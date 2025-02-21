@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useAuthStore } from './stores/authStore';
 import { Stethoscope } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
+import AdminPage from './pages/admin';
 
 // Placeholder components - we'll implement these next
 const Login = () => <div>Login Component</div>;
@@ -50,6 +51,16 @@ function App() {
         <Route 
           path="/dashboard/*" 
           element={user ? <Dashboard /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/admin" 
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <AdminPage />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
         />
       </Routes>
     </Router>

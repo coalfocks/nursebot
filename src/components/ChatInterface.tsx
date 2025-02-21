@@ -18,7 +18,7 @@ export function ChatInterface({ roomNumber }: ChatInterfaceProps) {
 
   useEffect(() => {
     const initializeChat = async () => {
-      const initialPrompt = generateInitialPrompt(roomNumber);
+      const initialPrompt = await generateInitialPrompt(roomNumber);
       if (!initialPrompt) return;
 
       setIsLoading(true);

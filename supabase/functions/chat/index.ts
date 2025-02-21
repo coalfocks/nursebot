@@ -1,5 +1,4 @@
-import { serve } from 'https://deno.fresh.dev/std@v1/http/server.ts';
-import { Configuration, OpenAIApi } from 'https://esm.sh/openai@4.24.1';
+import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { corsHeaders } from '../_shared/cors.ts';
 
 interface ChatMessage {
@@ -7,7 +6,7 @@ interface ChatMessage {
   content: string;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -17,12 +16,12 @@ serve(async (req) => {
     const { messages } = await req.json();
 
     // Initialize OpenAI
-    const openai = new OpenAIApi(new Configuration({
+    const openai = new OpenAI({
       apiKey: Deno.env.get('OPENAI_API_KEY'),
-    }));
+    })
 
     // Get chat completion
-    const completion = await openai.createChatCompletion({
+    const completion = await openai.chat.completions.create({
       model: 'gpt-4',
       messages,
       temperature: 0.7,
@@ -32,7 +31,7 @@ serve(async (req) => {
     // Return the response
     return new Response(
       JSON.stringify({
-        message: completion.data.choices[0].message?.content
+        message: completion.choices[0].message?.content
       }),
       {
         headers: { 
