@@ -1,12 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2 } from 'lucide-react';
-import { ChatMessage, generateInitialPrompt, getChatCompletion } from '../lib/openai';
+import { Send, Loader2, User2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useParams } from 'react-router-dom';
+import type { Database } from '../lib/database.types';
+
+type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
 interface ChatInterfaceProps {
   roomNumber: string;
 }
 
 export function ChatInterface({ roomNumber }: ChatInterfaceProps) {
+  const { assignmentId } = useParams<{ assignmentId: string }>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -17,81 +22,157 @@ export function ChatInterface({ roomNumber }: ChatInterfaceProps) {
   };
 
   useEffect(() => {
-    const initializeChat = async () => {
-      const initialPrompt = await generateInitialPrompt(roomNumber);
-      if (!initialPrompt) return;
-
-      setIsLoading(true);
-      try {
-        const initialMessages: ChatMessage[] = [
-          { role: 'system', content: initialPrompt }
-        ];
-        
-        const response = await getChatCompletion(initialMessages);
-        setMessages([
-          ...initialMessages,
-          { role: 'assistant', content: response }
-        ]);
-      } catch (error) {
-        console.error('Error initializing chat:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initializeChat();
-  }, [roomNumber]);
+    if (assignmentId) {
+      fetchMessages();
+      subscribeToMessages();
+    }
+  }, [assignmentId]);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
+  const fetchMessages = async () => {
+    if (!assignmentId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('assignment_id', assignmentId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setMessages(data || []);
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  };
+
+  const subscribeToMessages = () => {
+    if (!assignmentId) return;
+
+    const subscription = supabase
+      .channel('chat_messages')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `assignment_id=eq.${assignmentId}`
+        },
+        (payload) => {
+          const newMessage = payload.new as ChatMessage;
+          setMessages(prev => [...prev, newMessage]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !assignmentId) return;
 
-    const userMessage: ChatMessage = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const userMessage = input.trim();
     setInput('');
     setIsLoading(true);
 
     try {
-      const response = await getChatCompletion([...messages, userMessage]);
-      setMessages(prev => [...prev, { role: 'assistant', content: response }]);
+      // Insert the student's message
+      const { error: insertError } = await supabase
+        .from('chat_messages')
+        .insert([
+          {
+            assignment_id: assignmentId,
+            role: 'student',
+            content: userMessage
+          }
+        ]);
+
+      if (insertError) throw insertError;
+
+      // Get AI response
+      const { data: aiResponse, error: aiError } = await supabase.functions.invoke('chat', {
+        body: { 
+          messages: [
+            ...messages.map(m => ({
+              role: m.role === 'student' ? 'user' : 'assistant',
+              content: m.content
+            })),
+            { role: 'user', content: userMessage }
+          ]
+        }
+      });
+
+      if (aiError) throw aiError;
+
+      // Insert the AI's response
+      const { error: assistantError } = await supabase
+        .from('chat_messages')
+        .insert([
+          {
+            assignment_id: assignmentId,
+            role: 'assistant',
+            content: aiResponse.message
+          }
+        ]);
+
+      if (assistantError) throw assistantError;
     } catch (error) {
-      console.error('Error getting response:', error);
+      console.error('Error in chat:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit'
+    });
+  };
+
   return (
-    <div className="flex flex-col h-full bg-gray-50 rounded-lg shadow-lg">
+    <div className="flex flex-col h-[calc(100vh-16rem)] bg-white shadow rounded-lg">
       <div className="p-4 bg-blue-600 text-white rounded-t-lg">
-        <h2 className="text-lg font-semibold">Room {roomNumber} - Nurse Chat</h2>
+        <h2 className="text-lg font-semibold">Room {roomNumber} - Patient Assessment</h2>
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.filter(m => m.role !== 'system').map((message, index) => (
+        {messages.map((message, index) => (
           <div
-            key={index}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            key={message.id}
+            className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] p-3 rounded-lg ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white shadow-md'
+              className={`max-w-[80%] p-4 rounded-lg ${
+                message.role === 'student'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 text-gray-900'
               }`}
             >
-              {message.content}
+              <div className="flex items-center mb-1">
+                <User2 className="w-4 h-4 mr-2" />
+                <span className="text-xs font-medium">
+                  {message.role === 'student' ? 'You' : 'Nurse'}
+                </span>
+                <span className="text-xs ml-2 opacity-75">
+                  {formatDate(message.created_at)}
+                </span>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
             </div>
           </div>
         ))}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-white p-3 rounded-lg shadow-md">
-              <Loader2 className="w-5 h-5 animate-spin" />
+            <div className="bg-gray-100 p-4 rounded-lg">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
             </div>
           </div>
         )}

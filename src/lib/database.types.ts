@@ -38,6 +38,35 @@ export interface Database {
           updated_at?: string
         }
       }
+      chat_messages: {
+        Row: {
+          id: string
+          assignment_id: string
+          role: 'student' | 'assistant'
+          content: string
+          created_at: string
+          tokens_used: number | null
+          triggered_completion: boolean
+        }
+        Insert: {
+          id?: string
+          assignment_id: string
+          role: 'student' | 'assistant'
+          content: string
+          created_at?: string
+          tokens_used?: number | null
+          triggered_completion?: boolean
+        }
+        Update: {
+          id?: string
+          assignment_id?: string
+          role?: 'student' | 'assistant'
+          content?: string
+          created_at?: string
+          tokens_used?: number | null
+          triggered_completion?: boolean
+        }
+      }
       specialties: {
         Row: {
           id: string
@@ -58,53 +87,188 @@ export interface Database {
           created_at?: string
         }
       }
-      cases: {
+      rooms: {
         Row: {
-          id: string
-          specialty_id: string
-          title: string
-          description: string
-          patient_history: string
-          initial_vitals: Json
-          difficulty_level: string
-          expected_diagnosis: string
-          expected_treatment: string[]
-          created_by: string
+          id: number
+          room_number: string
+          role: string
+          objective: string
+          context: string
+          style: string
+          specialty_id: string | null
+          difficulty_level: 'beginner' | 'intermediate' | 'advanced' | null
+          expected_diagnosis: string | null
+          expected_treatment: string[] | null
+          initial_vitals: Json | null
+          created_by: string | null
           is_active: boolean
           created_at: string
           updated_at: string
         }
         Insert: {
-          id?: string
-          specialty_id: string
-          title: string
-          description: string
-          patient_history: string
-          initial_vitals: Json
-          difficulty_level: string
-          expected_diagnosis: string
-          expected_treatment: string[]
-          created_by: string
+          id?: number
+          room_number: string
+          role: string
+          objective: string
+          context: string
+          style: string
+          specialty_id?: string | null
+          difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
+          expected_diagnosis?: string | null
+          expected_treatment?: string[] | null
+          initial_vitals?: Json | null
+          created_by?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
         }
         Update: {
-          id?: string
-          specialty_id?: string
-          title?: string
-          description?: string
-          patient_history?: string
-          initial_vitals?: Json
-          difficulty_level?: string
-          expected_diagnosis?: string
-          expected_treatment?: string[]
-          created_by?: string
+          id?: number
+          room_number?: string
+          role?: string
+          objective?: string
+          context?: string
+          style?: string
+          specialty_id?: string | null
+          difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
+          expected_diagnosis?: string | null
+          expected_treatment?: string[] | null
+          initial_vitals?: Json | null
+          created_by?: string | null
           is_active?: boolean
           created_at?: string
           updated_at?: string
         }
       }
+      student_room_assignments: {
+        Row: {
+          id: string
+          student_id: string
+          room_id: number
+          assigned_by: string
+          status: 'assigned' | 'in_progress' | 'completed'
+          due_date: string | null
+          feedback: string | null
+          grade: number | null
+          diagnosis: string | null
+          treatment_plan: string[] | null
+          completion_token_matched: boolean
+          feedback_status: 'pending' | 'processing' | 'completed' | 'failed'
+          feedback_error: string | null
+          nurse_feedback: {
+            overallScore: number
+            clinicalReasoning: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            communication: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            professionalism: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            summary: string
+            recommendations: string[]
+          } | null
+          feedback_generated_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          student_id: string
+          room_id: number
+          assigned_by: string
+          status?: 'assigned' | 'in_progress' | 'completed'
+          due_date?: string | null
+          feedback?: string | null
+          grade?: number | null
+          diagnosis?: string | null
+          treatment_plan?: string[] | null
+          completion_token_matched?: boolean
+          feedback_status?: 'pending' | 'processing' | 'completed' | 'failed'
+          feedback_error?: string | null
+          nurse_feedback?: {
+            overallScore: number
+            clinicalReasoning: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            communication: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            professionalism: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            summary: string
+            recommendations: string[]
+          } | null
+          feedback_generated_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          student_id?: string
+          room_id?: number
+          assigned_by?: string
+          status?: 'assigned' | 'in_progress' | 'completed'
+          due_date?: string | null
+          feedback?: string | null
+          grade?: number | null
+          diagnosis?: string | null
+          treatment_plan?: string[] | null
+          completion_token_matched?: boolean
+          feedback_status?: 'pending' | 'processing' | 'completed' | 'failed'
+          feedback_error?: string | null
+          nurse_feedback?: {
+            overallScore: number
+            clinicalReasoning: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            communication: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            professionalism: {
+              score: number
+              comments: string
+              strengths: string[]
+              areasForImprovement: string[]
+            }
+            summary: string
+            recommendations: string[]
+          } | null
+          feedback_generated_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+    }
+    Enums: {
+      message_role: 'student' | 'assistant'
+      feedback_status: 'pending' | 'processing' | 'completed' | 'failed'
     }
   }
 }

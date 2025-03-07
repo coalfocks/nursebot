@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Pencil, Trash2, Plus, X, Check, Loader2 } from 'lucide-react';
+import Navbar from '../components/Navbar';
 
 interface Room {
   id: number;
@@ -184,24 +185,29 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin" />
+      <div className="min-h-screen bg-gray-100">
+        <Navbar />
+        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Room Management</h1>
-        <button
-          onClick={() => setIsAdding(true)}
-          className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center"
-        >
-          <Plus className="w-5 h-5 mr-1" />
-          Add Room
-        </button>
-      </div>
+    <div className="min-h-screen bg-gray-100">
+      <Navbar />
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold">Room Management</h1>
+          <button
+            onClick={() => setIsAdding(true)}
+            className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center"
+          >
+            <Plus className="w-5 h-5 mr-1" />
+            Add Room
+          </button>
+        </div>
 
       {isAdding && (
         <div className="mb-8">
@@ -267,6 +273,7 @@ export default function AdminPage() {
           </div>
         ))}
       </div>
+      </div>
     </div>
   );
-} 
+}

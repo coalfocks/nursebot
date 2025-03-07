@@ -4,10 +4,17 @@ import { useAuthStore } from './stores/authStore';
 import { Stethoscope } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import AdminPage from './pages/admin';
-
-// Placeholder components - we'll implement these next
-const Login = () => <div>Login Component</div>;
-const Register = () => <div>Register Component</div>;
+import Login from './pages/Login';
+import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import ProfileSettings from './pages/ProfileSettings';
+import MyCases from './pages/MyCases';
+import AdminDashboard from './pages/AdminDashboard';
+import CaseManager from './pages/CaseManager';
+import RoomManagement from './pages/RoomManagement';
+import FeedbackProcessor from './components/FeedbackProcessor';
+import AssignmentView from './pages/AssignmentView';
 
 function App() {
   const { user, loading, loadUser } = useAuthStore();
@@ -29,6 +36,7 @@ function App() {
 
   return (
     <Router>
+      <FeedbackProcessor />
       <Routes>
         <Route 
           path="/" 
@@ -49,6 +57,14 @@ function App() {
           element={user ? <Navigate to="/dashboard" replace /> : <Register />} 
         />
         <Route 
+          path="/forgot-password" 
+          element={user ? <Navigate to="/dashboard" replace /> : <ForgotPassword />} 
+        />
+        <Route 
+          path="/reset-password" 
+          element={<ResetPassword />} 
+        />
+        <Route 
           path="/dashboard/*" 
           element={user ? <Dashboard /> : <Navigate to="/login" replace />} 
         />
@@ -61,6 +77,52 @@ function App() {
               <Navigate to="/dashboard" replace />
             )
           } 
+        />
+        <Route 
+          path="/admin-dashboard" 
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <AdminDashboard />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/cases/:caseId/manage" 
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <CaseManager />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/profile" 
+          element={user ? <ProfileSettings /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/cases" 
+          element={user ? <MyCases /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/admin/rooms" 
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <RoomManagement />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/assignments" 
+          element={user ? <MyCases /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/assignment/:assignmentId" 
+          element={user ? <AssignmentView /> : <Navigate to="/login" replace />} 
         />
       </Routes>
     </Router>
