@@ -14,6 +14,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
+import AutoCompleteProcessor from './components/AutoCompleteProcessor';
 import AssignmentView from './pages/AssignmentView';
 
 function App() {
@@ -37,6 +38,7 @@ function App() {
   return (
     <Router>
       <FeedbackProcessor />
+      <AutoCompleteProcessor />
       <Routes>
         <Route 
           path="/" 

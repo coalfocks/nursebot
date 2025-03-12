@@ -150,6 +150,7 @@ export const useAuthStore = create<AuthState>((set) => ({
             full_name: defaultName,
             study_year: 1,
             is_admin: false,
+            phone_number: null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },

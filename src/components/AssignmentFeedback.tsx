@@ -120,51 +120,61 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
     strengths: string[];
     areasForImprovement: string[];
     sectionKey: string;
-  }) => (
-    <div className="border rounded-lg p-4">
-      <button
-        onClick={() => toggleSection(sectionKey)}
-        className="w-full flex items-center justify-between"
-      >
-        <div className="flex items-center space-x-3">
-          <Icon className="w-5 h-5 text-gray-600" />
-          <h3 className="text-lg font-medium">{title}</h3>
-        </div>
-        <div className="flex items-center space-x-4">
-          <ScoreIndicator score={score} />
-          {expandedSection === sectionKey ? (
-            <ChevronUp className="w-5 h-5 text-gray-400" />
-          ) : (
-            <ChevronDown className="w-5 h-5 text-gray-400" />
-          )}
-        </div>
-      </button>
-
-      {expandedSection === sectionKey && (
-        <div className="mt-4 space-y-4">
-          <p className="text-gray-700">{comments}</p>
-          
-          <div>
-            <h4 className="font-medium text-green-700 mb-2">Strengths</h4>
-            <ul className="list-disc list-inside space-y-1">
-              {strengths.map((strength, index) => (
-                <li key={index} className="text-gray-600">{strength}</li>
-              ))}
-            </ul>
+  }) => {
+    // Ensure arrays are defined
+    const safeStrengths = strengths || [];
+    const safeAreasForImprovement = areasForImprovement || [];
+    
+    return (
+      <div className="border rounded-lg p-4">
+        <button
+          onClick={() => toggleSection(sectionKey)}
+          className="w-full flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-3">
+            <Icon className="w-5 h-5 text-gray-600" />
+            <h3 className="text-lg font-medium">{title}</h3>
           </div>
-
-          <div>
-            <h4 className="font-medium text-amber-700 mb-2">Areas for Improvement</h4>
-            <ul className="list-disc list-inside space-y-1">
-              {areasForImprovement.map((area, index) => (
-                <li key={index} className="text-gray-600">{area}</li>
-              ))}
-            </ul>
+          <div className="flex items-center space-x-4">
+            <ScoreIndicator score={score} />
+            {expandedSection === sectionKey ? (
+              <ChevronUp className="w-5 h-5 text-gray-400" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-gray-400" />
+            )}
           </div>
-        </div>
-      )}
-    </div>
-  );
+        </button>
+
+        {expandedSection === sectionKey && (
+          <div className="mt-4 space-y-4">
+            <p className="text-gray-700">{comments || ''}</p>
+            
+            {safeStrengths.length > 0 && (
+              <div>
+                <h4 className="font-medium text-green-700 mb-2">Strengths</h4>
+                <ul className="list-disc list-inside space-y-1">
+                  {safeStrengths.map((strength, index) => (
+                    <li key={index} className="text-gray-600">{strength}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {safeAreasForImprovement.length > 0 && (
+              <div>
+                <h4 className="font-medium text-amber-700 mb-2">Areas for Improvement</h4>
+                <ul className="list-disc list-inside space-y-1">
+                  {safeAreasForImprovement.map((area, index) => (
+                    <li key={index} className="text-gray-600">{area}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="bg-white shadow rounded-lg p-6 space-y-6">

@@ -15,6 +15,7 @@ export interface Database {
           full_name: string
           study_year: number
           specialization_interest: string | null
+          phone_number: string | null
           is_admin: boolean
           created_at: string
           updated_at: string
@@ -24,6 +25,7 @@ export interface Database {
           full_name: string
           study_year: number
           specialization_interest?: string | null
+          phone_number?: string | null
           is_admin?: boolean
           created_at?: string
           updated_at?: string
@@ -33,6 +35,7 @@ export interface Database {
           full_name?: string
           study_year?: number
           specialization_interest?: string | null
+          phone_number?: string | null
           is_admin?: boolean
           created_at?: string
           updated_at?: string
@@ -148,6 +151,9 @@ export interface Database {
           assigned_by: string
           status: 'assigned' | 'in_progress' | 'completed'
           due_date: string | null
+          effective_date: string | null
+          notification_sent: boolean | null
+          notification_sent_at: string | null
           feedback: string | null
           grade: number | null
           diagnosis: string | null
@@ -189,6 +195,9 @@ export interface Database {
           assigned_by: string
           status?: 'assigned' | 'in_progress' | 'completed'
           due_date?: string | null
+          effective_date?: string | null
+          notification_sent?: boolean | null
+          notification_sent_at?: string | null
           feedback?: string | null
           grade?: number | null
           diagnosis?: string | null
@@ -230,6 +239,9 @@ export interface Database {
           assigned_by?: string
           status?: 'assigned' | 'in_progress' | 'completed'
           due_date?: string | null
+          effective_date?: string | null
+          notification_sent?: boolean | null
+          notification_sent_at?: string | null
           feedback?: string | null
           grade?: number | null
           diagnosis?: string | null

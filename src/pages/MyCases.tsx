@@ -80,7 +80,14 @@ export default function MyCases() {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'No due date';
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const formattedDate = date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return `${formattedDate} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
   };
 
   // Filter assignments based on active tab
@@ -164,6 +171,13 @@ export default function MyCases() {
                             <span className="font-medium">Due:</span> {formatDate(assignment.due_date)}
                           </p>
                         )}
+                        
+                        {assignment.effective_date && (
+                          <p className="mt-2 text-sm text-gray-600">
+                            <span className="font-medium">Effective:</span> {formatDate(assignment.effective_date)}
+                            <span className="ml-2 text-xs text-gray-500">(Auto-completes after 1 hour)</span>
+                          </p>
+                        )}
 
                         {activeTab === 'completed' && assignment.nurse_feedback && (
                           <div className="mt-4 bg-gray-50 p-4 rounded-md">
@@ -176,9 +190,11 @@ export default function MyCases() {
                                 </span>
                               )}
                             </h4>
-                            <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
+                            {assignment.nurse_feedback.summary && (
+                              <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
+                            )}
                             
-                            {assignment.nurse_feedback.clinicalReasoning.strengths.length > 0 && (
+                            {assignment.nurse_feedback.clinicalReasoning?.strengths?.length > 0 && (
                               <div className="mt-2">
                                 <h5 className="text-sm font-medium text-gray-900">Strengths:</h5>
                                 <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
@@ -189,7 +205,7 @@ export default function MyCases() {
                               </div>
                             )}
                             
-                            {assignment.nurse_feedback.clinicalReasoning.areasForImprovement.length > 0 && (
+                            {assignment.nurse_feedback.clinicalReasoning?.areasForImprovement?.length > 0 && (
                               <div className="mt-2">
                                 <h5 className="text-sm font-medium text-gray-900">Areas for Improvement:</h5>
                                 <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">

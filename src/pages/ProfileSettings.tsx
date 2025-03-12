@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, Clock } from 'lucide-react';
 
 export default function ProfileSettings() {
   const { user, profile, loadUser } = useAuthStore();
@@ -16,7 +16,10 @@ export default function ProfileSettings() {
     full_name: '',
     study_year: 1,
     specialization_interest: '',
+    phone_number: '',
   });
+
+  const [phoneError, setPhoneError] = useState('');
   
   // List of medical specializations
   const specializations = [
@@ -56,6 +59,7 @@ export default function ProfileSettings() {
         full_name: profile.full_name || '',
         study_year: profile.study_year || 1,
         specialization_interest: profile.specialization_interest || '',
+        phone_number: profile.phone_number || '',
       });
       setLoading(false);
     }
@@ -67,16 +71,58 @@ export default function ProfileSettings() {
       ...formData,
       [name]: name === 'study_year' ? parseInt(value) : value,
     });
+
+    // Clear phone error when user types
+    if (name === 'phone_number') {
+      setPhoneError('');
+    }
+  };
+
+  const validatePhoneNumber = (phone: string): boolean => {
+    if (!phone) return true; // Phone is optional
+    
+    // Basic validation for US phone numbers (10 digits, optionally with country code)
+    const phoneRegex = /^\+?1?\s*\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})$/;
+    return phoneRegex.test(phone);
+  };
+
+  const formatPhoneNumber = (phone: string): string => {
+    if (!phone) return '';
+    
+    // Remove all non-digit characters
+    const digitsOnly = phone.replace(/\D/g, '');
+    
+    // Format as +1XXXXXXXXXX if it's a 10-digit US number
+    if (digitsOnly.length === 10) {
+      return `+1${digitsOnly}`;
+    }
+    
+    // If it already has a country code (11 digits starting with 1)
+    if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+      return `+${digitsOnly}`;
+    }
+    
+    // Otherwise return as is
+    return phone;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     
+    // Validate phone number
+    if (formData.phone_number && !validatePhoneNumber(formData.phone_number)) {
+      setPhoneError('Please enter a valid phone number (e.g., +1 123-456-7890)');
+      return;
+    }
+    
     setSaving(true);
     setMessage(null);
     
     try {
+      // Format phone number for storage
+      const formattedPhoneNumber = formData.phone_number ? formatPhoneNumber(formData.phone_number) : null;
+      
       // Only allow updating own profile
       const { error } = await supabase
         .from('profiles')
@@ -84,6 +130,7 @@ export default function ProfileSettings() {
           full_name: formData.full_name,
           study_year: formData.study_year,
           specialization_interest: formData.specialization_interest || null,
+          phone_number: formattedPhoneNumber,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id); // Ensure we can only update our own profile
@@ -110,6 +157,9 @@ export default function ProfileSettings() {
       </div>
     );
   }
+
+  // Get the user's local timezone
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -178,6 +228,32 @@ export default function ProfileSettings() {
                   </option>
                 ))}
               </select>
+            </div>
+            
+            <div>
+              <label htmlFor="phone_number" className="block text-sm font-medium text-gray-700">
+                Phone Number (for SMS notifications)
+              </label>
+              <input
+                type="tel"
+                id="phone_number"
+                name="phone_number"
+                value={formData.phone_number}
+                onChange={handleChange}
+                placeholder="+1 (123) 456-7890"
+                className={`mt-1 block w-full rounded-md ${phoneError ? 'border-red-300' : 'border-gray-300'} shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm`}
+              />
+              {phoneError && (
+                <p className="mt-1 text-sm text-red-600">{phoneError}</p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">
+                Enter your phone number to receive SMS notifications when assignments become effective.
+              </p>
+            </div>
+            
+            <div className="flex items-center text-sm text-gray-500 mt-4">
+              <Clock className="w-4 h-4 mr-1" />
+              <span>Your timezone: {timezone}</span>
             </div>
             
             <div className="flex justify-end">

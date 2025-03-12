@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AssignmentFeedback from '../components/AssignmentFeedback';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle, Send, User2 } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, Book, CheckCircle } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import type { Database } from '../lib/database.types';
 
@@ -16,8 +16,6 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
   };
 };
 
-type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
-
 export default function AssignmentView() {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const { user } = useAuthStore();
@@ -25,9 +23,6 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [sendingMessage, setSendingMessage] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -36,13 +31,7 @@ export default function AssignmentView() {
     }
     
     if (assignmentId) {
-      const initializeRoom = async () => {
-        await fetchAssignment();
-        await fetchMessages();
-        subscribeToMessages();
-      };
-      
-      initializeRoom();
+      fetchAssignment();
     }
   }, [assignmentId, user]);
 
@@ -70,32 +59,6 @@ export default function AssignmentView() {
 
       setAssignment(data);
 
-      // Check if there are any existing messages
-      const { data: existingMessages, error: messagesError } = await supabase
-        .from('chat_messages')
-        .select('id')
-        .eq('assignment_id', assignmentId)
-        .limit(1);
-
-      if (messagesError) throw messagesError;
-
-      // If no messages exist, send initial nurse message
-      if (!existingMessages?.length) {
-        const initialMessage = `I need your help with a patient in Room ${data.room.room_number}. Here's the situation:\n\n${data.room.context}\n\nYour objective is to: ${data.room.objective}\n\nPlease help me assess and manage this patient.`;
-        
-        const { error: messageError } = await supabase
-          .from('chat_messages')
-          .insert([
-            {
-              assignment_id: assignmentId,
-              role: 'assistant',
-              content: initialMessage
-            }
-          ]);
-
-        if (messageError) throw messageError;
-      }
-
       // If status is 'assigned', update it to 'in_progress'
       if (data.status === 'assigned') {
         const { error: updateError } = await supabase
@@ -111,73 +74,6 @@ export default function AssignmentView() {
       navigate('/assignments');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchMessages = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('assignment_id', assignmentId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setMessages(data || []);
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-    }
-  };
-
-  const subscribeToMessages = () => {
-    const subscription = supabase
-      .channel('chat_messages')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `assignment_id=eq.${assignmentId}`
-        },
-        (payload) => {
-          setMessages(current => [...current, payload.new as ChatMessage]);
-          
-          // If this is a nurse message and status is 'completed', refresh assignment to get feedback
-          if (payload.new.role === 'nurse' && assignment?.status === 'completed') {
-            fetchAssignment();
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  };
-
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !assignment || sendingMessage) return;
-
-    setSendingMessage(true);
-    try {
-      const { error } = await supabase
-        .from('chat_messages')
-        .insert([
-          {
-            assignment_id: assignmentId,
-            role: 'student',
-            content: newMessage.trim(),
-          }
-        ]);
-
-      if (error) throw error;
-      setNewMessage('');
-    } catch (error) {
-      console.error('Error sending message:', error);
-    } finally {
-      setSendingMessage(false);
     }
   };
 
@@ -207,16 +103,6 @@ export default function AssignmentView() {
       default:
         return null;
     }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    });
   };
 
   if (loading) {

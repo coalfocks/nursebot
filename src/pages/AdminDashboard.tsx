@@ -32,6 +32,7 @@ export default function AdminDashboard() {
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
   const [dueDate, setDueDate] = useState<string>('');
+  const [effectiveDate, setEffectiveDate] = useState<string>('');
   const [assignmentError, setAssignmentError] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [assignmentSuccess, setAssignmentSuccess] = useState(false);
@@ -135,6 +136,7 @@ export default function AdminDashboard() {
             room_id: selectedRoomId,
             assigned_by: user.id,
             due_date: new Date(dueDate).toISOString(),
+            effective_date: effectiveDate ? new Date(effectiveDate).toISOString() : null,
           },
         ]);
 
@@ -144,6 +146,7 @@ export default function AdminDashboard() {
       setSelectedStudentId('');
       setSelectedRoomId(null);
       setDueDate('');
+      setEffectiveDate('');
       await fetchAssignments();
     } catch (error: any) {
       setAssignmentError(error.message);
@@ -401,6 +404,28 @@ export default function AdminDashboard() {
                     onChange={(e) => setDueDate(e.target.value)}
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                   />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                  </p>
+                </div>
+
+                <div>
+                  <label htmlFor="effectiveDate" className="block text-sm font-medium text-gray-700">
+                    Effective Date
+                  </label>
+                  <input
+                    type="datetime-local"
+                    id="effectiveDate"
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  />
+                  <p className="mt-1 text-sm text-gray-500">
+                    If set, the case will be automatically marked as complete 1 hour after this time.
+                    <span className="block mt-1">
+                      Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                    </span>
+                  </p>
                 </div>
 
                 <div>

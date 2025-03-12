@@ -48,6 +48,7 @@ interface CaseAssignment {
     areas_for_improvement: string[];
     created_at: string;
   };
+  effective_date?: string | null;
 }
 
 export default function CaseManager() {
@@ -138,7 +139,14 @@ export default function CaseManager() {
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Not set';
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const formattedDate = date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    return `${formattedDate} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
   };
 
   const getStatusBadge = (status: string) => {
@@ -634,6 +642,12 @@ export default function CaseManager() {
                                   <div className="flex items-center">
                                     <Calendar className="w-4 h-4 mr-1" />
                                     <span>Due: {formatDate(assignment.due_date)}</span>
+                                  </div>
+                                )}
+                                {assignment.effective_date && (
+                                  <div className="flex items-center">
+                                    <Calendar className="w-4 h-4 mr-1" />
+                                    <span>Effective: {formatDate(assignment.effective_date)}</span>
                                   </div>
                                 )}
                               </div>
