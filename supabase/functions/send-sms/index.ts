@@ -52,18 +52,45 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') as string;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get user's phone number
+    // Get user's phone number and check consent
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('phone_number')
+      .select('phone_number, sms_consent')
       .eq('id', userId)
       .single();
 
-    if (profileError || !profile || !profile.phone_number) {
+    if (profileError || !profile) {
       return new Response(
         JSON.stringify({ 
-          error: 'User not found or no phone number available',
+          error: 'User not found',
           details: profileError?.message
+        }),
+        {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    // Check if user has consented to SMS and has a phone number
+    if (!profile.sms_consent) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'User has not consented to receive SMS notifications',
+          consent: false
+        }),
+        {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    if (!profile.phone_number) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'No phone number available for user',
+          phone: false
         }),
         {
           status: 404,

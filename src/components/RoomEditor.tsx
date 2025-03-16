@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, FileText, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 
@@ -33,6 +33,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [expectedDiagnosis, setExpectedDiagnosis] = useState(room?.expected_diagnosis || '');
   const [expectedTreatment, setExpectedTreatment] = useState<string[]>(room?.expected_treatment || []);
   const [isActive, setIsActive] = useState(room?.is_active ?? true);
+  
+  // PDF upload state
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(room?.pdf_url || null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     fetchSpecialties();
@@ -58,6 +64,44 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     setError('');
 
     try {
+      // Handle PDF upload if a new file is selected
+      let finalPdfUrl = pdfUrl;
+      
+      if (pdfFile) {
+        setIsUploading(true);
+        
+        // If there's an existing PDF, delete it first
+        if (pdfUrl) {
+          const oldPath = pdfUrl.split('/').pop();
+          if (oldPath) {
+            await supabase.storage.from('room_pdfs').remove([oldPath]);
+          }
+        }
+        
+        // Generate a unique filename
+        const fileExt = pdfFile.name.split('.').pop();
+        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
+        const filePath = `${fileName}`;
+        
+        // Upload the new file
+        const { data, error: uploadError } = await supabase.storage
+          .from('room_pdfs')
+          .upload(filePath, pdfFile, {
+            cacheControl: '3600',
+            upsert: false,
+          });
+        
+        if (uploadError) throw uploadError;
+        
+        // Get the public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('room_pdfs')
+          .getPublicUrl(filePath);
+        
+        finalPdfUrl = publicUrl;
+        setIsUploading(false);
+      }
+
       const roomData = {
         room_number: roomNumber,
         role,
@@ -70,6 +114,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
         completion_token: '<completed>',
         is_active: isActive,
+        pdf_url: finalPdfUrl,
       };
 
       if (room?.id) {
@@ -109,6 +154,53 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
   const removeTreatment = (index: number) => {
     setExpectedTreatment(expectedTreatment.filter((_, i) => i !== index));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      
+      // Check if file is a PDF
+      if (file.type !== 'application/pdf') {
+        setError('Only PDF files are allowed');
+        return;
+      }
+      
+      // Check file size (limit to 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        setError('File size should be less than 10MB');
+        return;
+      }
+      
+      setPdfFile(file);
+      setError('');
+    }
+  };
+
+  const handleRemovePdf = async () => {
+    if (pdfUrl && room?.id) {
+      try {
+        // Extract the filename from the URL
+        const fileName = pdfUrl.split('/').pop();
+        if (fileName) {
+          await supabase.storage.from('room_pdfs').remove([fileName]);
+        }
+        
+        // Update the room record
+        await supabase
+          .from('rooms')
+          .update({ pdf_url: null })
+          .eq('id', room.id);
+        
+        setPdfUrl(null);
+        setPdfFile(null);
+      } catch (error: any) {
+        setError(error.message);
+      }
+    } else {
+      setPdfUrl(null);
+      setPdfFile(null);
+    }
   };
 
   return (
@@ -192,6 +284,68 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             rows={3}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
           />
+        </div>
+
+        <div>
+          <label htmlFor="pdfUpload" className="block text-sm font-medium text-gray-700">
+            Room PDF Document
+          </label>
+          <p className="mt-1 text-sm text-gray-500">
+            Upload a PDF document that students can view when they enter this room
+          </p>
+          
+          {pdfUrl ? (
+            <div className="mt-2 flex items-center space-x-2">
+              <a 
+                href={pdfUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                View Current PDF
+              </a>
+              <button
+                type="button"
+                onClick={handleRemovePdf}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                <X className="h-4 w-4 mr-2" />
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div className="mt-2">
+              <input
+                id="pdfUpload"
+                type="file"
+                accept="application/pdf"
+                onChange={handleFileChange}
+                className="block w-full text-sm text-gray-500
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-md file:border-0
+                  file:text-sm file:font-medium
+                  file:bg-blue-50 file:text-blue-700
+                  hover:file:bg-blue-100"
+              />
+              {pdfFile && (
+                <p className="mt-2 text-sm text-gray-500">
+                  Selected file: {pdfFile.name} ({Math.round(pdfFile.size / 1024)} KB)
+                </p>
+              )}
+              {isUploading && (
+                <div className="mt-2">
+                  <div className="w-full bg-gray-200 rounded-full h-2.5">
+                    <div 
+                      className="bg-blue-600 h-2.5 rounded-full" 
+                      style={{ width: `${uploadProgress}%` }}
+                    ></div>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">Uploading: {uploadProgress}%</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="pt-4">

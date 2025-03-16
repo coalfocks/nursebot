@@ -112,27 +112,29 @@ ${conversation}
       messages: [
         {
           role: "system",
-          content: "You are an experienced nurse educator providing detailed feedback on student performance."
+          content: "You are an experienced nurse educator providing detailed feedback on student performance. You must evaluate ALL THREE areas: Clinical Reasoning, Communication Skills, and Professionalism with equal attention and detail."
         },
         {
           role: "user",
           content: `
 You are an experienced nurse educator evaluating a student's performance in a simulated patient interaction. 
-Please analyze the following conversation and provide detailed feedback in these areas:
+Please analyze the following conversation and provide DETAILED feedback in ALL THREE of these areas:
 
-1. Clinical Reasoning (Score 1-5)
-2. Communication Skills (Score 1-5)
-3. Professionalism (Score 1-5)
+1. Clinical Reasoning (Score 1-5): Evaluate the student's ability to analyze patient data, identify problems, and develop appropriate care plans. Consider their critical thinking, assessment skills, and clinical decision-making.
 
-For each area, provide:
-- A numeric score
-- Specific comments
-- Key strengths
-- Areas for improvement
+2. Communication Skills (Score 1-5): Evaluate how effectively the student communicates with the patient. Consider clarity, empathy, active listening, and ability to explain medical concepts.
+
+3. Professionalism (Score 1-5): Evaluate the student's professional behavior. Consider respect, ethics, responsibility, and adherence to nursing standards.
+
+For EACH of these three areas, you MUST provide:
+- A numeric score (1-5)
+- Specific comments (at least 2-3 sentences)
+- At least 2-3 key strengths
+- At least 2-3 areas for improvement
 
 Also include:
-- An overall score (1-5)
-- A summary of the student's performance
+- An overall score (1-5) that considers all three areas
+- A summary of the student's overall performance
 - Specific recommendations for improvement
 
 Context of the interaction:
@@ -162,7 +164,9 @@ interface FeedbackResponse {
   };
   summary: string;
   recommendations: string[];
-}`
+}
+
+IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reasoning, Communication Skills, and Professionalism). Do not focus on just one area.`
         }
       ],
       response_format: { type: "json_object" }

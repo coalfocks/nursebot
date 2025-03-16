@@ -16,6 +16,7 @@ export interface Database {
           study_year: number
           specialization_interest: string | null
           phone_number: string | null
+          sms_consent: boolean
           is_admin: boolean
           created_at: string
           updated_at: string
@@ -26,6 +27,7 @@ export interface Database {
           study_year: number
           specialization_interest?: string | null
           phone_number?: string | null
+          sms_consent?: boolean
           is_admin?: boolean
           created_at?: string
           updated_at?: string
@@ -36,6 +38,7 @@ export interface Database {
           study_year?: number
           specialization_interest?: string | null
           phone_number?: string | null
+          sms_consent?: boolean
           is_admin?: boolean
           created_at?: string
           updated_at?: string
@@ -107,6 +110,7 @@ export interface Database {
           is_active: boolean
           created_at: string
           updated_at: string
+          pdf_url: string | null
         }
         Insert: {
           id?: number
@@ -124,6 +128,7 @@ export interface Database {
           is_active?: boolean
           created_at?: string
           updated_at?: string
+          pdf_url?: string | null
         }
         Update: {
           id?: number
@@ -141,6 +146,7 @@ export interface Database {
           is_active?: boolean
           created_at?: string
           updated_at?: string
+          pdf_url?: string | null
         }
       }
       student_room_assignments: {

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, Save, Clock } from 'lucide-react';
+import { Loader2, Save, Clock, AlertTriangle } from 'lucide-react';
 
 export default function ProfileSettings() {
   const { user, profile, loadUser } = useAuthStore();
@@ -17,6 +17,7 @@ export default function ProfileSettings() {
     study_year: 1,
     specialization_interest: '',
     phone_number: '',
+    sms_consent: false,
   });
 
   const [phoneError, setPhoneError] = useState('');
@@ -60,16 +61,18 @@ export default function ProfileSettings() {
         study_year: profile.study_year || 1,
         specialization_interest: profile.specialization_interest || '',
         phone_number: profile.phone_number || '',
+        sms_consent: profile.sms_consent || false,
       });
       setLoading(false);
     }
   }, [user, profile, navigate]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target as HTMLInputElement;
     setFormData({
       ...formData,
-      [name]: name === 'study_year' ? parseInt(value) : value,
+      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : 
+              name === 'study_year' ? parseInt(value) : value,
     });
 
     // Clear phone error when user types
@@ -110,9 +113,15 @@ export default function ProfileSettings() {
     e.preventDefault();
     if (!user) return;
     
-    // Validate phone number
+    // Validate phone number if provided
     if (formData.phone_number && !validatePhoneNumber(formData.phone_number)) {
       setPhoneError('Please enter a valid phone number (e.g., +1 123-456-7890)');
+      return;
+    }
+    
+    // Validate SMS consent - must have phone number if consent is true
+    if (formData.sms_consent && !formData.phone_number) {
+      setPhoneError('Phone number is required to receive SMS notifications');
       return;
     }
     
@@ -131,6 +140,7 @@ export default function ProfileSettings() {
           study_year: formData.study_year,
           specialization_interest: formData.specialization_interest || null,
           phone_number: formattedPhoneNumber,
+          sms_consent: formData.sms_consent,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id); // Ensure we can only update our own profile
@@ -250,6 +260,42 @@ export default function ProfileSettings() {
                 Enter your phone number to receive SMS notifications when assignments become effective.
               </p>
             </div>
+            
+            <div className="relative flex items-start">
+              <div className="flex items-center h-5">
+                <input
+                  id="sms_consent"
+                  name="sms_consent"
+                  type="checkbox"
+                  checked={formData.sms_consent}
+                  onChange={handleChange}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+              </div>
+              <div className="ml-3 text-sm">
+                <label htmlFor="sms_consent" className="font-medium text-gray-700">
+                  SMS Notifications Consent
+                </label>
+                <p className="text-gray-500">
+                  I consent to receive SMS notifications about my assignments. Message and data rates may apply.
+                </p>
+              </div>
+            </div>
+            
+            {!formData.phone_number && formData.sms_consent && (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <AlertTriangle className="h-5 w-5 text-yellow-400" />
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-yellow-700">
+                      You must provide a phone number to receive SMS notifications.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             
             <div className="flex items-center text-sm text-gray-500 mt-4">
               <Clock className="w-4 h-4 mr-1" />

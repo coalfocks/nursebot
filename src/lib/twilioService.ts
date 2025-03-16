@@ -18,6 +18,24 @@ interface AssignmentWithRoom {
  */
 export async function sendSmsNotification(userId: string, message: string): Promise<boolean> {
   try {
+    // Check if the user has consented to SMS notifications
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('phone_number, sms_consent')
+      .eq('id', userId)
+      .single();
+
+    if (profileError || !profile) {
+      console.error('Error fetching user profile:', profileError);
+      return false;
+    }
+
+    // Don't send SMS if the user hasn't consented or doesn't have a phone number
+    if (!profile.sms_consent || !profile.phone_number) {
+      console.log(`User ${userId} has not consented to SMS notifications or has no phone number`);
+      return false;
+    }
+
     // Call the Supabase Edge Function to send the SMS
     const { data, error } = await supabase.functions.invoke('send-sms', {
       body: { userId, message }
@@ -61,15 +79,21 @@ export async function sendAssignmentEffectiveNotification(assignmentId: string):
       return false;
     }
 
-    // Get the student's profile to check if they have a phone number
+    // Get the student's profile to check if they have a phone number and have consented
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('phone_number')
+      .select('phone_number, sms_consent')
       .eq('id', assignment.student_id)
       .single();
 
-    if (profileError || !profile || !profile.phone_number) {
-      console.error('Error fetching student profile or no phone number:', profileError);
+    if (profileError || !profile) {
+      console.error('Error fetching student profile:', profileError);
+      return false;
+    }
+
+    // Don't send SMS if the user hasn't consented or doesn't have a phone number
+    if (!profile.sms_consent || !profile.phone_number) {
+      console.log(`Student ${assignment.student_id} has not consented to SMS notifications or has no phone number`);
       return false;
     }
 

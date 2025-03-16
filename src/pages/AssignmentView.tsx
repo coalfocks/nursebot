@@ -4,8 +4,9 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AssignmentFeedback from '../components/AssignmentFeedback';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
+import PdfViewer from '../components/PdfViewer';
 import type { Database } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -23,6 +24,7 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -193,6 +195,20 @@ export default function AssignmentView() {
                       <p className="mt-1 text-sm text-gray-900">{new Date(assignment.due_date).toLocaleDateString()}</p>
                     </div>
                   )}
+                  {assignment.room.pdf_url && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Room Documents</h3>
+                      <div className="mt-2">
+                        <button
+                          onClick={() => setShowPdfViewer(true)}
+                          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          View PDF Document
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -214,6 +230,14 @@ export default function AssignmentView() {
           </div>
         </div>
       </div>
+
+      {/* PDF Viewer Modal */}
+      {showPdfViewer && assignment?.room.pdf_url && (
+        <PdfViewer 
+          pdfUrl={assignment.room.pdf_url} 
+          onClose={() => setShowPdfViewer(false)} 
+        />
+      )}
     </div>
   );
 } 

@@ -160,10 +160,7 @@ export default function MyCases() {
                           {getStatusBadge(assignment.status)}
                         </div>
                         <p className="mt-1 text-sm text-gray-500">
-                          {assignment.room.specialty?.name || 'General Practice'} - {assignment.room.difficulty_level || 'Standard'} difficulty
-                        </p>
-                        <p className="mt-2 text-sm text-gray-700">
-                          {assignment.room.objective}
+                          {assignment.room.specialty?.name || 'General Practice'}
                         </p>
                         
                         {assignment.due_date && (

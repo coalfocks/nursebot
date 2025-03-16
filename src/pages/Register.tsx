@@ -1,24 +1,72 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { AlertTriangle } from 'lucide-react';
 
 export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [studyYear, setStudyYear] = useState(1);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [smsConsent, setSmsConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { signUp } = useAuthStore();
   const navigate = useNavigate();
+
+  const validatePhoneNumber = (phone: string): boolean => {
+    if (!phone) return true; // Phone is optional
+    
+    // Basic validation for US phone numbers (10 digits, optionally with country code)
+    const phoneRegex = /^\+?1?\s*\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})$/;
+    return phoneRegex.test(phone);
+  };
+
+  const formatPhoneNumber = (phone: string): string => {
+    if (!phone) return '';
+    
+    // Remove all non-digit characters
+    const digitsOnly = phone.replace(/\D/g, '');
+    
+    // Format as +1XXXXXXXXXX if it's a 10-digit US number
+    if (digitsOnly.length === 10) {
+      return `+1${digitsOnly}`;
+    }
+    
+    // If it already has a country code (11 digits starting with 1)
+    if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+      return `+${digitsOnly}`;
+    }
+    
+    // Otherwise return as is
+    return phone;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
+    // Validate phone number if provided
+    if (phoneNumber && !validatePhoneNumber(phoneNumber)) {
+      setError('Please enter a valid phone number (e.g., +1 123-456-7890)');
+      setLoading(false);
+      return;
+    }
+    
+    // Validate SMS consent - must have phone number if consent is true
+    if (smsConsent && !phoneNumber) {
+      setError('Phone number is required to receive SMS notifications');
+      setLoading(false);
+      return;
+    }
+
     try {
-      await signUp(email, password, fullName, studyYear);
+      // Format phone number for storage
+      const formattedPhoneNumber = phoneNumber ? formatPhoneNumber(phoneNumber) : null;
+      
+      await signUp(email, password, fullName, studyYear, formattedPhoneNumber, smsConsent);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
@@ -127,6 +175,63 @@ export default function Register() {
                 </select>
               </div>
             </div>
+
+            <div>
+              <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700">
+                Phone Number (for SMS notifications)
+              </label>
+              <div className="mt-1">
+                <input
+                  id="phoneNumber"
+                  name="phoneNumber"
+                  type="tel"
+                  autoComplete="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="+1 (123) 456-7890"
+                  className="block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                Optional. Enter your phone number to receive SMS notifications.
+              </p>
+            </div>
+
+            <div className="relative flex items-start">
+              <div className="flex items-center h-5">
+                <input
+                  id="smsConsent"
+                  name="smsConsent"
+                  type="checkbox"
+                  checked={smsConsent}
+                  onChange={(e) => setSmsConsent(e.target.checked)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+              </div>
+              <div className="ml-3 text-sm">
+                <label htmlFor="smsConsent" className="font-medium text-gray-700">
+                  SMS Notifications Consent
+                </label>
+                <p className="text-gray-500">
+                  I consent to receive SMS notifications about my assignments. Message and data rates may apply.
+                </p>
+              </div>
+            </div>
+
+            {!phoneNumber && smsConsent && (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <AlertTriangle className="h-5 w-5 text-yellow-400" />
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-yellow-700">
+                      You must provide a phone number to receive SMS notifications.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
               <button

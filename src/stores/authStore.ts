@@ -7,7 +7,7 @@ interface AuthState {
   profile: any | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string, studyYear: number) => Promise<void>;
+  signUp: (email: string, password: string, fullName: string, studyYear: number, phoneNumber: string | null, smsConsent: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   loadUser: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -64,7 +64,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ user: data.user, profile: profileData });
     }
   },
-  signUp: async (email, password, fullName, studyYear) => {
+  signUp: async (email, password, fullName, studyYear, phoneNumber, smsConsent) => {
     const { data: { user }, error } = await supabase.auth.signUp({
       email,
       password,
@@ -82,6 +82,8 @@ export const useAuthStore = create<AuthState>((set) => ({
           full_name: fullName,
           study_year: studyYear,
           is_admin: false, // Default to student role
+          phone_number: phoneNumber,
+          sms_consent: smsConsent,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
@@ -151,6 +153,7 @@ export const useAuthStore = create<AuthState>((set) => ({
             study_year: 1,
             is_admin: false,
             phone_number: null,
+            sms_consent: false, // Default to no consent
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
