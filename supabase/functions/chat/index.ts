@@ -22,10 +22,10 @@ Deno.serve(async (req) => {
 
     // Get chat completion
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-4o-mini',
       messages,
       temperature: 0.7,
-      max_tokens: 500,
+      max_tokens: 10000,
     });
 
     // Return the response

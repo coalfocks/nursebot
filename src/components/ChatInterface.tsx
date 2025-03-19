@@ -3,6 +3,7 @@ import { Send, Loader2, User2, CheckCircle, Wand2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
+import { generateInitialPrompt } from '../lib/openai';
 
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
@@ -116,32 +117,11 @@ export function ChatInterface({ roomNumber }: ChatInterfaceProps) {
       
       console.log('No messages found, generating initial prompt');
       
-      // Fetch room details to generate the prompt
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select('*')
-        .eq('room_number', roomNumber)
-        .single();
-      
-      if (roomError) throw roomError;
-      
-      // Generate the system prompt
-      const systemPrompt = `You are a professional nurse in a hospital. ${roomData.role || ''}
-
-Your communication style should be ${roomData.style || 'professional and concise'}
-
-Context: ${roomData.context || ''}
-
-Objective: ${roomData.objective || ''}
-
-Remember:
-1. Be concise and professional
-2. Don't suggest treatments
-3. Ask the doctor for specific orders when needed
-4. Only provide information when asked
-5. Stay in character as a nurse at all times
-
-Current situation: You need help from a medical student about this patient. Start by explaining the situation briefly and professionally.`;
+      // Generate the system prompt using the dedicated function
+      const systemPrompt = await generateInitialPrompt(roomNumber);
+      if (!systemPrompt) {
+        throw new Error('Failed to generate initial prompt');
+      }
 
       // Get the initial response from OpenAI
       setIsLoading(true);
@@ -248,10 +228,17 @@ Current situation: You need help from a medical student about this patient. Star
         setMessages(prev => [...prev, insertedStudentMessage[0]]);
       }
 
-      // Get AI response
+      // Get the system prompt for context
+      const systemPrompt = await generateInitialPrompt(roomNumber);
+      if (!systemPrompt) {
+        throw new Error('Failed to generate system prompt');
+      }
+
+      // Get AI response with full context including system prompt
       const { data: aiResponse, error: aiError } = await supabase.functions.invoke('chat', {
         body: { 
           messages: [
+            { role: 'system', content: systemPrompt },
             ...messages.map(m => ({
               role: m.role === 'student' ? 'user' : 'assistant',
               content: m.content
