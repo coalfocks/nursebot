@@ -4,14 +4,16 @@ import { supabase } from '../lib/supabase';
 import { useParams, useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
+import EmbeddedPdfViewer from './EmbeddedPdfViewer';
 
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
 interface ChatInterfaceProps {
   roomNumber: string;
+  pdfUrl?: string | null;
 }
 
-export function ChatInterface({ roomNumber }: ChatInterfaceProps) {
+export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);

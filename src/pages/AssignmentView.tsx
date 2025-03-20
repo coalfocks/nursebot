@@ -6,7 +6,7 @@ import Navbar from '../components/Navbar';
 import AssignmentFeedback from '../components/AssignmentFeedback';
 import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
-import PdfViewer from '../components/PdfViewer';
+import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -24,7 +24,7 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -36,6 +36,35 @@ export default function AssignmentView() {
       fetchAssignment();
     }
   }, [assignmentId, user]);
+
+  const getSignedUrl = async (path: string) => {
+    try {
+      console.log('Original PDF URL:', path);
+      
+      // Extract just the filename from the full URL
+      const filename = path.split('/').pop();
+      console.log('Extracted filename:', filename);
+
+      if (!filename) {
+        console.error('No filename found in path');
+        return null;
+      }
+
+      const { data, error } = await supabase.storage
+        .from('room_pdfs')
+        .createSignedUrl(filename, 3600); // URL valid for 1 hour
+
+      if (error) {
+        console.error('Error getting signed URL:', error);
+        throw error;
+      }
+      console.log('Signed URL response:', data);
+      return data?.signedUrl;
+    } catch (error) {
+      console.error('Error in getSignedUrl:', error);
+      return null;
+    }
+  };
 
   const fetchAssignment = async () => {
     try {
@@ -59,6 +88,7 @@ export default function AssignmentView() {
         throw new Error('Unauthorized');
       }
 
+      console.log('Fetched assignment data:', data);
       setAssignment(data);
 
       // If status is 'assigned', update it to 'in_progress'
@@ -70,6 +100,20 @@ export default function AssignmentView() {
 
         if (updateError) throw updateError;
         setAssignment({ ...data, status: 'in_progress' });
+      }
+
+      // Get signed URL for PDF if it exists
+      if (data.room.pdf_url) {
+        console.log('Found PDF URL in room data:', data.room.pdf_url);
+        const signedUrl = await getSignedUrl(data.room.pdf_url);
+        console.log('Generated signed URL:', signedUrl);
+        if (signedUrl) {
+          setPdfUrl(signedUrl);
+        } else {
+          console.log('Failed to generate signed URL');
+        }
+      } else {
+        console.log('No PDF URL found in room data');
       }
     } catch (error) {
       console.error('Error fetching assignment:', error);
@@ -177,10 +221,6 @@ export default function AssignmentView() {
               <div className="bg-white shadow rounded-lg p-6">
                 <h2 className="text-lg font-medium text-gray-900 mb-4">Room Information</h2>
                 <div className="space-y-4">
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500">Objective</h3>
-                    <p className="mt-1 text-sm text-gray-900">{assignment.room.objective}</p>
-                  </div>
                   {assignment.room.initial_vitals && (
                     <div>
                       <h3 className="text-sm font-medium text-gray-500">Initial Vitals</h3>
@@ -195,20 +235,14 @@ export default function AssignmentView() {
                       <p className="mt-1 text-sm text-gray-900">{new Date(assignment.due_date).toLocaleDateString()}</p>
                     </div>
                   )}
-                  {assignment.room.pdf_url && (
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-500">Room Documents</h3>
-                      <div className="mt-2">
-                        <button
-                          onClick={() => setShowPdfViewer(true)}
-                          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          <FileText className="h-4 w-4 mr-2" />
-                          View PDF Document
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                </div>
+              </div>
+
+              {/* PDF Viewer */}
+              <div className="mt-6 bg-white shadow rounded-lg p-6">
+                <h2 className="text-lg font-medium text-gray-900 mb-4">Room Documents</h2>
+                <div className="h-[400px]">
+                  <EmbeddedPdfViewer pdfUrl={pdfUrl} />
                 </div>
               </div>
 
@@ -223,21 +257,17 @@ export default function AssignmentView() {
               )}
             </div>
 
-            {/* Chat Section */}
+            {/* Main Content Area */}
             <div className="lg:col-span-2">
-              <ChatInterface roomNumber={assignment.room.room_number} />
+              {/* Chat Section */}
+              <ChatInterface 
+                roomNumber={assignment.room.room_number} 
+                pdfUrl={pdfUrl}
+              />
             </div>
           </div>
         </div>
       </div>
-
-      {/* PDF Viewer Modal */}
-      {showPdfViewer && assignment?.room.pdf_url && (
-        <PdfViewer 
-          pdfUrl={assignment.room.pdf_url} 
-          onClose={() => setShowPdfViewer(false)} 
-        />
-      )}
     </div>
   );
 } 
