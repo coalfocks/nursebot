@@ -67,8 +67,8 @@ function App() {
           element={<ResetPassword />} 
         />
         <Route 
-          path="/dashboard/*" 
-          element={user ? <Dashboard /> : <Navigate to="/login" replace />} 
+          path="/dashboard" 
+          element={user ? <AdminDashboard /> : <Navigate to="/login" replace />} 
         />
         <Route 
           path="/admin" 
