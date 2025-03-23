@@ -202,7 +202,7 @@ export default function ProfileSettings() {
             
             <div>
               <label htmlFor="study_year" className="block text-sm font-medium text-gray-700">
-                Year of Study
+                Education Year
               </label>
               <select
                 id="study_year"
@@ -211,18 +211,18 @@ export default function ProfileSettings() {
                 onChange={handleChange}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               >
-                <option value={1}>Year 1</option>
-                <option value={2}>Year 2</option>
-                <option value={3}>Year 3</option>
-                <option value={4}>Year 4</option>
-                <option value={5}>Year 5</option>
-                <option value={6}>Year 6</option>
+                <option value={1}>MS-1</option>
+                <option value={2}>MS-2</option>
+                <option value={3}>MS-3</option>
+                <option value={4}>MS-4</option>
+                <option value={5}>PGY-1</option>
+                <option value={6}>PGY-2</option>
               </select>
             </div>
             
             <div>
               <label htmlFor="specialization_interest" className="block text-sm font-medium text-gray-700">
-                Specialization Interest
+                Specialty
               </label>
               <select
                 id="specialization_interest"

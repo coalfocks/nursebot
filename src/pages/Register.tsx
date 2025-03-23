@@ -82,7 +82,7 @@ export default function Register() {
           Create your student account
         </h2>
         <p className="mt-2 text-center text-sm text-gray-600">
-          Join the Medical Education Platform
+          Join Nurse Althea
         </p>
       </div>
 
@@ -155,7 +155,7 @@ export default function Register() {
 
             <div>
               <label htmlFor="studyYear" className="block text-sm font-medium text-gray-700">
-                Study Year
+                Education Year
               </label>
               <div className="mt-1">
                 <select
@@ -166,12 +166,12 @@ export default function Register() {
                   onChange={(e) => setStudyYear(Number(e.target.value))}
                   className="block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
                 >
-                  <option value={1}>Year 1</option>
-                  <option value={2}>Year 2</option>
-                  <option value={3}>Year 3</option>
-                  <option value={4}>Year 4</option>
-                  <option value={5}>Year 5</option>
-                  <option value={6}>Year 6</option>
+                  <option value={1}>MS-1</option>
+                  <option value={2}>MS-2</option>
+                  <option value={3}>MS-3</option>
+                  <option value={4}>MS-4</option>
+                  <option value={5}>PGY-1</option>
+                  <option value={6}>PGY-2</option>
                 </select>
               </div>
             </div>

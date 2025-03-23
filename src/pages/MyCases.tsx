@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, Clock, Book, CheckCircle, ArrowRight, Award } from 'lucide-react';
+import { Loader2, Clock, Book, CheckCircle, ArrowRight, Award, AlertCircle } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -114,7 +114,7 @@ export default function MyCases() {
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
           <div className="flex justify-between items-center mb-6">
-            <h1 className="text-2xl font-bold text-gray-900">My Assignments</h1>
+            <h1 className="text-2xl font-bold text-gray-900">My Patients</h1>
           </div>
 
           <div className="bg-white shadow overflow-hidden sm:rounded-lg">
@@ -128,7 +128,7 @@ export default function MyCases() {
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Active Assignments
+                  Active Conversations
                 </button>
                 <button
                   onClick={() => setActiveTab('completed')}
@@ -138,7 +138,7 @@ export default function MyCases() {
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
                 >
-                  Completed Assignments
+                  Completed Conversations
                 </button>
               </nav>
             </div>
@@ -159,7 +159,15 @@ export default function MyCases() {
                           </h3>
                           {getStatusBadge(assignment.status)}
                         </div>
-                        <p className="mt-1 text-sm text-gray-500">
+                        {assignment.status === 'in_progress' && (
+                          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
+                            <div className="flex items-center">
+                              <AlertCircle className="w-4 h-4 text-red-400 mr-2" />
+                              <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
+                            </div>
+                          </div>
+                        )}
+                        <p className="mt-2 text-sm text-gray-500">
                           {assignment.room.specialty?.name || 'General Practice'}
                         </p>
                         

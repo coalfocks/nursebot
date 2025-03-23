@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AssignmentFeedback from '../components/AssignmentFeedback';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
@@ -219,6 +219,14 @@ export default function AssignmentView() {
             {/* Room Information */}
             <div className="lg:col-span-1">
               <div className="bg-white shadow rounded-lg p-6">
+                {assignment.status === 'in_progress' && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                    <div className="flex items-center">
+                      <AlertCircle className="w-5 h-5 text-red-400 mr-2" />
+                      <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
+                    </div>
+                  </div>
+                )}
                 <h2 className="text-lg font-medium text-gray-900 mb-4">Room Information</h2>
                 <div className="space-y-4">
                   {assignment.room.initial_vitals && (
@@ -240,7 +248,7 @@ export default function AssignmentView() {
 
               {/* PDF Viewer */}
               <div className="mt-6 bg-white shadow rounded-lg p-6">
-                <h2 className="text-lg font-medium text-gray-900 mb-4">Room Documents</h2>
+                <h2 className="text-lg font-medium text-gray-900 mb-4">Progress Note</h2>
                 <div className="h-[400px]">
                   <EmbeddedPdfViewer pdfUrl={pdfUrl} />
                 </div>
