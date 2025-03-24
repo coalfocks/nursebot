@@ -16,6 +16,7 @@ import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
 import AutoCompleteProcessor from './components/AutoCompleteProcessor';
 import AssignmentView from './pages/AssignmentView';
+import Landing from './pages/Landing';
 
 function App() {
   const { user, loading, loadUser } = useAuthStore();
@@ -46,7 +47,7 @@ function App() {
             user ? (
               <Navigate to="/dashboard" replace />
             ) : (
-              <Navigate to="/login" replace />
+              <Landing />
             )
           } 
         />
