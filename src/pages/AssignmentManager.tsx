@@ -1,0 +1,460 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import { Loader2, Plus, Filter, Download, Search } from 'lucide-react';
+import Navbar from '../components/Navbar';
+import type { Database } from '../lib/database.types';
+import { useAuthStore } from '../stores/authStore';
+
+type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
+  student: {
+    id: string;
+    full_name: string;
+    study_year: number;
+  };
+  room: {
+    id: number;
+    room_number: string;
+    specialty_id: string | null;
+    difficulty_level: string | null;
+  };
+};
+
+type Room = Database['public']['Tables']['rooms']['Row'];
+type Profile = Database['public']['Tables']['profiles']['Row'];
+
+export default function AssignmentManager() {
+  const { user } = useAuthStore();
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<Profile[]>([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [filters, setFilters] = useState({
+    status: '',
+    studentId: '',
+    roomId: '',
+    search: ''
+  });
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<string>('');
+  const [studentSearch, setStudentSearch] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState<string>('');
+  const [dueDate, setDueDate] = useState<string>('');
+  const [effectiveDate, setEffectiveDate] = useState<string>('');
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchAssignments(),
+        fetchStudents(),
+        fetchRooms()
+      ]);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAssignments = async () => {
+    const { data, error } = await supabase
+      .from('student_room_assignments')
+      .select(`
+        *,
+        student:student_id (
+          id,
+          full_name,
+          study_year
+        ),
+        room:room_id (
+          id,
+          room_number,
+          specialty_id,
+          difficulty_level
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    setAssignments(data || []);
+  };
+
+  const fetchStudents = async () => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('is_admin', false)
+      .order('full_name');
+
+    if (error) throw error;
+    setStudents(data || []);
+  };
+
+  const fetchRooms = async () => {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('*')
+      .order('room_number');
+
+    if (error) throw error;
+    setRooms(data || []);
+  };
+
+  const handleAssign = async () => {
+    if (!selectedRoom || !selectedStudent || !user) {
+      alert('Please select a room and a student');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .insert({
+          student_id: selectedStudent,
+          room_id: parseInt(selectedRoom),
+          assigned_by: user.id,
+          status: 'assigned',
+          due_date: dueDate || null,
+          effective_date: effectiveDate || null
+        });
+
+      if (error) throw error;
+
+      setShowAssignModal(false);
+      setSelectedStudent('');
+      setStudentSearch('');
+      setSelectedRoom('');
+      setDueDate('');
+      setEffectiveDate('');
+      await fetchAssignments();
+    } catch (error) {
+      console.error('Error assigning case:', error);
+      alert('Error assigning case. Please try again.');
+    }
+  };
+
+  const filteredStudents = students.filter(student =>
+    student.full_name.toLowerCase().includes(studentSearch.toLowerCase())
+  );
+
+  const filteredAssignments = assignments.filter(assignment => {
+    if (filters.status && assignment.status !== filters.status) return false;
+    if (filters.studentId && assignment.student_id !== filters.status) return false;
+    if (filters.roomId && assignment.room_id.toString() !== filters.roomId) return false;
+    if (filters.search) {
+      const searchTerm = filters.search.toLowerCase();
+      return (
+        assignment.student.full_name.toLowerCase().includes(searchTerm) ||
+        assignment.room.room_number.toLowerCase().includes(searchTerm)
+      );
+    }
+    return true;
+  });
+
+  const getStatusBadge = (status: string) => {
+    const badges = {
+      assigned: 'bg-yellow-100 text-yellow-800',
+      in_progress: 'bg-blue-100 text-blue-800',
+      completed: 'bg-green-100 text-green-800'
+    };
+
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badges[status as keyof typeof badges]}`}>
+        {status.replace('_', ' ').charAt(0).toUpperCase() + status.slice(1)}
+      </span>
+    );
+  };
+
+  const formatDate = (date: string | null) => {
+    if (!date) return 'Not set';
+    return new Date(date).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Navbar />
+        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <Navbar />
+      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="px-4 sm:px-0 mb-8">
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-gray-900">Case Assignments</h1>
+            <button
+              onClick={() => setShowAssignModal(true)}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Assign Cases
+            </button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="bg-white shadow rounded-lg mb-6">
+          <div className="p-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Status</label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                  <option value="">All Status</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Student</label>
+                <select
+                  value={filters.studentId}
+                  onChange={(e) => setFilters({ ...filters, studentId: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                  <option value="">All Students</option>
+                  {students.map(student => (
+                    <option key={student.id} value={student.id}>
+                      {student.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Room</label>
+                <select
+                  value={filters.roomId}
+                  onChange={(e) => setFilters({ ...filters, roomId: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                  <option value="">All Rooms</option>
+                  {rooms.map(room => (
+                    <option key={room.id} value={room.id}>
+                      Room {room.room_number}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Search</label>
+                <div className="mt-1 relative rounded-md shadow-sm">
+                  <input
+                    type="text"
+                    value={filters.search}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    placeholder="Search by name or room..."
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <Search className="h-4 w-4 text-gray-400" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Assignments List */}
+        <div className="bg-white shadow rounded-lg">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Student
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Room
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Due Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Progress
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredAssignments.map((assignment) => (
+                  <tr key={assignment.id}>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {assignment.student.full_name}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        Year {assignment.student.study_year}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        Room {assignment.room.room_number}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {assignment.room.difficulty_level || 'No difficulty set'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getStatusBadge(assignment.status)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(assignment.due_date)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {assignment.nurse_feedback ? (
+                        <div className="text-sm">
+                          <div className="font-medium text-gray-900">
+                            Score: {assignment.nurse_feedback.overallScore}/5
+                          </div>
+                          <div className="text-gray-500">
+                            Feedback provided
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-500">
+                          No feedback yet
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Assignment Modal */}
+      {showAssignModal && (
+        <div className="fixed z-10 inset-0 overflow-y-auto">
+          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Assign Case</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Select Room</label>
+                    <select
+                      value={selectedRoom}
+                      onChange={(e) => setSelectedRoom(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    >
+                      <option value="">Choose a room...</option>
+                      {rooms.map(room => (
+                        <option key={room.id} value={room.id}>
+                          Room {room.room_number}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Search Students</label>
+                    <div className="mt-1">
+                      <input
+                        type="text"
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                        placeholder="Type to search students..."
+                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
+                      {filteredStudents.map(student => (
+                        <button
+                          key={student.id}
+                          type="button"
+                          onClick={() => setSelectedStudent(student.id)}
+                          className={`w-full text-left px-4 py-2 hover:bg-gray-50 focus:outline-none ${
+                            selectedStudent === student.id ? 'bg-blue-50' : ''
+                          }`}
+                        >
+                          <div className="font-medium text-gray-900">{student.full_name}</div>
+                          <div className="text-sm text-gray-500">
+                            Year {student.study_year}
+                          </div>
+                        </button>
+                      ))}
+                      {filteredStudents.length === 0 && (
+                        <div className="px-4 py-2 text-sm text-gray-500">
+                          No students found
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Effective Date</label>
+                    <input
+                      type="datetime-local"
+                      value={effectiveDate}
+                      onChange={(e) => setEffectiveDate(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      When should this assignment become active?
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 sm:mt-6 sm:grid sm:grid-cols-2 sm:gap-3 sm:grid-flow-row-dense">
+                <button
+                  type="button"
+                  onClick={handleAssign}
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
+                >
+                  Assign
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAssignModal(false);
+                    setSelectedStudent('');
+                    setStudentSearch('');
+                    setSelectedRoom('');
+                    setDueDate('');
+                    setEffectiveDate('');
+                  }}
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+} 

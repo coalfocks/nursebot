@@ -17,6 +17,7 @@ import FeedbackProcessor from './components/FeedbackProcessor';
 import AutoCompleteProcessor from './components/AutoCompleteProcessor';
 import AssignmentView from './pages/AssignmentView';
 import Landing from './pages/Landing';
+import AssignmentManager from './pages/AssignmentManager';
 
 function App() {
   const { user, loading, loadUser } = useAuthStore();
@@ -114,6 +115,16 @@ function App() {
           element={
             user?.id && useAuthStore.getState().profile?.is_admin ? (
               <RoomManagement />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/admin/assignments" 
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <AssignmentManager />
             ) : (
               <Navigate to="/dashboard" replace />
             )
