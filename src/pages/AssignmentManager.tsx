@@ -111,6 +111,13 @@ export default function AssignmentManager() {
     }
 
     try {
+      // Calculate default due date if not specified
+      let calculatedDueDate = dueDate;
+      if (!calculatedDueDate && effectiveDate) {
+        const effectiveDateTime = new Date(effectiveDate);
+        calculatedDueDate = new Date(effectiveDateTime.getTime() + 60 * 60 * 1000).toISOString();
+      }
+
       const { error } = await supabase
         .from('student_room_assignments')
         .insert({
@@ -118,7 +125,7 @@ export default function AssignmentManager() {
           room_id: parseInt(selectedRoom),
           assigned_by: user.id,
           status: 'assigned',
-          due_date: dueDate || null,
+          due_date: calculatedDueDate || null,
           effective_date: effectiveDate || null
         });
 
