@@ -60,10 +60,19 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
   }
 
   if (!assignment.nurse_feedback) {
+    console.log('No nurse feedback available for assignment:', assignment.id);
     return null;
   }
 
   const feedback = assignment.nurse_feedback;
+  console.log('Rendering feedback for assignment:', assignment.id, {
+    hasClinicalReasoning: !!feedback.clinicalReasoning,
+    hasCommunication: !!feedback.communication,
+    hasProfessionalism: !!feedback.professionalism,
+    overallScore: feedback.overallScore,
+    summary: feedback.summary?.substring(0, 50) + '...',
+    recommendationsCount: feedback.recommendations?.length
+  });
 
   // Add null checks for each section
   const clinicalReasoning = feedback.clinicalReasoning || {
@@ -86,6 +95,24 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
     strengths: [],
     areasForImprovement: []
   };
+
+  console.log('Processed feedback sections:', {
+    clinicalReasoning: {
+      score: clinicalReasoning.score,
+      strengthsCount: clinicalReasoning.strengths.length,
+      areasCount: clinicalReasoning.areasForImprovement.length
+    },
+    communication: {
+      score: communication.score,
+      strengthsCount: communication.strengths.length,
+      areasCount: communication.areasForImprovement.length
+    },
+    professionalism: {
+      score: professionalism.score,
+      strengthsCount: professionalism.strengths.length,
+      areasCount: professionalism.areasForImprovement.length
+    }
+  });
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);

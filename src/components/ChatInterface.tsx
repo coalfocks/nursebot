@@ -307,8 +307,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
         .from('student_room_assignments')
         .update({ 
           status: 'completed',
-          feedback_status: 'pending',
-          completed_at: new Date().toISOString()
+          feedback_status: 'pending'
         })
         .eq('id', assignmentId);
       

@@ -99,7 +99,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           .getPublicUrl(filePath);
         
         finalPdfUrl = publicUrl;
-        setIsUploading(false);
       }
 
       const roomData = {
@@ -112,33 +111,32 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         difficulty_level: difficultyLevel,
         expected_diagnosis: expectedDiagnosis || null,
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
-        completion_token: '<completed>',
         is_active: isActive,
         pdf_url: finalPdfUrl,
       };
 
-      if (room?.id) {
-        // Update existing room
+      if (room) {
         const { error } = await supabase
           .from('rooms')
           .update(roomData)
           .eq('id', room.id);
-
+        
         if (error) throw error;
       } else {
-        // Create new room
         const { error } = await supabase
           .from('rooms')
           .insert([roomData]);
-
+        
         if (error) throw error;
       }
 
       onSave();
-    } catch (error: any) {
-      setError(error.message);
+    } catch (error) {
+      console.error('Error saving room:', error);
+      setError('Failed to save room. Please try again.');
     } finally {
       setIsLoading(false);
+      setIsUploading(false);
     }
   };
 
@@ -157,198 +155,181 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      
-      // Check if file is a PDF
-      if (file.type !== 'application/pdf') {
-        setError('Only PDF files are allowed');
-        return;
-      }
-      
-      // Check file size (limit to 10MB)
-      if (file.size > 10 * 1024 * 1024) {
-        setError('File size should be less than 10MB');
-        return;
-      }
-      
+    const file = e.target.files?.[0];
+    if (file && file.type === 'application/pdf') {
       setPdfFile(file);
       setError('');
+    } else {
+      setError('Please select a valid PDF file.');
     }
   };
 
   const handleRemovePdf = async () => {
-    if (pdfUrl && room?.id) {
+    if (pdfUrl) {
       try {
-        // Extract the filename from the URL
-        const fileName = pdfUrl.split('/').pop();
-        if (fileName) {
-          await supabase.storage.from('room_pdfs').remove([fileName]);
+        const path = pdfUrl.split('/').pop();
+        if (path) {
+          await supabase.storage.from('room_pdfs').remove([path]);
         }
-        
-        // Update the room record
-        await supabase
-          .from('rooms')
-          .update({ pdf_url: null })
-          .eq('id', room.id);
-        
         setPdfUrl(null);
         setPdfFile(null);
-      } catch (error: any) {
-        setError(error.message);
+      } catch (error) {
+        console.error('Error removing PDF:', error);
+        setError('Failed to remove PDF. Please try again.');
       }
-    } else {
-      setPdfUrl(null);
-      setPdfFile(null);
     }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {error && (
-        <div className="bg-red-50 border-l-4 border-red-400 p-4">
-          <div className="flex">
-            <div className="ml-3">
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Basic Information */}
       <div className="space-y-4">
         <div>
           <label htmlFor="roomNumber" className="block text-sm font-medium text-gray-700">
-            Room Number *
+            Room Number
           </label>
           <input
             type="text"
             id="roomNumber"
-            required
             value={roomNumber}
             onChange={(e) => setRoomNumber(e.target.value)}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            required
           />
         </div>
 
         <div>
           <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-            Role *
+            Role
           </label>
-          <input
-            type="text"
+          <textarea
             id="role"
-            required
             value={role}
             onChange={(e) => setRole(e.target.value)}
+            rows={2}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            required
           />
         </div>
 
         <div>
           <label htmlFor="objective" className="block text-sm font-medium text-gray-700">
-            Objective *
+            Objective
           </label>
           <textarea
             id="objective"
-            required
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
-            rows={3}
+            rows={2}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            required
           />
         </div>
 
         <div>
           <label htmlFor="context" className="block text-sm font-medium text-gray-700">
-            Context *
+            Context
           </label>
           <textarea
             id="context"
-            required
             value={context}
             onChange={(e) => setContext(e.target.value)}
             rows={3}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            required
           />
         </div>
 
         <div>
           <label htmlFor="style" className="block text-sm font-medium text-gray-700">
-            Style *
+            Style
           </label>
           <textarea
             id="style"
-            required
             value={style}
             onChange={(e) => setStyle(e.target.value)}
-            rows={3}
+            rows={2}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            required
+          />
+        </div>
+      </div>
+
+      {/* PDF Upload Section */}
+      <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-900">PDF Document</h3>
+          <button
+            type="button"
+            onClick={() => document.getElementById('pdf-upload')?.click()}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm"
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            {pdfUrl ? 'Change PDF' : 'Upload PDF'}
+          </button>
+          <input
+            id="pdf-upload"
+            type="file"
+            accept=".pdf"
+            onChange={handleFileChange}
+            className="hidden"
           />
         </div>
 
-        <div>
-          <label htmlFor="pdfUpload" className="block text-sm font-medium text-gray-700">
-            Room PDF Document
-          </label>
-          <p className="mt-1 text-sm text-gray-500">
-            Upload a PDF document that students can view when they enter this room
-          </p>
-          
-          {pdfUrl ? (
-            <div className="mt-2 flex items-center space-x-2">
-              <a 
-                href={pdfUrl} 
-                target="_blank" 
+        {pdfUrl && (
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center space-x-3">
+              <FileText className="h-5 w-5 text-gray-400" />
+              <span className="text-sm text-gray-900">Current PDF</span>
+            </div>
+            <div className="flex items-center space-x-4">
+              <a
+                href={pdfUrl}
+                target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                className="text-sm text-blue-600 hover:text-blue-800"
               >
-                <FileText className="h-4 w-4 mr-2" />
-                View Current PDF
+                View PDF
               </a>
               <button
                 type="button"
                 onClick={handleRemovePdf}
-                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                className="text-sm text-red-600 hover:text-red-800"
               >
-                <X className="h-4 w-4 mr-2" />
-                Remove
+                <X className="h-4 w-4" />
               </button>
             </div>
-          ) : (
-            <div className="mt-2">
-              <input
-                id="pdfUpload"
-                type="file"
-                accept="application/pdf"
-                onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500
-                  file:mr-4 file:py-2 file:px-4
-                  file:rounded-md file:border-0
-                  file:text-sm file:font-medium
-                  file:bg-blue-50 file:text-blue-700
-                  hover:file:bg-blue-100"
-              />
-              {pdfFile && (
-                <p className="mt-2 text-sm text-gray-500">
-                  Selected file: {pdfFile.name} ({Math.round(pdfFile.size / 1024)} KB)
-                </p>
-              )}
-              {isUploading && (
-                <div className="mt-2">
-                  <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div 
-                      className="bg-blue-600 h-2.5 rounded-full" 
-                      style={{ width: `${uploadProgress}%` }}
-                    ></div>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">Uploading: {uploadProgress}%</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="pt-4">
+        {pdfFile && (
+          <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg">
+            <div className="flex items-center space-x-3">
+              <FileText className="h-5 w-5 text-blue-400" />
+              <span className="text-sm text-blue-900">{pdfFile.name}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPdfFile(null)}
+              className="text-sm text-blue-600 hover:text-blue-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {isUploading && (
+          <div className="flex items-center space-x-2">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+            <span className="text-sm text-gray-500">Uploading PDF...</span>
+          </div>
+        )}
+      </div>
+
+      {/* Advanced Settings */}
+      <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-900">Advanced Settings</h3>
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
@@ -359,12 +340,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             ) : (
               <ChevronDown className="h-4 w-4 mr-1" />
             )}
-            Advanced Settings
+            {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings'}
           </button>
         </div>
 
         {showAdvanced && (
-          <div className="space-y-4 pt-4 border-t border-gray-200">
+          <div className="space-y-4">
             <div>
               <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
                 Specialty
@@ -472,22 +453,28 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         )}
       </div>
 
+      {error && (
+        <div className="text-sm text-red-600">
+          {error}
+        </div>
+      )}
+
       <div className="flex justify-end space-x-3">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={isLoading}
-          className="inline-flex justify-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
         >
           {isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               Saving...
             </>
           ) : (

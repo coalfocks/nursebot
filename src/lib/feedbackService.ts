@@ -27,12 +27,42 @@ export interface FeedbackResponse {
 
 export async function generateFeedback(assignmentId: string): Promise<void> {
   try {
+    // First, update the status to processing
+    const { error: updateError } = await supabase
+      .from('student_room_assignments')
+      .update({ feedback_status: 'processing' })
+      .eq('id', assignmentId);
+
+    if (updateError) throw updateError;
+
+    // Then invoke the Edge Function
     const { data, error } = await supabase.functions.invoke('generate-feedback', {
       body: { assignmentId }
     });
 
-    if (error) throw error;
-    if (!data.success) throw new Error('Failed to generate feedback');
+    if (error) {
+      // If there's an error, update the status to failed
+      await supabase
+        .from('student_room_assignments')
+        .update({ 
+          feedback_status: 'failed',
+          feedback_error: error.message
+        })
+        .eq('id', assignmentId);
+      throw error;
+    }
+
+    if (!data.success) {
+      // If the function returns but wasn't successful, update the status to failed
+      await supabase
+        .from('student_room_assignments')
+        .update({ 
+          feedback_status: 'failed',
+          feedback_error: 'Failed to generate feedback'
+        })
+        .eq('id', assignmentId);
+      throw new Error('Failed to generate feedback');
+    }
 
   } catch (error) {
     console.error('Error generating feedback:', error);
@@ -54,6 +84,8 @@ export async function checkPendingFeedback(): Promise<void> {
   for (const assignment of pendingAssignments) {
     try {
       await generateFeedback(assignment.id);
+      // Add a small delay between processing assignments to avoid overwhelming the system
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`Error generating feedback for assignment ${assignment.id}:`, error);
     }

@@ -1,29 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Pencil, Trash2, Plus, X, Check, Loader2 } from 'lucide-react';
+import { Pencil, Trash2, Plus, Loader2 } from 'lucide-react';
 import Navbar from '../components/Navbar';
+import RoomEditor from '../components/RoomEditor';
+import type { Database } from '../lib/database.types';
 
-interface Room {
-  id: number;
-  room_number: string;
-  role: string;
-  objective: string;
-  context: string;
-  style: string;
-}
+type Room = Database['public']['Tables']['rooms']['Row'];
 
 export default function AdminPage() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [newRoom, setNewRoom] = useState<Omit<Room, 'id'>>({
-    room_number: '',
-    role: '',
-    objective: '',
-    context: '',
-    style: ''
-  });
 
   useEffect(() => {
     fetchRooms();
@@ -61,126 +49,10 @@ export default function AdminPage() {
     }
   };
 
-  const handleEdit = async (room: Room) => {
-    try {
-      const { error } = await supabase
-        .from('rooms')
-        .update({
-          room_number: room.room_number,
-          role: room.role,
-          objective: room.objective,
-          context: room.context,
-          style: room.style
-        })
-        .eq('id', room.id);
-
-      if (error) throw error;
-      setEditingRoom(null);
-      await fetchRooms();
-    } catch (error) {
-      console.error('Error updating room:', error);
-    }
-  };
-
-  const handleAdd = async () => {
-    try {
-      const { error } = await supabase
-        .from('rooms')
-        .insert([newRoom]);
-
-      if (error) throw error;
-      setIsAdding(false);
-      setNewRoom({
-        room_number: '',
-        role: '',
-        objective: '',
-        context: '',
-        style: ''
-      });
-      await fetchRooms();
-    } catch (error) {
-      console.error('Error adding room:', error);
-    }
-  };
-
-  const RoomForm = ({ room, onSave, onCancel }: { 
-    room: Partial<Room>, 
-    onSave: (room: Partial<Room>) => void, 
-    onCancel: () => void 
-  }) => {
-    const [formData, setFormData] = useState(room);
-
-    const handleSubmit = () => {
-      if (!formData.room_number?.trim()) {
-        alert('Room number is required');
-        return;
-      }
-      onSave(formData);
-    };
-
-    return (
-      <div className="space-y-4 p-4 bg-white rounded-lg shadow">
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Room Number</label>
-          <input
-            type="text"
-            value={formData.room_number || ''}
-            onChange={(e) => setFormData({ ...formData, room_number: e.target.value })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Role</label>
-          <textarea
-            value={formData.role || ''}
-            onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            rows={2}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Objective</label>
-          <textarea
-            value={formData.objective || ''}
-            onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            rows={3}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Context</label>
-          <textarea
-            value={formData.context || ''}
-            onChange={(e) => setFormData({ ...formData, context: e.target.value })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            rows={3}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">Style</label>
-          <textarea
-            value={formData.style || ''}
-            onChange={(e) => setFormData({ ...formData, style: e.target.value })}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            rows={2}
-          />
-        </div>
-        <div className="flex justify-end space-x-2">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-          >
-            Save
-          </button>
-        </div>
-      </div>
-    );
+  const handleSave = async () => {
+    setEditingRoom(null);
+    setIsAdding(false);
+    await fetchRooms();
   };
 
   if (loading) {
@@ -209,70 +81,83 @@ export default function AdminPage() {
           </button>
         </div>
 
-      {isAdding && (
-        <div className="mb-8">
-          <RoomForm
-            room={newRoom}
-            onSave={(room) => {
-              setNewRoom(room as Omit<Room, 'id'>);
-              handleAdd();
-            }}
-            onCancel={() => setIsAdding(false)}
-          />
-        </div>
-      )}
-
-      <div className="space-y-6">
-        {rooms.map((room) => (
-          <div key={room.id} className="bg-white rounded-lg shadow p-6">
-            {editingRoom?.id === room.id ? (
-              <RoomForm
-                room={editingRoom}
-                onSave={(updatedRoom) => handleEdit(updatedRoom as Room)}
-                onCancel={() => setEditingRoom(null)}
-              />
-            ) : (
-              <div>
-                <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-xl font-semibold">Room {room.room_number}</h2>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => setEditingRoom(room)}
-                      className="p-2 text-gray-600 hover:text-blue-600"
-                    >
-                      <Pencil className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(room.id)}
-                      className="p-2 text-gray-600 hover:text-red-600"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <h3 className="font-medium text-gray-700">Role</h3>
-                    <p className="mt-1 text-gray-600">{room.role}</p>
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-700">Objective</h3>
-                    <p className="mt-1 text-gray-600">{room.objective}</p>
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-700">Context</h3>
-                    <p className="mt-1 text-gray-600">{room.context}</p>
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-gray-700">Style</h3>
-                    <p className="mt-1 text-gray-600">{room.style}</p>
-                  </div>
-                </div>
-              </div>
-            )}
+        {isAdding && (
+          <div className="mb-8 bg-white shadow rounded-lg p-6">
+            <h2 className="text-xl font-semibold mb-4">Create New Room</h2>
+            <RoomEditor
+              onSave={handleSave}
+              onCancel={() => setIsAdding(false)}
+            />
           </div>
-        ))}
-      </div>
+        )}
+
+        <div className="space-y-6">
+          {rooms.map((room) => (
+            <div key={room.id} className="bg-white rounded-lg shadow p-6">
+              {editingRoom?.id === room.id ? (
+                <div>
+                  <h2 className="text-xl font-semibold mb-4">Edit Room {room.room_number}</h2>
+                  <RoomEditor
+                    room={editingRoom}
+                    onSave={handleSave}
+                    onCancel={() => setEditingRoom(null)}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <div className="flex justify-between items-start mb-4">
+                    <h2 className="text-xl font-semibold">Room {room.room_number}</h2>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => setEditingRoom(room)}
+                        className="p-2 text-gray-600 hover:text-blue-600"
+                      >
+                        <Pencil className="w-5 h-5" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(room.id)}
+                        className="p-2 text-gray-600 hover:text-red-600"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Role</h3>
+                      <p className="mt-1 text-sm text-gray-900">{room.role}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Objective</h3>
+                      <p className="mt-1 text-sm text-gray-900">{room.objective}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Context</h3>
+                      <p className="mt-1 text-sm text-gray-900">{room.context}</p>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Style</h3>
+                      <p className="mt-1 text-sm text-gray-900">{room.style}</p>
+                    </div>
+                    {room.pdf_url && (
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-500">PDF Document</h3>
+                        <a
+                          href={room.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          View PDF
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
