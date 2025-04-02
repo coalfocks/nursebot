@@ -105,15 +105,15 @@ export default function AssignmentManager() {
   };
 
   const handleAssign = async () => {
-    if (!selectedRoom || !selectedStudent || !user) {
-      alert('Please select a room and a student');
+    if (!selectedRoom || !selectedStudent || !user || !effectiveDate) {
+      alert('Please select a room, student, and effective date');
       return;
     }
 
     try {
       // Calculate default due date if not specified
       let calculatedDueDate = dueDate;
-      if (!calculatedDueDate && effectiveDate) {
+      if (!calculatedDueDate) {
         const effectiveDateTime = new Date(effectiveDate);
         calculatedDueDate = new Date(effectiveDateTime.getTime() + 60 * 60 * 1000).toISOString();
       }
@@ -413,15 +413,16 @@ export default function AssignmentManager() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Effective Date</label>
+                    <label className="block text-sm font-medium text-gray-700">Effective Date <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
                       value={effectiveDate}
                       onChange={(e) => setEffectiveDate(e.target.value)}
+                      required
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      When should this assignment become active?
+                      When should this assignment become active? This is required.
                     </p>
                   </div>
                   <div>
