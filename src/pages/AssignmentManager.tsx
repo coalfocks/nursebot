@@ -111,11 +111,17 @@ export default function AssignmentManager() {
     }
 
     try {
-      // Calculate default due date if not specified
+      // Convert effective date to UTC
+      const effectiveDateTime = new Date(effectiveDate);
+      const effectiveDateUTC = effectiveDateTime.toISOString();
+
+      // Calculate default due date if not specified and convert to UTC
       let calculatedDueDate = dueDate;
       if (!calculatedDueDate) {
-        const effectiveDateTime = new Date(effectiveDate);
-        calculatedDueDate = new Date(effectiveDateTime.getTime() + 60 * 60 * 1000).toISOString();
+        const defaultDueDate = new Date(effectiveDateTime.getTime() + 60 * 60 * 1000);
+        calculatedDueDate = defaultDueDate.toISOString();
+      } else {
+        calculatedDueDate = new Date(calculatedDueDate).toISOString();
       }
 
       const { error } = await supabase
@@ -126,7 +132,7 @@ export default function AssignmentManager() {
           assigned_by: user.id,
           status: 'assigned',
           due_date: calculatedDueDate || null,
-          effective_date: effectiveDate || null
+          effective_date: effectiveDateUTC || null
         });
 
       if (error) throw error;
