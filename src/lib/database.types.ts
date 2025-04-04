@@ -168,28 +168,28 @@ export interface Database {
           feedback_status: 'pending' | 'processing' | 'completed' | 'failed'
           feedback_error: string | null
           nurse_feedback: {
-            overallScore: number
-            clinicalReasoning: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            communication: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
+            summary: string;
+            overall_score: number;
+            clinical_reasoning: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            communication_skills: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
             professionalism: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            summary: string
-            recommendations: string[]
-          } | null
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            recommendations: string[];
+          } | null;
           feedback_generated_at: string | null
           created_at: string
           updated_at: string
@@ -212,28 +212,28 @@ export interface Database {
           feedback_status?: 'pending' | 'processing' | 'completed' | 'failed'
           feedback_error?: string | null
           nurse_feedback?: {
-            overallScore: number
-            clinicalReasoning: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            communication: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
+            summary: string;
+            overall_score: number;
+            clinical_reasoning: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            communication_skills: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
             professionalism: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            summary: string
-            recommendations: string[]
-          } | null
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            recommendations: string[];
+          } | null;
           feedback_generated_at?: string | null
           created_at?: string
           updated_at?: string
@@ -256,28 +256,28 @@ export interface Database {
           feedback_status?: 'pending' | 'processing' | 'completed' | 'failed'
           feedback_error?: string | null
           nurse_feedback?: {
-            overallScore: number
-            clinicalReasoning: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            communication: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
+            summary: string;
+            overall_score: number;
+            clinical_reasoning: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            communication_skills: {
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
             professionalism: {
-              score: number
-              comments: string
-              strengths: string[]
-              areasForImprovement: string[]
-            }
-            summary: string
-            recommendations: string[]
-          } | null
+              score: number;
+              comments: string;
+              strengths: string[];
+              areas_for_improvement: string[];
+            };
+            recommendations: string[];
+          } | null;
           feedback_generated_at?: string | null
           created_at?: string
           updated_at?: string

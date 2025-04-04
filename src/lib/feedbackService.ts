@@ -27,13 +27,18 @@ export interface FeedbackResponse {
 
 export async function generateFeedback(assignmentId: string): Promise<void> {
   try {
-    // First, update the status to processing
-    const { error: updateError } = await supabase
+    // First, reset the status to pending and clear any previous errors
+    const { error: resetError } = await supabase
       .from('student_room_assignments')
-      .update({ feedback_status: 'processing' })
+      .update({ 
+        feedback_status: 'pending',
+        feedback_error: null,
+        nurse_feedback: null,
+        feedback_generated_at: null
+      })
       .eq('id', assignmentId);
 
-    if (updateError) throw updateError;
+    if (resetError) throw resetError;
 
     // Then invoke the Edge Function
     const { data, error } = await supabase.functions.invoke('generate-feedback', {

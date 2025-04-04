@@ -8,6 +8,7 @@ import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle } f
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
+import { generateFeedback } from '../lib/feedbackService';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -25,6 +26,7 @@ export default function AssignmentView() {
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -72,9 +74,17 @@ export default function AssignmentView() {
         .from('student_room_assignments')
         .select(`
           *,
+          student:student_id (
+            id,
+            full_name,
+            study_year
+          ),
           room:room_id (
-            *,
-            specialty:specialty_id (name)
+            id,
+            room_number,
+            specialty:specialty_id (
+              name
+            )
           )
         `)
         .eq('id', assignmentId)
@@ -120,6 +130,20 @@ export default function AssignmentView() {
       navigate('/assignments');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRetryFeedback = async () => {
+    if (!assignmentId || processing) return;
+    
+    setProcessing(true);
+    try {
+      await generateFeedback(assignmentId);
+      await fetchAssignment();
+    } catch (error) {
+      console.error('Error retrying feedback:', error);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -259,7 +283,7 @@ export default function AssignmentView() {
                 <div className="mt-6">
                   <AssignmentFeedback 
                     assignment={assignment}
-                    onRetryFeedback={fetchAssignment}
+                    onRetryFeedback={handleRetryFeedback}
                   />
                 </div>
               )}

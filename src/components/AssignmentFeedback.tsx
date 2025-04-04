@@ -66,51 +66,51 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
 
   const feedback = assignment.nurse_feedback;
   console.log('Rendering feedback for assignment:', assignment.id, {
-    hasClinicalReasoning: !!feedback.clinicalReasoning,
-    hasCommunication: !!feedback.communication,
+    hasClinicalReasoning: !!feedback.clinical_reasoning,
+    hasCommunication: !!feedback.communication_skills,
     hasProfessionalism: !!feedback.professionalism,
-    overallScore: feedback.overallScore,
+    overallScore: feedback.overall_score,
     summary: feedback.summary?.substring(0, 50) + '...',
     recommendationsCount: feedback.recommendations?.length
   });
 
   // Add null checks for each section
-  const clinicalReasoning = feedback.clinicalReasoning || {
+  const clinicalReasoning = feedback.clinical_reasoning || {
     score: 0,
     comments: '',
     strengths: [],
-    areasForImprovement: []
+    areas_for_improvement: []
   };
 
-  const communication = feedback.communication || {
+  const communication = feedback.communication_skills || {
     score: 0,
     comments: '',
     strengths: [],
-    areasForImprovement: []
+    areas_for_improvement: []
   };
 
   const professionalism = feedback.professionalism || {
     score: 0,
     comments: '',
     strengths: [],
-    areasForImprovement: []
+    areas_for_improvement: []
   };
 
   console.log('Processed feedback sections:', {
     clinicalReasoning: {
       score: clinicalReasoning.score,
       strengthsCount: clinicalReasoning.strengths.length,
-      areasCount: clinicalReasoning.areasForImprovement.length
+      areasCount: clinicalReasoning.areas_for_improvement.length
     },
     communication: {
       score: communication.score,
       strengthsCount: communication.strengths.length,
-      areasCount: communication.areasForImprovement.length
+      areasCount: communication.areas_for_improvement.length
     },
     professionalism: {
       score: professionalism.score,
       strengthsCount: professionalism.strengths.length,
-      areasCount: professionalism.areasForImprovement.length
+      areasCount: professionalism.areas_for_improvement.length
     }
   });
 
@@ -208,7 +208,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
       <div className="border-b pb-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold text-gray-900">Performance Feedback</h2>
-          <ScoreIndicator score={feedback.overallScore || 0} />
+          <ScoreIndicator score={feedback.overall_score || 0} />
         </div>
         <p className="text-gray-700">{feedback.summary || ''}</p>
       </div>
@@ -220,7 +220,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
           score={clinicalReasoning.score}
           comments={clinicalReasoning.comments}
           strengths={clinicalReasoning.strengths}
-          areasForImprovement={clinicalReasoning.areasForImprovement}
+          areasForImprovement={clinicalReasoning.areas_for_improvement}
           sectionKey="clinical"
         />
 
@@ -230,7 +230,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
           score={communication.score}
           comments={communication.comments}
           strengths={communication.strengths}
-          areasForImprovement={communication.areasForImprovement}
+          areasForImprovement={communication.areas_for_improvement}
           sectionKey="communication"
         />
 
@@ -240,7 +240,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
           score={professionalism.score}
           comments={professionalism.comments}
           strengths={professionalism.strengths}
-          areasForImprovement={professionalism.areasForImprovement}
+          areasForImprovement={professionalism.areas_for_improvement}
           sectionKey="professionalism"
         />
       </div>

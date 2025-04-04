@@ -9,26 +9,26 @@ const corsHeaders = {
 const TIMEOUT_MS = 60000; // Increase timeout to 60 seconds
 
 interface FeedbackResponse {
-  overallScore: number;
-  clinicalReasoning: {
+  summary: string;
+  overall_score: number;
+  clinical_reasoning: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
-  communication: {
+  communication_skills: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
   professionalism: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
-  summary: string;
   recommendations: string[];
 }
 
@@ -110,6 +110,15 @@ Deno.serve(async (req) => {
         throw assignmentError;
       }
 
+      // Verify assignment is completed before generating feedback
+      if (assignment.status !== 'completed') {
+        console.error('Cannot generate feedback for incomplete assignment:', {
+          assignmentId,
+          status: assignment.status
+        });
+        throw new Error('Cannot generate feedback for incomplete assignment');
+      }
+
       console.log('Fetched assignment details');
 
       // Fetch chat messages
@@ -147,7 +156,7 @@ ${conversation}
 
       // Generate feedback using OpenAI
       const completion = await openai.chat.completions.create({
-        model: "gpt-4-turbo-preview",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -176,32 +185,32 @@ Also include:
 - A summary of the student's overall performance
 - Specific recommendations for improvement
 
-Context of the interaction:
+Context of the interaction (the first message is from the nurse to the doctor):
 ${context}
 
 Provide your evaluation in a structured JSON format matching this TypeScript interface:
 
 interface FeedbackResponse {
-  overallScore: number;
-  clinicalReasoning: {
+  summary: string;
+  overall_score: number;
+  clinical_reasoning: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
-  communication: {
+  communication_skills: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
   professionalism: {
     score: number;
     comments: string;
     strengths: string[];
-    areasForImprovement: string[];
+    areas_for_improvement: string[];
   };
-  summary: string;
   recommendations: string[];
 }
 
@@ -225,10 +234,10 @@ IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reas
       const feedback = JSON.parse(content) as FeedbackResponse;
       
       // Validate feedback structure
-      if (!feedback.clinicalReasoning || !feedback.communication || !feedback.professionalism) {
+      if (!feedback.clinical_reasoning || !feedback.communication_skills || !feedback.professionalism) {
         console.error('Feedback response missing required sections:', {
-          hasClinicalReasoning: !!feedback.clinicalReasoning,
-          hasCommunication: !!feedback.communication,
+          hasClinicalReasoning: !!feedback.clinical_reasoning,
+          hasCommunication: !!feedback.communication_skills,
           hasProfessionalism: !!feedback.professionalism
         });
         throw new Error('Feedback response missing required sections');
@@ -236,18 +245,18 @@ IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reas
 
       // Validate each section has required fields
       const validateSection = (section: any, name: string) => {
-        if (!section.score || !section.comments || !section.strengths || !section.areasForImprovement) {
+        if (!section.score || !section.comments || !section.strengths || !section.areas_for_improvement) {
           console.error(`Missing required fields in ${name} section:`, section);
           throw new Error(`Missing required fields in ${name} section`);
         }
       };
 
-      validateSection(feedback.clinicalReasoning, 'clinicalReasoning');
-      validateSection(feedback.communication, 'communication');
+      validateSection(feedback.clinical_reasoning, 'clinical_reasoning');
+      validateSection(feedback.communication_skills, 'communication_skills');
       validateSection(feedback.professionalism, 'professionalism');
 
       // Validate overall feedback
-      if (!feedback.overallScore || !feedback.summary || !feedback.recommendations) {
+      if (!feedback.overall_score || !feedback.summary || !feedback.recommendations) {
         console.error('Missing required fields in overall feedback:', feedback);
         throw new Error('Missing required fields in overall feedback');
       }
@@ -255,21 +264,21 @@ IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reas
       console.log('Successfully validated feedback structure');
       console.log('Feedback sections:', {
         clinicalReasoning: {
-          score: feedback.clinicalReasoning.score,
-          strengthsCount: feedback.clinicalReasoning.strengths.length,
-          areasCount: feedback.clinicalReasoning.areasForImprovement.length
+          score: feedback.clinical_reasoning.score,
+          strengthsCount: feedback.clinical_reasoning.strengths.length,
+          areasCount: feedback.clinical_reasoning.areas_for_improvement.length
         },
         communication: {
-          score: feedback.communication.score,
-          strengthsCount: feedback.communication.strengths.length,
-          areasCount: feedback.communication.areasForImprovement.length
+          score: feedback.communication_skills.score,
+          strengthsCount: feedback.communication_skills.strengths.length,
+          areasCount: feedback.communication_skills.areas_for_improvement.length
         },
         professionalism: {
           score: feedback.professionalism.score,
           strengthsCount: feedback.professionalism.strengths.length,
-          areasCount: feedback.professionalism.areasForImprovement.length
+          areasCount: feedback.professionalism.areas_for_improvement.length
         },
-        overallScore: feedback.overallScore,
+        overallScore: feedback.overall_score,
         recommendationsCount: feedback.recommendations.length
       });
 
@@ -292,7 +301,12 @@ IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reas
     })();
 
     // Race between timeout and main function
-    await Promise.race([mainPromise, timeoutPromise]);
+    try {
+      await Promise.race([mainPromise, timeoutPromise]);
+    } catch (error) {
+      console.error('Error in feedback generation:', error);
+      throw error;
+    }
 
     return new Response(
       JSON.stringify({ success: true }),
@@ -304,6 +318,12 @@ IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reas
 
   } catch (error) {
     console.error('Error in generate-feedback function:', error);
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause
+    });
     
     // If we have an assignmentId, update the status
     try {
