@@ -51,7 +51,7 @@ async function sendAssignmentEffectiveNotification(assignmentId, supabase) {
       console.error('Error fetching assignment details:', assignmentError);
       return false;
     }
-    const message = `You have a message waiting for you from a nurse in Room ${data.room.room_number}.`;
+    const message = `You have a message waiting for you from a nurse in Room ${data.room.room_number} on Nurse Connect.`;
     return await sendSmsNotification(data.student_id, message, supabase);
   } catch (error) {
     console.error('Error sending assignment effective notification:', error);

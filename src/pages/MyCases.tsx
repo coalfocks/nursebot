@@ -28,6 +28,8 @@ export default function MyCases() {
 
   const fetchAssignments = async () => {
     try {
+      const now = new Date().toISOString();
+      
       const { data, error } = await supabase
         .from('student_room_assignments')
         .select(`
@@ -38,6 +40,7 @@ export default function MyCases() {
           )
         `)
         .eq('student_id', user?.id)
+        .or(`effective_date.is.null,effective_date.lte.${now}`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -91,11 +94,21 @@ export default function MyCases() {
   };
 
   // Filter assignments based on active tab
-  const filteredAssignments = assignments.filter(assignment => 
-    activeTab === 'assigned' 
-      ? ['assigned', 'in_progress'].includes(assignment.status)
-      : assignment.status === 'completed'
-  );
+  const filteredAssignments = assignments.filter(assignment => {
+    // For completed assignments, show all of them
+    if (activeTab === 'completed') {
+      return assignment.status === 'completed';
+    }
+    
+    // For active assignments, only show those that:
+    // 1. Have status 'assigned' or 'in_progress'
+    // 2. Have an effective_date that has passed (or is null)
+    const now = new Date();
+    const effectiveDate = assignment.effective_date ? new Date(assignment.effective_date) : null;
+    
+    return ['assigned', 'in_progress'].includes(assignment.status) && 
+           (!effectiveDate || effectiveDate <= now);
+  });
 
   if (loading) {
     return (
@@ -189,9 +202,9 @@ export default function MyCases() {
                             <h4 className="font-medium text-gray-900 flex items-center">
                               <Award className="w-4 h-4 mr-2 text-yellow-500" />
                               Feedback
-                              {assignment.nurse_feedback.overallScore && (
+                              {assignment.nurse_feedback.overall_score && (
                                 <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md">
-                                  Score: {assignment.nurse_feedback.overallScore}/5
+                                  Score: {assignment.nurse_feedback.overall_score}/5
                                 </span>
                               )}
                             </h4>
@@ -199,22 +212,22 @@ export default function MyCases() {
                               <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
                             )}
                             
-                            {assignment.nurse_feedback.clinicalReasoning?.strengths?.length > 0 && (
+                            {assignment.nurse_feedback.clinical_reasoning?.strengths?.length > 0 && (
                               <div className="mt-2">
                                 <h5 className="text-sm font-medium text-gray-900">Strengths:</h5>
                                 <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                  {assignment.nurse_feedback.clinicalReasoning.strengths.map((strength, idx) => (
+                                  {assignment.nurse_feedback.clinical_reasoning.strengths.map((strength: string, idx: number) => (
                                     <li key={idx}>{strength}</li>
                                   ))}
                                 </ul>
                               </div>
                             )}
                             
-                            {assignment.nurse_feedback.clinicalReasoning?.areasForImprovement?.length > 0 && (
+                            {assignment.nurse_feedback.clinical_reasoning?.areas_for_improvement?.length > 0 && (
                               <div className="mt-2">
                                 <h5 className="text-sm font-medium text-gray-900">Areas for Improvement:</h5>
                                 <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                  {assignment.nurse_feedback.clinicalReasoning.areasForImprovement.map((area, idx) => (
+                                  {assignment.nurse_feedback.clinical_reasoning.areas_for_improvement.map((area: string, idx: number) => (
                                     <li key={idx}>{area}</li>
                                   ))}
                                 </ul>
@@ -227,7 +240,16 @@ export default function MyCases() {
                       <div className="ml-4">
                         <Link
                           to={`/assignment/${assignment.id}`}
-                          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          className={`inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md ${
+                            activeTab === 'assigned' && assignment.effective_date && new Date(assignment.effective_date) > new Date()
+                              ? 'text-gray-400 bg-gray-100 cursor-not-allowed'
+                              : 'text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                          }`}
+                          onClick={(e) => {
+                            if (activeTab === 'assigned' && assignment.effective_date && new Date(assignment.effective_date) > new Date()) {
+                              e.preventDefault();
+                            }
+                          }}
                         >
                           {activeTab === 'assigned' ? 'Enter Room' : 'View Details'}
                           <ArrowRight className="ml-2 h-4 w-4" />
