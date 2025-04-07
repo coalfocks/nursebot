@@ -4,6 +4,7 @@ import { Loader2, Plus, Filter, Download, Search } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
+import { Link } from 'react-router-dom';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -16,6 +17,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     room_number: string;
     specialty_id: string | null;
     difficulty_level: string | null;
+    case_id: string;
   };
 };
 
@@ -40,6 +42,11 @@ export default function AssignmentManager() {
   const [selectedRoom, setSelectedRoom] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
   const [effectiveDate, setEffectiveDate] = useState<string>('');
+  const [editingAssignment, setEditingAssignment] = useState<{
+    id: string;
+    effective_date: string;
+    due_date: string | null;
+  } | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -147,6 +154,47 @@ export default function AssignmentManager() {
     } catch (error) {
       console.error('Error assigning case:', error);
       alert('Error assigning case. Please try again.');
+    }
+  };
+
+  const handleDelete = async (assignmentId: string) => {
+    if (!window.confirm('Are you sure you want to delete this assignment?')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .delete()
+        .eq('id', assignmentId);
+
+      if (error) throw error;
+      await fetchAssignments();
+    } catch (error) {
+      console.error('Error deleting assignment:', error);
+      alert('Error deleting assignment. Please try again.');
+    }
+  };
+
+  const handleEdit = async () => {
+    if (!editingAssignment) return;
+
+    try {
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .update({
+          effective_date: new Date(editingAssignment.effective_date).toISOString(),
+          due_date: editingAssignment.due_date ? new Date(editingAssignment.due_date).toISOString() : null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', editingAssignment.id);
+
+      if (error) throw error;
+      setEditingAssignment(null);
+      await fetchAssignments();
+    } catch (error) {
+      console.error('Error updating assignment:', error);
+      alert('Error updating assignment. Please try again.');
     }
   };
 
@@ -340,7 +388,7 @@ export default function AssignmentManager() {
                       {assignment.nurse_feedback ? (
                         <div className="text-sm">
                           <div className="font-medium text-gray-900">
-                            Score: {assignment.nurse_feedback.overallScore}/5
+                            Score: {assignment.nurse_feedback.overall_score}/5
                           </div>
                           <div className="text-gray-500">
                             Feedback provided
@@ -351,6 +399,40 @@ export default function AssignmentManager() {
                           No feedback yet
                         </span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="ml-4 flex space-x-2">
+                        {new Date(assignment.effective_date || '') > new Date() && (
+                          <>
+                            <button
+                              onClick={() => {
+                                // Format dates for the datetime-local input
+                                const effectiveDate = assignment.effective_date 
+                                  ? new Date(assignment.effective_date).toISOString().slice(0, 16)
+                                  : '';
+                                const dueDate = assignment.due_date
+                                  ? new Date(assignment.due_date).toISOString().slice(0, 16)
+                                  : null;
+                                
+                                setEditingAssignment({
+                                  id: assignment.id,
+                                  effective_date: effectiveDate,
+                                  due_date: dueDate
+                                });
+                              }}
+                              className="inline-flex items-center px-3 py-2 border border-blue-300 shadow-sm text-sm leading-4 font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(assignment.id)}
+                              className="inline-flex items-center px-3 py-2 border border-red-300 shadow-sm text-sm leading-4 font-medium rounded-md text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -461,6 +543,63 @@ export default function AssignmentManager() {
                     setEffectiveDate('');
                   }}
                   className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Assignment Modal */}
+      {editingAssignment && (
+        <div className="fixed z-10 inset-0 overflow-y-auto">
+          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Assignment</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Effective Date <span className="text-red-500">*</span></label>
+                    <input
+                      type="datetime-local"
+                      value={editingAssignment.effective_date}
+                      onChange={(e) => setEditingAssignment({
+                        ...editingAssignment,
+                        effective_date: e.target.value
+                      })}
+                      required
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={editingAssignment.due_date || ''}
+                      onChange={(e) => setEditingAssignment({
+                        ...editingAssignment,
+                        due_date: e.target.value || null
+                      })}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 sm:mt-6 sm:grid sm:grid-cols-2 sm:gap-3 sm:grid-flow-row-dense">
+                <button
+                  type="button"
+                  onClick={handleEdit}
+                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2 sm:text-sm"
+                >
+                  Save Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingAssignment(null)}
+                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1 sm:text-sm"
                 >
                   Cancel
                 </button>
