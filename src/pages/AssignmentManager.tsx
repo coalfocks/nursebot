@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Filter, Download, Search } from 'lucide-react';
+import { Loader2, Plus, Filter, Download, Search, MessageSquare } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -23,6 +23,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Profile = Database['public']['Tables']['profiles']['Row'];
+type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
 export default function AssignmentManager() {
   const { user } = useAuthStore();
@@ -47,6 +48,9 @@ export default function AssignmentManager() {
     effective_date: string;
     due_date: string | null;
   } | null>(null);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
+  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -196,6 +200,29 @@ export default function AssignmentManager() {
       console.error('Error updating assignment:', error);
       alert('Error updating assignment. Please try again.');
     }
+  };
+
+  const fetchChatMessages = async (assignmentId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('assignment_id', assignmentId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error fetching chat messages:', error);
+      return [];
+    }
+  };
+
+  const handleViewChat = async (assignment: Assignment) => {
+    setSelectedAssignment(assignment);
+    const messages = await fetchChatMessages(assignment.id);
+    setSelectedChatMessages(messages);
+    setShowChatModal(true);
   };
 
   const filteredStudents = students.filter(student =>
@@ -432,6 +459,15 @@ export default function AssignmentManager() {
                             </button>
                           </>
                         )}
+                        {assignment.status === 'completed' && (
+                          <button
+                            onClick={() => handleViewChat(assignment)}
+                            className="inline-flex items-center px-3 py-2 border border-green-300 shadow-sm text-sm leading-4 font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                          >
+                            <MessageSquare className="w-4 h-4 mr-1" />
+                            View Chat
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -602,6 +638,61 @@ export default function AssignmentManager() {
                   className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1 sm:text-sm"
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chat Modal */}
+      {showChatModal && selectedAssignment && (
+        <div className="fixed z-10 inset-0 overflow-y-auto">
+          <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6">
+              <div>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Chat History - {selectedAssignment.student.full_name} in Room {selectedAssignment.room.room_number}
+                </h3>
+                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+                  {selectedChatMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] p-4 rounded-lg ${
+                          message.role === 'student'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-100 text-gray-900'
+                        }`}
+                      >
+                        <div className="flex items-center mb-1">
+                          <span className="text-xs font-medium">
+                            {message.role === 'student' ? 'Student' : 'Nurse'}
+                          </span>
+                          <span className="text-xs ml-2 opacity-75">
+                            {new Date(message.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-5 sm:mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowChatModal(false);
+                    setSelectedChatMessages([]);
+                    setSelectedAssignment(null);
+                  }}
+                  className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Close
                 </button>
               </div>
             </div>
