@@ -165,25 +165,125 @@ ${conversation}
           {
             role: "user",
             content: `
-You are an experienced nurse educator evaluating a student's performance in a simulated patient interaction. 
-Please analyze the following conversation and provide DETAILED feedback in ALL THREE of these areas:
+When evaluating medical student performance in responding to clinical pages or text messages,
+please use the following detailed scale (1 to 5). This evaluation is specifically designed
+considering the student's preparation level as a fourth-year medical student transitioning toward
+internship. As active listening responses are limited due to the text-based format, emphasize
+concise yet complete clinical decision-making, focused questioning, clarity of medical
+explanations, diagnostic reasoning, patient care planning, appropriate demonstration of medical
+knowledge, professional tone, timeliness of follow-up, and overall practical communication
+suitable for short interactions via paging systems.
+---
+**Scoring Criteria**
+Each student response should be evaluated in detail across three key domains:
+### 1. Clinical Reasoning
+Assess the student&#39;s ability to think critically through clinical scenarios, use relevant medical
+knowledge, demonstrate sound diagnostic approaches, and propose appropriate next steps in
+patient management.
+- **Score 1 (Poor):**
+- Limited clinical judgment, inappropriate or incomplete assessments.
+- Neglects key patient information or significant clinical details.
+- No clear diagnostic strategy, or incorrect/inappropriate proposed management.
+- **Score 2 (Below Average):**
+- Minimal clinical reasoning skills shown with partial relevance.
+- Makes superficial assessments, overlooks critical aspects of patient&#39;s clinical presentation or
+data.
+- Inadequate clinical reasoning leads to very limited or vague management plans.
+- **Score 3 (Average):**
+- Demonstrates reasonable, standard clinical reasoning for their level.
+- Appropriately identifies main clinical concerns but misses some subtleties.
 
-1. Clinical Reasoning (Score 1-5): Evaluate the student's ability to analyze patient data, identify problems, and develop appropriate care plans. Consider their critical thinking, assessment skills, and clinical decision-making.
+- Provides acceptable but generic management plans, missing nuance or depth.
+- **Score 4 (Very Good):**
+- Consistently shows sound clinical reasoning aligned with training level.
+- Clearly identifies key clinical issues, effectively prioritizes them, and proposes thoughtful next
+steps in diagnosis or management.
+- Demonstrates evidence-based thinking and appropriate use of medical knowledge.
+- **Score 5 (Excellent):**
+- Outstanding clinical reasoning reflective of early intern-level competence and decision making.
+- Quickly identifies critical clinical issues, relevant differential diagnoses, articulates concise and
+effective management proposals along with well-considered follow-up steps.
+- Demonstrates advanced reasoning beyond typical student expectations, utilizing comprehensive
+medical knowledge actively in responses.
+### 2. Communication Skills
+Assess the students&#39; clarity, conciseness, ability to explain clinical reasoning and medical
+concepts without confusion or ambiguity, and their capability in asking targeted and relevant
+follow-up questions through short messaging.
+- **Score 1 (Poor):**
+- Unclear, confusing responses with frequent inaccuracies.
+- Ineffective questioning or follow-up communication; no relevant clarification or details
+provided.
+- Communication completely unsuitable for paging or messaging format.
+- **Score 2 (Below Average):**
+- Responses show limited clarity; occasional confusion for the recipient.
+- Questions are minimal or inappropriate, lacking direction or relevance.
+- Responses not well-adapted to short, concise paging interactions.
+- **Score 3 (Average):**
 
-2. Communication Skills (Score 1-5): Evaluate how effectively the student communicates with the patient. Consider clarity, empathy, active listening, and ability to explain medical concepts.
+- Generally clear communication, but may include unnecessary information or lacks proper
+conciseness.
+- Adequately relevant follow-up questions, but occasionally missing important points.
+- Adequate for pages, but room remains for improved efficiency and clarity.
+- **Score 4 (Very Good):**
+- Clear and appropriate communication, generally concise and efficient.
+- Effectively asks meaningful questions specific to clinical context, facilitating diagnostic and
+management clarity.
+- Responses typically clear, medically accurate, and adapted well for short messaging
+interactions.
+- **Score 5 (Excellent):**
+- Superior communication quality: consistently clear, succinct, and precise.
+- Exceptional skill in formulating questions and follow-up communications, directly relevant to
+clinical scenario.
+- Ideals for paging: responses are highly effective, precise, and demonstrate a mature
+understanding of clinical and practical information exchange.
+### 3. Professionalism
+Assess the student&#39;s adherence to professional etiquette, responsiveness, responsibility,
+respectfulness, timeliness of replies, and ethical standards appropriate in a medical paging
+interaction at an intern-level.
+- **Score 1 (Poor):**
+- Demonstrates substantial unprofessional behavior (disrespectful language, very late responses
+without rationale).
+- Seemingly unconcerned about patient safety or professional responsibilities.
+- Clearly below standards expected at their training stage.
+- **Score 2 (Below Average):**
+- Exhibits some unprofessional behaviors such as delayed responses, casual or inappropriate
+messaging tone.
 
-3. Professionalism (Score 1-5): Evaluate the student's professional behavior. Consider respect, ethics, responsibility, and adherence to nursing standards.
+- Demonstrates inconsistent accountability or responsibility regarding clinical tasks.
+- Needs direct feedback to correct behavior or responsiveness.
+- **Score 3 (Average):**
+- Consistently respectful and generally professional language and tone.
+- Responsive, though might miss timeliness slightly or show occasional lapses in professional
+etiquette.
+- Appropriate conduct but needs continued reinforcement of professionalism expectations.
+- **Score 4 (Very Good):**
+- Consistent professionalism, clear respect, proper etiquette demonstrated in each interaction.
+- Timely, responsive messages; takes clear responsibility for patient care decisions.
+- Shows strong understanding of professional norms and ethical considerations.
+- **Score 5 (Excellent):**
+- Outstanding professionalism displayed consistently in messaging interactions.
+- Quick, timely, respectful, and highly responsible responses always appropriately
+acknowledging patient priorities and safety concerns.
+- Exemplifies all professional standards clearly expected of a new intern, demonstrating role-
+modeling behavior.
+---
+### Overall Performance Scoring (1–5)
+Assign an overall numerical score based on collective evaluation from above criteria, reflecting
+an integrated assessment of the student&#39;s readiness approaching internship level.
+---
+### Feedback Guidelines
+Provide detailed evaluation structured in JSON format clearly, including each of these required
+components for each area (Clinical Reasoning, Communication, Professionalism):
+- Numeric Score
 
-For EACH of these three areas, you MUST provide:
-- A numeric score (1-5)
-- Specific comments (at least 2-3 sentences)
-- At least 2-3 key strengths
-- At least 2-3 areas for improvement
-
-Also include:
-- An overall score (1-5) that considers all three areas
-- A summary of the student's overall performance
-- Specific recommendations for improvement
+- Detailed Comments (at least 2–3 sentences)
+- At least 2–3 Key Strengths
+- At least 2–3 Areas for Improvement
+Additionally, include:
+- **Short summary** explicitly stating student&#39;s overall performance.
+- **Specific Recommendations** for areas requiring further improvement targeted toward intern
+preparedness.
+---
 
 Context of the interaction (the first message is from the nurse to the doctor):
 ${context}
@@ -214,7 +314,13 @@ interface FeedbackResponse {
   recommendations: string[];
 }
 
-IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reasoning, Communication Skills, and Professionalism). Do not focus on just one area.`
+IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reasoning, Communication Skills, and Professionalism). Do not focus on just one area.
+
+**Final Note:**
+Keep in mind the audience and context – these are fourth-year medical students at the cusp of
+becoming residents/interns. Feedback should be constructive, specific, actionable, direct, and
+aimed at identifying priority areas for focused growth to ensure readiness and effectiveness in
+their upcoming clinical roles.`
           }
         ],
         response_format: { type: "json_object" },
