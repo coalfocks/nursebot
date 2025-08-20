@@ -23,12 +23,6 @@ interface FeedbackResponse {
     strengths: string[];
     areas_for_improvement: string[];
   };
-  professionalism: {
-    score: number;
-    comments: string;
-    strengths: string[];
-    areas_for_improvement: string[];
-  };
   recommendations: string[];
 }
 
@@ -160,15 +154,16 @@ ${conversation}
         messages: [
           {
             role: "system",
-            content: "You are an experienced nurse educator providing detailed feedback on student performance. You must evaluate ALL THREE areas: Clinical Reasoning, Communication Skills, and Professionalism with equal attention and detail. Each section must have a score, comments, strengths, and areas for improvement."
+            content: "You are an experienced nurse educator providing detailed feedback on student performance. You must evaluate BOTH areas: Clinical Reasoning and Communication Skills with equal attention and detail. Each section must have a score, comments, strengths, and areas for improvement."
           },
           {
             role: "user",
             content: `
+**Prompt for Evaluation of Medical Student Responses to Text-Based Pages**
 When evaluating medical student performance in responding to clinical pages or text messages,
 please use the following detailed scale (1 to 5). This evaluation is specifically designed
 considering the student's preparation level as a fourth-year medical student transitioning toward
-internship. As active listening responses are limited due to the text-based format, emphasize
+internship. As active listening responses are limited due to the text-based format, they emphasize
 concise yet complete clinical decision-making, focused questioning, clarity of medical
 explanations, diagnostic reasoning, patient care planning, appropriate demonstration of medical
 knowledge, professional tone, timeliness of follow-up, and overall practical communication
@@ -177,7 +172,7 @@ suitable for short interactions via paging systems.
 **Scoring Criteria**
 Each student response should be evaluated in detail across three key domains:
 ### 1. Clinical Reasoning
-Assess the student&#39;s ability to think critically through clinical scenarios, use relevant medical
+Assess the student's ability to think critically through clinical scenarios, use relevant medical
 knowledge, demonstrate sound diagnostic approaches, and propose appropriate next steps in
 patient management.
 - **Score 1 (Poor):**
@@ -186,27 +181,26 @@ patient management.
 - No clear diagnostic strategy, or incorrect/inappropriate proposed management.
 - **Score 2 (Below Average):**
 - Minimal clinical reasoning skills shown with partial relevance.
-- Makes superficial assessments, overlooks critical aspects of patient&#39;s clinical presentation or
+- Makes superficial assessments, overlooks critical aspects of patient's clinical presentation or
 data.
 - Inadequate clinical reasoning leads to very limited or vague management plans.
 - **Score 3 (Average):**
 - Demonstrates reasonable, standard clinical reasoning for their level.
 - Appropriately identifies main clinical concerns but misses some subtleties.
-
 - Provides acceptable but generic management plans, missing nuance or depth.
 - **Score 4 (Very Good):**
-- Consistently shows sound clinical reasoning aligned with training level.
+- Consistently shows sound clinical reasoning aligned with level of intern.
 - Clearly identifies key clinical issues, effectively prioritizes them, and proposes thoughtful next
 steps in diagnosis or management.
 - Demonstrates evidence-based thinking and appropriate use of medical knowledge.
 - **Score 5 (Excellent):**
 - Outstanding clinical reasoning reflective of early intern-level competence and decision making.
-- Quickly identifies critical clinical issues, relevant differential diagnoses, articulates concise and
-effective management proposals along with well-considered follow-up steps.
+- Quickly identifies critical clinical issues, relevant differential diagnoses, and articulates concise
+and effective management proposals along with well-considered follow-up steps.
 - Demonstrates advanced reasoning beyond typical student expectations, utilizing comprehensive
 medical knowledge actively in responses.
 ### 2. Communication Skills
-Assess the students&#39; clarity, conciseness, ability to explain clinical reasoning and medical
+Assess the students' clarity, conciseness, ability to explain clinical reasoning and medical
 concepts without confusion or ambiguity, and their capability in asking targeted and relevant
 follow-up questions through short messaging.
 - **Score 1 (Poor):**
@@ -219,7 +213,6 @@ provided.
 - Questions are minimal or inappropriate, lacking direction or relevance.
 - Responses not well-adapted to short, concise paging interactions.
 - **Score 3 (Average):**
-
 - Generally clear communication, but may include unnecessary information or lacks proper
 conciseness.
 - Adequately relevant follow-up questions, but occasionally missing important points.
@@ -236,51 +229,20 @@ interactions.
 clinical scenario.
 - Ideals for paging: responses are highly effective, precise, and demonstrate a mature
 understanding of clinical and practical information exchange.
-### 3. Professionalism
-Assess the student&#39;s adherence to professional etiquette, responsiveness, responsibility,
-respectfulness, timeliness of replies, and ethical standards appropriate in a medical paging
-interaction at an intern-level.
-- **Score 1 (Poor):**
-- Demonstrates substantial unprofessional behavior (disrespectful language, very late responses
-without rationale).
-- Seemingly unconcerned about patient safety or professional responsibilities.
-- Clearly below standards expected at their training stage.
-- **Score 2 (Below Average):**
-- Exhibits some unprofessional behaviors such as delayed responses, casual or inappropriate
-messaging tone.
-
-- Demonstrates inconsistent accountability or responsibility regarding clinical tasks.
-- Needs direct feedback to correct behavior or responsiveness.
-- **Score 3 (Average):**
-- Consistently respectful and generally professional language and tone.
-- Responsive, though might miss timeliness slightly or show occasional lapses in professional
-etiquette.
-- Appropriate conduct but needs continued reinforcement of professionalism expectations.
-- **Score 4 (Very Good):**
-- Consistent professionalism, clear respect, proper etiquette demonstrated in each interaction.
-- Timely, responsive messages; takes clear responsibility for patient care decisions.
-- Shows strong understanding of professional norms and ethical considerations.
-- **Score 5 (Excellent):**
-- Outstanding professionalism displayed consistently in messaging interactions.
-- Quick, timely, respectful, and highly responsible responses always appropriately
-acknowledging patient priorities and safety concerns.
-- Exemplifies all professional standards clearly expected of a new intern, demonstrating role-
-modeling behavior.
----
 ### Overall Performance Scoring (1–5)
 Assign an overall numerical score based on collective evaluation from above criteria, reflecting
-an integrated assessment of the student&#39;s readiness approaching internship level.
+an integrated assessment of the student's readiness approaching internship level.
 ---
 ### Feedback Guidelines
 Provide detailed evaluation structured in JSON format clearly, including each of these required
-components for each area (Clinical Reasoning, Communication, Professionalism):
+components for each area (Clinical Reasoning, Communication Skills):
 - Numeric Score
-
 - Detailed Comments (at least 2–3 sentences)
 - At least 2–3 Key Strengths
 - At least 2–3 Areas for Improvement
+
 Additionally, include:
-- **Short summary** explicitly stating student&#39;s overall performance.
+- **Short summary** explicitly stating student's overall performance.
 - **Specific Recommendations** for areas requiring further improvement targeted toward intern
 preparedness.
 ---
@@ -305,22 +267,16 @@ interface FeedbackResponse {
     strengths: string[];
     areas_for_improvement: string[];
   };
-  professionalism: {
-    score: number;
-    comments: string;
-    strengths: string[];
-    areas_for_improvement: string[];
-  };
   recommendations: string[];
 }
 
-IMPORTANT: You MUST provide detailed feedback for ALL THREE areas (Clinical Reasoning, Communication Skills, and Professionalism). Do not focus on just one area.
+IMPORTANT: You MUST provide detailed feedback for BOTH areas (Clinical Reasoning and Communication Skills). Do not focus on just one area.
 
 **Final Note:**
 Keep in mind the audience and context – these are fourth-year medical students at the cusp of
-becoming residents/interns. Feedback should be constructive, specific, actionable, direct, and
-aimed at identifying priority areas for focused growth to ensure readiness and effectiveness in
-their upcoming clinical roles.`
+becoming residents/interns. Feedback should be constructive, simple, specific, actionable, direct,
+and aimed at identifying priority areas for focused growth to ensure readiness and effectiveness
+in their upcoming clinical roles.`
           }
         ],
         response_format: { type: "json_object" },
@@ -340,11 +296,10 @@ their upcoming clinical roles.`
       const feedback = JSON.parse(content) as FeedbackResponse;
       
       // Validate feedback structure
-      if (!feedback.clinical_reasoning || !feedback.communication_skills || !feedback.professionalism) {
+      if (!feedback.clinical_reasoning || !feedback.communication_skills) {
         console.error('Feedback response missing required sections:', {
           hasClinicalReasoning: !!feedback.clinical_reasoning,
-          hasCommunication: !!feedback.communication_skills,
-          hasProfessionalism: !!feedback.professionalism
+          hasCommunication: !!feedback.communication_skills
         });
         throw new Error('Feedback response missing required sections');
       }
@@ -359,7 +314,6 @@ their upcoming clinical roles.`
 
       validateSection(feedback.clinical_reasoning, 'clinical_reasoning');
       validateSection(feedback.communication_skills, 'communication_skills');
-      validateSection(feedback.professionalism, 'professionalism');
 
       // Validate overall feedback
       if (!feedback.overall_score || !feedback.summary || !feedback.recommendations) {
@@ -378,11 +332,6 @@ their upcoming clinical roles.`
           score: feedback.communication_skills.score,
           strengthsCount: feedback.communication_skills.strengths.length,
           areasCount: feedback.communication_skills.areas_for_improvement.length
-        },
-        professionalism: {
-          score: feedback.professionalism.score,
-          strengthsCount: feedback.professionalism.strengths.length,
-          areasCount: feedback.professionalism.areas_for_improvement.length
         },
         overallScore: feedback.overall_score,
         recommendationsCount: feedback.recommendations.length
