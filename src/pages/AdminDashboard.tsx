@@ -1,175 +1,422 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, FileText, GraduationCap, School, TrendingUp, Users, Clock } from 'lucide-react';
+import AdminSidebar from '../components/admin/AdminSidebar';
+import AdminHeader from '../components/admin/AdminHeader';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
-import { Loader2, FileText } from 'lucide-react';
-import Navbar from '../components/Navbar';
-import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
+import StudentDashboard from './StudentDashboard';
 import type { Database } from '../lib/database.types';
 
-type Room = Database['public']['Tables']['rooms']['Row'] & {
-  specialty?: {
-    name: string;
-  };
+type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
+type RoomRow = Database['public']['Tables']['rooms']['Row'];
+type ProfileRow = Database['public']['Tables']['profiles']['Row'];
+
+type RecentAssignment = {
+  id: string;
+  status: AssignmentRow['status'];
+  createdAt: string;
+  grade: number | null;
+  studentName: string;
+  roomNumber: string;
+  specialty?: string | null;
+};
+
+type DashboardStats = {
+  studentCount: number;
+  assignmentCount: number;
+  completedAssignments: number;
+  activeRoomCount: number;
+  adminCount: number;
+  averageScore: number | null;
+};
+
+const initialStats: DashboardStats = {
+  studentCount: 0,
+  assignmentCount: 0,
+  completedAssignments: 0,
+  activeRoomCount: 0,
+  adminCount: 0,
+  averageScore: null,
+};
+
+const formatStatusLabel = (status: AssignmentRow['status']) => {
+  switch (status) {
+    case 'completed':
+      return 'Completed';
+    case 'in_progress':
+      return 'In Progress';
+    default:
+      return 'Assigned';
+  }
+};
+
+const statusBadgeClass = (status: AssignmentRow['status']) => {
+  switch (status) {
+    case 'completed':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'in_progress':
+      return 'bg-amber-100 text-amber-700';
+    default:
+      return 'bg-slate-100 text-slate-600';
+  }
+};
+
+const formatDayPartGreeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
 };
 
 export default function AdminDashboard() {
-  const { user, profile } = useAuthStore();
+  const navigate = useNavigate();
+  const { user, profile, signOut } = useAuthStore();
+  const [stats, setStats] = useState<DashboardStats>(initialStats);
+  const [recentAssignments, setRecentAssignments] = useState<RecentAssignment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const [pdfUrls, setPdfUrls] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('AdminDashboard mounted, user:', user);
-    if (!user) {
-      console.log('No user found, returning early');
+    if (!user || !profile?.is_admin) {
       return;
     }
-    fetchRooms();
-  }, [user]);
 
-  const getSignedUrl = async (path: string) => {
-    try {
-      // Extract just the filename from the full URL
-      const filename = path.split('/').pop();
-      if (!filename) {
-        console.error('No filename found in path:', path);
-        return null;
-      }
+    let isMounted = true;
 
-      console.log('Getting signed URL for:', filename);
-      const { data, error } = await supabase.storage
-        .from('room_pdfs')
-        .createSignedUrl(filename, 3600); // URL valid for 1 hour
-
-      if (error) {
-        console.error('Error getting signed URL:', error);
-        return null;
-      }
-
-      console.log('Generated signed URL:', data?.signedUrl);
-      return data?.signedUrl;
-    } catch (error) {
-      console.error('Error getting signed URL:', error);
-      return null;
-    }
-  };
-
-  const fetchRooms = async () => {
-    try {
-      console.log('Starting to fetch rooms...');
-      const { data, error } = await supabase
-        .from('rooms')
-        .select(`
-          *,
-          specialty:specialty_id (
-            name
+    const loadDashboard = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const studentPromise = supabase
+          .from('profiles')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_admin', false);
+        const adminPromise = supabase
+          .from('profiles')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_admin', true);
+        const assignmentPromise = supabase
+          .from('student_room_assignments')
+          .select('id', { count: 'exact', head: true });
+        const completedPromise = supabase
+          .from('student_room_assignments')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'completed');
+        const roomsPromise = supabase
+          .from('rooms')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_active', true);
+        const gradePromise = supabase
+          .from('student_room_assignments')
+          .select('grade, nurse_feedback');
+        const recentPromise = supabase
+          .from('student_room_assignments')
+          .select(
+            `id, status, grade, created_at,
+             room:room_id ( room_number, specialty:specialty_id ( name ) ),
+             student:student_id ( full_name )`
           )
-        `)
-        .order('room_number');
+          .order('created_at', { ascending: false })
+          .limit(6);
 
-      if (error) {
-        console.error('Error fetching rooms:', error);
-        throw error;
-      }
+        const [
+          studentResult,
+          adminResult,
+          assignmentResult,
+          completedResult,
+          roomsResult,
+          gradeResult,
+          recentResult,
+        ] = await Promise.all([
+          studentPromise,
+          adminPromise,
+          assignmentPromise,
+          completedPromise,
+          roomsPromise,
+          gradePromise,
+          recentPromise,
+        ]);
 
-      console.log('Successfully fetched rooms:', data);
-      setRooms(data || []);
+        if (!isMounted) return;
 
-      // Get signed URLs for all PDFs
-      const urls: Record<string, string> = {};
-      for (const room of data || []) {
-        if (room.pdf_url) {
-          const signedUrl = await getSignedUrl(room.pdf_url);
-          if (signedUrl) {
-            urls[room.pdf_url] = signedUrl;
+        if (studentResult.error) throw studentResult.error;
+        if (adminResult.error) throw adminResult.error;
+        if (assignmentResult.error) throw assignmentResult.error;
+        if (completedResult.error) throw completedResult.error;
+        if (roomsResult.error) throw roomsResult.error;
+        if (gradeResult.error) throw gradeResult.error;
+        if (recentResult.error) throw recentResult.error;
+
+        const gradeRows = (gradeResult.data ?? []) as Array<Pick<AssignmentRow, 'grade' | 'nurse_feedback'>>;
+        const scoreValues = gradeRows
+          .map((row) => {
+            if (typeof row.grade === 'number') return row.grade;
+            const feedback = row.nurse_feedback as AssignmentRow['nurse_feedback'];
+            if (feedback && typeof feedback.overall_score === 'number') {
+              return feedback.overall_score;
+            }
+            return null;
+          })
+          .filter((value): value is number => value !== null);
+
+        const averageScore = scoreValues.length
+          ? Number((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length).toFixed(1))
+          : null;
+
+        const recentRows = (recentResult.data ?? []) as Array<
+          Pick<AssignmentRow, 'id' | 'status' | 'grade' | 'created_at'> & {
+            room: Pick<RoomRow, 'room_number'> & { specialty: { name: string | null } | null } | null;
+            student: Pick<ProfileRow, 'full_name'> | null;
           }
+        >;
+
+        setStats({
+          studentCount: studentResult.count ?? 0,
+          adminCount: adminResult.count ?? 0,
+          assignmentCount: assignmentResult.count ?? 0,
+          completedAssignments: completedResult.count ?? 0,
+          activeRoomCount: roomsResult.count ?? 0,
+          averageScore,
+        });
+
+        setRecentAssignments(
+          recentRows.map((row) => ({
+            id: row.id,
+            status: row.status,
+            grade: row.grade,
+            createdAt: row.created_at,
+            studentName: row.student?.full_name ?? 'Unassigned',
+            roomNumber: row.room?.room_number ?? '—',
+            specialty: row.room?.specialty?.name ?? null,
+          }))
+        );
+      } catch (err) {
+        console.error('Failed to load admin dashboard', err);
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('Unable to load dashboard data.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
         }
       }
-      setPdfUrls(urls);
-    } catch (error) {
-      console.error('Error in fetchRooms:', error);
-    } finally {
-      setLoading(false);
+    };
+
+    void loadDashboard();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user, profile?.is_admin]);
+
+  const firstName = useMemo(() => {
+    if (!profile?.full_name) return 'there';
+    const [first] = profile.full_name.split(' ');
+    return first || 'there';
+  }, [profile?.full_name]);
+
+  const outstandingAssignments = useMemo(() => {
+    const { assignmentCount, completedAssignments } = stats;
+    return Math.max(assignmentCount - completedAssignments, 0);
+  }, [stats]);
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate('/login');
+    } catch (err) {
+      console.error('Error signing out', err);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-        </div>
-      </div>
-    );
+  if (!profile?.is_admin) {
+    return <StudentDashboard />;
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
-      <div className="flex h-[calc(100vh-64px)]">
-        {/* Left column - Room list */}
-        <div className="w-1/3 border-r border-gray-200 bg-white overflow-y-auto">
-          <div className="p-4">
-            <h2 className="text-lg font-semibold text-gray-900">Rooms</h2>
-          </div>
-          <div className="divide-y divide-gray-200">
-            {rooms.length === 0 ? (
-              <div className="p-4 text-gray-500">No rooms found</div>
+    <div className="flex min-h-screen bg-slate-50">
+      <AdminSidebar />
+      <div className="flex flex-1 flex-col">
+        <AdminHeader
+          fullName={profile.full_name}
+          email={user?.email}
+          roleLabel={profile.is_admin ? 'Administrator' : 'User'}
+          onSignOut={handleSignOut}
+        />
+        <main className="flex-1 overflow-y-auto bg-slate-50">
+          <div className="px-6 py-6">
+            <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-white p-6 shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Overview</p>
+              <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+                {formatDayPartGreeting()}, {firstName}.
+              </h2>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600">
+                Keep tabs on student assignments, review automated feedback, and ensure every simulated room stays ready for practice.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-600">
+                <div>Active assignments requiring review: <span className="font-semibold text-slate-900">{outstandingAssignments}</span></div>
+                <div className="hidden sm:inline-block h-4 w-px bg-slate-200" aria-hidden="true" />
+                <div>Total active rooms: <span className="font-semibold text-slate-900">{stats.activeRoomCount}</span></div>
+              </div>
+            </section>
+
+            {error && (
+              <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="flex h-[50vh] items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+              </div>
             ) : (
-              rooms.map((room) => (
-                <button
-                  key={room.id}
-                  onClick={() => setSelectedRoom(room)}
-                  className={`w-full p-4 text-left hover:bg-gray-50 focus:outline-none ${
-                    selectedRoom?.id === room.id ? 'bg-blue-50' : ''
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-medium text-gray-900">
-                        Room {room.room_number}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        {room.specialty?.name || 'General Practice'}
-                      </p>
+              <div className="mt-6 space-y-6">
+                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                  {[{
+                    title: 'Total Students',
+                    value: stats.studentCount,
+                    description: 'Non-admin profiles',
+                    icon: GraduationCap,
+                    accent: 'bg-blue-100 text-blue-600',
+                  }, {
+                    title: 'Case Assignments',
+                    value: stats.assignmentCount,
+                    description: `${stats.completedAssignments} completed`,
+                    icon: FileText,
+                    accent: 'bg-emerald-100 text-emerald-600',
+                  }, {
+                    title: 'Average Score',
+                    value: stats.averageScore ?? '—',
+                    description: 'Latest recorded average',
+                    icon: TrendingUp,
+                    accent: 'bg-purple-100 text-purple-600',
+                  }, {
+                    title: 'Active Rooms',
+                    value: stats.activeRoomCount,
+                    description: 'Rooms available to assign',
+                    icon: School,
+                    accent: 'bg-amber-100 text-amber-600',
+                  }, {
+                    title: 'Admin Users',
+                    value: stats.adminCount,
+                    description: 'Team members with admin access',
+                    icon: Users,
+                    accent: 'bg-slate-200 text-slate-700',
+                  }].map((card) => (
+                    <article key={card.title} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-slate-500">{card.title}</p>
+                          <p className="mt-2 text-2xl font-semibold text-slate-900">{card.value}</p>
+                        </div>
+                        <span className={`flex h-10 w-10 items-center justify-center rounded-full ${card.accent}`}>
+                          <card.icon className="h-5 w-5" />
+                        </span>
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">{card.description}</p>
+                    </article>
+                  ))}
+                </section>
+
+                <section className="grid gap-6 lg:grid-cols-3">
+                  <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">Recent Case Assignments</h3>
+                        <p className="text-sm text-slate-500">Latest activity across cohorts</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/admin/assignments')}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        View all
+                      </button>
                     </div>
-                    {room.pdf_url && (
-                      <FileText className="h-5 w-5 text-gray-400" />
-                    )}
-                  </div>
-                </button>
-              ))
+                    <div className="mt-6 space-y-4">
+                      {recentAssignments.length === 0 ? (
+                        <p className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                          No assignments have been created yet.
+                        </p>
+                      ) : (
+                        recentAssignments.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between gap-4 rounded-lg border border-slate-100 px-4 py-3">
+                            <div className="flex items-center gap-3 overflow-hidden">
+                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-700">
+                                {item.studentName
+                                  .split(' ')
+                                  .map((part) => part[0])
+                                  .join('')
+                                  .slice(0, 2)
+                                  .toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900">{item.studentName}</p>
+                                <p className="text-xs text-slate-500">
+                                  Room {item.roomNumber}
+                                  {item.specialty ? ` • ${item.specialty}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClass(item.status)}`}>
+                                {formatStatusLabel(item.status)}
+                              </span>
+                              {typeof item.grade === 'number' && (
+                                <span className="text-sm font-semibold text-slate-900">{item.grade.toFixed(1)}</span>
+                              )}
+                              <div className="flex items-center gap-1 text-xs text-slate-500">
+                                <Clock className="h-3.5 w-3.5" />
+                                {new Date(item.createdAt).toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </article>
+
+                  <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <h3 className="text-lg font-semibold text-slate-900">Quick Actions</h3>
+                    <p className="text-sm text-slate-500">Jump straight into common admin workflows</p>
+                    <div className="mt-6 space-y-3">
+                      {[{
+                        title: 'Assign new cases',
+                        description: 'Distribute scenarios to students or cohorts',
+                        action: () => navigate('/admin/assignments'),
+                      }, {
+                        title: 'Manage rooms',
+                        description: 'Update case details and upload new PDFs',
+                        action: () => navigate('/admin/rooms'),
+                      }, {
+                        title: 'Update profile',
+                        description: 'Adjust your contact details and preferences',
+                        action: () => navigate('/profile'),
+                      }].map((action) => (
+                        <button
+                          key={action.title}
+                          type="button"
+                          onClick={action.action}
+                          className="block w-full rounded-lg border border-slate-200 px-4 py-3 text-left transition-colors hover:border-blue-200 hover:bg-blue-50"
+                        >
+                          <p className="text-sm font-semibold text-slate-900">{action.title}</p>
+                          <p className="mt-1 text-xs text-slate-500">{action.description}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                </section>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Right column - PDF viewer */}
-        <div className="flex-1 bg-white p-4">
-          {selectedRoom ? (
-            <div className="h-full">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Room {selectedRoom.room_number} - {selectedRoom.specialty?.name || 'General Practice'}
-                </h2>
-              </div>
-              {selectedRoom.pdf_url && pdfUrls[selectedRoom.pdf_url] ? (
-                <div className="h-[calc(100vh-180px)] border rounded-lg overflow-hidden">
-                  <EmbeddedPdfViewer pdfUrl={pdfUrls[selectedRoom.pdf_url]} />
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-[calc(100vh-180px)] text-gray-500">
-                  No PDF available for this room
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Select a room to view its PDF
-            </div>
-          )}
-        </div>
+        </main>
       </div>
     </div>
   );
