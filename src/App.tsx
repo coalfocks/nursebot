@@ -10,6 +10,8 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import ProfileSettings from './pages/ProfileSettings';
 import MyCases from './pages/MyCases';
+import AdminStudents from './pages/AdminStudents';
+import AdminStudentCases from './pages/AdminStudentCases';
 import AdminDashboard from './pages/AdminDashboard';
 import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
@@ -104,9 +106,25 @@ function App() {
           path="/profile" 
           element={user ? <ProfileSettings /> : <Navigate to="/login" replace />} 
         />
-        <Route 
-          path="/cases" 
-          element={user ? <MyCases /> : <Navigate to="/login" replace />} 
+        <Route
+          path="/cases"
+          element={
+            user ? (
+              useAuthStore.getState().profile?.is_admin ? <AdminStudents /> : <MyCases />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/students/:studentId"
+          element={
+            user?.id && useAuthStore.getState().profile?.is_admin ? (
+              <AdminStudentCases />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          }
         />
         <Route 
           path="/admin/rooms" 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, Clock, Book, CheckCircle, ArrowRight, Award, AlertCircle } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 
@@ -15,7 +16,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 };
 
 export default function MyCases() {
-  const { user } = useAuthStore();
+  const { user, profile } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeTab, setActiveTab] = useState<'assigned' | 'completed'>('assigned');
@@ -105,10 +106,143 @@ export default function MyCases() {
     // 2. Have an effective_date that has passed (or is null)
     const now = new Date();
     const effectiveDate = assignment.effective_date ? new Date(assignment.effective_date) : null;
-    
+
     return ['assigned', 'in_progress'].includes(assignment.status) && 
            (!effectiveDate || effectiveDate <= now);
   });
+
+  const loaderContent = (
+    <div className="flex h-full items-center justify-center py-24">
+      <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+    </div>
+  );
+
+  const pageContent = (
+    <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <div className="px-4 py-6 sm:px-0">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">My Patients</h1>
+        </div>
+
+        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+          <div className="border-b border-gray-200">
+            <nav className="flex -mb-px">
+              <button
+                onClick={() => setActiveTab('assigned')}
+                className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
+                  activeTab === 'assigned'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Active Conversations
+              </button>
+              <button
+                onClick={() => setActiveTab('completed')}
+                className={`whitespace-nowrap py-4 px-6 border-b-2 font-medium text-sm ${
+                  activeTab === 'completed'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Completed Conversations
+              </button>
+            </nav>
+          </div>
+
+          {filteredAssignments.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500">No {activeTab} assignments found.</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-200">
+              {filteredAssignments.map((assignment) => (
+                <li key={assignment.id} className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center">
+                        <h3 className="text-lg font-medium text-gray-900 mr-3">
+                          Room {assignment.room.room_number}
+                        </h3>
+                        {getStatusBadge(assignment.status)}
+                      </div>
+                      {assignment.status === 'in_progress' && (
+                        <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
+                          <div className="flex items-center">
+                            <AlertCircle className="w-4 h-4 text-red-400 mr-2" />
+                            <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
+                          </div>
+                        </div>
+                      )}
+                      <p className="mt-2 text-sm text-gray-500">
+                        {assignment.room.specialty?.name || 'General Practice'}
+                      </p>
+
+                      {assignment.due_date && (
+                        <p className="mt-2 text-sm text-gray-600">
+                          <span className="font-medium">Due:</span> {formatDate(assignment.due_date)}
+                        </p>
+                      )}
+
+                      {assignment.effective_date && (
+                        <p className="mt-2 text-sm text-gray-600">
+                          <span className="font-medium">Effective:</span> {formatDate(assignment.effective_date)}
+                          <span className="ml-2 text-xs text-gray-500">(Auto-completes after 1 hour)</span>
+                        </p>
+                      )}
+
+                      {activeTab === 'completed' && assignment.nurse_feedback && (
+                        <div className="mt-4 bg-gray-50 p-4 rounded-md">
+                          <h4 className="font-medium text-gray-900 flex items-center">
+                            <Award className="w-4 h-4 mr-2 text-yellow-500" />
+                            Feedback
+                            {assignment.nurse_feedback.overall_score && (
+                              <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md">
+                                Score: {assignment.nurse_feedback.overall_score}/5
+                              </span>
+                            )}
+                          </h4>
+                          {assignment.nurse_feedback.summary && (
+                            <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
+                          )}
+
+                          {assignment.nurse_feedback.clinical_reasoning?.strengths?.length > 0 && (
+                            <div className="mt-2">
+                              <h5 className="text-sm font-medium text-gray-900">Strengths:</h5>
+                              <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
+                                {assignment.nurse_feedback.clinical_reasoning.strengths.map((strength: string, idx: number) => (
+                                  <li key={idx}>{strength}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {assignment.nurse_feedback.clinical_reasoning?.areas_for_improvement?.length > 0 && (
+                            <div className="mt-2">
+                              <h5 className="text-sm font-medium text-gray-900">Areas for Improvement:</h5>
+                              <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
+                                {assignment.nurse_feedback.clinical_reasoning.areas_for_improvement.map((area: string, idx: number) => (
+                                  <li key={idx}>{area}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="ml-6 text-sm text-gray-500">
+                      <p className="font-medium text-gray-700">Assigned</p>
+                      <p>{formatDate(assignment.created_at)}</p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -263,6 +397,31 @@ export default function MyCases() {
           </div>
         </div>
       </div>
+    </div>
+  );
+
+  if (loading) {
+    if (profile?.is_admin) {
+      return <AdminLayout>{loaderContent}</AdminLayout>;
+    }
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Navbar />
+        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    );
+  }
+
+  if (profile?.is_admin) {
+    return <AdminLayout>{pageContent}</AdminLayout>;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <Navbar />
+      {pageContent}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Pencil, Trash2, Plus, Loader2 } from 'lucide-react';
-import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
 
@@ -57,18 +57,16 @@ export default function AdminPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
+    <AdminLayout>
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold">Room Management</h1>
@@ -159,6 +157,6 @@ export default function AdminPage() {
           ))}
         </div>
       </div>
-    </div>
+    </AdminLayout>
   );
 }

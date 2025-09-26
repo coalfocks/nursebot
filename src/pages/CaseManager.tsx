@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
-import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, User, Calendar, List, MessageSquare, FileText, CheckSquare, XCircle, ArrowLeft } from 'lucide-react';
 
 interface CaseWithDetails {
@@ -312,19 +312,17 @@ export default function CaseManager() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   if (!caseDetails) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
+      <AdminLayout>
         <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
             <div className="bg-white shadow rounded-lg p-6">
@@ -341,13 +339,12 @@ export default function CaseManager() {
             </div>
           </div>
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
+    <AdminLayout>
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-4 sm:px-0">
           <div className="flex justify-between items-center mb-6">
@@ -747,6 +744,6 @@ export default function CaseManager() {
           )}
         </div>
       </div>
-    </div>
+    </AdminLayout>
   );
 }

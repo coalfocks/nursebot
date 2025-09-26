@@ -18,6 +18,9 @@ export interface Database {
           phone_number: string | null
           sms_consent: boolean
           is_admin: boolean
+          email: string
+          role: 'student' | 'school_admin' | 'super_admin'
+          school_id: string | null
           created_at: string
           updated_at: string
         }
@@ -29,6 +32,9 @@ export interface Database {
           phone_number?: string | null
           sms_consent?: boolean
           is_admin?: boolean
+          email?: string
+          role?: 'student' | 'school_admin' | 'super_admin'
+          school_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -40,6 +46,9 @@ export interface Database {
           phone_number?: string | null
           sms_consent?: boolean
           is_admin?: boolean
+          email?: string
+          role?: 'student' | 'school_admin' | 'super_admin'
+          school_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -53,6 +62,7 @@ export interface Database {
           created_at: string
           tokens_used: number | null
           triggered_completion: boolean
+          school_id: string
         }
         Insert: {
           id?: string
@@ -62,6 +72,7 @@ export interface Database {
           created_at?: string
           tokens_used?: number | null
           triggered_completion?: boolean
+          school_id?: string
         }
         Update: {
           id?: string
@@ -71,6 +82,7 @@ export interface Database {
           created_at?: string
           tokens_used?: number | null
           triggered_completion?: boolean
+          school_id?: string
         }
       }
       specialties: {
@@ -79,18 +91,21 @@ export interface Database {
           name: string
           description: string
           created_at: string
+          school_id: string
         }
         Insert: {
           id?: string
           name: string
           description: string
           created_at?: string
+          school_id?: string
         }
         Update: {
           id?: string
           name?: string
           description?: string
           created_at?: string
+          school_id?: string
         }
       }
       rooms: {
@@ -111,6 +126,7 @@ export interface Database {
           created_at: string
           updated_at: string
           pdf_url: string | null
+          school_id: string
         }
         Insert: {
           id?: number
@@ -129,6 +145,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           pdf_url?: string | null
+          school_id?: string
         }
         Update: {
           id?: number
@@ -147,6 +164,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           pdf_url?: string | null
+          school_id?: string
         }
       }
       student_room_assignments: {
@@ -193,6 +211,7 @@ export interface Database {
           feedback_generated_at: string | null
           created_at: string
           updated_at: string
+          school_id: string
         }
         Insert: {
           id?: string
@@ -237,6 +256,7 @@ export interface Database {
           feedback_generated_at?: string | null
           created_at?: string
           updated_at?: string
+          school_id?: string
         }
         Update: {
           id?: string
@@ -281,6 +301,30 @@ export interface Database {
           feedback_generated_at?: string | null
           created_at?: string
           updated_at?: string
+          school_id?: string
+        }
+      }
+      schools: {
+        Row: {
+          id: string
+          name: string
+          slug: string
+          timezone: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          slug: string
+          timezone?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          slug?: string
+          timezone?: string | null
+          created_at?: string
         }
       }
     }

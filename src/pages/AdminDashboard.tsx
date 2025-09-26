@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, FileText, GraduationCap, School, TrendingUp, Users, Clock } from 'lucide-react';
-import AdminSidebar from '../components/admin/AdminSidebar';
-import AdminHeader from '../components/admin/AdminHeader';
+import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import StudentDashboard from './StudentDashboard';
@@ -71,7 +70,7 @@ const formatDayPartGreeting = () => {
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
-  const { user, profile, signOut } = useAuthStore();
+  const { user, profile } = useAuthStore();
   const [stats, setStats] = useState<DashboardStats>(initialStats);
   const [recentAssignments, setRecentAssignments] = useState<RecentAssignment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -223,36 +222,18 @@ export default function AdminDashboard() {
     return Math.max(assignmentCount - completedAssignments, 0);
   }, [stats]);
 
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      navigate('/login');
-    } catch (err) {
-      console.error('Error signing out', err);
-    }
-  };
-
   if (!profile?.is_admin) {
     return <StudentDashboard />;
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      <AdminSidebar />
-      <div className="flex flex-1 flex-col">
-        <AdminHeader
-          fullName={profile.full_name}
-          email={user?.email}
-          roleLabel={profile.is_admin ? 'Administrator' : 'User'}
-          onSignOut={handleSignOut}
-        />
-        <main className="flex-1 overflow-y-auto bg-slate-50">
-          <div className="px-6 py-6">
-            <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-white p-6 shadow-sm">
-              <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Overview</p>
-              <h2 className="mt-2 text-2xl font-semibold text-slate-900">
-                {formatDayPartGreeting()}, {firstName}.
-              </h2>
+    <AdminLayout>
+      <div className="px-6 py-6">
+          <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-white p-6 shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Overview</p>
+            <h2 className="mt-2 text-2xl font-semibold text-slate-900">
+              {formatDayPartGreeting()}, {firstName}.
+            </h2>
               <p className="mt-2 max-w-2xl text-sm text-slate-600">
                 Keep tabs on student assignments, review automated feedback, and ensure every simulated room stays ready for practice.
               </p>
@@ -415,9 +396,7 @@ export default function AdminDashboard() {
                 </section>
               </div>
             )}
-          </div>
-        </main>
       </div>
-    </div>
+    </AdminLayout>
   );
 }

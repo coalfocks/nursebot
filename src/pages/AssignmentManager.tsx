@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Loader2, Plus, Filter, Download, Search, MessageSquare, RefreshCw } from 'lucide-react';
-import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { Link } from 'react-router-dom';
@@ -11,6 +11,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     id: string;
     full_name: string;
     study_year: number;
+    email: string | null;
   };
   room: {
     id: number;
@@ -80,7 +81,8 @@ export default function AssignmentManager() {
         student:student_id (
           id,
           full_name,
-          study_year
+          study_year,
+          email
         ),
         room:room_id (
           id,
@@ -98,7 +100,7 @@ export default function AssignmentManager() {
   const fetchStudents = async () => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, full_name, study_year, email')
       .eq('is_admin', false)
       .order('full_name');
 
@@ -270,18 +272,23 @@ export default function AssignmentManager() {
     }
   };
 
-  const filteredStudents = students.filter(student =>
-    student.full_name.toLowerCase().includes(studentSearch.toLowerCase())
-  );
+  const filteredStudents = students.filter((student) => {
+    const term = studentSearch.toLowerCase();
+    return (
+      student.full_name.toLowerCase().includes(term) ||
+      (student.email?.toLowerCase().includes(term) ?? false)
+    );
+  });
 
-  const filteredAssignments = assignments.filter(assignment => {
+  const filteredAssignments = assignments.filter((assignment) => {
     if (filters.status && assignment.status !== filters.status) return false;
-    if (filters.studentId && assignment.student_id !== filters.status) return false;
+    if (filters.studentId && assignment.student_id !== filters.studentId) return false;
     if (filters.roomId && assignment.room_id.toString() !== filters.roomId) return false;
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
       return (
         assignment.student.full_name.toLowerCase().includes(searchTerm) ||
+        (assignment.student.email?.toLowerCase().includes(searchTerm) ?? false) ||
         assignment.room.room_number.toLowerCase().includes(searchTerm)
       );
     }
@@ -315,18 +322,16 @@ export default function AssignmentManager() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
+    <AdminLayout>
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="px-4 sm:px-0 mb-8">
@@ -367,9 +372,10 @@ export default function AssignmentManager() {
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 >
                   <option value="">All Students</option>
-                  {students.map(student => (
+                  {students.map((student) => (
                     <option key={student.id} value={student.id}>
                       {student.full_name}
+                      {student.email ? ` (${student.email})` : ''}
                     </option>
                   ))}
                 </select>
@@ -397,7 +403,7 @@ export default function AssignmentManager() {
                     value={filters.search}
                     onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                     className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    placeholder="Search by name or room..."
+                    placeholder="Search by name, email, or room..."
                   />
                   <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                     <Search className="h-4 w-4 text-gray-400" />
@@ -444,6 +450,9 @@ export default function AssignmentManager() {
                       <div className="text-sm text-gray-500">
                         Year {assignment.student.study_year}
                       </div>
+                      {assignment.student.email && (
+                        <div className="text-sm text-gray-500">{assignment.student.email}</div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
@@ -761,6 +770,6 @@ export default function AssignmentManager() {
           </div>
         </div>
       )}
-    </div>
+    </AdminLayout>
   );
-} 
+}

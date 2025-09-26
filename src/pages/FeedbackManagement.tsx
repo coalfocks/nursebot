@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, RefreshCw, AlertCircle, CheckCircle, Clock, Activity } from 'lucide-react';
-import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import AssignmentFeedback from '../components/AssignmentFeedback';
 import { generateFeedback } from '../lib/feedbackService';
 import type { Database } from '../lib/database.types';
@@ -45,7 +45,8 @@ export default function FeedbackManagement() {
           student:student_id (
             id,
             full_name,
-            study_year
+            study_year,
+            email
           ),
           room:room_id (
             id,
@@ -88,24 +89,23 @@ export default function FeedbackManagement() {
     const matchesStatus = statusFilter === 'all' || assignment.feedback_status === statusFilter;
     const matchesSearch = searchTerm === '' || 
       assignment.student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (assignment.student.email?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
       assignment.room.room_number.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesStatus && matchesSearch;
   });
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
+    <AdminLayout>
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 sm:px-0">
           <h2 className="text-2xl font-bold text-gray-900">Feedback Management</h2>
@@ -123,7 +123,7 @@ export default function FeedbackManagement() {
                   <input
                     type="text"
                     id="search"
-                    placeholder="Search by student or room..."
+                    placeholder="Search by student, email, or room..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
@@ -149,15 +149,18 @@ export default function FeedbackManagement() {
               {filteredAssignments.map((assignment) => (
                 <li key={assignment.id} className="p-4 hover:bg-gray-50">
                   <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-900">
-                        {assignment.student.full_name}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        Room {assignment.room.room_number}
-                        {assignment.room.specialty?.name && ` - ${assignment.room.specialty.name}`}
-                      </p>
-                    </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900">
+                      {assignment.student.full_name}
+                    </h3>
+                    <p className="text-sm text-gray-500">
+                      Room {assignment.room.room_number}
+                      {assignment.room.specialty?.name && ` - ${assignment.room.specialty.name}`}
+                    </p>
+                    {assignment.student.email && (
+                      <p className="text-sm text-gray-500">{assignment.student.email}</p>
+                    )}
+                  </div>
                     <div className="flex items-center space-x-4">
                       <div className="flex items-center">
                         {assignment.feedback_status === 'completed' ? (
@@ -209,6 +212,6 @@ export default function FeedbackManagement() {
           </div>
         </div>
       </div>
-    </div>
+    </AdminLayout>
   );
-} 
+}

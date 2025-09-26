@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Loader2, Edit, ChevronDown, ChevronUp } from 'lucide-react';
-import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
 
@@ -79,19 +79,17 @@ export default function RoomManagement() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
-        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   if (isEditing) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <Navbar />
+      <AdminLayout>
         <div className="max-w-4xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 sm:px-0 mb-6">
             <h2 className="text-2xl font-bold text-gray-900">
@@ -106,13 +104,12 @@ export default function RoomManagement() {
             />
           </div>
         </div>
-      </div>
+      </AdminLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar />
+    <AdminLayout>
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 sm:px-0">
           <div className="sm:flex sm:items-center">
@@ -233,6 +230,6 @@ export default function RoomManagement() {
           </div>
         </div>
       </div>
-    </div>
+    </AdminLayout>
   );
-} 
+}
