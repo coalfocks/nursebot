@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import AdminSidebar from './AdminSidebar';
 import AdminHeader from './AdminHeader';
 import { useAuthStore } from '../../stores/authStore';
+import { hasAdminAccess } from '../../lib/roles';
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -21,7 +22,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     }
   }, [signOut, navigate]);
 
-  if (!profile?.is_admin) {
+  if (!hasAdminAccess(profile)) {
     return <Navigate to="/dashboard" replace />;
   }
 

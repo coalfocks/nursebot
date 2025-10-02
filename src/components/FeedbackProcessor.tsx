@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { checkPendingFeedback } from '../lib/feedbackService';
+import { hasAdminAccess } from '../lib/roles';
 
 const POLLING_INTERVAL = 30000; // Check every 30 seconds
 
@@ -10,7 +11,7 @@ export default function FeedbackProcessor() {
 
   useEffect(() => {
     // Only run for admin users
-    if (!profile?.is_admin) return;
+    if (!hasAdminAccess(profile)) return;
 
     // Initial check
     checkPendingFeedback();

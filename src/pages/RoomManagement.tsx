@@ -6,6 +6,8 @@ import { Plus, Loader2, Edit, ChevronDown, ChevronUp } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialty: {
@@ -14,26 +16,28 @@ type Room = Database['public']['Tables']['rooms']['Row'] & {
 };
 
 export default function RoomManagement() {
-  const { user, profile } = useAuthStore();
+  const { user, profile, activeSchoolId } = useAuthStore();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | undefined>();
   const [expandedRooms, setExpandedRooms] = useState<Set<number>>(new Set());
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
-    if (!user || !profile?.is_admin) {
+    if (!user || !hasAdmin) {
       navigate('/dashboard');
       return;
     }
     
     fetchRooms();
-  }, [user, profile, navigate]);
+  }, [user, hasAdmin, navigate, scopedSchoolId]);
 
   const fetchRooms = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('rooms')
         .select(`
           *,
@@ -42,6 +46,12 @@ export default function RoomManagement() {
           )
         `)
         .order('room_number');
+
+      if (scopedSchoolId) {
+        query = query.eq('school_id', scopedSchoolId);
+      }
+
+      const { data, error } = await query;
       
       if (error) throw error;
       setRooms(data || []);
@@ -76,6 +86,16 @@ export default function RoomManagement() {
     }
     setExpandedRooms(newExpanded);
   };
+
+  if (!hasAdmin) {
+    return (
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
 
   if (loading) {
     return (
@@ -119,7 +139,8 @@ export default function RoomManagement() {
                 A list of all patient rooms in the system. Click on a room to view more details.
               </p>
             </div>
-            <div className="mt-4 sm:mt-0 sm:ml-16 sm:flex-none">
+            <div className="mt-4 flex flex-col gap-3 sm:mt-0 sm:ml-16 sm:flex-row sm:items-center sm:gap-4">
+              <SchoolScopeSelector className="sm:w-56" label="School scope" />
               <button
                 type="button"
                 onClick={handleCreateRoom}

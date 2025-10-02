@@ -5,6 +5,7 @@ import AdminLayout from '../components/admin/AdminLayout';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -19,11 +20,13 @@ type AssignmentWithRoom = AssignmentRow & {
 
 export default function AdminStudentCases() {
   const { studentId } = useParams<{ studentId: string }>();
-  const { profile } = useAuthStore();
+  const { profile, activeSchoolId } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [student, setStudent] = useState<ProfileRow | null>(null);
   const [assignments, setAssignments] = useState<AssignmentWithRoom[]>([]);
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
     if (!studentId) return;
@@ -31,26 +34,39 @@ export default function AdminStudentCases() {
     let isMounted = true;
 
     const loadStudent = async () => {
+      if (!hasAdmin) return;
       setLoading(true);
       setError(null);
       try {
-        const [{ data: studentRow, error: studentError }, { data: assignmentRows, error: assignmentError }] = await Promise.all([
-          supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', studentId)
-            .single(),
-          supabase
-            .from('student_room_assignments')
-            .select(`
+        let studentQuery = supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', studentId)
+          .eq('role', 'student');
+
+        if (scopedSchoolId) {
+          studentQuery = studentQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let assignmentQuery = supabase
+          .from('student_room_assignments')
+          .select(`
+            *,
+            room:room_id (
               *,
-              room:room_id (
-                *,
-                specialty:specialty_id (name)
-              )
-            `)
-            .eq('student_id', studentId)
-            .order('created_at', { ascending: false }),
+              specialty:specialty_id (name)
+            )
+          `)
+          .eq('student_id', studentId)
+          .order('created_at', { ascending: false });
+
+        if (scopedSchoolId) {
+          assignmentQuery = assignmentQuery.eq('school_id', scopedSchoolId);
+        }
+
+        const [{ data: studentRow, error: studentError }, { data: assignmentRows, error: assignmentError }] = await Promise.all([
+          studentQuery.single(),
+          assignmentQuery,
         ]);
 
         if (studentError) throw studentError;
@@ -77,9 +93,9 @@ export default function AdminStudentCases() {
     return () => {
       isMounted = false;
     };
-  }, [studentId]);
+  }, [studentId, hasAdmin, scopedSchoolId]);
 
-  if (!profile?.is_admin) {
+  if (!hasAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
 

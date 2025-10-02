@@ -6,6 +6,7 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, Clock, Book, CheckCircle, ArrowRight, Award, AlertCircle } from 'lucide-react';
 import type { Database } from '../lib/database.types';
+import { hasAdminAccess } from '../lib/roles';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -401,7 +402,7 @@ export default function MyCases() {
   );
 
   if (loading) {
-    if (profile?.is_admin) {
+    if (hasAdminAccess(profile)) {
       return <AdminLayout>{loaderContent}</AdminLayout>;
     }
     return (
@@ -414,7 +415,7 @@ export default function MyCases() {
     );
   }
 
-  if (profile?.is_admin) {
+  if (hasAdminAccess(profile)) {
     return <AdminLayout>{pageContent}</AdminLayout>;
   }
 

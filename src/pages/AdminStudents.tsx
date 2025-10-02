@@ -4,6 +4,9 @@ import AdminLayout from '../components/admin/AdminLayout';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { Link } from 'react-router-dom';
+import { useAuthStore } from '../stores/authStore';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -18,6 +21,9 @@ type StudentSummary = {
 const STUDY_YEARS = [1, 2, 3, 4, 5, 6];
 
 export default function AdminStudents() {
+  const { profile, activeSchoolId } = useAuthStore();
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [students, setStudents] = useState<StudentSummary[]>([]);
@@ -29,19 +35,32 @@ export default function AdminStudents() {
     let isMounted = true;
 
     const loadStudents = async () => {
+      if (!hasAdmin) return;
       setLoading(true);
       setError(null);
       try {
+        let profileQuery = supabase
+          .from('profiles')
+          .select('id, full_name, study_year, specialization_interest, phone_number, sms_consent, created_at, role, school_id')
+          .eq('role', 'student')
+          .order('full_name');
+
+        if (scopedSchoolId) {
+          profileQuery = profileQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let assignmentQuery = supabase
+          .from('student_room_assignments')
+          .select('id, student_id, status, grade, nurse_feedback, created_at, completed_at, school_id');
+
+        if (scopedSchoolId) {
+          assignmentQuery = assignmentQuery.eq('school_id', scopedSchoolId);
+        }
+
         const [{ data: profileRows, error: profileError }, { data: assignmentRows, error: assignmentError }] =
           await Promise.all([
-            supabase
-              .from('profiles')
-              .select('id, full_name, study_year, specialization_interest, phone_number, sms_consent, created_at')
-              .eq('is_admin', false)
-              .order('full_name'),
-            supabase
-              .from('student_room_assignments')
-              .select('id, student_id, status, grade, nurse_feedback, created_at, completed_at'),
+            profileQuery,
+            assignmentQuery,
           ]);
 
         if (profileError) throw profileError;
@@ -105,7 +124,7 @@ export default function AdminStudents() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [hasAdmin, scopedSchoolId]);
 
   const filteredStudents = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -157,6 +176,16 @@ export default function AdminStudents() {
     return { totalStudents, activeAssignments, completedAssignments, averageScore };
   }, [students]);
 
+  if (!hasAdmin) {
+    return (
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
   if (loading) {
     return (
       <AdminLayout>
@@ -187,7 +216,8 @@ export default function AdminStudents() {
             <h1 className="text-3xl font-semibold text-slate-900">Student Management</h1>
             <p className="text-sm text-slate-500">Track student progress, performance, and assignments across schools.</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <SchoolScopeSelector className="md:w-56" label="School scope" />
             <button
               type="button"
               className="flex items-center rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"

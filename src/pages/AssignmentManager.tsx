@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Filter, Download, Search, MessageSquare, RefreshCw } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, RefreshCw } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
-import { Link } from 'react-router-dom';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -12,13 +13,14 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     full_name: string;
     study_year: number;
     email: string | null;
+    school_id: string | null;
   };
   room: {
     id: number;
     room_number: string;
     specialty_id: string | null;
     difficulty_level: string | null;
-    case_id: string;
+    school_id: string;
   };
 };
 
@@ -27,7 +29,9 @@ type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
 export default function AssignmentManager() {
-  const { user } = useAuthStore();
+  const { user, profile, activeSchoolId } = useAuthStore();
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState<Profile[]>([]);
@@ -55,8 +59,9 @@ export default function AssignmentManager() {
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!hasAdmin) return;
     fetchData();
-  }, []);
+  }, [hasAdmin, scopedSchoolId]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -74,7 +79,7 @@ export default function AssignmentManager() {
   };
 
   const fetchAssignments = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('student_room_assignments')
       .select(`
         *,
@@ -82,37 +87,57 @@ export default function AssignmentManager() {
           id,
           full_name,
           study_year,
-          email
+          email,
+          school_id
         ),
         room:room_id (
           id,
           room_number,
           specialty_id,
-          difficulty_level
+          difficulty_level,
+          school_id
         )
       `)
       .order('created_at', { ascending: false });
 
+    if (scopedSchoolId) {
+      query = query.eq('school_id', scopedSchoolId);
+    }
+
+    const { data, error } = await query;
+
     if (error) throw error;
-    setAssignments(data || []);
+    setAssignments((data ?? []) as Assignment[]);
   };
 
   const fetchStudents = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
-      .select('id, full_name, study_year, email')
-      .eq('is_admin', false)
+      .select('id, full_name, study_year, email, role, school_id')
+      .eq('role', 'student')
       .order('full_name');
+
+    if (scopedSchoolId) {
+      query = query.eq('school_id', scopedSchoolId);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
     setStudents(data || []);
   };
 
   const fetchRooms = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('rooms')
       .select('*')
       .order('room_number');
+
+    if (scopedSchoolId) {
+      query = query.eq('school_id', scopedSchoolId);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
     setRooms(data || []);
@@ -121,6 +146,14 @@ export default function AssignmentManager() {
   const handleAssign = async () => {
     if (!selectedRoom || !selectedStudent || !user || !effectiveDate) {
       alert('Please select a room, student, and effective date');
+      return;
+    }
+
+    const selectedStudentProfile = students.find((student) => student.id === selectedStudent);
+    const assignmentSchoolId = selectedStudentProfile?.school_id ?? scopedSchoolId;
+
+    if (!assignmentSchoolId) {
+      alert('Unable to determine school for this assignment. Please select a school scope first.');
       return;
     }
 
@@ -146,7 +179,8 @@ export default function AssignmentManager() {
           assigned_by: user.id,
           status: 'assigned',
           due_date: calculatedDueDate || null,
-          effective_date: effectiveDateUTC || null
+          effective_date: effectiveDateUTC || null,
+          school_id: assignmentSchoolId,
         });
 
       if (error) throw error;
@@ -320,6 +354,10 @@ export default function AssignmentManager() {
     });
   };
 
+  if (!hasAdmin) {
+    return <AdminLayout><div className="flex h-full items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div></AdminLayout>;
+  }
+
   if (loading) {
     return (
       <AdminLayout>
@@ -334,9 +372,13 @@ export default function AssignmentManager() {
     <AdminLayout>
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="px-4 sm:px-0 mb-8">
-          <div className="flex justify-between items-center">
+        <div className="px-4 sm:px-0 mb-8 space-y-4 sm:space-y-0 sm:flex sm:items-center sm:justify-between">
+          <div>
             <h1 className="text-2xl font-bold text-gray-900">Case Assignments</h1>
+            <p className="mt-1 text-sm text-gray-600">Manage and track assignments for your selected school.</p>
+          </div>
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <SchoolScopeSelector className="sm:w-56" label="School scope" />
             <button
               onClick={() => setShowAssignModal(true)}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"

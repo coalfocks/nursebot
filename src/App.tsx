@@ -2,7 +2,6 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/authStore';
 import { Stethoscope } from 'lucide-react';
-import Dashboard from './pages/Dashboard';
 import AdminPage from './pages/admin';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -21,7 +20,8 @@ import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 
 function App() {
-  const { user, loading, loadUser } = useAuthStore();
+  const { user, loading, loadUser, profile } = useAuthStore();
+  const hasAdminAccess = profile?.role === 'school_admin' || profile?.role === 'super_admin';
 
   useEffect(() => {
     loadUser();
@@ -75,7 +75,7 @@ function App() {
         <Route 
           path="/admin" 
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <AdminPage />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -85,7 +85,7 @@ function App() {
         <Route 
           path="/admin-dashboard" 
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <AdminDashboard />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -95,7 +95,7 @@ function App() {
         <Route 
           path="/cases/:caseId/manage" 
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <CaseManager />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -110,7 +110,7 @@ function App() {
           path="/cases"
           element={
             user ? (
-              useAuthStore.getState().profile?.is_admin ? <AdminStudents /> : <MyCases />
+              hasAdminAccess ? <AdminStudents /> : <MyCases />
             ) : (
               <Navigate to="/login" replace />
             )
@@ -119,7 +119,7 @@ function App() {
         <Route
           path="/students/:studentId"
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <AdminStudentCases />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -129,7 +129,7 @@ function App() {
         <Route 
           path="/admin/rooms" 
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <RoomManagement />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -139,7 +139,7 @@ function App() {
         <Route 
           path="/admin/assignments" 
           element={
-            user?.id && useAuthStore.getState().profile?.is_admin ? (
+            user?.id && hasAdminAccess ? (
               <AssignmentManager />
             ) : (
               <Navigate to="/dashboard" replace />

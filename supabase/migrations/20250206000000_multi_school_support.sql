@@ -41,14 +41,14 @@ DECLARE
   default_school_id uuid;
 BEGIN
   INSERT INTO schools (name, slug, timezone)
-  VALUES ('NurseConnect University', 'default-school', 'UTC')
+  VALUES ('ATSU-SOMA', 'atsu-soma', 'America/Phoenix')
   ON CONFLICT (slug) DO UPDATE
     SET name = EXCLUDED.name,
         timezone = EXCLUDED.timezone
   RETURNING id INTO default_school_id;
 
   IF default_school_id IS NULL THEN
-    SELECT id INTO default_school_id FROM schools WHERE slug = 'default-school';
+    SELECT id INTO default_school_id FROM schools WHERE slug = 'atsu-soma';
   END IF;
 
   -- Ensure profile roles reflect legacy is_admin flag

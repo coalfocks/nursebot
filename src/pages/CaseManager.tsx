@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, User, Calendar, List, MessageSquare, FileText, CheckSquare, XCircle, ArrowLeft } from 'lucide-react';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 interface CaseWithDetails {
   id: string;
@@ -53,7 +54,7 @@ interface CaseAssignment {
 
 export default function CaseManager() {
   const { caseId } = useParams<{ caseId: string }>();
-  const { user, profile } = useAuthStore();
+  const { user, profile, activeSchoolId } = useAuthStore();
   const navigate = useNavigate();
   
   const [loading, setLoading] = useState(true);
@@ -71,8 +72,11 @@ export default function CaseManager() {
   const [feedbackError, setFeedbackError] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
 
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
+
   useEffect(() => {
-    if (!user || !profile?.is_admin) {
+    if (!user || !hasAdmin) {
       navigate('/dashboard');
       return;
     }
@@ -80,7 +84,7 @@ export default function CaseManager() {
     if (caseId) {
       fetchCaseData(caseId);
     }
-  }, [caseId, user, profile, navigate]);
+  }, [caseId, user, hasAdmin, navigate]);
 
   const fetchCaseData = async (id: string) => {
     setLoading(true);
@@ -114,7 +118,7 @@ export default function CaseManager() {
   };
 
   const fetchCaseAssignments = async (id: string) => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('student_room_assignments')
       .select(`
         *,
@@ -131,6 +135,12 @@ export default function CaseManager() {
       `)
       .eq('room_id', id)
       .order('created_at', { ascending: false });
+
+    if (scopedSchoolId) {
+      query = query.eq('school_id', scopedSchoolId);
+    }
+
+    const { data, error } = await query;
     
     if (error) throw error;
     setAssignments(data || []);

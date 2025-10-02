@@ -6,6 +6,8 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import StudentDashboard from './StudentDashboard';
 import type { Database } from '../lib/database.types';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
 type RoomRow = Database['public']['Tables']['rooms']['Row'];
@@ -70,14 +72,16 @@ const formatDayPartGreeting = () => {
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
-  const { user, profile } = useAuthStore();
+  const { user, profile, activeSchoolId } = useAuthStore();
   const [stats, setStats] = useState<DashboardStats>(initialStats);
   const [recentAssignments, setRecentAssignments] = useState<RecentAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
-    if (!user || !profile?.is_admin) {
+    if (!user || !hasAdmin) {
       return;
     }
 
@@ -87,29 +91,53 @@ export default function AdminDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const studentPromise = supabase
+        let studentQuery = supabase
           .from('profiles')
           .select('id', { count: 'exact', head: true })
-          .eq('is_admin', false);
-        const adminPromise = supabase
+          .eq('role', 'student');
+        if (scopedSchoolId) {
+          studentQuery = studentQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let adminQuery = supabase
           .from('profiles')
           .select('id', { count: 'exact', head: true })
-          .eq('is_admin', true);
-        const assignmentPromise = supabase
+          .in('role', ['school_admin', 'super_admin']);
+        if (scopedSchoolId) {
+          adminQuery = adminQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let assignmentQuery = supabase
           .from('student_room_assignments')
           .select('id', { count: 'exact', head: true });
-        const completedPromise = supabase
+        if (scopedSchoolId) {
+          assignmentQuery = assignmentQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let completedQuery = supabase
           .from('student_room_assignments')
           .select('id', { count: 'exact', head: true })
           .eq('status', 'completed');
-        const roomsPromise = supabase
+        if (scopedSchoolId) {
+          completedQuery = completedQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let roomsQuery = supabase
           .from('rooms')
           .select('id', { count: 'exact', head: true })
           .eq('is_active', true);
-        const gradePromise = supabase
+        if (scopedSchoolId) {
+          roomsQuery = roomsQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let gradeQuery = supabase
           .from('student_room_assignments')
           .select('grade, nurse_feedback');
-        const recentPromise = supabase
+        if (scopedSchoolId) {
+          gradeQuery = gradeQuery.eq('school_id', scopedSchoolId);
+        }
+
+        let recentQuery = supabase
           .from('student_room_assignments')
           .select(
             `id, status, grade, created_at,
@@ -118,6 +146,9 @@ export default function AdminDashboard() {
           )
           .order('created_at', { ascending: false })
           .limit(6);
+        if (scopedSchoolId) {
+          recentQuery = recentQuery.eq('school_id', scopedSchoolId);
+        }
 
         const [
           studentResult,
@@ -128,13 +159,13 @@ export default function AdminDashboard() {
           gradeResult,
           recentResult,
         ] = await Promise.all([
-          studentPromise,
-          adminPromise,
-          assignmentPromise,
-          completedPromise,
-          roomsPromise,
-          gradePromise,
-          recentPromise,
+          studentQuery,
+          adminQuery,
+          assignmentQuery,
+          completedQuery,
+          roomsQuery,
+          gradeQuery,
+          recentQuery,
         ]);
 
         if (!isMounted) return;
@@ -209,7 +240,7 @@ export default function AdminDashboard() {
     return () => {
       isMounted = false;
     };
-  }, [user, profile?.is_admin]);
+  }, [user, hasAdmin, scopedSchoolId]);
 
   const firstName = useMemo(() => {
     if (!profile?.full_name) return 'there';
@@ -222,13 +253,15 @@ export default function AdminDashboard() {
     return Math.max(assignmentCount - completedAssignments, 0);
   }, [stats]);
 
-  if (!profile?.is_admin) {
+  if (!hasAdmin) {
     return <StudentDashboard />;
   }
 
   return (
     <AdminLayout>
-      <div className="px-6 py-6">
+      <div className="px-6 py-6 space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex-1">
           <section className="rounded-2xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-white p-6 shadow-sm">
             <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Overview</p>
             <h2 className="mt-2 text-2xl font-semibold text-slate-900">
@@ -243,6 +276,9 @@ export default function AdminDashboard() {
                 <div>Total active rooms: <span className="font-semibold text-slate-900">{stats.activeRoomCount}</span></div>
               </div>
             </section>
+          </div>
+          <SchoolScopeSelector className="w-full sm:w-60" label="Viewing" />
+        </div>
 
             {error && (
               <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">

@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, Save, Clock, AlertTriangle } from 'lucide-react';
+import { hasAdminAccess } from '../lib/roles';
 
 export default function ProfileSettings() {
   const { user, profile, loadUser } = useAuthStore();
@@ -146,7 +147,7 @@ export default function ProfileSettings() {
   };
 
   if (loading) {
-    if (profile?.is_admin) {
+    if (hasAdminAccess(profile)) {
       return (
         <AdminLayout>
           <div className="flex h-full items-center justify-center py-24">
@@ -329,7 +330,7 @@ export default function ProfileSettings() {
     </div>
   );
 
-  if (profile?.is_admin) {
+  if (hasAdminAccess(profile)) {
     return <AdminLayout>{pageContent}</AdminLayout>;
   }
 

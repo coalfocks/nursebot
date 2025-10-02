@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
+import { hasAdminAccess } from '../lib/roles';
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { user, profile, signOut } = useAuthStore();
+  const { profile, signOut } = useAuthStore();
+  const showAdminLinks = hasAdminAccess(profile);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -51,7 +53,7 @@ export default function Navbar() {
                 <Book className="h-4 w-4 mr-1" />
                 Secure Chat
               </Link>
-              {profile?.is_admin && (
+              {showAdminLinks && (
                 <>
                   <Link
                     to="/admin"
@@ -152,7 +154,7 @@ export default function Navbar() {
               <UserCog className="h-4 w-4 mr-2" />
               Profile Settings
             </Link>
-            {profile?.is_admin && (
+            {showAdminLinks && (
               <>
                 <Link
                   to="/admin"

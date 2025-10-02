@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { useSchools } from '../hooks/useSchools';
 
 export default function Register() {
   const [email, setEmail] = useState('');
@@ -11,10 +12,18 @@ export default function Register() {
   const [studyYear, setStudyYear] = useState(1);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
+  const [schoolId, setSchoolId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { signUp } = useAuthStore();
   const navigate = useNavigate();
+  const { schools, loading: schoolsLoading, error: schoolsError } = useSchools();
+
+  useEffect(() => {
+    if (!schoolsLoading && schools.length > 0 && !schoolId) {
+      setSchoolId(schools[0].id);
+    }
+  }, [schoolsLoading, schools, schoolId]);
 
   const validatePhoneNumber = (phone: string): boolean => {
     if (!phone) return true; // Phone is optional
@@ -63,11 +72,17 @@ export default function Register() {
       return;
     }
 
+    if (!schoolId) {
+      setError('Please select a school to continue');
+      setLoading(false);
+      return;
+    }
+
     try {
       // Format phone number for storage
       const formattedPhoneNumber = phoneNumber ? formatPhoneNumber(phoneNumber) : null;
       
-      await signUp(email, password, fullName, studyYear, formattedPhoneNumber, smsConsent);
+      await signUp(email, password, fullName, studyYear, formattedPhoneNumber, smsConsent, schoolId);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
@@ -94,6 +109,17 @@ export default function Register() {
               <div className="flex">
                 <div className="ml-3">
                   <p className="text-sm text-red-700">{error}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {schoolsError && (
+            <div className="bg-amber-50 border-l-4 border-amber-400 p-4 mb-6">
+              <div className="flex">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                <div className="ml-3">
+                  <p className="text-sm text-amber-700">{schoolsError}</p>
                 </div>
               </div>
             </div>
@@ -186,6 +212,28 @@ export default function Register() {
                   <option value={6}>PGY-2</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="school" className="block text-sm font-medium text-gray-700">
+                School
+              </label>
+              <select
+                id="school"
+                name="school"
+                value={schoolId}
+                onChange={(e) => setSchoolId(e.target.value)}
+                disabled={schoolsLoading || schools.length === 0}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-50 disabled:text-gray-500"
+              >
+                {schoolsLoading && <option value="">Loading schools…</option>}
+                {!schoolsLoading && schools.length === 0 && <option value="">No schools available</option>}
+                {!schoolsLoading && schools.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>

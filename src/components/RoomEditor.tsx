@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp, Loader2, FileText, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
+import { useAuthStore } from '../stores/authStore';
+import { useSchools } from '../hooks/useSchools';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -13,6 +16,8 @@ interface RoomEditorProps {
 }
 
 export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) {
+  const { profile, activeSchoolId } = useAuthStore();
+  const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -33,30 +38,57 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [expectedDiagnosis, setExpectedDiagnosis] = useState(room?.expected_diagnosis || '');
   const [expectedTreatment, setExpectedTreatment] = useState<string[]>(room?.expected_treatment || []);
   const [isActive, setIsActive] = useState(room?.is_active ?? true);
+  const scopedSchoolId = isSuperAdmin(profile)
+    ? room?.school_id ?? activeSchoolId ?? null
+    : profile?.school_id ?? room?.school_id ?? null;
+  const [schoolId, setSchoolId] = useState<string>(scopedSchoolId ?? '');
   
   // PDF upload state
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(room?.pdf_url || null);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
-    fetchSpecialties();
-  }, []);
+    let isMounted = true;
 
-  const fetchSpecialties = async () => {
-    const { data, error } = await supabase
-      .from('specialties')
-      .select('*')
-      .order('name');
-    
-    if (error) {
-      console.error('Error fetching specialties:', error);
-      return;
+    const loadSpecialties = async () => {
+      try {
+        let query = supabase
+          .from('specialties')
+          .select('*')
+          .order('name');
+
+        if (schoolId) {
+          query = query.eq('school_id', schoolId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.error('Error fetching specialties:', error);
+          return;
+        }
+
+        if (isMounted) {
+          setSpecialties(data || []);
+        }
+      } catch (err) {
+        console.error('Error fetching specialties:', err);
+      }
+    };
+
+    void loadSpecialties();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (!schoolId && scopedSchoolId) {
+      setSchoolId(scopedSchoolId);
     }
-    
-    setSpecialties(data || []);
-  };
+  }, [scopedSchoolId, schoolId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +96,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     setError('');
 
     try {
+      const finalSchoolId = schoolId || scopedSchoolId;
+
+      if (!finalSchoolId) {
+        setError('Please select a school before saving this room.');
+        return;
+      }
+
       // Handle PDF upload if a new file is selected
       let finalPdfUrl = pdfUrl;
       
@@ -84,7 +123,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         const filePath = `${fileName}`;
         
         // Upload the new file
-        const { data, error: uploadError } = await supabase.storage
+        const { error: uploadError } = await supabase.storage
           .from('room_pdfs')
           .upload(filePath, pdfFile, {
             cacheControl: '3600',
@@ -113,6 +152,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
         is_active: isActive,
         pdf_url: finalPdfUrl,
+        school_id: finalSchoolId,
       };
 
       if (room) {
@@ -184,6 +224,37 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Basic Information */}
       <div className="space-y-4">
+        {hasAdminAccess(profile) && isSuperAdmin(profile) && (
+          <div>
+            <label htmlFor="school" className="block text-sm font-medium text-gray-700">
+              School
+            </label>
+            <select
+              id="school"
+              value={schoolId}
+              onChange={(e) => setSchoolId(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              required
+            >
+              <option value="" disabled>
+                Select a school
+              </option>
+              {schools.map((school) => (
+                <option key={school.id} value={school.id}>
+                  {school.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {hasAdminAccess(profile) && !isSuperAdmin(profile) && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">School</label>
+            <p className="mt-1 text-sm text-gray-500">
+              This room belongs to your school assignment and cannot be changed.
+            </p>
+          </div>
+        )}
         <div>
           <label htmlFor="roomNumber" className="block text-sm font-medium text-gray-700">
             Room Number

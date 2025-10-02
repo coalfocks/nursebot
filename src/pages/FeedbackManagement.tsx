@@ -7,6 +7,8 @@ import AdminLayout from '../components/admin/AdminLayout';
 import AssignmentFeedback from '../components/AssignmentFeedback';
 import { generateFeedback } from '../lib/feedbackService';
 import type { Database } from '../lib/database.types';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: Database['public']['Tables']['profiles']['Row'];
@@ -18,7 +20,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 };
 
 export default function FeedbackManagement() {
-  const { user, profile } = useAuthStore();
+  const { user, profile, activeSchoolId } = useAuthStore();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -26,19 +28,21 @@ export default function FeedbackManagement() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
-    if (!user || !profile?.is_admin) {
+    if (!user || !hasAdmin) {
       navigate('/dashboard');
       return;
     }
     
     fetchAssignments();
-  }, [user, profile, navigate]);
+  }, [user, hasAdmin, navigate, scopedSchoolId]);
 
   const fetchAssignments = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('student_room_assignments')
         .select(`
           *,
@@ -46,7 +50,8 @@ export default function FeedbackManagement() {
             id,
             full_name,
             study_year,
-            email
+            email,
+            school_id
           ),
           room:room_id (
             id,
@@ -57,6 +62,12 @@ export default function FeedbackManagement() {
           )
         `)
         .order('created_at', { ascending: false });
+
+      if (scopedSchoolId) {
+        query = query.eq('school_id', scopedSchoolId);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setAssignments(data || []);
@@ -94,6 +105,16 @@ export default function FeedbackManagement() {
     return matchesStatus && matchesSearch;
   });
 
+  if (!hasAdmin) {
+    return (
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
   if (loading) {
     return (
       <AdminLayout>
@@ -112,6 +133,10 @@ export default function FeedbackManagement() {
           <p className="mt-2 text-sm text-gray-700">
             Monitor and manage feedback generation for completed assignments
           </p>
+        </div>
+
+        <div className="px-4 sm:px-0">
+          <SchoolScopeSelector className="mt-4 w-full sm:w-56" label="School scope" />
         </div>
 
         <div className="mt-4">

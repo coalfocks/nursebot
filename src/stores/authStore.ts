@@ -1,21 +1,32 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
+import type { Database } from '../lib/database.types';
+
+type Profile = Database['public']['Tables']['profiles']['Row'];
 
 interface AuthState {
   user: User | null;
-  profile: any | null;
+  profile: Profile | null;
+  activeSchoolId: string | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, fullName: string, studyYear: number, phoneNumber: string | null, smsConsent: boolean) => Promise<void>;
+  signUp: (email: string, password: string, fullName: string, studyYear: number, phoneNumber: string | null, smsConsent: boolean, schoolId: string) => Promise<void>;
   signOut: () => Promise<void>;
   loadUser: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
+  setActiveSchoolId: (schoolId: string | null) => void;
 }
+
+const withProfileDefaults = (profile: Profile): Profile => ({
+  ...profile,
+  role: profile.role ?? 'student',
+});
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   profile: null,
+  activeSchoolId: null,
   loading: true,
   signIn: async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -55,16 +66,18 @@ export const useAuthStore = create<AuthState>((set) => ({
           .single();
         
         if (createError) throw createError;
-        set({ user: data.user, profile: newProfile });
+        const normalized = withProfileDefaults(newProfile as Profile);
+        set({ user: data.user, profile: normalized, activeSchoolId: normalized.school_id ?? null });
         return;
       }
       
       if (profileError) throw profileError;
       
-      set({ user: data.user, profile: profileData });
+      const normalizedProfile = withProfileDefaults(profileData as Profile);
+      set({ user: data.user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
     }
   },
-  signUp: async (email, password, fullName, studyYear, phoneNumber, smsConsent) => {
+  signUp: async (email, password, fullName, studyYear, phoneNumber, smsConsent, schoolId) => {
     const { data: { user }, error } = await supabase.auth.signUp({
       email,
       password,
@@ -84,6 +97,8 @@ export const useAuthStore = create<AuthState>((set) => ({
           is_admin: false, // Default to student role
           phone_number: phoneNumber,
           sms_consent: smsConsent,
+          role: 'student',
+          school_id: schoolId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
@@ -92,13 +107,14 @@ export const useAuthStore = create<AuthState>((set) => ({
       .single();
 
     if (profileError) throw profileError;
-    
-    set({ user, profile: profileData });
+
+    const normalizedProfile = withProfileDefaults(profileData as Profile);
+    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
   },
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    set({ user: null, profile: null });
+    set({ user: null, profile: null, activeSchoolId: null });
   },
   resetPassword: async (email: string) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -119,7 +135,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     
     if (!session) {
-      set({ user: null, profile: null, loading: false });
+      set({ user: null, profile: null, activeSchoolId: null, loading: false });
       return;
     }
     
@@ -152,6 +168,7 @@ export const useAuthStore = create<AuthState>((set) => ({
             full_name: defaultName,
             study_year: 1,
             is_admin: false,
+            role: 'student',
             phone_number: null,
             sms_consent: false, // Default to no consent
             created_at: new Date().toISOString(),
@@ -167,16 +184,19 @@ export const useAuthStore = create<AuthState>((set) => ({
         return;
       }
       
-      set({ user, profile: newProfile, loading: false });
+      const normalized = withProfileDefaults(newProfile as Profile);
+      set({ user, profile: normalized, activeSchoolId: normalized.school_id ?? null, loading: false });
       return;
     }
     
     if (profileError) {
       console.error(profileError);
-      set({ user, profile: null, loading: false });
+      set({ user, profile: null, activeSchoolId: null, loading: false });
       return;
     }
     
-    set({ user, profile, loading: false });
+    const normalizedProfile = withProfileDefaults(profile as Profile);
+    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null, loading: false });
   },
+  setActiveSchoolId: (schoolId) => set({ activeSchoolId: schoolId }),
 }));

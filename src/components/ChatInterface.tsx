@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, User2, CheckCircle, Wand2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -6,7 +6,19 @@ import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
 import EmbeddedPdfViewer from './EmbeddedPdfViewer';
 
+const ASSISTANT_RESPONSE_DELAY = {
+  min: 600,
+  max: 1800
+};
+
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+
+const getMessageKey = (message: ChatMessage) => {
+  if (message.id !== null && message.id !== undefined) {
+    return String(message.id);
+  }
+  return `${message.assignment_id}-${message.created_at}`;
+};
 
 interface ChatInterfaceProps {
   roomNumber: string;
@@ -20,14 +32,78 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const [isAssistantTyping, setIsAssistantTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
+  const messageIdsRef = useRef<Set<string>>(new Set());
+  const pendingAssistantMessagesRef = useRef<Set<string>>(new Set());
+  const messageTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  const queueMessageForDisplay = useCallback(
+    (message: ChatMessage, options: { simulateDelay?: boolean } = {}) => {
+      const messageKey = getMessageKey(message);
+
+      if (
+        messageIdsRef.current.has(messageKey) ||
+        messageTimeoutsRef.current.has(messageKey)
+      ) {
+        return;
+      }
+
+      const addMessageToState = () => {
+        messageTimeoutsRef.current.delete(messageKey);
+        messageIdsRef.current.add(messageKey);
+        setMessages(prev => {
+          if (prev.some(existing => getMessageKey(existing) === messageKey)) {
+            return prev;
+          }
+
+          const nextMessages = [...prev, message];
+          nextMessages.sort(
+            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          );
+          return nextMessages;
+        });
+
+        if (
+          pendingAssistantMessagesRef.current.delete(messageKey) &&
+          pendingAssistantMessagesRef.current.size === 0
+        ) {
+          setIsAssistantTyping(false);
+        }
+      };
+
+      const shouldSimulateDelay =
+        message.role === 'assistant' && options.simulateDelay !== false;
+
+      if (shouldSimulateDelay) {
+        pendingAssistantMessagesRef.current.add(messageKey);
+        setIsAssistantTyping(true);
+
+        const delay =
+          Math.floor(
+            Math.random() *
+              (ASSISTANT_RESPONSE_DELAY.max - ASSISTANT_RESPONSE_DELAY.min + 1)
+          ) + ASSISTANT_RESPONSE_DELAY.min;
+
+        const timeoutId = setTimeout(() => {
+          addMessageToState();
+        }, delay);
+
+        messageTimeoutsRef.current.set(messageKey, timeoutId);
+        return;
+      }
+
+      addMessageToState();
+    },
+    []
+  );
 
   // Set up subscription when component mounts
   useEffect(() => {
@@ -46,13 +122,11 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
           (payload) => {
             console.log('New message received via subscription', payload);
             const newMessage = payload.new as ChatMessage;
-            setMessages(prev => {
-              // Check if message already exists to prevent duplicates
-              if (prev.some(msg => msg.id === newMessage.id)) {
-                return prev;
-              }
-              return [...prev, newMessage];
-            });
+            const shouldDelay =
+              newMessage.role === 'assistant' &&
+              newMessage.content !== '<completed>' &&
+              !newMessage.triggered_completion;
+            queueMessageForDisplay(newMessage, { simulateDelay: shouldDelay });
           }
         )
         .subscribe();
@@ -73,11 +147,30 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
         initializedRef.current = false;
       };
     }
-  }, [assignmentId]);
+  }, [assignmentId, queueMessageForDisplay]);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    if (isAssistantTyping) {
+      scrollToBottom();
+    }
+  }, [isAssistantTyping]);
+
+  useEffect(() => {
+    const timeouts = messageTimeoutsRef.current;
+    const pendingMessages = pendingAssistantMessagesRef.current;
+
+    return () => {
+      timeouts.forEach(timeoutId => {
+        clearTimeout(timeoutId);
+      });
+      timeouts.clear();
+      pendingMessages.clear();
+    };
+  }, []);
 
   const initializeChat = async () => {
     // Set initializing flag to prevent concurrent initialization
@@ -113,6 +206,9 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       if (existingMessages && existingMessages.length > 0) {
         console.log('Found messages in database, updating state');
         setMessages(existingMessages);
+        messageIdsRef.current = new Set(
+          existingMessages.map(existing => getMessageKey(existing))
+        );
         initializedRef.current = true;
         return;
       }
@@ -154,14 +250,14 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
         
         // Manually add the message to state to ensure it appears immediately
         if (insertedMessage && insertedMessage.length > 0) {
-          setMessages([insertedMessage[0]]);
+          queueMessageForDisplay(insertedMessage[0]);
         }
         
         // Wait a moment for the subscription to pick up the new message
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         // If the subscription didn't update our state, fetch messages again
-        if (messages.length === 0) {
+        if (messages.length === 0 && messageTimeoutsRef.current.size === 0) {
           await fetchMessages();
         }
       } catch (error) {
@@ -194,6 +290,13 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       if (data && data.length > 0) {
         console.log(`Found ${data.length} messages`);
         setMessages(data);
+        messageIdsRef.current = new Set(data.map(message => getMessageKey(message)));
+        messageTimeoutsRef.current.forEach(timeoutId => {
+          clearTimeout(timeoutId);
+        });
+        messageTimeoutsRef.current.clear();
+        pendingAssistantMessagesRef.current.clear();
+        setIsAssistantTyping(false);
       } else {
         console.log('No messages found');
       }
@@ -227,7 +330,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       
       // Manually add the student message to state
       if (insertedStudentMessage && insertedStudentMessage.length > 0) {
-        setMessages(prev => [...prev, insertedStudentMessage[0]]);
+        queueMessageForDisplay(insertedStudentMessage[0], { simulateDelay: false });
       }
 
       // Get the system prompt for context
@@ -268,7 +371,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       
       // Manually add the assistant message to state
       if (insertedAssistantMessage && insertedAssistantMessage.length > 0) {
-        setMessages(prev => [...prev, insertedAssistantMessage[0]]);
+        queueMessageForDisplay(insertedAssistantMessage[0]);
       }
     } catch (error) {
       console.error('Error in chat:', error);
@@ -299,7 +402,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       
       // Add the completion message to the state
       if (completionMessage && completionMessage.length > 0) {
-        setMessages(prev => [...prev, completionMessage[0]]);
+        queueMessageForDisplay(completionMessage[0], { simulateDelay: false });
       }
       
       // Update the assignment status
@@ -360,7 +463,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message, index) => {
+        {messages.map((message) => {
           // Special handling for completion message
           if (message.content === '<completed>' && message.role === 'assistant') {
             return (
@@ -404,6 +507,14 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
           <div className="flex justify-start">
             <div className="bg-gray-100 p-4 rounded-lg">
               <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+            </div>
+          </div>
+        )}
+        {isAssistantTyping && !isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 px-4 py-3 rounded-lg flex items-center space-x-2">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
+              <span className="text-sm text-gray-600">Nurse is typing...</span>
             </div>
           </div>
         )}
