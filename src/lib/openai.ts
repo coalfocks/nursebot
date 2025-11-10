@@ -50,10 +50,10 @@ Remember:
 Current situation: You need to page the doctor about this patient. Start by explaining the situation briefly and professionally.`;
 };
 
-export const getChatCompletion = async (messages: ChatMessage[]) => {
+export const getChatCompletion = async (assignmentId: string, messages: ChatMessage[]) => {
   try {
     const { data, error } = await supabase.functions.invoke('chat', {
-      body: { messages }
+      body: { assignmentId, messages }
     });
 
     if (error) throw error;

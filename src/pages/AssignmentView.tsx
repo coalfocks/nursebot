@@ -293,8 +293,8 @@ export default function AssignmentView() {
             <div className="lg:col-span-2">
               {/* Chat Section */}
               <ChatInterface 
-                roomNumber={assignment.room.room_number} 
-                pdfUrl={pdfUrl}
+                assignmentId={assignment.id}
+                roomNumber={assignment.room.room_number}
               />
             </div>
           </div>

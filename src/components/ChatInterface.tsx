@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, User2, CheckCircle, Wand2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
-import EmbeddedPdfViewer from './EmbeddedPdfViewer';
 
 const ASSISTANT_RESPONSE_DELAY = {
   min: 600,
@@ -12,6 +11,10 @@ const ASSISTANT_RESPONSE_DELAY = {
 };
 
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+interface ChatFunctionResponse {
+  message: string;
+  chatMessage: ChatMessage;
+}
 
 const getMessageKey = (message: ChatMessage) => {
   if (message.id !== null && message.id !== undefined) {
@@ -21,12 +24,11 @@ const getMessageKey = (message: ChatMessage) => {
 };
 
 interface ChatInterfaceProps {
+  assignmentId: string;
   roomNumber: string;
-  pdfUrl?: string | null;
 }
 
-export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
-  const { assignmentId } = useParams<{ assignmentId: string }>();
+export function ChatInterface({ assignmentId, roomNumber }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -40,6 +42,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
   const messageIdsRef = useRef<Set<string>>(new Set());
   const pendingAssistantMessagesRef = useRef<Set<string>>(new Set());
   const messageTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const messagesRef = useRef<ChatMessage[]>([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -68,6 +71,7 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
           nextMessages.sort(
             (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
           );
+          messagesRef.current = nextMessages;
           return nextMessages;
         });
 
@@ -105,49 +109,40 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
     []
   );
 
-  // Set up subscription when component mounts
-  useEffect(() => {
-    if (assignmentId) {
-      // Set up subscription
-      const subscription = supabase
-        .channel(`chat_messages_${assignmentId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'chat_messages',
-            filter: `assignment_id=eq.${assignmentId}`
-          },
-          (payload) => {
-            console.log('New message received via subscription', payload);
-            const newMessage = payload.new as ChatMessage;
-            const shouldDelay =
-              newMessage.role === 'assistant' &&
-              newMessage.content !== '<completed>' &&
-              !newMessage.triggered_completion;
-            queueMessageForDisplay(newMessage, { simulateDelay: shouldDelay });
-          }
-        )
-        .subscribe();
+  const fetchMessages = useCallback(async () => {
+    if (!assignmentId) return;
+
+    try {
+      console.log('Fetching messages');
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('*')
+        .eq('assignment_id', assignmentId)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
       
-      subscriptionRef.current = subscription;
-      
-      // Initialize chat
-      if (!initializedRef.current && !initializingRef.current) {
-        initializeChat();
+      if (data && data.length > 0) {
+        console.log(`Found ${data.length} messages`);
+        setMessages(data);
+        messagesRef.current = data;
+        messageIdsRef.current = new Set(data.map(message => getMessageKey(message)));
+        messageTimeoutsRef.current.forEach(timeoutId => {
+          clearTimeout(timeoutId);
+        });
+        messageTimeoutsRef.current.clear();
+        pendingAssistantMessagesRef.current.clear();
+        setIsAssistantTyping(false);
+      } else {
+        console.log('No messages found');
+        messagesRef.current = [];
       }
-      
-      // Cleanup function
-      return () => {
-        console.log('Cleaning up subscription');
-        if (subscriptionRef.current) {
-          subscriptionRef.current.unsubscribe();
-        }
-        initializedRef.current = false;
-      };
+    } catch (error) {
+      console.error('Error fetching messages:', error);
     }
-  }, [assignmentId, queueMessageForDisplay]);
+  }, [assignmentId]);
+
+  
 
   useEffect(() => {
     scrollToBottom();
@@ -172,28 +167,22 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
     };
   }, []);
 
-  const initializeChat = async () => {
-    // Set initializing flag to prevent concurrent initialization
-    if (initializingRef.current) return;
+  const initializeChat = useCallback(async () => {
+    if (!assignmentId || initializingRef.current) return;
     initializingRef.current = true;
     
     try {
       console.log('Starting chat initialization');
       
-      // Fetch existing messages
       await fetchMessages();
-      
-      // Wait a moment to ensure any messages have been loaded
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Check if we have messages after fetching
-      if (messages.length > 0) {
+      if (messagesRef.current.length > 0) {
         console.log('Messages already exist, skipping initial prompt');
         initializedRef.current = true;
         return;
       }
       
-      // Double-check directly from the database if there are any messages
       const { data: existingMessages, error: checkError } = await supabase
         .from('chat_messages')
         .select('*')
@@ -202,10 +191,10 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       
       if (checkError) throw checkError;
       
-      // If messages exist in the database but not in our state, update state and return
       if (existingMessages && existingMessages.length > 0) {
         console.log('Found messages in database, updating state');
         setMessages(existingMessages);
+        messagesRef.current = existingMessages;
         messageIdsRef.current = new Set(
           existingMessages.map(existing => getMessageKey(existing))
         );
@@ -215,17 +204,16 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       
       console.log('No messages found, generating initial prompt');
       
-      // Generate the system prompt using the dedicated function
       const systemPrompt = await generateInitialPrompt(roomNumber);
       if (!systemPrompt) {
         throw new Error('Failed to generate initial prompt');
       }
 
-      // Get the initial response from OpenAI
       setIsLoading(true);
       try {
-        const { data: aiResponse, error: aiError } = await supabase.functions.invoke('chat', {
+        const { data: aiResponse, error: aiError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
           body: { 
+            assignmentId,
             messages: [
               { role: 'system', content: systemPrompt }
             ]
@@ -233,31 +221,15 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
         });
 
         if (aiError) throw aiError;
-
-        // Insert the AI's response as the first message
-        const { data: insertedMessage, error: insertError } = await supabase
-          .from('chat_messages')
-          .insert([
-            {
-              assignment_id: assignmentId,
-              role: 'assistant',
-              content: aiResponse.message
-            }
-          ])
-          .select();
-
-        if (insertError) throw insertError;
-        
-        // Manually add the message to state to ensure it appears immediately
-        if (insertedMessage && insertedMessage.length > 0) {
-          queueMessageForDisplay(insertedMessage[0]);
+        if (!aiResponse?.chatMessage) {
+          throw new Error('Assistant response missing chat message');
         }
         
-        // Wait a moment for the subscription to pick up the new message
+        queueMessageForDisplay(aiResponse.chatMessage);
+        
         await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // If the subscription didn't update our state, fetch messages again
-        if (messages.length === 0 && messageTimeoutsRef.current.size === 0) {
+        if (messagesRef.current.length === 0 && messageTimeoutsRef.current.size === 0) {
           await fetchMessages();
         }
       } catch (error) {
@@ -272,38 +244,48 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
     } finally {
       initializingRef.current = false;
     }
-  };
+  }, [assignmentId, fetchMessages, queueMessageForDisplay, roomNumber]);
 
-  const fetchMessages = async () => {
-    if (!assignmentId) return;
-
-    try {
-      console.log('Fetching messages');
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('assignment_id', assignmentId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
+  // Set up subscription when component mounts
+  useEffect(() => {
+    if (assignmentId) {
+      const subscription = supabase
+        .channel(`chat_messages_${assignmentId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'chat_messages',
+            filter: `assignment_id=eq.${assignmentId}`
+          },
+          (payload) => {
+            console.log('New message received via subscription', payload);
+            const newMessage = payload.new as ChatMessage;
+            const shouldDelay =
+              newMessage.role === 'assistant' &&
+              newMessage.content !== '<completed>' &&
+              !newMessage.triggered_completion;
+            queueMessageForDisplay(newMessage, { simulateDelay: shouldDelay });
+          }
+        )
+        .subscribe();
       
-      if (data && data.length > 0) {
-        console.log(`Found ${data.length} messages`);
-        setMessages(data);
-        messageIdsRef.current = new Set(data.map(message => getMessageKey(message)));
-        messageTimeoutsRef.current.forEach(timeoutId => {
-          clearTimeout(timeoutId);
-        });
-        messageTimeoutsRef.current.clear();
-        pendingAssistantMessagesRef.current.clear();
-        setIsAssistantTyping(false);
-      } else {
-        console.log('No messages found');
+      subscriptionRef.current = subscription;
+      
+      if (!initializedRef.current && !initializingRef.current) {
+        initializeChat();
       }
-    } catch (error) {
-      console.error('Error fetching messages:', error);
+      
+      return () => {
+        console.log('Cleaning up subscription');
+        if (subscriptionRef.current) {
+          subscriptionRef.current.unsubscribe();
+        }
+        initializedRef.current = false;
+      };
     }
-  };
+  }, [assignmentId, queueMessageForDisplay, initializeChat]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -340,11 +322,12 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       }
 
       // Get AI response with full context including system prompt
-      const { data: aiResponse, error: aiError } = await supabase.functions.invoke('chat', {
+      const { data: aiResponse, error: aiError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
         body: { 
+          assignmentId,
           messages: [
             { role: 'system', content: systemPrompt },
-            ...messages.map(m => ({
+            ...messagesRef.current.map(m => ({
               role: m.role === 'student' ? 'user' : 'assistant',
               content: m.content
             })),
@@ -354,25 +337,11 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
       });
 
       if (aiError) throw aiError;
-
-      // Insert the AI's response
-      const { data: insertedAssistantMessage, error: assistantError } = await supabase
-        .from('chat_messages')
-        .insert([
-          {
-            assignment_id: assignmentId,
-            role: 'assistant',
-            content: aiResponse.message
-          }
-        ])
-        .select();
-
-      if (assistantError) throw assistantError;
-      
-      // Manually add the assistant message to state
-      if (insertedAssistantMessage && insertedAssistantMessage.length > 0) {
-        queueMessageForDisplay(insertedAssistantMessage[0]);
+      if (!aiResponse?.chatMessage) {
+        throw new Error('Assistant response missing chat message');
       }
+      
+      queueMessageForDisplay(aiResponse.chatMessage);
     } catch (error) {
       console.error('Error in chat:', error);
     } finally {
@@ -386,24 +355,20 @@ export function ChatInterface({ roomNumber, pdfUrl }: ChatInterfaceProps) {
     setIsCompleting(true);
     try {
       // First, add a completion message
-      const { data: completionMessage, error: messageError } = await supabase
-        .from('chat_messages')
-        .insert([
-          {
-            assignment_id: assignmentId,
-            role: 'assistant',
-            content: '<completed>',
-            triggered_completion: true
-          }
-        ])
-        .select();
+      const { data: completionResponse, error: completionError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
+        body: {
+          assignmentId,
+          contentOverride: '<completed>',
+          triggeredCompletion: true
+        }
+      });
       
-      if (messageError) throw messageError;
-      
-      // Add the completion message to the state
-      if (completionMessage && completionMessage.length > 0) {
-        queueMessageForDisplay(completionMessage[0], { simulateDelay: false });
+      if (completionError) throw completionError;
+      if (!completionResponse?.chatMessage) {
+        throw new Error('Assistant completion message missing from response');
       }
+      
+      queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
       
       // Update the assignment status
       const { error: updateError } = await supabase
