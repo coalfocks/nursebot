@@ -85,6 +85,86 @@ export interface Database {
           school_id?: string
         }
       }
+      case_blueprints: {
+        Row: {
+          id: string
+          title: string
+          specialty: string
+          difficulty: 'easy' | 'intermediate' | 'difficult'
+          objectives: string
+          admitting_hpi: string
+          hospital_days: number | null
+          admit_orders: string | null
+          admission_vitals: string | null
+          admission_labs: string | null
+          admission_exam: string | null
+          initial_message: string | null
+          bedside_required: boolean
+          event_vitals: string | null
+          nurse_exam: string | null
+          bedside_exam: string | null
+          typical_questions: string[] | null
+          imaging_and_orders: string | null
+          harmful_actions: string[] | null
+          progress_note: string | null
+          created_by: string | null
+          school_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          specialty: string
+          difficulty: 'easy' | 'intermediate' | 'difficult'
+          objectives: string
+          admitting_hpi: string
+          hospital_days?: number | null
+          admit_orders?: string | null
+          admission_vitals?: string | null
+          admission_labs?: string | null
+          admission_exam?: string | null
+          initial_message?: string | null
+          bedside_required?: boolean
+          event_vitals?: string | null
+          nurse_exam?: string | null
+          bedside_exam?: string | null
+          typical_questions?: string[] | null
+          imaging_and_orders?: string | null
+          harmful_actions?: string[] | null
+          progress_note?: string | null
+          created_by?: string | null
+          school_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          specialty?: string
+          difficulty?: 'easy' | 'intermediate' | 'difficult'
+          objectives?: string
+          admitting_hpi?: string
+          hospital_days?: number | null
+          admit_orders?: string | null
+          admission_vitals?: string | null
+          admission_labs?: string | null
+          admission_exam?: string | null
+          initial_message?: string | null
+          bedside_required?: boolean
+          event_vitals?: string | null
+          nurse_exam?: string | null
+          bedside_exam?: string | null
+          typical_questions?: string[] | null
+          imaging_and_orders?: string | null
+          harmful_actions?: string[] | null
+          progress_note?: string | null
+          created_by?: string | null
+          school_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
       specialties: {
         Row: {
           id: string

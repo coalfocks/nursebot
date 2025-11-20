@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Activity, FileText, TestTube, Pill, Calendar, User } from 'lucide-react';
 import type { Patient } from '../features/emr/lib/types';
 import { mockPatients } from '../features/emr/lib/mockData';
@@ -11,8 +11,14 @@ import { OrdersManagement } from '../features/emr/components/OrdersManagement';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
 import { Badge } from '../features/emr/components/ui/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../features/emr/components/ui/Tabs';
+import Navbar from '../components/Navbar';
+import AdminLayout from '../components/admin/AdminLayout';
+import { useAuthStore } from '../stores/authStore';
+import { hasAdminAccess } from '../lib/roles';
 
 export default function EmrDashboard() {
+  const { profile } = useAuthStore();
+  const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
 
@@ -26,23 +32,8 @@ export default function EmrDashboard() {
     })();
   }, []);
 
-  if (!selectedPatient) {
-    return (
-      <div className="medical-grid">
-        <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
-        <div className="main-content flex items-center justify-center">
-          <div className="text-center">
-            <User className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-foreground mb-2">Select a Patient</h2>
-            <p className="text-muted-foreground">Choose a patient from the sidebar to view their medical record</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="medical-grid">
+  const content = selectedPatient ? (
+    <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
 
       <div className="main-content">
@@ -217,6 +208,28 @@ export default function EmrDashboard() {
           </Tabs>
         </div>
       </div>
+    </div>
+  ) : (
+    <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
+      <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
+      <div className="main-content flex items-center justify-center">
+        <div className="text-center">
+          <User className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-foreground mb-2">Select a Patient</h2>
+          <p className="text-muted-foreground">Choose a patient from the sidebar to view their medical record</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  return showAdminLayout ? (
+    <AdminLayout>
+      <div className="flex-1">{content}</div>
+    </AdminLayout>
+  ) : (
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      {content}
     </div>
   );
 }

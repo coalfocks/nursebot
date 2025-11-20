@@ -19,6 +19,7 @@ import AssignmentView from './pages/AssignmentView';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
+import CaseBuilder from './pages/CaseBuilder';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -154,6 +155,16 @@ function App() {
           element={
             user?.id && hasAdminAccess ? (
               <AssignmentManager />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/admin/case-builder" 
+          element={
+            user?.id && hasAdminAccess ? (
+              <CaseBuilder />
             ) : (
               <Navigate to="/dashboard" replace />
             )
