@@ -18,6 +18,7 @@ import FeedbackProcessor from './components/FeedbackProcessor';
 import AssignmentView from './pages/AssignmentView';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
+import EmrDashboard from './pages/EmrDashboard';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -71,6 +72,18 @@ function App() {
         <Route 
           path="/dashboard" 
           element={user ? <AdminDashboard /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/emr" 
+          element={user ? <EmrDashboard /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/rooms" 
+          element={user ? <EmrDashboard /> : <Navigate to="/login" replace />} 
+        />
+        <Route 
+          path="/ehr" 
+          element={user ? <EmrDashboard /> : <Navigate to="/login" replace />} 
         />
         <Route 
           path="/admin" 

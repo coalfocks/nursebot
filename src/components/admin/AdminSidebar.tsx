@@ -8,6 +8,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  Activity,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -30,6 +31,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
 
   const navItems = [
     { label: 'Overview', to: '/dashboard', icon: LayoutDashboard },
+    { label: 'EHR', to: '/ehr', icon: Activity },
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Students', to: '/cases', icon: GraduationCap },
     { label: 'Rooms', to: '/admin/rooms', icon: School },

@@ -1,0 +1,87 @@
+// Core EMR Types
+export interface Patient {
+  id: string;
+  schoolId?: string | null;
+  roomId?: number | null;
+  mrn: string; // Medical Record Number
+  firstName: string;
+  lastName: string;
+  dateOfBirth: string;
+  gender: 'Male' | 'Female' | 'Other';
+  room?: string;
+  service?: string;
+  admissionDate?: string;
+  attendingPhysician?: string;
+  allergies: string[];
+  codeStatus?: 'Full Code' | 'DNR' | 'DNI' | 'DNR/DNI';
+  deletedAt?: string | null;
+}
+
+export interface ClinicalNote {
+  id: string;
+  patientId: string;
+  type: 'H&P' | 'Progress' | 'Discharge' | 'Consult' | 'Nursing' | 'Daily';
+  title: string;
+  content: string;
+  author: string;
+  timestamp: string;
+  signed: boolean;
+}
+
+export interface LabResult {
+  id: string;
+  patientId: string;
+  testName: string;
+  value: string | number;
+  unit: string;
+  referenceRange: string;
+  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending';
+  collectionTime: string;
+  resultTime?: string;
+  orderedBy: string;
+  deletedAt?: string | null;
+}
+
+export interface VitalSigns {
+  id: string;
+  patientId: string;
+  timestamp: string;
+  temperature?: number;
+  bloodPressureSystolic?: number;
+  bloodPressureDiastolic?: number;
+  heartRate?: number;
+  respiratoryRate?: number;
+  oxygenSaturation?: number;
+  pain?: number;
+  weight?: number;
+  height?: number;
+  deletedAt?: string | null;
+}
+
+export interface MedicalOrder {
+  id: string;
+  patientId: string;
+  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity';
+  orderName: string;
+  frequency?: string;
+  route?: string;
+  dose?: string;
+  priority: 'Routine' | 'STAT' | 'Timed';
+  status: 'Active' | 'Completed' | 'Discontinued' | 'Pending';
+  orderedBy: string;
+  orderTime: string;
+  scheduledTime?: string;
+  instructions?: string;
+  deletedAt?: string | null;
+}
+
+export interface ImagingResult {
+  id: string;
+  patientId: string;
+  studyType: string;
+  studyDate: string;
+  status: 'Scheduled' | 'In Progress' | 'Completed' | 'Cancelled';
+  findings?: string;
+  impression?: string;
+  radiologist?: string;
+}

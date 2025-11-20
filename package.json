@@ -12,12 +12,21 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
     "@types/react-pdf": "^7.0.0",
+    "@radix-ui/react-label": "^2.0.2",
+    "@radix-ui/react-scroll-area": "^1.0.5",
+    "@radix-ui/react-select": "^2.1.2",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
     "lucide-react": "^0.344.0",
     "openai": "^4.86.2",
+    "recharts": "^2.12.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-pdf": "^9.2.1",
     "react-router-dom": "^6.22.2",
+    "tailwind-merge": "^2.5.3",
     "zustand": "^4.5.2"
   },
   "devDependencies": {

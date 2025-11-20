@@ -328,6 +328,271 @@ export interface Database {
         }
       }
     }
+      patients: {
+        Row: {
+          id: string
+          school_id: string | null
+          room_id: number | null
+          mrn: string
+          first_name: string
+          last_name: string
+          date_of_birth: string
+          gender: string
+          service: string | null
+          admission_date: string | null
+          attending_physician: string | null
+          allergies: string[] | null
+          code_status: string | null
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          school_id?: string | null
+          room_id?: number | null
+          mrn: string
+          first_name: string
+          last_name: string
+          date_of_birth: string
+          gender: string
+          service?: string | null
+          admission_date?: string | null
+          attending_physician?: string | null
+          allergies?: string[] | null
+          code_status?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          school_id?: string | null
+          room_id?: number | null
+          mrn?: string
+          first_name?: string
+          last_name?: string
+          date_of_birth?: string
+          gender?: string
+          service?: string | null
+          admission_date?: string | null
+          attending_physician?: string | null
+          allergies?: string[] | null
+          code_status?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
+      clinical_notes: {
+        Row: {
+          id: string
+          patient_id: string | null
+          school_id: string | null
+          note_type: string
+          title: string
+          content: string
+          author: string | null
+          timestamp: string
+          signed: boolean
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          note_type: string
+          title: string
+          content: string
+          author?: string | null
+          timestamp?: string
+          signed?: boolean
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          note_type?: string
+          title?: string
+          content?: string
+          author?: string | null
+          timestamp?: string
+          signed?: boolean
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
+      lab_results: {
+        Row: {
+          id: string
+          patient_id: string | null
+          school_id: string | null
+          test_name: string
+          value: number | null
+          unit: string | null
+          reference_range: string | null
+          status: string | null
+          collection_time: string | null
+          result_time: string | null
+          ordered_by: string | null
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          test_name: string
+          value?: number | null
+          unit?: string | null
+          reference_range?: string | null
+          status?: string | null
+          collection_time?: string | null
+          result_time?: string | null
+          ordered_by?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          test_name?: string
+          value?: number | null
+          unit?: string | null
+          reference_range?: string | null
+          status?: string | null
+          collection_time?: string | null
+          result_time?: string | null
+          ordered_by?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
+      vital_signs: {
+        Row: {
+          id: string
+          patient_id: string | null
+          school_id: string | null
+          timestamp: string
+          temperature: number | null
+          blood_pressure_systolic: number | null
+          blood_pressure_diastolic: number | null
+          heart_rate: number | null
+          respiratory_rate: number | null
+          oxygen_saturation: number | null
+          pain: number | null
+          weight: number | null
+          height: number | null
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          timestamp: string
+          temperature?: number | null
+          blood_pressure_systolic?: number | null
+          blood_pressure_diastolic?: number | null
+          heart_rate?: number | null
+          respiratory_rate?: number | null
+          oxygen_saturation?: number | null
+          pain?: number | null
+          weight?: number | null
+          height?: number | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          timestamp?: string
+          temperature?: number | null
+          blood_pressure_systolic?: number | null
+          blood_pressure_diastolic?: number | null
+          heart_rate?: number | null
+          respiratory_rate?: number | null
+          oxygen_saturation?: number | null
+          pain?: number | null
+          weight?: number | null
+          height?: number | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
+      medical_orders: {
+        Row: {
+          id: string
+          patient_id: string | null
+          school_id: string | null
+          category: string
+          order_name: string
+          frequency: string | null
+          route: string | null
+          dose: string | null
+          priority: string | null
+          status: string | null
+          ordered_by: string | null
+          order_time: string
+          scheduled_time: string | null
+          instructions: string | null
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          category: string
+          order_name: string
+          frequency?: string | null
+          route?: string | null
+          dose?: string | null
+          priority?: string | null
+          status?: string | null
+          ordered_by?: string | null
+          order_time?: string
+          scheduled_time?: string | null
+          instructions?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string | null
+          school_id?: string | null
+          category?: string
+          order_name?: string
+          frequency?: string | null
+          route?: string | null
+          dose?: string | null
+          priority?: string | null
+          status?: string | null
+          ordered_by?: string | null
+          order_time?: string
+          scheduled_time?: string | null
+          instructions?: string | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
     Enums: {
       message_role: 'student' | 'assistant'
       feedback_status: 'pending' | 'processing' | 'completed' | 'failed'

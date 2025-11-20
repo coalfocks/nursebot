@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog } from 'lucide-react';
+import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog, Activity } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess } from '../lib/roles';
 
@@ -40,7 +40,18 @@ export default function Navbar() {
                     : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                 } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
               >
-                EMR
+                Dashboard
+              </Link>
+              <Link
+                to="/emr"
+                className={`${
+                  location.pathname === '/emr' 
+                    ? 'border-blue-500 text-gray-900' 
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+              >
+                <Activity className="h-4 w-4 mr-1" />
+                EHR
               </Link>
               <Link
                 to="/cases"
@@ -69,7 +80,7 @@ export default function Navbar() {
                   <Link
                     to="/admin/assignments"
                     className={`${
-                      location.pathname === '/assignment-manager' 
+                      location.pathname === '/admin/assignments' 
                         ? 'border-blue-500 text-gray-900' 
                         : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
                     } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
@@ -133,6 +144,17 @@ export default function Navbar() {
               Dashboard
             </Link>
             <Link
+              to="/emr"
+              className={`${
+                location.pathname === '/emr'
+                  ? 'bg-blue-50 border-blue-500 text-blue-700'
+                  : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
+              } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
+            >
+              <Activity className="h-4 w-4 mr-2" />
+              EHR
+            </Link>
+            <Link
               to="/cases"
               className={`${
                 location.pathname === '/cases'
@@ -168,9 +190,9 @@ export default function Navbar() {
                   Room Management
                 </Link>
                 <Link
-                  to="/assignment-manager"
+                  to="/admin/assignments"
                   className={`${
-                    location.pathname === '/assignment-manager'
+                    location.pathname === '/admin/assignments'
                       ? 'bg-blue-50 border-blue-500 text-blue-700'
                       : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
                   } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
