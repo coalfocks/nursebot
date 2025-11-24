@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, User2, CheckCircle, Wand2 } from 'lucide-react';
+import { Send, Loader2, User2, CheckCircle, Wand2, ExternalLink } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
+import { emrApi } from '../features/emr/lib/api';
 
 const ASSISTANT_RESPONSE_DELAY = {
   min: 600,
@@ -26,15 +27,18 @@ const getMessageKey = (message: ChatMessage) => {
 interface ChatInterfaceProps {
   assignmentId: string;
   roomNumber: string;
+  roomId?: number;
 }
 
-export function ChatInterface({ assignmentId, roomNumber }: ChatInterfaceProps) {
+export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
+  const [patientLink, setPatientLink] = useState<{ patientId: string; roomId?: number } | null>(null);
+  const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
@@ -166,6 +170,27 @@ export function ChatInterface({ assignmentId, roomNumber }: ChatInterfaceProps) 
       pendingMessages.clear();
     };
   }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    if (!roomId) {
+      setPatientLink(null);
+      return;
+    }
+
+    setIsLoadingPatient(true);
+    void (async () => {
+      const patient = await emrApi.getPatientByRoomId(roomId);
+      if (!isActive) return;
+      setPatientLink(patient ? { patientId: patient.id, roomId } : null);
+      setIsLoadingPatient(false);
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [roomId]);
 
   const initializeChat = useCallback(async () => {
     if (!assignmentId || initializingRef.current) return;
@@ -401,6 +426,21 @@ export function ChatInterface({ assignmentId, roomNumber }: ChatInterfaceProps) 
     }
   };
 
+  const handleGoToEmr = () => {
+    if (!patientLink && !roomId) return;
+    const params = new URLSearchParams();
+    if (patientLink?.patientId) {
+      params.set('patientId', patientLink.patientId);
+    }
+    if (roomId) {
+      params.set('roomId', String(roomId));
+    }
+    if (assignmentId) {
+      params.set('assignmentId', assignmentId);
+    }
+    navigate(`/emr${params.toString() ? `?${params.toString()}` : ''}`);
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString([], { 
       hour: '2-digit', 
@@ -411,20 +451,42 @@ export function ChatInterface({ assignmentId, roomNumber }: ChatInterfaceProps) 
   return (
     <div className="flex flex-col h-[calc(100vh-16rem)] bg-white shadow rounded-lg">
       <div className="p-4 bg-blue-600 text-white rounded-t-lg flex justify-between items-center">
-        <h2 className="text-lg font-semibold">Room {roomNumber} - Patient Assessment</h2>
-        <button
-          onClick={completeAssignment}
-          disabled={isCompleting}
-          className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
-          title="Complete assignment and generate feedback"
-        >
-          {isCompleting ? (
-            <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-          ) : (
-            <Wand2 className="w-4 h-4 mr-1" />
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold">Room {roomNumber} - Patient Assessment</h2>
+          {roomId && (
+            <span className="px-2 py-1 rounded bg-white/15 text-xs">
+              {patientLink ? 'EMR linked' : isLoadingPatient ? 'Loading EMR...' : 'No EMR patient yet'}
+            </span>
           )}
-          Complete
-        </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleGoToEmr}
+            disabled={isLoadingPatient || (!patientLink && !roomId)}
+            className="flex items-center px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-sm font-medium transition-colors disabled:opacity-50"
+            title={patientLink ? 'Open EMR for this room' : 'Open EMR to review patients'}
+          >
+            {isLoadingPatient ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <ExternalLink className="w-4 h-4 mr-1" />
+            )}
+            Open EMR
+          </button>
+          <button
+            onClick={completeAssignment}
+            disabled={isCompleting}
+            className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
+            title="Complete assignment and generate feedback"
+          >
+            {isCompleting ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <Wand2 className="w-4 h-4 mr-1" />
+            )}
+            Complete
+          </button>
+        </div>
       </div>
       
       <div className="flex-1 overflow-y-auto p-4 space-y-4">

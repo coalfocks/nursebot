@@ -295,6 +295,7 @@ export default function AssignmentView() {
               <ChatInterface 
                 assignmentId={assignment.id}
                 roomNumber={assignment.room.room_number}
+                roomId={assignment.room.id}
               />
             </div>
           </div>

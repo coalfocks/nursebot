@@ -207,6 +207,7 @@ export interface Database {
           updated_at: string
           pdf_url: string | null
           school_id: string
+          orders_config: Json | null
         }
         Insert: {
           id?: number
@@ -226,6 +227,7 @@ export interface Database {
           updated_at?: string
           pdf_url?: string | null
           school_id?: string
+          orders_config?: Json | null
         }
         Update: {
           id?: number
@@ -245,6 +247,7 @@ export interface Database {
           updated_at?: string
           pdf_url?: string | null
           school_id?: string
+          orders_config?: Json | null
         }
       }
       student_room_assignments: {
@@ -512,6 +515,7 @@ export interface Database {
         Row: {
           id: string
           patient_id: string | null
+          assignment_id: string | null
           school_id: string | null
           test_name: string
           value: number | null
@@ -528,6 +532,7 @@ export interface Database {
         Insert: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
           school_id?: string | null
           test_name: string
           value?: number | null
@@ -544,6 +549,7 @@ export interface Database {
         Update: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
           school_id?: string | null
           test_name?: string
           value?: number | null
@@ -618,6 +624,7 @@ export interface Database {
         Row: {
           id: string
           patient_id: string | null
+          assignment_id: string | null
           school_id: string | null
           category: string
           order_name: string
@@ -637,6 +644,7 @@ export interface Database {
         Insert: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
           school_id?: string | null
           category: string
           order_name: string
@@ -656,6 +664,7 @@ export interface Database {
         Update: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
           school_id?: string | null
           category?: string
           order_name?: string

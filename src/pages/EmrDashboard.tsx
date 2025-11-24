@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, FileText, TestTube, Pill, Calendar, User } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import type { Patient } from '../features/emr/lib/types';
 import { mockPatients } from '../features/emr/lib/mockData';
 import { emrApi } from '../features/emr/lib/api';
@@ -15,12 +16,17 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess } from '../lib/roles';
+import type { RoomOrdersConfig } from '../features/emr/lib/types';
 
 export default function EmrDashboard() {
   const { profile } = useAuthStore();
+  const [searchParams] = useSearchParams();
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
+  const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig | null>(null);
+  const [isLoadingOrdersConfig, setIsLoadingOrdersConfig] = useState(false);
+  const assignmentId = searchParams.get('assignmentId') || undefined;
 
   useEffect(() => {
     void (async () => {
@@ -31,6 +37,58 @@ export default function EmrDashboard() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (!patients.length) return;
+
+    const patientIdParam = searchParams.get('patientId');
+    const roomIdParam = searchParams.get('roomId');
+    const matchingPatient =
+      patients.find((p) => (patientIdParam && p.id === patientIdParam) || (roomIdParam && p.roomId && String(p.roomId) === roomIdParam)) ||
+      null;
+
+    if (matchingPatient) {
+      setSelectedPatient(matchingPatient);
+      return;
+    }
+
+    if (roomIdParam) {
+      void (async () => {
+        const patient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
+        if (patient) {
+          setPatients((prev) => {
+            if (prev.some((p) => p.id === patient.id)) return prev;
+            return [...prev, patient];
+          });
+          setSelectedPatient(patient);
+        }
+      })();
+    } else if (patientIdParam) {
+      void (async () => {
+        const patient = await emrApi.getPatient(patientIdParam);
+        if (patient) {
+          setPatients((prev) => {
+            if (prev.some((p) => p.id === patient.id)) return prev;
+            return [...prev, patient];
+          });
+          setSelectedPatient(patient);
+        }
+      })();
+    }
+  }, [patients, searchParams]);
+
+  useEffect(() => {
+    if (!selectedPatient?.roomId) {
+      setOrdersConfig(null);
+      return;
+    }
+    setIsLoadingOrdersConfig(true);
+    void (async () => {
+      const config = await emrApi.getRoomOrdersConfig(selectedPatient.roomId as number);
+      setOrdersConfig(config);
+      setIsLoadingOrdersConfig(false);
+    })();
+  }, [selectedPatient?.roomId]);
 
   const content = selectedPatient ? (
     <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
@@ -184,7 +242,12 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="labs">
-              <LabResults patient={selectedPatient} />
+              <LabResults
+                patient={selectedPatient}
+                ordersConfig={ordersConfig}
+                isConfigLoading={isLoadingOrdersConfig}
+                assignmentId={assignmentId}
+              />
             </TabsContent>
 
             <TabsContent value="vitals">
@@ -192,7 +255,7 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="orders">
-              <OrdersManagement patient={selectedPatient} />
+              <OrdersManagement patient={selectedPatient} ordersConfig={ordersConfig} assignmentId={assignmentId} />
             </TabsContent>
 
             <TabsContent value="imaging">

@@ -1,0 +1,374 @@
+,Category,Order
+0,Admission/Location/Care Team,Admit to Medicine (General Ward)
+1,Admission/Location/Care Team,Admit to Medicine (Telemetry Unit)
+2,Admission/Location/Care Team,Admit to Medicine (ICU)
+3,Admission/Location/Care Team,Admit to Surgery (General Surgery Ward)
+4,Admission/Location/Care Team,Admit to Surgical ICU (SICU)
+5,Admission/Location/Care Team,Admit to Cardiology (Ward)
+6,Admission/Location/Care Team,Admit to Cardiac ICU (CICU)
+7,Admission/Location/Care Team,Admit to Neurology (Ward)
+8,Admission/Location/Care Team,Admit to Neuro ICU (NICU/NSICU)
+9,Admission/Location/Care Team,Admit to Oncology (Ward)
+10,Admission/Location/Care Team,Admit to Pediatrics (Ward)
+11,Admission/Location/Care Team,Admit to PICU (Pediatric ICU)
+12,Admission/Location/Care Team,Admit to OBGYN (Antepartum)
+13,Admission/Location/Care Team,Admit to Labor & Delivery (L&D)
+14,Admission/Location/Care Team,Observation Status (Place in Observation)
+15,Admission/Location/Care Team,Convert Observation to Inpatient
+16,Admission/Location/Care Team,Transfer to Higher Level of Care
+17,Admission/Location/Care Team,Transfer to Lower Level of Care
+18,Admission/Location/Care Team,Bed Request (Any Unit)
+19,Admission/Location/Care Team,Telemetry Bed Request
+20,Admission/Location/Care Team,Negative Pressure Room Request
+21,Admission/Location/Care Team,Private Room Request
+22,Admission/Location/Care Team,Assign Primary Attending
+23,Admission/Location/Care Team,Assign Admitting Resident/Team
+24,Admission/Location/Care Team,Assign Primary Nurse
+25,Admission/Location/Care Team,Assign Case Manager/Social Worker
+26,Admission/Location/Care Team,Assign Hospitalist Service
+27,Admission/Location/Care Team,Assign Advanced Practice Provider (APP)
+28,Code Status/Precautions/Isolation,Code Status: Full Code
+29,Code Status/Precautions/Isolation,Code Status: DNR
+30,Code Status/Precautions/Isolation,Code Status: DNI
+31,Code Status/Precautions/Isolation,Code Status: DNR/DNI
+32,Code Status/Precautions/Isolation,Goals of Care Discussion — Completed
+33,Code Status/Precautions/Isolation,Fall Precautions — Standard
+34,Code Status/Precautions/Isolation,Fall Precautions — High Risk
+35,Code Status/Precautions/Isolation,Aspiration Precautions
+36,Code Status/Precautions/Isolation,Seizure Precautions
+37,Code Status/Precautions/Isolation,Bleeding Precautions
+38,Code Status/Precautions/Isolation,Neutropenic Precautions
+39,Code Status/Precautions/Isolation,Pressure Injury Prevention Bundle
+40,Code Status/Precautions/Isolation,Suicide Precautions — 1:1 Sitter
+41,Code Status/Precautions/Isolation,Elopement Precautions
+42,Code Status/Precautions/Isolation,Delirium Precautions (Non‑pharmacologic)
+43,Code Status/Precautions/Isolation,VTE Prophylaxis: Pharmacologic per Protocol
+44,Code Status/Precautions/Isolation,VTE Prophylaxis: Mechanical (SCDs)
+45,Code Status/Precautions/Isolation,Infection Isolation: Contact
+46,Code Status/Precautions/Isolation,Infection Isolation: Contact Plus (C. difficile)
+47,Code Status/Precautions/Isolation,Infection Isolation: Droplet
+48,Code Status/Precautions/Isolation,Infection Isolation: Airborne
+49,Code Status/Precautions/Isolation,Protective/Reverse Isolation
+50,Code Status/Precautions/Isolation,NPO (Nothing by Mouth) Now
+51,Code Status/Precautions/Isolation,NPO after Midnight
+52,Code Status/Precautions/Isolation,NPO Except Meds with Sips of Water
+53,Code Status/Precautions/Isolation,Aspiration Screening: Nursing Bedside
+54,Code Status/Precautions/Isolation,Dysphagia Screen — Nursing
+55,Code Status/Precautions/Isolation,Alcohol Withdrawal Precautions (CIWA monitoring)
+56,Code Status/Precautions/Isolation,Opioid Over‑Sedation Risk Precautions
+57,Code Status/Precautions/Isolation,QTc Prolongation Precautions
+58,Code Status/Precautions/Isolation,MRI Safety Screening Completed
+59,Code Status/Precautions/Isolation,Contrast Allergy Precautions (Premedication)
+60,Code Status/Precautions/Isolation,Latex Allergy Precautions
+61,Code Status/Precautions/Isolation,Anaphylaxis Kit at Bedside
+62,Code Status/Precautions/Isolation,CLABSI Prevention Bathing (CHG)
+63,Code Status/Precautions/Isolation,CAUTI Prevention Bundle
+64,Code Status/Precautions/Isolation,Restraints: Non‑violent — Apply per Policy
+65,Code Status/Precautions/Isolation,Restraints: Violent/Self‑harm — Apply per Policy
+66,Code Status/Precautions/Isolation,Sitter Request — Behavioral
+67,Code Status/Precautions/Isolation,Sitter Request — Safety/Fall Risk
+68,Code Status/Precautions/Isolation,Bed Alarm On
+69,Code Status/Precautions/Isolation,Chair Alarm On
+70,Code Status/Precautions/Isolation,HOB Elevation ≥30° (Aspiration Risk)
+71,Code Status/Precautions/Isolation,Sepsis Protocol — Lactic Acid Bundle Initiated
+72,Code Status/Precautions/Isolation,Rapid Response Team — Call if Criteria Met
+73,Code Status/Precautions/Isolation,Notify Provider for MEWS ≥ X
+74,Code Status/Precautions/Isolation,Delirium CAM Screening Daily
+75,Code Status/Precautions/Isolation,Resuscitation Equipment Check (Daily)
+76,Code Status/Precautions/Isolation,Infection Prevention Consult
+77,Nursing Monitoring/Vitals/Telemetry,Vital Signs q4h
+78,Nursing Monitoring/Vitals/Telemetry,Vital Signs q1h
+79,Nursing Monitoring/Vitals/Telemetry,Continuous Cardiac Telemetry
+80,Nursing Monitoring/Vitals/Telemetry,Continuous Pulse Oximetry
+81,Nursing Monitoring/Vitals/Telemetry,Capnography Monitoring (EtCO₂)
+82,Nursing Monitoring/Vitals/Telemetry,Neuro Checks q4h
+83,Nursing Monitoring/Vitals/Telemetry,CIWA Scoring q4h
+84,Nursing Monitoring/Vitals/Telemetry,Pain Assessment q4h
+85,Nursing Monitoring/Vitals/Telemetry,Glucose POC AC & HS
+86,Nursing Monitoring/Vitals/Telemetry,Strict Intake & Output
+87,Nursing Monitoring/Vitals/Telemetry,Daily Weights
+88,Nursing Monitoring/Vitals/Telemetry,Orthostatic Vital Signs
+89,Nursing Monitoring/Vitals/Telemetry,Bladder Scan PRN Retention
+90,Nursing Monitoring/Vitals/Telemetry,Post‑Void Residual Measurements qShift
+91,Nursing Monitoring/Vitals/Telemetry,Urine Output Alert <0.5 mL/kg/hr
+92,Nursing Monitoring/Vitals/Telemetry,Foley Care per Protocol Daily
+93,Nursing Monitoring/Vitals/Telemetry,NG Tube Residual Checks q4‑6h
+94,Nursing Monitoring/Vitals/Telemetry,Drain Output Record qShift
+95,Nursing Monitoring/Vitals/Telemetry,Stool Charting (Bristol Scale)
+96,Nursing Monitoring/Vitals/Telemetry,Central Line Daily Necessity Review
+97,Nursing Monitoring/Vitals/Telemetry,Fall Risk Re‑assessment qShift
+98,Nursing Monitoring/Vitals/Telemetry,Bedside Handoff with SBAR
+99,Nursing Monitoring/Vitals/Telemetry,Daily Chlorhexidine Bath
+100,Nursing Monitoring/Vitals/Telemetry,Pressure Offloading Heels
+101,Nursing Monitoring/Vitals/Telemetry,Oxygen Titration to SpO₂ Target
+102,Nursing Monitoring/Vitals/Telemetry,Telemetry: Notify Provider for New Arrhythmia
+103,Nursing Monitoring/Vitals/Telemetry,Telemetry: Electrolyte Replacement Protocol
+104,Nursing Monitoring/Vitals/Telemetry,Post‑op Check q4h First 24h
+105,Nursing Monitoring/Vitals/Telemetry,Peripheral IV Site Assessment q4h
+106,Nursing Monitoring/Vitals/Telemetry,Daily Skin Assessment — RN
+107,Nursing Monitoring/Vitals/Telemetry,Early Mobility Program — Enroll
+108,Nursing Monitoring/Vitals/Telemetry,Daily Indwelling Device Review
+109,Nursing Monitoring/Vitals/Telemetry,Nursing: Remove Telemetry (Criteria Met)
+110,Nursing Monitoring/Vitals/Telemetry,Nursing: Notify Provider of Critical Result
+111,Nursing Monitoring/Vitals/Telemetry,Incentive Spirometry Coaching q2h While Awake
+112,Nursing Monitoring/Vitals/Telemetry,Education: Anticoagulation Safety
+113,Nursing Monitoring/Vitals/Telemetry,Education: Heart Failure Toolkit
+114,Nursing Monitoring/Vitals/Telemetry,Education: Diabetes Survival Skills
+115,Nursing Monitoring/Vitals/Telemetry,Interpreter Services Requested
+116,Nursing Monitoring/Vitals/Telemetry,Chaplaincy Requested
+117,Diets/NPO/Nutrition,Regular Diet
+118,Diets/NPO/Nutrition,Heart‑Healthy (Cardiac) Diet
+119,Diets/NPO/Nutrition,Renal Diet — Non‑dialysis
+120,Diets/NPO/Nutrition,Diabetic Diet — Consistent Carbohydrate
+121,Diets/NPO/Nutrition,Low Sodium 2 g Diet
+122,Diets/NPO/Nutrition,Fluid Restriction 1.5 L/day
+123,Diets/NPO/Nutrition,Low Fat Diet
+124,Diets/NPO/Nutrition,Low Residue Diet
+125,Diets/NPO/Nutrition,Dysphagia Level 1 (Pureed)
+126,Diets/NPO/Nutrition,Dysphagia Level 2 (Mechanically Altered)
+127,Diets/NPO/Nutrition,Dysphagia Level 3 (Advanced/Soft)
+128,Diets/NPO/Nutrition,Thickened Liquids — Nectar
+129,Diets/NPO/Nutrition,Thickened Liquids — Honey
+130,Diets/NPO/Nutrition,NPO — Absolutely Nothing by Mouth
+131,Diets/NPO/Nutrition,NPO Except Medications
+132,Diets/NPO/Nutrition,NPO After Midnight (Procedure)
+133,Diets/NPO/Nutrition,Clear Liquid Diet
+134,Diets/NPO/Nutrition,Full Liquid Diet
+135,Diets/NPO/Nutrition,Post‑op Advanced as Tolerated
+136,Diets/NPO/Nutrition,Tube Feed: Start (Specify Formula)
+137,Diets/NPO/Nutrition,Tube Feed: Advance per Protocol
+138,Diets/NPO/Nutrition,Tube Feed: Continuous
+139,Diets/NPO/Nutrition,Tube Feed Water Flush q4h
+140,Diets/NPO/Nutrition,Parenteral Nutrition: Start PN
+141,Diets/NPO/Nutrition,Calorie Count — 72 Hours
+142,Diets/NPO/Nutrition,Nutrition Consult — Dietitian
+143,Diets/NPO/Nutrition,Swallow Evaluation — SLP
+144,Diets/NPO/Nutrition,Post‑extubation Swallow Screen
+145,Diets/NPO/Nutrition,Supplement: Oral Nutrition Shake BID
+146,Diets/NPO/Nutrition,GI Bleed: NPO + PPI Bundle
+147,Diets/NPO/Nutrition,Pancreatitis: NPO → Clears → Low Fat
+148,Diets/NPO/Nutrition,Refeed Risk Protocol (Electrolyte Repletion)
+149,Activity/Rehab/Therapies,Activity as Tolerated
+150,Activity/Rehab/Therapies,Bedrest
+151,Activity/Rehab/Therapies,Up with Assistance
+152,Activity/Rehab/Therapies,Out of Bed to Chair TID
+153,Activity/Rehab/Therapies,Ambulate with Assist TID
+154,Activity/Rehab/Therapies,Ambulate Independent TID
+155,Activity/Rehab/Therapies,PT Evaluation & Treat — Inpatient
+156,Activity/Rehab/Therapies,PT Daily Treatment
+157,Activity/Rehab/Therapies,PT Gait Training with Walker
+158,Activity/Rehab/Therapies,PT Stair Training
+159,Activity/Rehab/Therapies,OT Evaluation & Treat — Inpatient
+160,Activity/Rehab/Therapies,OT ADL Training
+161,Activity/Rehab/Therapies,OT Energy Conservation Education
+162,Activity/Rehab/Therapies,SLP Evaluation — Dysphagia
+163,Activity/Rehab/Therapies,SLP Therapy — Swallow
+164,Activity/Rehab/Therapies,Early Mobility — Progressive Mobility
+165,Activity/Rehab/Therapies,Cardiac Rehab Consult (Phase I)
+166,Activity/Rehab/Therapies,Pulmonary Rehab Consult
+167,Activity/Rehab/Therapies,PM&R Consult (Inpatient Rehab Candidacy)
+168,Activity/Rehab/Therapies,Social Work Consult — Discharge Planning
+169,Activity/Rehab/Therapies,Mobility Aids: Walker
+170,Activity/Rehab/Therapies,Wheelchair — Inpatient Use
+171,Activity/Rehab/Therapies,Pressure Relief Cushion Order
+172,Activity/Rehab/Therapies,Sit‑to‑Stand Lift Use
+173,Activity/Rehab/Therapies,Hoyer Lift Use
+174,Activity/Rehab/Therapies,Incentive Spirometer Hourly Use
+175,Activity/Rehab/Therapies,Cough Assist Device Use
+176,Activity/Rehab/Therapies,Cervical Collar Maintain
+177,Activity/Rehab/Therapies,TLSO Application per PT
+178,Activity/Rehab/Therapies,Home Exercise Program — Issued
+179,Activity/Rehab/Therapies,Family/Carer Training Completed
+180,Respiratory Therapy/Airway,Oxygen via Nasal Cannula — Titrate to SpO₂ Target
+181,Respiratory Therapy/Airway,Oxygen via Simple Mask
+182,Respiratory Therapy/Airway,Oxygen via Non‑rebreather Mask
+183,Respiratory Therapy/Airway,High‑Flow Nasal Cannula (HFNC) — Start
+184,Respiratory Therapy/Airway,HFNC — Wean per Protocol
+185,Respiratory Therapy/Airway,CPAP — Start (Specify Settings)
+186,Respiratory Therapy/Airway,BiPAP — Start (Specify Settings)
+187,Respiratory Therapy/Airway,Non‑invasive Ventilation — Titrate per Protocol
+188,Respiratory Therapy/Airway,Mechanical Ventilation — Initial Settings
+189,Respiratory Therapy/Airway,Spontaneous Breathing Trial Daily
+190,Respiratory Therapy/Airway,Ventilator Weaning Protocol
+191,Respiratory Therapy/Airway,Airway Clearance Therapy (CPT) q6h
+192,Respiratory Therapy/Airway,Nebulizer: Albuterol PRN Wheeze
+193,Respiratory Therapy/Airway,Nebulizer: Ipratropium/Albuterol q6h
+194,Respiratory Therapy/Airway,Nebulizer: Hypertonic Saline
+195,Respiratory Therapy/Airway,MDI Coaching & Spacer Education
+196,Respiratory Therapy/Airway,Peak Flow Monitoring Daily
+197,Respiratory Therapy/Airway,Incentive Spirometry q2h While Awake
+198,Respiratory Therapy/Airway,Tracheostomy Care Daily
+199,Respiratory Therapy/Airway,Tracheostomy Suction PRN
+200,Respiratory Therapy/Airway,Trach Cuff Pressure Check qShift
+201,Respiratory Therapy/Airway,Humidified Oxygen via Trach Collar
+202,Respiratory Therapy/Airway,ABG on Room Air
+203,Respiratory Therapy/Airway,ABG on Current Oxygen
+204,Respiratory Therapy/Airway,Sputum Induction
+205,Respiratory Therapy/Airway,Ventilator Associated Pneumonia Bundle
+206,Respiratory Therapy/Airway,Post‑extubation Nebs per Protocol
+207,Respiratory Therapy/Airway,Chest Tube to Water Seal Order
+208,Respiratory Therapy/Airway,Chest Tube to Suction Order
+209,Respiratory Therapy/Airway,CPAP for OSA Inpatient Nights
+210,Respiratory Therapy/Airway,Overnight Oximetry Study
+211,Respiratory Therapy/Airway,Pulmonary Function Test — Inpatient
+212,Respiratory Therapy/Airway,Six‑Minute Walk Test
+213,Respiratory Therapy/Airway,Oxygen Walk Test with RT
+214,Respiratory Therapy/Airway,RT: Wean to Room Air as Tolerated
+215,Respiratory Therapy/Airway,RT Consult — COPD Action Plan
+216,Respiratory Therapy/Airway,RT Consult — Asthma Education
+217,Respiratory Therapy/Airway,Smoking Cessation Education — RT
+218,Respiratory Therapy/Airway,Prone Positioning Protocol (ARDS)
+219,Respiratory Therapy/Airway,SpO₂ Target per COPD Protocol (88–92%)
+220,Respiratory Therapy/Airway,SpO₂ Target per ARDS Protocol (92–96%)
+221,Lines/Tubes/Drains/Procedures,Peripheral IV Insert
+222,Lines/Tubes/Drains/Procedures,Peripheral IV Ultrasound‑Guided Insert
+223,Lines/Tubes/Drains/Procedures,Midline Catheter Insert
+224,Lines/Tubes/Drains/Procedures,PICC Line Insert
+225,Lines/Tubes/Drains/Procedures,PICC Line Removal
+226,Lines/Tubes/Drains/Procedures,Central Line (IJ) Insert
+227,Lines/Tubes/Drains/Procedures,Arterial Line Insert
+228,Lines/Tubes/Drains/Procedures,Arterial Line Removal
+229,Lines/Tubes/Drains/Procedures,Foley Catheter Insert
+230,Lines/Tubes/Drains/Procedures,Foley Catheter Removal
+231,Lines/Tubes/Drains/Procedures,External (Condom) Catheter Apply
+232,Lines/Tubes/Drains/Procedures,Straight Cath for Urine Sample
+233,Lines/Tubes/Drains/Procedures,NG Tube Insert
+234,Lines/Tubes/Drains/Procedures,OG Tube Insert
+235,Lines/Tubes/Drains/Procedures,Cortrak/Feeding Tube Placement
+236,Lines/Tubes/Drains/Procedures,Chest Tube Insert
+237,Lines/Tubes/Drains/Procedures,Chest Tube Removal
+238,Lines/Tubes/Drains/Procedures,Wound Care Consult
+239,Lines/Tubes/Drains/Procedures,Negative Pressure Wound Therapy Apply
+240,Lines/Tubes/Drains/Procedures,Wound Dressing Change Daily
+241,Lines/Tubes/Drains/Procedures,Ostomy Appliance Change
+242,Lines/Tubes/Drains/Procedures,Pressure Injury Staging & Photo
+243,Lines/Tubes/Drains/Procedures,Suture/Staple Removal
+244,Lines/Tubes/Drains/Procedures,Bedside I&D of Abscess
+245,Lines/Tubes/Drains/Procedures,Paracentesis — Diagnostic
+246,Lines/Tubes/Drains/Procedures,Paracentesis — Therapeutic
+247,Lines/Tubes/Drains/Procedures,Thoracentesis
+248,Lines/Tubes/Drains/Procedures,Lumbar Puncture
+249,Lines/Tubes/Drains/Procedures,Arthrocentesis
+250,Lines/Tubes/Drains/Procedures,EKG 12‑lead Now
+251,Lines/Tubes/Drains/Procedures,EKG 12‑lead Daily x3
+252,Lines/Tubes/Drains/Procedures,Telemetry Box Swap
+253,Lines/Tubes/Drains/Procedures,Pacemaker Interrogation
+254,Lines/Tubes/Drains/Procedures,ICD Interrogation
+255,Lines/Tubes/Drains/Procedures,Blood Culture x2 Peripheral
+256,Lines/Tubes/Drains/Procedures,Blood Culture from Line + Peripheral
+349,Consults/Referrals,Cardiology Consult
+350,Consults/Referrals,Electrophysiology Consult
+351,Consults/Referrals,Cardiothoracic Surgery Consult
+352,Consults/Referrals,Heart Failure Service Consult
+353,Consults/Referrals,Interventional Cardiology Consult
+354,Consults/Referrals,Neurology Consult
+355,Consults/Referrals,Neurosurgery Consult
+356,Consults/Referrals,Stroke Team Activation
+357,Consults/Referrals,Pulmonology Consult
+358,Consults/Referrals,Thoracic Surgery Consult
+359,Consults/Referrals,Gastroenterology Consult
+360,Consults/Referrals,Hepatology Consult
+361,Consults/Referrals,Colorectal Surgery Consult
+362,Consults/Referrals,General Surgery Consult
+363,Consults/Referrals,Trauma Surgery Consult
+364,Consults/Referrals,Vascular Surgery Consult
+365,Consults/Referrals,Urology Consult
+366,Consults/Referrals,Nephrology Consult
+367,Consults/Referrals,Endocrinology Consult
+368,Consults/Referrals,Hematology Consult
+369,Consults/Referrals,Medical Oncology Consult
+370,Consults/Referrals,Radiation Oncology Consult
+371,Consults/Referrals,Palliative Care Consult
+372,Consults/Referrals,Pain Management Service Consult
+373,Consults/Referrals,Infectious Diseases Consult
+374,Consults/Referrals,Rheumatology Consult
+375,Consults/Referrals,Allergy/Immunology Consult
+376,Consults/Referrals,Dermatology Consult
+377,Consults/Referrals,Plastic Surgery Consult
+378,Consults/Referrals,Orthopedic Surgery Consult
+379,Consults/Referrals,ENT (Otolaryngology) Consult
+380,Consults/Referrals,Ophthalmology Consult
+381,Consults/Referrals,Oral & Maxillofacial Surgery Consult
+382,Consults/Referrals,Dentistry Consult
+383,Consults/Referrals,Geriatrics Consult
+384,Consults/Referrals,PM&R (Physiatry) Consult
+385,Consults/Referrals,Psychiatry Consult (Adult)
+386,Consults/Referrals,Psychology Consult
+387,Consults/Referrals,Social Work Consult
+388,Consults/Referrals,Case Management Consult
+389,Consults/Referrals,Nutrition/Dietitian Consult
+390,Consults/Referrals,Lactation Consultant
+391,Consults/Referrals,Speech‑Language Pathology Consult
+392,Consults/Referrals,Physical Therapy Consult
+393,Consults/Referrals,Occupational Therapy Consult
+394,Consults/Referrals,Wound Care Team Consult
+395,Consults/Referrals,Hyperbaric Medicine Consult
+396,Consults/Referrals,Maternal‑Fetal Medicine Consult
+397,Consults/Referrals,Pediatrics Hospitalist Consult
+398,Consults/Referrals,Pediatric Surgery Consult
+399,Consults/Referrals,Pediatric Cardiology Consult
+400,Consults/Referrals,Pediatric Neurology Consult
+401,Consults/Referrals,Pediatric Gastroenterology Consult
+402,Consults/Referrals,Pediatric Endocrinology Consult
+403,Consults/Referrals,Pediatric Hematology/Oncology Consult
+404,Consults/Referrals,Pediatric Infectious Diseases Consult
+405,Consults/Referrals,Pediatric Nephrology Consult
+406,Consults/Referrals,Pediatric Pulmonology Consult
+407,OB/GYN & L&D,OB Triage Evaluation
+408,OB/GYN & L&D,Fetal Non‑Stress Test (NST)
+409,OB/GYN & L&D,Continuous Fetal Monitoring (EFM)
+410,OB/GYN & L&D,Induction of Labor Pathway — Begin
+411,OB/GYN & L&D,Augmentation of Labor — Begin
+412,OB/GYN & L&D,Oxytocin Titration per Protocol
+413,OB/GYN & L&D,Cervical Ripening — Start
+414,OB/GYN & L&D,Epidural Anesthesia Request
+415,OB/GYN & L&D,Group B Strep Prophylaxis — Start
+416,OB/GYN & L&D,Postpartum Hemorrhage (PPH) Bundle — Ready
+417,OB/GYN & L&D,Active Management of 3rd Stage of Labor
+418,OB/GYN & L&D,Post‑delivery Fundal Checks q15–60min
+419,OB/GYN & L&D,Rhogam Evaluation/Administration
+420,OB/GYN & L&D,Lactation Consultant at Bedside
+421,OB/GYN & L&D,Maternal Vital Signs q15min Post‑delivery
+422,OB/GYN & L&D,NICU Team at Delivery — Request
+423,OB/GYN & L&D,Post‑C‑section Ambulation Early
+424,OB/GYN & L&D,Wound Care Post‑C‑section
+425,OB/GYN & L&D,Postpartum Depression Screen (EPDS)
+426,OB/GYN & L&D,OB Ultrasound Bedside
+427,OB/GYN & L&D,Magnesium Sulfate Seizure Prophylaxis
+428,OB/GYN & L&D,Preeclampsia Labs q6h (Panel)
+429,OB/GYN & L&D,Urine Protein/Creatinine Ratio — OB
+430,OB/GYN & L&D,Gestational Diabetes Glucose Monitoring
+431,Restraints/Behavioral/SUD,Restraints: Assess Need q2h
+432,Restraints/Behavioral/SUD,Restraints: Range of Motion q2h
+433,Restraints/Behavioral/SUD,Restraints: Skin Check q2h
+434,Restraints/Behavioral/SUD,Discontinue Restraints — Criteria Met
+435,Restraints/Behavioral/SUD,Constant Observation (1:1) — Behavioral
+436,Restraints/Behavioral/SUD,Suicide Risk Assessment (Columbia)
+437,Restraints/Behavioral/SUD,Environmental Safety Sweep — Psychiatry
+438,Restraints/Behavioral/SUD,Elopement Risk Bracelet Apply
+439,Restraints/Behavioral/SUD,Medication Overdose Monitoring Protocol
+440,Restraints/Behavioral/SUD,CIWA Protocol Initiation
+441,Restraints/Behavioral/SUD,OUD (Opioid Use Disorder) Assessment
+442,Restraints/Behavioral/SUD,Narcan at Bedside for High‑Risk Patients
+443,Restraints/Behavioral/SUD,Behavioral Emergency Response Team (BERT)
+444,Restraints/Behavioral/SUD,Domestic Violence Screen & Social Work
+445,Telemetry/Devices/Misc,Initiate Telemetry Monitoring
+446,Telemetry/Devices/Misc,Telemetry Parameter Limits Set
+447,Telemetry/Devices/Misc,Telemetry — Notify for HR <X or >Y
+448,Telemetry/Devices/Misc,After‑hours Provider Notification Parameters
+449,Telemetry/Devices/Misc,Bedside Glucose Monitoring AC/HS
+450,Telemetry/Devices/Misc,Insulin Sliding Scale Protocol Link
+451,Telemetry/Devices/Misc,PCA Pump Initiate (Analgesia)
+452,Telemetry/Devices/Misc,Epidural/PCA Co‑management Nursing Checks
+453,Telemetry/Devices/Misc,Sequential Compression Devices Apply
+454,Telemetry/Devices/Misc,Cooling Blanket Protocol — Hyperthermia
+455,Telemetry/Devices/Misc,Hypothermia (TTM) Protocol Initiation
+456,Telemetry/Devices/Misc,Specialty Bed — Bariatric
+457,Telemetry/Devices/Misc,Specialty Bed — Low Air Loss
+458,Telemetry/Devices/Misc,Video EEG Monitoring Start
+459,Telemetry/Devices/Misc,Tele‑Stroke Consult Activation
+460,Telemetry/Devices/Misc,Tele‑Psychiatry Consult Request
+461,Telemetry/Devices/Misc,Device: Incentive Spirometer Dispense
+462,Telemetry/Devices/Misc,Device: Spacer for Inhaler Dispense
+463,Telemetry/Devices/Misc,Cough & Deep Breathing q2h While Awake
+464,Telemetry/Devices/Misc,Universal Protocol Time‑out — Document

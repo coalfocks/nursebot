@@ -17,6 +17,19 @@ export interface Patient {
   deletedAt?: string | null;
 }
 
+export type LabOrderSetting = {
+  name: string;
+  type: 'instant' | 'pending';
+  statByDefault?: boolean;
+  valueOverride?: string;
+  instruction?: string;
+};
+
+export interface RoomOrdersConfig {
+  labs: LabOrderSetting[];
+  notes?: string | null;
+}
+
 export interface ClinicalNote {
   id: string;
   patientId: string;
@@ -31,6 +44,7 @@ export interface ClinicalNote {
 export interface LabResult {
   id: string;
   patientId: string;
+  assignmentId?: string | null;
   testName: string;
   value: string | number;
   unit: string;
@@ -61,6 +75,7 @@ export interface VitalSigns {
 export interface MedicalOrder {
   id: string;
   patientId: string;
+  assignmentId?: string | null;
   category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity';
   orderName: string;
   frequency?: string;

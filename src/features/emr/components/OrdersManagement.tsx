@@ -7,25 +7,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User } from 'lucide-react';
 import { mockOrders } from '../lib/mockData';
-import type { Patient, MedicalOrder } from '../lib/types';
+import type { Patient, MedicalOrder, RoomOrdersConfig } from '../lib/types';
 import { emrApi } from '../lib/api';
 
 interface OrdersManagementProps {
-  patient: Patient
+  patient: Patient;
+  ordersConfig?: RoomOrdersConfig | null;
+  assignmentId?: string;
 }
 
-export function OrdersManagement({ patient }: OrdersManagementProps) {
+export function OrdersManagement({ patient, assignmentId }: OrdersManagementProps) {
   const [orders, setOrders] = useState<MedicalOrder[]>(mockOrders);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
 
   useEffect(() => {
     void (async () => {
-      const data = await emrApi.listOrders(patient.id);
+      const data = await emrApi.listOrders(patient.id, assignmentId);
       if (data.length) {
         setOrders(data);
       }
     })();
-  }, [patient.id]);
+  }, [patient.id, assignmentId]);
 
   const handleOrderPlaced = (newOrder: MedicalOrder) => {
     setOrders([newOrder, ...orders]);
@@ -105,7 +107,7 @@ export function OrdersManagement({ patient }: OrdersManagementProps) {
         </Button>
       </div>
 
-      {showOrderEntry && <OrderEntry patient={patient} onOrderPlaced={handleOrderPlaced} />}
+      {showOrderEntry && <OrderEntry patient={patient} assignmentId={assignmentId} onOrderPlaced={handleOrderPlaced} />}
 
       <Tabs defaultValue="active" className="w-full">
         <TabsList>

@@ -6,6 +6,7 @@ import type {
   LabResult,
   VitalSigns,
   MedicalOrder,
+  RoomOrdersConfig,
 } from './types';
 
 const mapPatient = (row: Database['public']['Tables']['patients']['Row']): Patient => ({
@@ -27,6 +28,42 @@ const mapPatient = (row: Database['public']['Tables']['patients']['Row']): Patie
 });
 
 export const emrApi = {
+  async getPatient(patientId: string): Promise<Patient | null> {
+    const { data, error } = await supabase
+      .from('patients')
+      .select('*')
+      .eq('id', patientId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) {
+        console.error('Error fetching patient', error);
+      }
+      return null;
+    }
+
+    return mapPatient(data);
+  },
+
+  async getPatientByRoomId(roomId: number): Promise<Patient | null> {
+    const { data, error } = await supabase
+      .from('patients')
+      .select('*')
+      .eq('room_id', roomId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) {
+        console.error('Error fetching patient by room', error);
+      }
+      return null;
+    }
+
+    return mapPatient(data);
+  },
+
   async listPatients(): Promise<Patient[]> {
     const { data, error } = await supabase
       .from('patients')
@@ -83,13 +120,19 @@ export const emrApi = {
     }
   },
 
-  async listLabResults(patientId: string): Promise<LabResult[]> {
-    const { data, error } = await supabase
+  async listLabResults(patientId: string, assignmentId?: string): Promise<LabResult[]> {
+    let query = supabase
       .from('lab_results')
       .select('*')
       .eq('patient_id', patientId)
       .is('deleted_at', null)
       .order('collection_time', { ascending: false });
+
+    if (assignmentId) {
+      query = query.eq('assignment_id', assignmentId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching labs', error);
@@ -99,6 +142,7 @@ export const emrApi = {
     return (data ?? []).map((row) => ({
       id: row.id,
       patientId: row.patient_id ?? patientId,
+      assignmentId: row.assignment_id,
       testName: row.test_name,
       value: row.value ?? '',
       unit: row.unit ?? '',
@@ -115,6 +159,7 @@ export const emrApi = {
     if (!labs.length) return;
     const payload = labs.map((lab) => ({
       patient_id: lab.patientId,
+      assignment_id: lab.assignmentId ?? null,
       test_name: lab.testName,
       value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
       unit: lab.unit,
@@ -181,13 +226,19 @@ export const emrApi = {
     }
   },
 
-  async listOrders(patientId: string): Promise<MedicalOrder[]> {
-    const { data, error } = await supabase
+  async listOrders(patientId: string, assignmentId?: string): Promise<MedicalOrder[]> {
+    let query = supabase
       .from('medical_orders')
       .select('*')
       .eq('patient_id', patientId)
       .is('deleted_at', null)
       .order('order_time', { ascending: false });
+
+    if (assignmentId) {
+      query = query.eq('assignment_id', assignmentId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching orders', error);
@@ -197,6 +248,7 @@ export const emrApi = {
     return (data ?? []).map((row) => ({
       id: row.id,
       patientId: row.patient_id ?? patientId,
+      assignmentId: row.assignment_id ?? undefined,
       category: row.category as MedicalOrder['category'],
       orderName: row.order_name,
       frequency: row.frequency ?? undefined,
@@ -215,6 +267,7 @@ export const emrApi = {
   async addOrder(order: MedicalOrder): Promise<void> {
     const { error } = await supabase.from('medical_orders').insert({
       patient_id: order.patientId,
+      assignment_id: order.assignmentId ?? null,
       category: order.category,
       order_name: order.orderName,
       frequency: order.frequency,
@@ -230,5 +283,25 @@ export const emrApi = {
     if (error) {
       console.error('Error inserting order', error);
     }
+  },
+
+  async getRoomOrdersConfig(roomId: number): Promise<RoomOrdersConfig | null> {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('orders_config')
+      .eq('id', roomId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching room orders config', error);
+      return null;
+    }
+
+    const ordersConfig = (data?.orders_config ?? null) as RoomOrdersConfig | null;
+    if (ordersConfig && Array.isArray(ordersConfig.labs)) {
+      return ordersConfig;
+    }
+
+    return null;
   },
 };

@@ -16,11 +16,12 @@ type OrderCategory = 'all' | 'Lab' | 'Medication' | 'Imaging';
 type OrderPriority = 'Routine' | 'STAT' | 'Timed';
 
 interface OrderEntryProps {
-  patient: Patient
-  onOrderPlaced: (order: MedicalOrder) => void
+  patient: Patient;
+  assignmentId?: string;
+  onOrderPlaced: (order: MedicalOrder) => void;
 }
 
-export function OrderEntry({ patient, onOrderPlaced }: OrderEntryProps) {
+export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
@@ -59,6 +60,7 @@ export function OrderEntry({ patient, onOrderPlaced }: OrderEntryProps) {
     const newOrder: MedicalOrder = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: patient.id,
+      assignmentId,
       category: selectedOrder.category,
       orderName: selectedOrder.name,
       frequency: orderDetails.frequency,

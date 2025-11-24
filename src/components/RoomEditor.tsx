@@ -5,6 +5,8 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
+import type { LabOrderSetting, RoomOrdersConfig } from '../features/emr/lib/types';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -29,6 +31,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [objective, setObjective] = useState(room?.objective || '');
   const [context, setContext] = useState(room?.context || '');
   const [style, setStyle] = useState(room?.style || '');
+  const [patientName, setPatientName] = useState('');
   
   // Advanced settings
   const [specialtyId, setSpecialtyId] = useState(room?.specialty_id || '');
@@ -37,6 +40,14 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [expectedDiagnosis, setExpectedDiagnosis] = useState(room?.expected_diagnosis || '');
   const [expectedTreatment, setExpectedTreatment] = useState<string[]>(room?.expected_treatment || []);
+  const initialOrdersConfig = (() => {
+    const raw = room?.orders_config as RoomOrdersConfig | null | undefined;
+    if (raw && Array.isArray(raw.labs)) {
+      return raw;
+    }
+    return { labs: [], notes: '' } as RoomOrdersConfig;
+  })();
+  const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig>(initialOrdersConfig);
   const [isActive, setIsActive] = useState(room?.is_active ?? true);
   const scopedSchoolId = isSuperAdmin(profile)
     ? room?.school_id ?? activeSchoolId ?? null
@@ -102,6 +113,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         setError('Please select a school before saving this room.');
         return;
       }
+      if (!room && !patientName.trim()) {
+        setError('Please enter a patient name to create the EMR record.');
+        setIsLoading(false);
+        return;
+      }
 
       // Handle PDF upload if a new file is selected
       let finalPdfUrl = pdfUrl;
@@ -150,6 +166,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         difficulty_level: difficultyLevel,
         expected_diagnosis: expectedDiagnosis || null,
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
+        orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
         school_id: finalSchoolId,
@@ -163,11 +180,36 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { data: inserted, error } = await supabase
           .from('rooms')
-          .insert([roomData]);
+          .insert([roomData])
+          .select()
+          .single();
         
         if (error) throw error;
+
+        const [firstName, ...rest] = patientName.trim().split(' ');
+        const lastName = rest.join(' ') || 'Patient';
+        const mrn = `ROOM-${inserted.room_number}-${Date.now()}`;
+
+        const patientPayload = {
+          room_id: inserted.id,
+          school_id: inserted.school_id ?? finalSchoolId,
+          mrn,
+          first_name: firstName || 'Patient',
+          last_name: lastName,
+          date_of_birth: '1990-01-01',
+          gender: 'Other',
+          admission_date: new Date().toISOString().slice(0, 10),
+          service: null,
+          attending_physician: null,
+        };
+
+        const { error: patientError } = await supabase.from('patients').insert([patientPayload]);
+        if (patientError) {
+          console.error('Failed to create patient for room', patientError);
+          setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
+        }
       }
 
       onSave();
@@ -219,6 +261,48 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
     }
   };
+
+  const toggleLabSelection = (name: string, type: LabOrderSetting['type']) => {
+    setOrdersConfig((prev) => {
+      const existing = prev.labs.find((lab) => lab.name === name);
+      if (existing) {
+        if (existing.type === type) {
+          const nextLabs = prev.labs.filter((lab) => lab.name !== name);
+          return { ...prev, labs: nextLabs };
+        }
+        return {
+          ...prev,
+          labs: prev.labs.map((lab) =>
+            lab.name === name ? { ...lab, type, statByDefault: type === 'instant' ? true : lab.statByDefault } : lab
+          ),
+        };
+      }
+      return {
+        ...prev,
+        labs: [
+          ...prev.labs,
+          {
+            name,
+            type,
+            statByDefault: type === 'instant',
+          },
+        ],
+      };
+    });
+  };
+
+  const updateLabSetting = (name: string, patch: Partial<LabOrderSetting>) => {
+    setOrdersConfig((prev) => ({
+      ...prev,
+      labs: prev.labs.map((lab) => (lab.name === name ? { ...lab, ...patch } : lab)),
+    }));
+  };
+
+  const selectedLabsByType = ordersConfig.labs.reduce<Record<string, LabOrderSetting[]>>((acc, lab) => {
+    if (!acc[lab.type]) acc[lab.type] = [];
+    acc[lab.type].push(lab);
+    return acc;
+  }, {});
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -324,6 +408,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             required
           />
         </div>
+
+        {!room && (
+          <div>
+            <label htmlFor="patientName" className="block text-sm font-medium text-gray-700">
+              Patient Name (creates EMR patient)
+            </label>
+            <input
+              type="text"
+              id="patientName"
+              value={patientName}
+              onChange={(e) => setPatientName(e.target.value)}
+              placeholder="e.g., Alex Rivera"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              required
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              A patient record will be created and linked to this room.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* PDF Upload Section */}
@@ -395,6 +499,129 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             <span className="text-sm text-gray-500">Uploading PDF...</span>
           </div>
         )}
+      </div>
+
+      {/* Orders & Labs configuration */}
+      <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">Orders & Labs (EMR)</h3>
+            <p className="text-sm text-gray-600">
+              Choose which labs are available in the EMR and how they behave (STAT vs pending, preset values).
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-700">Instant labs (generate results)</p>
+              <span className="text-xs text-gray-500">{selectedLabsByType.instant?.length ?? 0} selected</span>
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-2 rounded-md border border-gray-200 p-3">
+              {instantLabs.map((lab) => (
+                <label key={lab} className="flex items-start gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={ordersConfig.labs.some((item) => item.name === lab && item.type === 'instant')}
+                    onChange={() => toggleLabSelection(lab, 'instant')}
+                    className="mt-0.5"
+                  />
+                  <span>{lab}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-700">Pending labs (no auto result)</p>
+              <span className="text-xs text-gray-500">{selectedLabsByType.pending?.length ?? 0} selected</span>
+            </div>
+            <div className="max-h-64 overflow-y-auto space-y-2 rounded-md border border-gray-200 p-3">
+              {pendingLabs.map((lab) => (
+                <label key={lab} className="flex items-start gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={ordersConfig.labs.some((item) => item.name === lab && item.type === 'pending')}
+                    onChange={() => toggleLabSelection(lab, 'pending')}
+                    className="mt-0.5"
+                  />
+                  <span>{lab}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {ordersConfig.labs.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium text-gray-700">Selected labs configuration</p>
+            <div className="space-y-2">
+              {ordersConfig.labs.map((lab) => (
+                <div key={lab.name} className="rounded-md border border-gray-200 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-gray-900">{lab.name}</p>
+                      <p className="text-xs text-gray-500 capitalize">{lab.type} workflow</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={lab.statByDefault ?? lab.type === 'instant'}
+                          onChange={(e) => updateLabSetting(lab.name, { statByDefault: e.target.checked })}
+                        />
+                        STAT by default
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => toggleLabSelection(lab.name, lab.type)}
+                        className="text-sm text-red-600 hover:text-red-700 flex items-center gap-1"
+                      >
+                        <X className="h-4 w-4" />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Preset value or range</label>
+                      <input
+                        type="text"
+                        value={lab.valueOverride || ''}
+                        onChange={(e) => updateLabSetting(lab.name, { valueOverride: e.target.value })}
+                        placeholder="e.g., WBC 12.4, Cr 1.9, Hgb 8.7"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Instructions/notes</label>
+                      <input
+                        type="text"
+                        value={lab.instruction || ''}
+                        onChange={(e) => updateLabSetting(lab.name, { instruction: e.target.value })}
+                        placeholder="Any routing notes for this lab"
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Orders/Labs notes (optional)</label>
+          <textarea
+            rows={3}
+            value={ordersConfig.notes || ''}
+            onChange={(e) => setOrdersConfig((prev) => ({ ...prev, notes: e.target.value }))}
+            placeholder="Any overarching instructions for lab ordering in this room"
+            className="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+          />
+        </div>
       </div>
 
       {/* Advanced Settings */}

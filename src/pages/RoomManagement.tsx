@@ -13,6 +13,7 @@ type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialty: {
     name: string;
   } | null;
+  patients?: Database['public']['Tables']['patients']['Row'][] | null;
 };
 
 export default function RoomManagement() {
@@ -43,7 +44,8 @@ export default function RoomManagement() {
           *,
           specialty:specialty_id (
             name
-          )
+          ),
+          patients:patients (*)
         `)
         .order('room_number');
 
@@ -85,6 +87,45 @@ export default function RoomManagement() {
       newExpanded.add(roomId);
     }
     setExpandedRooms(newExpanded);
+  };
+
+  const createPatientForRoom = async (room: Room, name?: string) => {
+    const [firstName, ...rest] = (name || `Sim Patient ${room.room_number}`).trim().split(' ');
+    const lastName = rest.join(' ') || 'Patient';
+    const mrn = `ROOM-${room.room_number}-${Date.now()}`;
+
+    const payload = {
+      room_id: room.id,
+      school_id: room.school_id,
+      mrn,
+      first_name: firstName || 'Patient',
+      last_name: lastName,
+      date_of_birth: '1990-01-01',
+      gender: 'Other',
+      admission_date: new Date().toISOString().slice(0, 10),
+      service: room.objective || null,
+      attending_physician: null,
+    };
+
+    const { error } = await supabase.from('patients').insert([payload]);
+    if (error) {
+      console.error('Failed to create patient', error);
+      alert('Failed to create patient for this room.');
+    } else {
+      await fetchRooms();
+    }
+  };
+
+  const linkExistingPatient = async (room: Room) => {
+    const patientId = window.prompt('Enter existing patient ID to link to this room');
+    if (!patientId) return;
+    const { error } = await supabase.from('patients').update({ room_id: room.id }).eq('id', patientId);
+    if (error) {
+      console.error('Failed to link patient', error);
+      alert('Failed to link patient. Please verify the patient ID.');
+    } else {
+      await fetchRooms();
+    }
   };
 
   if (!hasAdmin) {
@@ -178,26 +219,31 @@ export default function RoomManagement() {
                                 <h3 className="text-sm font-medium text-gray-900">
                                   Room {room.room_number}
                                 </h3>
-                                <div className="flex items-center space-x-2 mt-1">
-                                  {room.specialty && (
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                      {room.specialty.name}
-                                    </span>
-                                  )}
-                                  {room.difficulty_level && (
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                      {room.difficulty_level}
-                                    </span>
-                                  )}
-                                  {!room.is_active && (
-                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                      Inactive
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <button
+                    <div className="flex items-center space-x-2 mt-1">
+                      {room.specialty && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {room.specialty.name}
+                        </span>
+                      )}
+                      {room.difficulty_level && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          {room.difficulty_level}
+                        </span>
+                      )}
+                      {!room.is_active && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                          Inactive
+                        </span>
+                      )}
+                      {room.patients && room.patients.length > 0 && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          EMR linked
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <button
                               onClick={() => handleEditRoom(room)}
                               className="text-blue-600 hover:text-blue-900"
                             >
@@ -215,19 +261,50 @@ export default function RoomManagement() {
                                 <h4 className="text-xs font-medium text-gray-500 uppercase">Objective</h4>
                                 <p className="mt-1 text-sm text-gray-900">{room.objective}</p>
                               </div>
-                              <div>
-                                <h4 className="text-xs font-medium text-gray-500 uppercase">Context</h4>
-                                <p className="mt-1 text-sm text-gray-900">{room.context}</p>
-                              </div>
-                              <div>
-                                <h4 className="text-xs font-medium text-gray-500 uppercase">Style</h4>
-                                <p className="mt-1 text-sm text-gray-900">{room.style}</p>
-                              </div>
-                              {room.expected_diagnosis && (
-                                <div>
-                                  <h4 className="text-xs font-medium text-gray-500 uppercase">Expected Diagnosis</h4>
-                                  <p className="mt-1 text-sm text-gray-900">{room.expected_diagnosis}</p>
-                                </div>
+                          <div>
+                            <h4 className="text-xs font-medium text-gray-500 uppercase">Context</h4>
+                            <p className="mt-1 text-sm text-gray-900">{room.context}</p>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-medium text-gray-500 uppercase">Style</h4>
+                            <p className="mt-1 text-sm text-gray-900">{room.style}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <h4 className="text-xs font-medium text-gray-500 uppercase">EMR Patient</h4>
+                            <div className="flex flex-wrap items-center gap-3">
+                              {room.patients && room.patients.length > 0 ? (
+                                <span className="text-sm text-gray-900">
+                                  {room.patients[0].first_name} {room.patients[0].last_name} (MRN: {room.patients[0].mrn})
+                                </span>
+                              ) : (
+                                <span className="text-sm text-gray-500">No patient linked</span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const name = window.prompt('Patient name for this room?') || undefined;
+                                  void createPatientForRoom(room, name);
+                                }}
+                                className="inline-flex items-center rounded-md border border-transparent bg-green-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-green-700"
+                              >
+                                {room.patients && room.patients.length > 0 ? 'Create new patient' : 'Create patient'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void linkExistingPatient(room)}
+                                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                              >
+                                Link existing patient
+                              </button>
+                            </div>
+                          </div>
+                          {room.expected_diagnosis && (
+                            <div>
+                              <h4 className="text-xs font-medium text-gray-500 uppercase">Expected Diagnosis</h4>
+                              <p className="mt-1 text-sm text-gray-900">{room.expected_diagnosis}</p>
+                            </div>
                               )}
                               {room.expected_treatment && room.expected_treatment.length > 0 && (
                                 <div>
