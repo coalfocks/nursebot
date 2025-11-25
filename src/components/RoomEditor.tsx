@@ -288,19 +288,21 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         return acc;
       }, { ...normalVitals });
 
+      const emrContextPayload =
+        emrContext || (initialVitals ? JSON.stringify({ initial_vitals: initialVitals }) : null);
+
       const roomData = {
         room_number: roomNumber,
         role,
         objective,
         context: nurseContext,
         nurse_context: nurseContext,
-        emr_context: emrContext || null,
+        emr_context: emrContextPayload,
         style,
         specialty_id: specialtyId || null,
         difficulty_level: difficultyLevel,
         expected_diagnosis: expectedDiagnosis || null,
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
-        initial_vitals: initialVitals,
         case_goals: caseGoals || null,
         progress_note: progressNote || null,
         completion_hint: completionHint || null,
