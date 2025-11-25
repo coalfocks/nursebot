@@ -196,11 +196,17 @@ export interface Database {
           objective: string
           context: string
           style: string
+          nurse_context: string | null
+          emr_context: string | null
           specialty_id: string | null
           difficulty_level: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis: string | null
           expected_treatment: string[] | null
           initial_vitals: Json | null
+          case_goals: string | null
+          progress_note: string | null
+          completion_hint: string | null
+          bedside_hint: string | null
           created_by: string | null
           is_active: boolean
           created_at: string
@@ -216,11 +222,17 @@ export interface Database {
           objective: string
           context: string
           style: string
+          nurse_context?: string | null
+          emr_context?: string | null
           specialty_id?: string | null
           difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
           initial_vitals?: Json | null
+          case_goals?: string | null
+          progress_note?: string | null
+          completion_hint?: string | null
+          bedside_hint?: string | null
           created_by?: string | null
           is_active?: boolean
           created_at?: string
@@ -236,11 +248,17 @@ export interface Database {
           objective?: string
           context?: string
           style?: string
+          nurse_context?: string | null
+          emr_context?: string | null
           specialty_id?: string | null
           difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
           initial_vitals?: Json | null
+          case_goals?: string | null
+          progress_note?: string | null
+          completion_hint?: string | null
+          bedside_hint?: string | null
           created_by?: string | null
           is_active?: boolean
           created_at?: string

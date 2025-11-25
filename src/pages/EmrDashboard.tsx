@@ -25,8 +25,10 @@ export default function EmrDashboard() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
   const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig | null>(null);
-  const [isLoadingOrdersConfig, setIsLoadingOrdersConfig] = useState(false);
+  const [labRefreshToken, setLabRefreshToken] = useState(0);
+  const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const assignmentId = searchParams.get('assignmentId') || undefined;
+  const isSandbox = !assignmentId;
 
   useEffect(() => {
     void (async () => {
@@ -82,11 +84,9 @@ export default function EmrDashboard() {
       setOrdersConfig(null);
       return;
     }
-    setIsLoadingOrdersConfig(true);
     void (async () => {
       const config = await emrApi.getRoomOrdersConfig(selectedPatient.roomId as number);
       setOrdersConfig(config);
-      setIsLoadingOrdersConfig(false);
     })();
   }, [selectedPatient?.roomId]);
 
@@ -110,9 +110,6 @@ export default function EmrDashboard() {
               </div>
             </div>
             <div className="text-right">
-              <Badge variant="outline" className="mb-2">
-                {selectedPatient.service}
-              </Badge>
               <p className="text-sm text-muted-foreground">Attending: {selectedPatient.attendingPhysician}</p>
             </div>
           </div>
@@ -193,7 +190,7 @@ export default function EmrDashboard() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <TestTube className="h-5 w-5" />
-                      Critical Labs
+                      Recent Labs
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -244,9 +241,11 @@ export default function EmrDashboard() {
             <TabsContent value="labs">
               <LabResults
                 patient={selectedPatient}
-                ordersConfig={ordersConfig}
-                isConfigLoading={isLoadingOrdersConfig}
                 assignmentId={assignmentId}
+                refreshToken={labRefreshToken}
+                isSandbox={isSandbox}
+                sandboxLabs={sandboxLabs}
+                onSandboxLabsChange={setSandboxLabs}
               />
             </TabsContent>
 
@@ -255,7 +254,14 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="orders">
-              <OrdersManagement patient={selectedPatient} ordersConfig={ordersConfig} assignmentId={assignmentId} />
+              <OrdersManagement
+                patient={selectedPatient}
+                ordersConfig={ordersConfig}
+                assignmentId={assignmentId}
+                isSandbox={isSandbox}
+                onLabResultsUpdated={() => setLabRefreshToken((prev) => prev + 1)}
+                onSandboxLabResult={(lab) => setSandboxLabs((prev) => [lab, ...prev])}
+              />
             </TabsContent>
 
             <TabsContent value="imaging">

@@ -7,15 +7,15 @@ export interface ChatMessage {
 
 interface RoomConfig {
   role: string;
-  objective: string;
-  context: string;
+  context: string | null;
+  nurse_context?: string | null;
   style: string;
 }
 
 async function getRoomConfig(roomNumber: string): Promise<RoomConfig | null> {
   const { data, error } = await supabase
     .from('rooms')
-    .select('role, objective, context, style')
+    .select('role, context, nurse_context, style')
     .eq('room_number', roomNumber)
     .single();
 
@@ -31,13 +31,13 @@ export const generateInitialPrompt = async (roomNumber: string) => {
   const room = await getRoomConfig(roomNumber);
   if (!room) return null;
 
+  const nurseContext = room.nurse_context || room.context || '';
+
   return `You are a professional nurse in a hospital. ${room.role}
 
 Your communication style should be ${room.style}
 
-Context: ${room.context}
-
-Objective: ${room.objective}
+Context: ${nurseContext}
 
 Remember:
 1. Be concise and professional
