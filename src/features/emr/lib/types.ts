@@ -33,7 +33,7 @@ export interface RoomOrdersConfig {
 export interface ClinicalNote {
   id: string;
   patientId: string;
-  type: 'H&P' | 'Progress' | 'Discharge' | 'Consult' | 'Nursing' | 'Daily';
+  type: 'H&P' | 'Progress' | 'Discharge' | 'Consult';
   title: string;
   content: string;
   author: string;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, FileText, TestTube, Pill, Calendar, User } from 'lucide-react';
+import { Activity, FileText, TestTube, Pill, Calendar, User, Droplets } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import type { Patient } from '../features/emr/lib/types';
+import type { LabResult, Patient } from '../features/emr/lib/types';
 import { mockPatients } from '../features/emr/lib/mockData';
 import { emrApi } from '../features/emr/lib/api';
 import { PatientSidebar } from '../features/emr/components/PatientSidebar';
@@ -16,7 +16,7 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess } from '../lib/roles';
-import type { RoomOrdersConfig } from '../features/emr/lib/types';
+import type { MedicalOrder, RoomOrdersConfig } from '../features/emr/lib/types';
 
 export default function EmrDashboard() {
   const { profile } = useAuthStore();
@@ -27,6 +27,7 @@ export default function EmrDashboard() {
   const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig | null>(null);
   const [labRefreshToken, setLabRefreshToken] = useState(0);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
+  const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const assignmentId = searchParams.get('assignmentId') || undefined;
   const isSandbox = !assignmentId;
 
@@ -90,6 +91,16 @@ export default function EmrDashboard() {
     })();
   }, [selectedPatient?.roomId]);
 
+  useEffect(() => {
+    if (!selectedPatient) return;
+
+    void (async () => {
+      const orders = await emrApi.listOrders(selectedPatient.id, assignmentId);
+      const meds = orders.filter((order) => order.category === 'Medication');
+      setMedicationOrders(meds);
+    })();
+  }, [selectedPatient, assignmentId]);
+
   const content = selectedPatient ? (
     <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
@@ -133,6 +144,10 @@ export default function EmrDashboard() {
                 <Activity className="h-4 w-4" />
                 Overview
               </TabsTrigger>
+              <TabsTrigger value="vitals" className="flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                Vitals
+              </TabsTrigger>
               <TabsTrigger value="notes" className="flex items-center gap-2">
                 <FileText className="h-4 w-4" />
                 Notes
@@ -141,17 +156,13 @@ export default function EmrDashboard() {
                 <TestTube className="h-4 w-4" />
                 Labs
               </TabsTrigger>
-              <TabsTrigger value="vitals" className="flex items-center gap-2">
-                <Activity className="h-4 w-4" />
-                Vitals
+              <TabsTrigger value="imaging" className="flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
+                Imaging
               </TabsTrigger>
               <TabsTrigger value="orders" className="flex items-center gap-2">
                 <Pill className="h-4 w-4" />
                 Orders
-              </TabsTrigger>
-              <TabsTrigger value="imaging" className="flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Imaging
               </TabsTrigger>
             </TabsList>
 
@@ -189,23 +200,37 @@ export default function EmrDashboard() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <TestTube className="h-5 w-5" />
-                      Recent Labs
+                      <Droplets className="h-5 w-5" />
+                      Intake & Output
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Hemoglobin</span>
-                        <span className="text-sm font-medium lab-value-abnormal">8.7 g/dL ↓</span>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div>
+                        <h4 className="text-sm font-semibold text-muted-foreground mb-2">Intake</h4>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">IV Fluids</span>
+                            <span className="text-sm font-medium">750 mL</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Oral Fluids</span>
+                            <span className="text-sm font-medium">420 mL</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">WBC</span>
-                        <span className="text-sm font-medium lab-value-abnormal">12.5 K/uL ↑</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Creatinine</span>
-                        <span className="text-sm font-medium lab-value-normal">1.2 mg/dL</span>
+                      <div>
+                        <h4 className="text-sm font-semibold text-muted-foreground mb-2">Output</h4>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Urine</span>
+                            <span className="text-sm font-medium">650 mL</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-muted-foreground">Stool</span>
+                            <span className="text-sm font-medium">1 episode</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -215,23 +240,31 @@ export default function EmrDashboard() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Pill className="h-5 w-5" />
-                      Active Orders
+                      Active Medications
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-2">
-                      <div className="text-sm">
-                        <div className="font-medium">Lisinopril 10mg PO Daily</div>
-                        <div className="text-muted-foreground">Routine</div>
+                    {medicationOrders.length ? (
+                      <div className="space-y-3">
+                        {medicationOrders.map((order) => (
+                          <div key={order.id} className="text-sm">
+                            <div className="font-medium">{order.orderName}</div>
+                            <div className="text-muted-foreground">
+                              {[order.dose, order.route, order.frequency].filter(Boolean).join(' • ') || 'Medication'}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div className="text-sm">
-                        <div className="font-medium">CBC with Diff</div>
-                        <div className="text-muted-foreground">Scheduled for tomorrow AM</div>
-                      </div>
-                    </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No active medications recorded.</p>
+                    )}
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="vitals">
+              <VitalSignsComponent patient={selectedPatient} />
             </TabsContent>
 
             <TabsContent value="notes">
@@ -249,8 +282,15 @@ export default function EmrDashboard() {
               />
             </TabsContent>
 
-            <TabsContent value="vitals">
-              <VitalSignsComponent patient={selectedPatient} />
+            <TabsContent value="imaging">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Imaging Studies</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-muted-foreground">Imaging results will appear here...</p>
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="orders">
@@ -262,17 +302,6 @@ export default function EmrDashboard() {
                 onLabResultsUpdated={() => setLabRefreshToken((prev) => prev + 1)}
                 onSandboxLabResult={(lab) => setSandboxLabs((prev) => [lab, ...prev])}
               />
-            </TabsContent>
-
-            <TabsContent value="imaging">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Imaging Studies</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Imaging results will appear here...</p>
-                </CardContent>
-              </Card>
             </TabsContent>
           </Tabs>
         </div>

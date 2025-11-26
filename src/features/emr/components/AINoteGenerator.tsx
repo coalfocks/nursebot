@@ -11,7 +11,7 @@ import { generateClinicalNote, formatNoteForDisplay } from '../lib/aiNotes';
 import { emrApi } from '../lib/api';
 import type { Patient, ClinicalNote } from '../lib/types';
 
-type NoteTypeOption = 'H&P' | 'Progress' | 'Discharge' | 'Consult' | 'Nursing' | 'Daily';
+type NoteTypeOption = 'H&P' | 'Progress' | 'Discharge' | 'Consult';
 
 interface AINotesGeneratorProps {
   patient: Patient
@@ -92,9 +92,7 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="H&P">History & Physical</SelectItem>
-                  <SelectItem value="Progress">Progress Note</SelectItem>
-                  <SelectItem value="Daily">Daily Note</SelectItem>
-                  <SelectItem value="Nursing">Nursing Documentation</SelectItem>
+                  <SelectItem value="Progress">Progress Note (Daily)</SelectItem>
                   <SelectItem value="Consult">Consultation Note</SelectItem>
                   <SelectItem value="Discharge">Discharge Summary</SelectItem>
                 </SelectContent>

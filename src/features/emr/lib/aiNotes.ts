@@ -1,4 +1,4 @@
-type NoteType = 'H&P' | 'Progress' | 'Discharge' | 'Consult' | 'Nursing' | 'Daily';
+type NoteType = 'H&P' | 'Progress' | 'Discharge' | 'Consult';
 
 export interface NoteGenerationRequest {
   patientId: string;
@@ -69,36 +69,20 @@ const noteBuilders: Record<NoteType, (ctx: NoteBuilderContext) => string> = {
     [
       section(
         'Subjective',
-        `${ctx.patientName} reports improved comfort. No overnight events.`,
+        `${ctx.patientName} notes ${ctx.caseDescription.split('.')[0]?.toLowerCase() || 'improved comfort'}. No overnight events unless otherwise stated.`,
       ),
       section(
         'Objective',
-        'Vitals stable. Lungs clear. Abdomen soft. Labs pending this morning.',
+        'Vitals reviewed and stable. Lungs clear, abdomen soft. I/Os reviewed; no acute neuro deficits.',
       ),
       section(
         'Assessment',
-        `${ctx.demographic} with ${ctx.caseDescription.toLowerCase()}. Stable condition.`,
+        `${ctx.demographic} with ${ctx.caseDescription.toLowerCase()}. Condition stable.`,
       ),
       section(
         'Plan',
-        'Maintain current therapy, encourage ambulation, repeat labs tomorrow, update attending if status changes.',
+        '1) Continue current therapy and home medications as appropriate.\n2) Encourage ambulation, monitor intake/output and pain.\n3) Repeat targeted labs in the morning; escalate to attending if status changes.',
       ),
-    ].join('\n'),
-  Daily: (ctx) =>
-    [
-      section('Overnight Events', 'None reported.'),
-      section('Current Condition', 'Awake, oriented, pain well controlled.'),
-      section('Treatments', ctx.medications),
-      section('Plan for the Day', 'Advance diet as tolerated, monitor intake/output, coordinate family update.'),
-      section('Concerns', ctx.caseDescription),
-    ].join('\n'),
-  Nursing: () =>
-    [
-      section('General Condition', 'Resting comfortably in bed, fall precautions maintained.'),
-      section('Pain & Comfort', 'Rates pain 3/10, relieved with scheduled medication.'),
-      section('Mobility', 'Ambulated with standby assist; steady gait.'),
-      section('Education', 'Reinforced medication schedule and call-light use.'),
-      section('Family Interaction', 'Family updated at bedside, questions answered.'),
     ].join('\n'),
   Consult: (ctx) =>
     [

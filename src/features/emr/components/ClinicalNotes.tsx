@@ -57,9 +57,8 @@ export function ClinicalNotes({ patient }: ClinicalNotesProps) {
           <TabsTrigger value="all">All Notes ({notes.length})</TabsTrigger>
           <TabsTrigger value="H&P">H&P ({notesByType['H&P']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Progress">Progress ({notesByType['Progress']?.length || 0})</TabsTrigger>
-          <TabsTrigger value="Daily">Daily ({notesByType['Daily']?.length || 0})</TabsTrigger>
-          <TabsTrigger value="Nursing">Nursing ({notesByType['Nursing']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Consult">Consult ({notesByType['Consult']?.length || 0})</TabsTrigger>
+          <TabsTrigger value="Discharge">Discharge ({notesByType['Discharge']?.length || 0})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="all" className="mt-6">
