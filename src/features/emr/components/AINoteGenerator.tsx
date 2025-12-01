@@ -21,27 +21,33 @@ interface AINotesGeneratorProps {
 export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [noteType, setNoteType] = useState<NoteTypeOption>('Progress');
+  const [generationMode, setGenerationMode] = useState<'generate' | 'format'>('generate');
   const [caseDescription, setCaseDescription] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
+  const [rawNote, setRawNote] = useState('');
   const [generatedNote, setGeneratedNote] = useState('');
 
   const handleGenerateNote = async () => {
-    if (!caseDescription.trim()) return;
+    if (generationMode === 'generate' && !caseDescription.trim()) return;
+    if (generationMode === 'format' && !rawNote.trim()) return;
 
     setIsGenerating(true);
     try {
-      const noteContent = await generateClinicalNote({
-        patientId: patient.id,
-        noteType,
-        caseDescription,
-        patientInfo: {
-          name: `${patient.firstName} ${patient.lastName}`,
-          age: new Date().getFullYear() - new Date(patient.dateOfBirth).getFullYear(),
-          gender: patient.gender,
-          chiefComplaint,
-          allergies: patient.allergies,
-        },
-      });
+      const noteContent =
+        generationMode === 'format'
+          ? rawNote.trim()
+          : await generateClinicalNote({
+              patientId: patient.id,
+              noteType,
+              caseDescription,
+              patientInfo: {
+                name: `${patient.firstName} ${patient.lastName}`,
+                age: new Date().getFullYear() - new Date(patient.dateOfBirth).getFullYear(),
+                gender: patient.gender,
+                chiefComplaint,
+                allergies: patient.allergies,
+              },
+            });
 
       const formattedNote = formatNoteForDisplay(
         noteContent,
@@ -100,32 +106,68 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="chiefComplaint">Chief Complaint (Optional)</Label>
-              <Input
-                id="chiefComplaint"
-                placeholder="e.g., Chest pain, Shortness of breath"
-                value={chiefComplaint}
-                onChange={(e) => setChiefComplaint(e.target.value)}
-              />
+              <Label htmlFor="mode">Mode</Label>
+              <Select value={generationMode} onValueChange={(value: 'generate' | 'format') => setGenerationMode(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="generate">Generate with AI</SelectItem>
+                  <SelectItem value="format">Format my draft</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="caseDescription">Case Description</Label>
-            <Textarea
-              id="caseDescription"
-              placeholder="Describe the patient's case, symptoms, history, and current condition. Be as detailed as possible for better note generation..."
-              value={caseDescription}
-              onChange={(e) => setCaseDescription(e.target.value)}
-              rows={6}
-              className="resize-none"
-            />
-          </div>
+          {generationMode === 'generate' && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="chiefComplaint">Chief Complaint (Optional)</Label>
+                  <Input
+                    id="chiefComplaint"
+                    placeholder="e.g., Chest pain, Shortness of breath"
+                    value={chiefComplaint}
+                    onChange={(e) => setChiefComplaint(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="caseDescription">Case Description</Label>
+                <Textarea
+                  id="caseDescription"
+                  placeholder="Describe the case, symptoms, history, and current condition for the AI to summarize."
+                  value={caseDescription}
+                  onChange={(e) => setCaseDescription(e.target.value)}
+                  rows={6}
+                  className="resize-none"
+                />
+              </div>
+            </>
+          )}
+
+          {generationMode === 'format' && (
+            <div className="space-y-2">
+              <Label htmlFor="rawNote">Paste your note</Label>
+              <Textarea
+                id="rawNote"
+                placeholder="Paste your draft note here and we'll format it."
+                value={rawNote}
+                onChange={(e) => setRawNote(e.target.value)}
+                rows={8}
+                className="resize-none"
+              />
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <Button
               onClick={handleGenerateNote}
-              disabled={isGenerating || !caseDescription.trim()}
+              disabled={
+                isGenerating ||
+                (generationMode === 'generate' ? !caseDescription.trim() : !rawNote.trim())
+              }
               className="flex items-center gap-2"
             >
               {isGenerating ? (
@@ -136,7 +178,7 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
               ) : (
                 <>
                   <FileText className="h-4 w-4" />
-                  Generate {noteType} Note
+                  {generationMode === 'generate' ? `Generate ${noteType} Note` : 'Format Note'}
                 </>
               )}
             </Button>

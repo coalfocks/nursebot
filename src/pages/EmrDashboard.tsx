@@ -16,7 +16,7 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess } from '../lib/roles';
-import type { MedicalOrder, RoomOrdersConfig } from '../features/emr/lib/types';
+import type { MedicalOrder } from '../features/emr/lib/types';
 
 export default function EmrDashboard() {
   const { profile } = useAuthStore();
@@ -24,8 +24,6 @@ export default function EmrDashboard() {
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
-  const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig | null>(null);
-  const [labRefreshToken, setLabRefreshToken] = useState(0);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const assignmentId = searchParams.get('assignmentId') || undefined;
@@ -79,17 +77,6 @@ export default function EmrDashboard() {
       })();
     }
   }, [patients, searchParams]);
-
-  useEffect(() => {
-    if (!selectedPatient?.roomId) {
-      setOrdersConfig(null);
-      return;
-    }
-    void (async () => {
-      const config = await emrApi.getRoomOrdersConfig(selectedPatient.roomId as number);
-      setOrdersConfig(config);
-    })();
-  }, [selectedPatient?.roomId]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -275,7 +262,6 @@ export default function EmrDashboard() {
               <LabResults
                 patient={selectedPatient}
                 assignmentId={assignmentId}
-                refreshToken={labRefreshToken}
                 isSandbox={isSandbox}
                 sandboxLabs={sandboxLabs}
                 onSandboxLabsChange={setSandboxLabs}
@@ -296,11 +282,7 @@ export default function EmrDashboard() {
             <TabsContent value="orders">
               <OrdersManagement
                 patient={selectedPatient}
-                ordersConfig={ordersConfig}
                 assignmentId={assignmentId}
-                isSandbox={isSandbox}
-                onLabResultsUpdated={() => setLabRefreshToken((prev) => prev + 1)}
-                onSandboxLabResult={(lab) => setSandboxLabs((prev) => [lab, ...prev])}
               />
             </TabsContent>
           </Tabs>
