@@ -214,6 +214,7 @@ export interface Database {
           pdf_url: string | null
           school_id: string
           orders_config: Json | null
+          patient_id: string | null
         }
         Insert: {
           id?: number
@@ -240,6 +241,7 @@ export interface Database {
           pdf_url?: string | null
           school_id?: string
           orders_config?: Json | null
+          patient_id?: string | null
         }
         Update: {
           id?: number
@@ -266,6 +268,7 @@ export interface Database {
           pdf_url?: string | null
           school_id?: string
           orders_config?: Json | null
+          patient_id?: string | null
         }
       }
       student_room_assignments: {
@@ -489,6 +492,9 @@ export interface Database {
         Row: {
           id: string
           patient_id: string | null
+          assignment_id: string | null
+          room_id: number | null
+          override_scope: 'baseline' | 'room' | 'assignment'
           school_id: string | null
           note_type: string
           title: string
@@ -503,6 +509,9 @@ export interface Database {
         Insert: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           note_type: string
           title: string
@@ -517,6 +526,9 @@ export interface Database {
         Update: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           note_type?: string
           title?: string
@@ -534,6 +546,8 @@ export interface Database {
           id: string
           patient_id: string | null
           assignment_id: string | null
+          room_id: number | null
+          override_scope: 'baseline' | 'room' | 'assignment'
           school_id: string | null
           test_name: string
           value: number | null
@@ -551,6 +565,8 @@ export interface Database {
           id?: string
           patient_id?: string | null
           assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           test_name: string
           value?: number | null
@@ -568,6 +584,8 @@ export interface Database {
           id?: string
           patient_id?: string | null
           assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           test_name?: string
           value?: number | null
@@ -586,6 +604,9 @@ export interface Database {
         Row: {
           id: string
           patient_id: string | null
+          assignment_id: string | null
+          room_id: number | null
+          override_scope: 'baseline' | 'room' | 'assignment'
           school_id: string | null
           timestamp: string
           temperature: number | null
@@ -604,6 +625,9 @@ export interface Database {
         Insert: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           timestamp: string
           temperature?: number | null
@@ -622,6 +646,9 @@ export interface Database {
         Update: {
           id?: string
           patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           timestamp?: string
           temperature?: number | null
@@ -643,6 +670,8 @@ export interface Database {
           id: string
           patient_id: string | null
           assignment_id: string | null
+          room_id: number | null
+          override_scope: 'baseline' | 'room' | 'assignment'
           school_id: string | null
           category: string
           order_name: string
@@ -663,6 +692,8 @@ export interface Database {
           id?: string
           patient_id?: string | null
           assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           category: string
           order_name: string
@@ -683,6 +714,8 @@ export interface Database {
           id?: string
           patient_id?: string | null
           assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
           school_id?: string | null
           category?: string
           order_name?: string

@@ -89,92 +89,74 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(room?.pdf_url || null);
   const [isUploading, setIsUploading] = useState(false);
-  const buildInitialLabResults = (patientId: string, schoolId?: string | null) => {
+  const buildInitialLabResults = (patientId: string, schoolId?: string | null, roomId?: number | null) => {
     const now = new Date().toISOString();
+    const baseFields = {
+      patient_id: patientId,
+      room_id: roomId ?? null,
+      assignment_id: null,
+      override_scope: roomId ? 'room' : 'baseline' as const,
+      school_id: schoolId ?? null,
+      collection_time: now,
+      result_time: now,
+      ordered_by: 'EMR Auto',
+    };
     return [
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Hemoglobin',
         value: 13.5,
         unit: 'g/dL',
         reference_range: '12.0-15.5',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'White Blood Cell Count',
         value: 8.1,
         unit: 'K/uL',
         reference_range: '4.0-11.0',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Platelets',
         value: 245,
         unit: 'K/uL',
         reference_range: '150-400',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Sodium',
         value: 138,
         unit: 'mmol/L',
         reference_range: '135-145',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Potassium',
         value: 4.1,
         unit: 'mmol/L',
         reference_range: '3.5-5.1',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Creatinine',
         value: 1.0,
         unit: 'mg/dL',
         reference_range: '0.7-1.3',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
       {
-        patient_id: patientId,
-        school_id: schoolId ?? null,
+        ...baseFields,
         test_name: 'Glucose',
         value: 95,
         unit: 'mg/dL',
         reference_range: '70-110',
         status: 'Normal',
-        collection_time: now,
-        result_time: now,
-        ordered_by: 'EMR Auto',
       },
     ];
   };
@@ -355,8 +337,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           console.error('Failed to create patient for room', patientError);
           setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
         } else {
+          await supabase.from('rooms').update({ patient_id: patientRecord.id }).eq('id', inserted.id);
           try {
-            const initialLabs = buildInitialLabResults(patientRecord.id, patientRecord.school_id ?? finalSchoolId);
+            const initialLabs = buildInitialLabResults(
+              patientRecord.id,
+              patientRecord.school_id ?? finalSchoolId,
+              inserted.id,
+            );
             const { error: labError } = await supabase.from('lab_results').insert(initialLabs);
             if (labError) {
               console.error('Failed to seed initial labs', labError);

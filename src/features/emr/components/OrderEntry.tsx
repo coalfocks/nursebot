@@ -61,6 +61,8 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: patient.id,
       assignmentId,
+      roomId: patient.roomId ?? null,
+      overrideScope: assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: selectedOrder.category,
       orderName: selectedOrder.name,
       frequency: orderDetails.frequency,

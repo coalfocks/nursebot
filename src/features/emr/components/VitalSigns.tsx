@@ -21,29 +21,34 @@ import { emrApi } from '../lib/api';
 import type { Patient, VitalSigns } from '../lib/types';
 
 interface VitalSignsProps {
-  patient: Patient
+  patient: Patient;
+  assignmentId?: string;
 }
 
-export function VitalSignsComponent({ patient }: VitalSignsProps) {
+export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) {
   const [vitals, setVitals] = useState<VitalSigns[]>(mockVitals);
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     void (async () => {
-      const data = await emrApi.listVitals(patient.id);
+      const data = await emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null);
       if (data.length) {
         setVitals(data);
       }
     })();
-  }, [patient.id]);
+  }, [patient.id, patient.roomId, assignmentId]);
 
   const handleGenerateVitals = async () => {
     setIsGenerating(true);
     try {
       const caseDescription = '37-year-old male with epigastric pain, possible peptic ulcer disease, stable condition';
-      const newVitals = await generateVitalSigns(patient.id, caseDescription);
+      const newVitals = (await generateVitalSigns(patient.id, caseDescription)).map((vital) => ({
+        ...vital,
+        assignmentId: assignmentId ?? null,
+        roomId: patient.roomId ?? null,
+      }));
       setVitals([...newVitals, ...vitals]);
-      void emrApi.addVitals(newVitals);
+      void emrApi.addVitals(newVitals, patient.roomId ?? null);
     } catch (error) {
       console.error('Error generating vitals:', error);
     } finally {

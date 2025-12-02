@@ -251,11 +251,11 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="vitals">
-              <VitalSignsComponent patient={selectedPatient} />
+              <VitalSignsComponent patient={selectedPatient} assignmentId={assignmentId} />
             </TabsContent>
 
             <TabsContent value="notes">
-              <ClinicalNotes patient={selectedPatient} />
+              <ClinicalNotes patient={selectedPatient} assignmentId={assignmentId} />
             </TabsContent>
 
             <TabsContent value="labs">

@@ -9,16 +9,51 @@ import type {
   RoomOrdersConfig,
 } from './types';
 
-const mapPatient = (row: Database['public']['Tables']['patients']['Row']): Patient => ({
+type OverrideScope = 'baseline' | 'room' | 'assignment';
+
+const deriveScope = (
+  overrideScope: string | null | undefined,
+  assignmentId?: string | null,
+  roomId?: number | null,
+): OverrideScope => {
+  if (overrideScope === 'assignment' || overrideScope === 'room' || overrideScope === 'baseline') {
+    return overrideScope;
+  }
+  if (assignmentId) return 'assignment';
+  if (roomId) return 'room';
+  return 'baseline';
+};
+
+const scopeMatchesContext = (
+  scope: OverrideScope,
+  rowRoomId: number | null,
+  targetRoomId?: number | null,
+  rowAssignmentId?: string | null,
+  targetAssignmentId?: string | null,
+) => {
+  if (scope === 'assignment') {
+    return Boolean(targetAssignmentId && rowAssignmentId === targetAssignmentId);
+  }
+  if (scope === 'room') {
+    if (!targetRoomId) return true;
+    return rowRoomId === targetRoomId;
+  }
+  return true;
+};
+
+const mapPatient = (
+  row: Database['public']['Tables']['patients']['Row'],
+  roomIdOverride?: number | null,
+): Patient => ({
   id: row.id,
   schoolId: row.school_id,
-  roomId: row.room_id,
+  roomId: roomIdOverride ?? row.room_id,
   mrn: row.mrn,
   firstName: row.first_name,
   lastName: row.last_name,
   dateOfBirth: row.date_of_birth,
   gender: (row.gender as Patient['gender']) ?? 'Other',
-  room: undefined,
+  room: roomIdOverride ? String(roomIdOverride) : row.room_id ? String(row.room_id) : undefined,
   service: row.service ?? undefined,
   admissionDate: row.admission_date ?? undefined,
   attendingPhysician: row.attending_physician ?? undefined,
@@ -48,20 +83,31 @@ export const emrApi = {
 
   async getPatientByRoomId(roomId: number): Promise<Patient | null> {
     const { data, error } = await supabase
+      .from('rooms')
+      .select('patient_id, patient:patient_id(*)')
+      .eq('id', roomId)
+      .maybeSingle();
+
+    if (data?.patient) {
+      return mapPatient(data.patient as Database['public']['Tables']['patients']['Row'], roomId);
+    }
+
+    const { data: legacyData, error: legacyError } = await supabase
       .from('patients')
       .select('*')
       .eq('room_id', roomId)
       .is('deleted_at', null)
       .maybeSingle();
 
-    if (error || !data) {
-      if (error) {
-        console.error('Error fetching patient by room', error);
-      }
-      return null;
+    if ((error && !legacyData) || legacyError) {
+      console.error('Error fetching patient by room', error || legacyError);
     }
 
-    return mapPatient(data);
+    if (legacyData) {
+      return mapPatient(legacyData, roomId);
+    }
+
+    return null;
   },
 
   async listPatients(): Promise<Patient[]> {
@@ -79,7 +125,7 @@ export const emrApi = {
     return (data ?? []).map(mapPatient);
   },
 
-  async listClinicalNotes(patientId: string): Promise<ClinicalNote[]> {
+  async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
     const { data, error } = await supabase
       .from('clinical_notes')
       .select('*')
@@ -92,21 +138,41 @@ export const emrApi = {
       return [];
     }
 
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      patientId: row.patient_id ?? patientId,
-      type: row.note_type as ClinicalNote['type'],
-      title: row.title,
-      content: row.content,
-      author: row.author ?? 'Unknown',
-      timestamp: row.timestamp,
-      signed: row.signed ?? false,
-    }));
+    return (data ?? [])
+      .map((row) => {
+        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+        return {
+          id: row.id,
+          patientId: row.patient_id ?? patientId,
+          assignmentId: row.assignment_id ?? undefined,
+          roomId: row.room_id ?? undefined,
+          overrideScope: scope,
+          type: row.note_type as ClinicalNote['type'],
+          title: row.title,
+          content: row.content,
+          author: row.author ?? 'Unknown',
+          timestamp: row.timestamp,
+          signed: row.signed ?? false,
+        };
+      })
+      .filter((note) =>
+        scopeMatchesContext(
+          note.overrideScope ?? 'baseline',
+          note.roomId ?? null,
+          roomId,
+          note.assignmentId ?? null,
+          assignmentId,
+        ),
+      );
   },
 
   async addClinicalNote(note: ClinicalNote): Promise<void> {
+    const overrideScope = deriveScope(note.overrideScope, note.assignmentId, note.roomId);
     const { error } = await supabase.from('clinical_notes').insert({
       patient_id: note.patientId,
+      assignment_id: note.assignmentId ?? null,
+      room_id: note.roomId ?? null,
+      override_scope: overrideScope,
       note_type: note.type,
       title: note.title,
       content: note.content,
@@ -120,46 +186,57 @@ export const emrApi = {
     }
   },
 
-  async listLabResults(patientId: string, assignmentId?: string): Promise<LabResult[]> {
-    let query = supabase
+  async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
+    const { data, error } = await supabase
       .from('lab_results')
       .select('*')
       .eq('patient_id', patientId)
       .is('deleted_at', null)
       .order('collection_time', { ascending: false });
 
-    if (assignmentId) {
-      query = query.eq('assignment_id', assignmentId);
-    }
-
-    const { data, error } = await query;
-
     if (error) {
       console.error('Error fetching labs', error);
       return [];
     }
 
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      patientId: row.patient_id ?? patientId,
-      assignmentId: row.assignment_id,
-      testName: row.test_name,
-      value: row.value ?? '',
-      unit: row.unit ?? '',
-      referenceRange: row.reference_range ?? '',
-      status: (row.status as LabResult['status']) ?? 'Pending',
-      collectionTime: row.collection_time ?? new Date().toISOString(),
-      resultTime: row.result_time ?? undefined,
-      orderedBy: row.ordered_by ?? 'Unknown',
-      deletedAt: row.deleted_at,
-    }));
+    return (data ?? [])
+      .map((row) => {
+        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+        return {
+          id: row.id,
+          patientId: row.patient_id ?? patientId,
+          assignmentId: row.assignment_id,
+          roomId: row.room_id ?? undefined,
+          overrideScope: scope,
+          testName: row.test_name,
+          value: row.value ?? '',
+          unit: row.unit ?? '',
+          referenceRange: row.reference_range ?? '',
+          status: (row.status as LabResult['status']) ?? 'Pending',
+          collectionTime: row.collection_time ?? new Date().toISOString(),
+          resultTime: row.result_time ?? undefined,
+          orderedBy: row.ordered_by ?? 'Unknown',
+          deletedAt: row.deleted_at,
+        };
+      })
+      .filter((lab) =>
+        scopeMatchesContext(
+          lab.overrideScope ?? 'baseline',
+          lab.roomId ?? null,
+          roomId,
+          lab.assignmentId ?? null,
+          assignmentId,
+        ),
+      );
   },
 
-  async addLabResults(labs: LabResult[]): Promise<void> {
+  async addLabResults(labs: LabResult[], roomId?: number | null): Promise<void> {
     if (!labs.length) return;
     const payload = labs.map((lab) => ({
       patient_id: lab.patientId,
       assignment_id: lab.assignmentId ?? null,
+      room_id: lab.roomId ?? roomId ?? null,
+      override_scope: deriveScope(lab.overrideScope, lab.assignmentId, lab.roomId ?? roomId ?? null),
       test_name: lab.testName,
       value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
       unit: lab.unit,
@@ -175,7 +252,7 @@ export const emrApi = {
     }
   },
 
-  async listVitals(patientId: string): Promise<VitalSigns[]> {
+  async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {
     const { data, error } = await supabase
       .from('vital_signs')
       .select('*')
@@ -188,27 +265,46 @@ export const emrApi = {
       return [];
     }
 
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      patientId: row.patient_id ?? patientId,
-      timestamp: row.timestamp,
-      temperature: row.temperature ?? undefined,
-      bloodPressureSystolic: row.blood_pressure_systolic ?? undefined,
-      bloodPressureDiastolic: row.blood_pressure_diastolic ?? undefined,
-      heartRate: row.heart_rate ?? undefined,
-      respiratoryRate: row.respiratory_rate ?? undefined,
-      oxygenSaturation: row.oxygen_saturation ?? undefined,
-      pain: row.pain ?? undefined,
-      weight: row.weight ?? undefined,
-      height: row.height ?? undefined,
-      deletedAt: row.deleted_at,
-    }));
+    return (data ?? [])
+      .map((row) => {
+        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+        return {
+          id: row.id,
+          patientId: row.patient_id ?? patientId,
+          assignmentId: row.assignment_id ?? undefined,
+          roomId: row.room_id ?? undefined,
+          overrideScope: scope,
+          timestamp: row.timestamp,
+          temperature: row.temperature ?? undefined,
+          bloodPressureSystolic: row.blood_pressure_systolic ?? undefined,
+          bloodPressureDiastolic: row.blood_pressure_diastolic ?? undefined,
+          heartRate: row.heart_rate ?? undefined,
+          respiratoryRate: row.respiratory_rate ?? undefined,
+          oxygenSaturation: row.oxygen_saturation ?? undefined,
+          pain: row.pain ?? undefined,
+          weight: row.weight ?? undefined,
+          height: row.height ?? undefined,
+          deletedAt: row.deleted_at,
+        };
+      })
+      .filter((vital) =>
+        scopeMatchesContext(
+          vital.overrideScope ?? 'baseline',
+          vital.roomId ?? null,
+          roomId,
+          vital.assignmentId ?? null,
+          assignmentId,
+        ),
+      );
   },
 
-  async addVitals(vitals: VitalSigns[]): Promise<void> {
+  async addVitals(vitals: VitalSigns[], roomId?: number | null): Promise<void> {
     if (!vitals.length) return;
     const payload = vitals.map((v) => ({
       patient_id: v.patientId,
+      assignment_id: v.assignmentId ?? null,
+      room_id: v.roomId ?? roomId ?? null,
+      override_scope: deriveScope(v.overrideScope, v.assignmentId, v.roomId ?? roomId ?? null),
       timestamp: v.timestamp,
       temperature: v.temperature,
       blood_pressure_systolic: v.bloodPressureSystolic,
@@ -226,48 +322,60 @@ export const emrApi = {
     }
   },
 
-  async listOrders(patientId: string, assignmentId?: string): Promise<MedicalOrder[]> {
-    let query = supabase
+  async listOrders(patientId: string, assignmentId?: string, roomId?: number | null): Promise<MedicalOrder[]> {
+    const { data, error } = await supabase
       .from('medical_orders')
       .select('*')
       .eq('patient_id', patientId)
       .is('deleted_at', null)
       .order('order_time', { ascending: false });
 
-    if (assignmentId) {
-      query = query.eq('assignment_id', assignmentId);
-    }
-
-    const { data, error } = await query;
-
     if (error) {
       console.error('Error fetching orders', error);
       return [];
     }
 
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      patientId: row.patient_id ?? patientId,
-      assignmentId: row.assignment_id ?? undefined,
-      category: row.category as MedicalOrder['category'],
-      orderName: row.order_name,
-      frequency: row.frequency ?? undefined,
-      route: row.route ?? undefined,
-      dose: row.dose ?? undefined,
-      priority: (row.priority as MedicalOrder['priority']) ?? 'Routine',
-      status: (row.status as MedicalOrder['status']) ?? 'Active',
-      orderedBy: row.ordered_by ?? 'Unknown',
-      orderTime: row.order_time ?? new Date().toISOString(),
-      scheduledTime: row.scheduled_time ?? undefined,
-      instructions: row.instructions ?? undefined,
-      deletedAt: row.deleted_at,
-    }));
+    return (data ?? [])
+      .map((row) => {
+        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+        return {
+          id: row.id,
+          patientId: row.patient_id ?? patientId,
+          assignmentId: row.assignment_id ?? undefined,
+          roomId: row.room_id ?? undefined,
+          overrideScope: scope,
+          category: row.category as MedicalOrder['category'],
+          orderName: row.order_name,
+          frequency: row.frequency ?? undefined,
+          route: row.route ?? undefined,
+          dose: row.dose ?? undefined,
+          priority: (row.priority as MedicalOrder['priority']) ?? 'Routine',
+          status: (row.status as MedicalOrder['status']) ?? 'Active',
+          orderedBy: row.ordered_by ?? 'Unknown',
+          orderTime: row.order_time ?? new Date().toISOString(),
+          scheduledTime: row.scheduled_time ?? undefined,
+          instructions: row.instructions ?? undefined,
+          deletedAt: row.deleted_at,
+        };
+      })
+      .filter((order) =>
+        scopeMatchesContext(
+          order.overrideScope ?? 'baseline',
+          order.roomId ?? null,
+          roomId,
+          order.assignmentId ?? null,
+          assignmentId,
+        ),
+      );
   },
 
-  async addOrder(order: MedicalOrder): Promise<void> {
+  async addOrder(order: MedicalOrder, roomId?: number | null): Promise<void> {
+    const overrideScope = deriveScope(order.overrideScope, order.assignmentId, order.roomId ?? roomId ?? null);
     const { error } = await supabase.from('medical_orders').insert({
       patient_id: order.patientId,
       assignment_id: order.assignmentId ?? null,
+      room_id: order.roomId ?? roomId ?? null,
+      override_scope: overrideScope,
       category: order.category,
       order_name: order.orderName,
       frequency: order.frequency,

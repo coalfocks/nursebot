@@ -34,10 +34,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       return;
     }
     void (async () => {
-      const data = await emrApi.listLabResults(patient.id, assignmentId);
+      const data = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
       setLabResults(data);
     })();
-  }, [patient.id, assignmentId, refreshToken, isSandbox, sandboxLabs]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs]);
 
   const handleGenerateLabResults = async () => {
     setIsGenerating(true);
@@ -45,12 +45,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const caseDescription =
         '37-year-old male with epigastric pain, possible peptic ulcer disease, taking Excedrin for migraines, history of GERD';
       const newLabs = await generateLabResults(patient.id, caseDescription);
-      const labsWithAssignment = newLabs.map((lab) => ({ ...lab, assignmentId: assignmentId ?? null }));
+      const labsWithAssignment = newLabs.map((lab) => ({
+        ...lab,
+        assignmentId: assignmentId ?? null,
+        roomId: patient.roomId ?? null,
+      }));
       setLabResults((prev) => [...labsWithAssignment, ...prev]);
       if (isSandbox) {
         onSandboxLabsChange?.([...labsWithAssignment, ...labResults]);
       } else {
-        void emrApi.addLabResults(labsWithAssignment);
+        void emrApi.addLabResults(labsWithAssignment, patient.roomId ?? null);
       }
     } catch (error) {
       console.error('Error generating labs:', error);

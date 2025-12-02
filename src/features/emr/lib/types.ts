@@ -33,18 +33,23 @@ export interface RoomOrdersConfig {
 export interface ClinicalNote {
   id: string;
   patientId: string;
+  roomId?: number | null;
+  overrideScope?: 'baseline' | 'room' | 'assignment';
   type: 'H&P' | 'Progress' | 'Discharge' | 'Consult';
   title: string;
   content: string;
   author: string;
   timestamp: string;
   signed: boolean;
+  assignmentId?: string | null;
 }
 
 export interface LabResult {
   id: string;
   patientId: string;
   assignmentId?: string | null;
+  roomId?: number | null;
+  overrideScope?: 'baseline' | 'room' | 'assignment';
   testName: string;
   value: string | number;
   unit: string;
@@ -59,6 +64,9 @@ export interface LabResult {
 export interface VitalSigns {
   id: string;
   patientId: string;
+  assignmentId?: string | null;
+  roomId?: number | null;
+  overrideScope?: 'baseline' | 'room' | 'assignment';
   timestamp: string;
   temperature?: number;
   bloodPressureSystolic?: number;
@@ -76,6 +84,8 @@ export interface MedicalOrder {
   id: string;
   patientId: string;
   assignmentId?: string | null;
+  roomId?: number | null;
+  overrideScope?: 'baseline' | 'room' | 'assignment';
   category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity';
   orderName: string;
   frequency?: string;

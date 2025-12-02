@@ -10,25 +10,31 @@ import type { Patient, ClinicalNote } from '../lib/types';
 import { emrApi } from '../lib/api';
 
 interface ClinicalNotesProps {
-  patient: Patient
+  patient: Patient;
+  assignmentId?: string;
 }
 
-export function ClinicalNotes({ patient }: ClinicalNotesProps) {
+export function ClinicalNotes({ patient, assignmentId }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
 
   useEffect(() => {
     void (async () => {
-      const data = await emrApi.listClinicalNotes(patient.id);
+      const data = await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null);
       setNotes(data);
     })();
-  }, [patient.id]);
+  }, [patient.id, patient.roomId, assignmentId]);
 
   const [showGenerator, setShowGenerator] = useState(false);
 
   const handleNoteGenerated = (newNote: ClinicalNote) => {
     setNotes([newNote, ...notes]);
     setShowGenerator(false);
-    void emrApi.addClinicalNote(newNote);
+    void emrApi.addClinicalNote({
+      ...newNote,
+      assignmentId: assignmentId ?? newNote.assignmentId ?? null,
+      roomId: patient.roomId ?? newNote.roomId ?? null,
+      overrideScope: assignmentId ? 'assignment' : patient.roomId ? 'room' : newNote.overrideScope,
+    });
   };
 
   const notesByType = notes.reduce(

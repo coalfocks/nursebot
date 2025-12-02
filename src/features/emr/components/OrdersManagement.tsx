@@ -23,17 +23,23 @@ export function OrdersManagement({
 
   useEffect(() => {
     void (async () => {
-      const data = await emrApi.listOrders(patient.id, assignmentId);
+      const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
       if (data.length) {
         setOrders(data);
       }
     })();
-  }, [patient.id, assignmentId]);
+  }, [patient.id, patient.roomId, assignmentId]);
 
   const handleOrderPlaced = (newOrder: MedicalOrder) => {
     setOrders((prev) => [newOrder, ...prev]);
     setShowOrderEntry(false);
-    void emrApi.addOrder(newOrder);
+    void emrApi.addOrder(
+      {
+        ...newOrder,
+        roomId: newOrder.roomId ?? patient.roomId ?? null,
+      },
+      patient.roomId ?? null,
+    );
   };
 
   const handleOrderStatusChange = (orderId: string, newStatus: MedicalOrder['status']) => {
@@ -163,7 +169,9 @@ export function OrdersManagement({
         </Button>
       </div>
 
-      {showOrderEntry && <OrderEntry patient={patient} assignmentId={assignmentId} onOrderPlaced={handleOrderPlaced} />}
+      {showOrderEntry && (
+        <OrderEntry patient={patient} assignmentId={assignmentId} onOrderPlaced={handleOrderPlaced} />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card>

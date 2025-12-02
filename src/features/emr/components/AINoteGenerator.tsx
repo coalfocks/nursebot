@@ -8,7 +8,6 @@ import { Label } from './ui/Label';
 import { Badge } from './ui/Badge';
 import { Loader2, FileText, Sparkles } from 'lucide-react';
 import { generateClinicalNote, formatNoteForDisplay } from '../lib/aiNotes';
-import { emrApi } from '../lib/api';
 import type { Patient, ClinicalNote } from '../lib/types';
 
 type NoteTypeOption = 'H&P' | 'Progress' | 'Discharge' | 'Consult';
@@ -62,6 +61,8 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
       const newNote: ClinicalNote = {
         id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
         patientId: patient.id,
+        roomId: patient.roomId ?? null,
+        overrideScope: patient.roomId ? 'room' : 'baseline',
         type: noteType,
         title: `${noteType} Note - ${new Date().toLocaleDateString()}`,
         content: formattedNote,
@@ -71,7 +72,6 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
       };
 
       onNoteGenerated(newNote);
-      void emrApi.addClinicalNote(newNote);
     } catch (error) {
       console.error('Error generating note:', error);
     } finally {

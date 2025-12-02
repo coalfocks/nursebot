@@ -14,6 +14,7 @@ type Room = Database['public']['Tables']['rooms']['Row'] & {
     name: string;
   } | null;
   patients?: Database['public']['Tables']['patients']['Row'][] | null;
+  patient?: Database['public']['Tables']['patients']['Row'] | null;
 };
 
 export default function RoomManagement() {
@@ -45,7 +46,8 @@ export default function RoomManagement() {
           specialty:specialty_id (
             name
           ),
-          patients:patients (*)
+          patients:patients (*),
+          patient:patient_id (*)
         `)
         .order('room_number');
 
@@ -73,6 +75,8 @@ export default function RoomManagement() {
     setSelectedRoom(undefined);
     setIsEditing(true);
   };
+
+  const resolveRoomPatient = (room: Room) => room.patient ?? room.patients?.[0] ?? null;
 
   const handleSave = () => {
     setIsEditing(false);
@@ -107,11 +111,12 @@ export default function RoomManagement() {
       attending_physician: null,
     };
 
-    const { error } = await supabase.from('patients').insert([payload]);
-    if (error) {
+    const { data, error } = await supabase.from('patients').insert([payload]).select().maybeSingle();
+    if (error || !data) {
       console.error('Failed to create patient', error);
       alert('Failed to create patient for this room.');
     } else {
+      await supabase.from('rooms').update({ patient_id: data.id }).eq('id', room.id);
       await fetchRooms();
     }
   };
@@ -119,9 +124,10 @@ export default function RoomManagement() {
   const linkExistingPatient = async (room: Room) => {
     const patientId = window.prompt('Enter existing patient ID to link to this room');
     if (!patientId) return;
-    const { error } = await supabase.from('patients').update({ room_id: room.id }).eq('id', patientId);
-    if (error) {
-      console.error('Failed to link patient', error);
+    const { error: patientError } = await supabase.from('patients').update({ room_id: room.id }).eq('id', patientId);
+    const { error: roomError } = await supabase.from('rooms').update({ patient_id: patientId }).eq('id', room.id);
+    if (patientError || roomError) {
+      console.error('Failed to link patient', patientError || roomError);
       alert('Failed to link patient. Please verify the patient ID.');
     } else {
       await fetchRooms();
@@ -200,8 +206,10 @@ export default function RoomManagement() {
               <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
                 <div className="bg-white">
                   <ul role="list" className="divide-y divide-gray-200">
-                    {rooms.map((room) => (
-                      <li key={room.id} className="p-4">
+                    {rooms.map((room) => {
+                      const linkedPatient = resolveRoomPatient(room);
+                      return (
+                        <li key={room.id} className="p-4">
                         <div className="w-full">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center">
@@ -219,7 +227,7 @@ export default function RoomManagement() {
                                 <h3 className="text-sm font-medium text-gray-900">
                                   Room {room.room_number}
                                 </h3>
-                    <div className="flex items-center space-x-2 mt-1">
+                                <div className="flex items-center space-x-2 mt-1">
                       {room.specialty && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {room.specialty.name}
@@ -235,15 +243,15 @@ export default function RoomManagement() {
                           Inactive
                         </span>
                       )}
-                      {room.patients && room.patients.length > 0 && (
+                      {linkedPatient && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                           EMR linked
                         </span>
                       )}
-                    </div>
-                  </div>
-                </div>
-                <button
+                                </div>
+                              </div>
+                            </div>
+                            <button
                               onClick={() => handleEditRoom(room)}
                               className="text-blue-600 hover:text-blue-900"
                             >
@@ -272,9 +280,9 @@ export default function RoomManagement() {
                           <div className="space-y-1">
                             <h4 className="text-xs font-medium text-gray-500 uppercase">EMR Patient</h4>
                             <div className="flex flex-wrap items-center gap-3">
-                              {room.patients && room.patients.length > 0 ? (
+                              {linkedPatient ? (
                                 <span className="text-sm text-gray-900">
-                                  {room.patients[0].first_name} {room.patients[0].last_name} (MRN: {room.patients[0].mrn})
+                                  {linkedPatient.first_name} {linkedPatient.last_name} (MRN: {linkedPatient.mrn})
                                 </span>
                               ) : (
                                 <span className="text-sm text-gray-500">No patient linked</span>
@@ -289,7 +297,7 @@ export default function RoomManagement() {
                                 }}
                                 className="inline-flex items-center rounded-md border border-transparent bg-green-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-green-700"
                               >
-                                {room.patients && room.patients.length > 0 ? 'Create new patient' : 'Create patient'}
+                                {linkedPatient ? 'Create new patient' : 'Create patient'}
                               </button>
                               <button
                                 type="button"
@@ -320,7 +328,8 @@ export default function RoomManagement() {
                           )}
                         </div>
                       </li>
-                    ))}
+                    );
+                    })}
                   </ul>
                 </div>
               </div>
