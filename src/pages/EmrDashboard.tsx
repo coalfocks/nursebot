@@ -24,7 +24,6 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
-import type { MedicalOrder } from '../features/emr/lib/types';
 
 export default function EmrDashboard() {
   const { profile } = useAuthStore();

@@ -2,12 +2,13 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Loader2, Edit, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2 } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialty: {
@@ -25,6 +26,9 @@ export default function RoomManagement() {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | undefined>();
   const [expandedRooms, setExpandedRooms] = useState<Set<number>>(new Set());
+  const [patientSearch, setPatientSearch] = useState('');
+  const debouncedPatientSearch = useDebouncedValue(patientSearch, 300);
+  const [patientOptions, setPatientOptions] = useState<Database['public']['Tables']['patients']['Row'][]>([]);
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -46,7 +50,7 @@ export default function RoomManagement() {
           specialty:specialty_id (
             name
           ),
-          patients:patients (*),
+          patients:patients!patients_room_id_fkey (*),
           patient:patient_id (*)
         `)
         .order('room_number');
@@ -121,8 +125,33 @@ export default function RoomManagement() {
     }
   };
 
-  const linkExistingPatient = async (room: Room) => {
-    const patientId = window.prompt('Enter existing patient ID to link to this room');
+  useEffect(() => {
+    const fetchPatients = async () => {
+      if (!debouncedPatientSearch) {
+        setPatientOptions([]);
+        return;
+      }
+      try {
+        let query = supabase
+          .from('patients')
+          .select('*')
+          .ilike('last_name', `%${debouncedPatientSearch}%`)
+          .order('last_name')
+          .limit(20);
+        if (scopedSchoolId) {
+          query = query.eq('school_id', scopedSchoolId);
+        }
+        const { data, error } = await query;
+        if (error) throw error;
+        setPatientOptions(data || []);
+      } catch (err) {
+        console.error('Failed to search patients', err);
+      }
+    };
+    void fetchPatients();
+  }, [debouncedPatientSearch, scopedSchoolId]);
+
+  const linkExistingPatient = async (room: Room, patientId: string) => {
     if (!patientId) return;
     const { error: patientError } = await supabase.from('patients').update({ room_id: room.id }).eq('id', patientId);
     const { error: roomError } = await supabase.from('rooms').update({ patient_id: patientId }).eq('id', room.id);
@@ -131,6 +160,8 @@ export default function RoomManagement() {
       alert('Failed to link patient. Please verify the patient ID.');
     } else {
       await fetchRooms();
+      setPatientSearch('');
+      setPatientOptions([]);
     }
   };
 
@@ -299,13 +330,33 @@ export default function RoomManagement() {
                               >
                                 {linkedPatient ? 'Create new patient' : 'Create patient'}
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => void linkExistingPatient(room)}
-                                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                              >
-                                Link existing patient
-                              </button>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  value={patientSearch}
+                                  onChange={(e) => setPatientSearch(e.target.value)}
+                                  placeholder="Search patient..."
+                                  className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                                />
+                                {patientSearch && patientOptions.length > 0 && (
+                                  <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded shadow">
+                                    <ul className="max-h-48 overflow-y-auto text-sm">
+                                      {patientOptions.map((p) => (
+                                        <li
+                                          key={p.id}
+                                          className="px-3 py-2 hover:bg-gray-100 cursor-pointer flex items-center justify-between"
+                                          onClick={() => void linkExistingPatient(room, p.id)}
+                                        >
+                                          <span>
+                                            {p.last_name}, {p.first_name}
+                                          </span>
+                                          <span className="text-xs text-gray-500">{p.mrn}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                           {room.expected_diagnosis && (

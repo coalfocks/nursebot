@@ -7,6 +7,7 @@ import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -115,6 +116,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
   const [schoolId, setSchoolId] = useState<string>(scopedSchoolId ?? '');
+  const [patientSearch, setPatientSearch] = useState('');
+  const debouncedPatientSearch = useDebouncedValue(patientSearch, 300);
+  const [patientOptions, setPatientOptions] = useState<Database['public']['Tables']['patients']['Row'][]>([]);
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(room?.patient_id ?? null);
   
   // PDF upload state
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -234,6 +239,36 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     }
   }, [scopedSchoolId, schoolId]);
 
+  useEffect(() => {
+    const fetchPatients = async () => {
+      try {
+        let query = supabase
+          .from('patients')
+          .select('*')
+          .limit(20)
+          .order('last_name');
+
+        if (scopedSchoolId) {
+          query = query.eq('school_id', scopedSchoolId);
+        }
+
+        if (debouncedPatientSearch) {
+          query = query.or(
+            `last_name.ilike.%${debouncedPatientSearch}%,first_name.ilike.%${debouncedPatientSearch}%,mrn.ilike.%${debouncedPatientSearch}%`,
+          );
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setPatientOptions(data || []);
+      } catch (err) {
+        console.error('Failed to fetch patients', err);
+      }
+    };
+
+    void fetchPatients();
+  }, [debouncedPatientSearch, scopedSchoolId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -248,12 +283,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         setIsLoading(false);
         return;
       }
-      if (!room && !patientName.trim()) {
-        setError('Please enter a patient name to create the EMR record.');
-        setIsLoading(false);
-        return;
-      }
-
       // Handle PDF upload if a new file is selected
       let finalPdfUrl = pdfUrl;
       
@@ -360,45 +389,50 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         
         if (error) throw error;
 
-        const [firstName, ...rest] = patientName.trim().split(' ');
-        const lastName = rest.join(' ') || 'Patient';
-        const mrn = `ROOM-${inserted.room_number}-${Date.now()}`;
+        if (selectedPatientId) {
+          await supabase.from('rooms').update({ patient_id: selectedPatientId }).eq('id', inserted.id);
+          await supabase.from('patients').update({ room_id: inserted.id }).eq('id', selectedPatientId);
+        } else if (patientName.trim()) {
+          const [firstName, ...rest] = patientName.trim().split(' ');
+          const lastName = rest.join(' ') || 'Patient';
+          const mrn = `ROOM-${inserted.room_number}-${Date.now()}`;
 
-        const patientPayload = {
-          room_id: inserted.id,
-          school_id: inserted.school_id ?? finalSchoolId,
-          mrn,
-          first_name: firstName || 'Patient',
-          last_name: lastName,
-          date_of_birth: '1990-01-01',
-          gender: 'Other',
-          admission_date: new Date().toISOString().slice(0, 10),
-          service: null,
-          attending_physician: null,
-        };
+          const patientPayload = {
+            room_id: inserted.id,
+            school_id: inserted.school_id ?? finalSchoolId,
+            mrn,
+            first_name: firstName || 'Patient',
+            last_name: lastName,
+            date_of_birth: '1990-01-01',
+            gender: 'Other',
+            admission_date: new Date().toISOString().slice(0, 10),
+            service: null,
+            attending_physician: null,
+          };
 
-        const { data: patientRecord, error: patientError } = await supabase
-          .from('patients')
-          .insert([patientPayload])
-          .select()
-          .single();
-        if (patientError || !patientRecord) {
-          console.error('Failed to create patient for room', patientError);
-          setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
-        } else {
-          await supabase.from('rooms').update({ patient_id: patientRecord.id }).eq('id', inserted.id);
-          try {
-            const initialLabs = buildInitialLabResults(
-              patientRecord.id,
-              patientRecord.school_id ?? finalSchoolId,
-              inserted.id,
-            );
-            const { error: labError } = await supabase.from('lab_results').insert(initialLabs);
-            if (labError) {
-              console.error('Failed to seed initial labs', labError);
+          const { data: patientRecord, error: patientError } = await supabase
+            .from('patients')
+            .insert([patientPayload])
+            .select()
+            .single();
+          if (patientError || !patientRecord) {
+            console.error('Failed to create patient for room', patientError);
+            setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
+          } else {
+            await supabase.from('rooms').update({ patient_id: patientRecord.id }).eq('id', inserted.id);
+            try {
+              const initialLabs = buildInitialLabResults(
+                patientRecord.id,
+                patientRecord.school_id ?? finalSchoolId,
+                inserted.id,
+              );
+              const { error: labError } = await supabase.from('lab_results').insert(initialLabs);
+              if (labError) {
+                console.error('Failed to seed initial labs', labError);
+              }
+            } catch (seedError) {
+              console.error('Error seeding initial labs', seedError);
             }
-          } catch (seedError) {
-            console.error('Error seeding initial labs', seedError);
           }
         }
       }
@@ -572,10 +606,47 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           />
         </div>
 
-        {!room && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="patientSelect" className="block text-sm font-medium text-gray-700">
+              Link existing patient (optional)
+            </label>
+            <input
+              id="patientSelect"
+              type="text"
+              value={patientSearch}
+              onChange={(e) => setPatientSearch(e.target.value)}
+              placeholder="Search by name or MRN"
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            />
+            {patientSearch && patientOptions.length > 0 && (
+              <div className="mt-2 max-h-40 overflow-y-auto rounded border border-gray-200 bg-white shadow">
+                <ul className="divide-y divide-gray-100">
+                  {patientOptions.map((p) => (
+                    <li
+                      key={p.id}
+                      className={`px-3 py-2 text-sm cursor-pointer hover:bg-gray-50 ${
+                        selectedPatientId === p.id ? 'bg-blue-50' : ''
+                      }`}
+                      onClick={() => {
+                        setSelectedPatientId(p.id);
+                        setPatientSearch(`${p.last_name}, ${p.first_name} (${p.mrn})`);
+                      }}
+                    >
+                      <div className="font-medium">{p.last_name}, {p.first_name}</div>
+                      <div className="text-xs text-gray-500">MRN: {p.mrn}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {selectedPatientId && (
+              <p className="mt-1 text-xs text-green-600">Selected patient will be linked to this room.</p>
+            )}
+          </div>
           <div>
             <label htmlFor="patientName" className="block text-sm font-medium text-gray-700">
-              Patient Name (creates EMR patient)
+              Or create new patient (optional)
             </label>
             <input
               type="text"
@@ -584,13 +655,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               onChange={(e) => setPatientName(e.target.value)}
               placeholder="e.g., Alex Rivera"
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              required
             />
             <p className="mt-1 text-xs text-gray-500">
-              A patient record will be created and linked to this room.
+              Leave blank to create the room without an EMR patient.
             </p>
           </div>
-        )}
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
