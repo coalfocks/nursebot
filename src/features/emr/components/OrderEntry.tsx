@@ -18,10 +18,11 @@ type OrderPriority = 'Routine' | 'STAT' | 'Timed';
 interface OrderEntryProps {
   patient: Patient;
   assignmentId?: string;
+  forceBaseline?: boolean;
   onOrderPlaced: (order: MedicalOrder) => void;
 }
 
-export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryProps) {
+export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline }: OrderEntryProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
@@ -62,9 +63,9 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
     const newOrder: MedicalOrder = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: patient.id,
-      assignmentId,
-      roomId: patient.roomId ?? null,
-      overrideScope: assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
+      assignmentId: forceBaseline ? null : assignmentId,
+      roomId: forceBaseline ? null : patient.roomId ?? null,
+      overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: selectedOrder.category,
       orderName: selectedOrder.name,
       frequency: orderDetails.frequency,

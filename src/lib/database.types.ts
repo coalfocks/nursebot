@@ -447,6 +447,7 @@ export interface Database {
           attending_physician: string | null
           allergies: string[] | null
           code_status: string | null
+          intake_output: Json | null
           created_at: string
           updated_at: string
           deleted_at: string | null
@@ -466,6 +467,7 @@ export interface Database {
           attending_physician?: string | null
           allergies?: string[] | null
           code_status?: string | null
+          intake_output?: Json | null
           created_at?: string
           updated_at?: string
           deleted_at?: string | null
@@ -485,6 +487,7 @@ export interface Database {
           attending_physician?: string | null
           allergies?: string[] | null
           code_status?: string | null
+          intake_output?: Json | null
           created_at?: string
           updated_at?: string
           deleted_at?: string | null

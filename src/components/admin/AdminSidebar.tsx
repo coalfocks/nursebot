@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Activity,
   NotebookPen,
+  UserPlus,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -36,6 +37,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
     { label: 'Students', to: '/cases', icon: GraduationCap },
+    { label: 'Patients', to: '/admin/patients', icon: UserPlus },
     { label: 'Rooms', to: '/admin/rooms', icon: School },
     { label: 'Profile Settings', to: '/profile', icon: Settings },
   ];

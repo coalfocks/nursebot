@@ -5,20 +5,24 @@ import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User } from 'lucide-react';
-import { mockOrders } from '../lib/mockData';
 import type { Patient, MedicalOrder } from '../lib/types';
 import { emrApi } from '../lib/api';
+import { generateLabResults } from '../lib/aiLabGenerator';
 
 interface OrdersManagementProps {
   patient: Patient;
   assignmentId?: string;
+  forceBaseline?: boolean;
+  onOrderAdded?: (order: MedicalOrder) => void;
 }
 
 export function OrdersManagement({
   patient,
   assignmentId,
+  forceBaseline,
+  onOrderAdded,
 }: OrdersManagementProps) {
-  const [orders, setOrders] = useState<MedicalOrder[]>(mockOrders);
+  const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
 
   useEffect(() => {
@@ -30,16 +34,38 @@ export function OrdersManagement({
     })();
   }, [patient.id, patient.roomId, assignmentId]);
 
-  const handleOrderPlaced = (newOrder: MedicalOrder) => {
-    setOrders((prev) => [newOrder, ...prev]);
+  const handleOrderPlaced = async (newOrder: MedicalOrder) => {
+    const adjustedOrder: MedicalOrder = {
+      ...newOrder,
+      assignmentId: forceBaseline ? null : newOrder.assignmentId,
+      roomId: forceBaseline ? null : newOrder.roomId,
+      overrideScope: forceBaseline ? 'baseline' : newOrder.overrideScope,
+    };
+    setOrders((prev) => [adjustedOrder, ...prev]);
+    onOrderAdded?.(adjustedOrder);
     setShowOrderEntry(false);
     void emrApi.addOrder(
       {
-        ...newOrder,
-        roomId: newOrder.roomId ?? patient.roomId ?? null,
+        ...adjustedOrder,
+        roomId: forceBaseline ? null : adjustedOrder.roomId ?? patient.roomId ?? null,
       },
-      patient.roomId ?? null,
+      forceBaseline ? null : patient.roomId ?? null,
     );
+
+    if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
+      try {
+        const labs = await generateLabResults(patient.id, adjustedOrder.orderName);
+        const labsWithScope = labs.map((lab) => ({
+          ...lab,
+          assignmentId: forceBaseline ? null : adjustedOrder.assignmentId ?? assignmentId ?? null,
+          roomId: forceBaseline ? null : patient.roomId ?? null,
+          overrideScope: forceBaseline ? 'baseline' : lab.overrideScope,
+        }));
+        await emrApi.addLabResults(labsWithScope, forceBaseline ? null : patient.roomId ?? null);
+      } catch (err) {
+        console.error('Failed to generate STAT labs', err);
+      }
+    }
   };
 
   const handleOrderStatusChange = (orderId: string, newStatus: MedicalOrder['status']) => {
@@ -158,7 +184,12 @@ export function OrdersManagement({
       </div>
 
       {showOrderEntry && (
-        <OrderEntry patient={patient} assignmentId={assignmentId} onOrderPlaced={handleOrderPlaced} />
+        <OrderEntry
+          patient={patient}
+          assignmentId={assignmentId}
+          forceBaseline={forceBaseline}
+          onOrderPlaced={handleOrderPlaced}
+        />
       )}
 
       <Card>

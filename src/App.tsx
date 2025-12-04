@@ -20,6 +20,7 @@ import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
 import CaseBuilder from './pages/CaseBuilder';
+import AdminPatients from './pages/AdminPatients';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -145,6 +146,16 @@ function App() {
           element={
             user?.id && hasAdminAccess ? (
               <RoomManagement />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          } 
+        />
+        <Route 
+          path="/admin/patients" 
+          element={
+            user?.id && hasAdminAccess ? (
+              <AdminPatients />
             ) : (
               <Navigate to="/dashboard" replace />
             )

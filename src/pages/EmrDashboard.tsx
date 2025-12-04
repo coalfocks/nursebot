@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, FileText, TestTube, Pill, Calendar, User, Droplets, Plus, Edit } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import type { LabResult, Patient, CustomOverviewSection } from '../features/emr/lib/types';
+import type {
+  LabResult,
+  Patient,
+  CustomOverviewSection,
+  VitalSigns,
+  IntakeOutput,
+  MedicalOrder,
+} from '../features/emr/lib/types';
 import { mockPatients } from '../features/emr/lib/mockData';
 import { emrApi } from '../features/emr/lib/api';
 import { PatientSidebar } from '../features/emr/components/PatientSidebar';
@@ -10,6 +17,7 @@ import { LabResults } from '../features/emr/components/LabResults';
 import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
 import { OrdersManagement } from '../features/emr/components/OrdersManagement';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
+import { Button } from '../features/emr/components/ui/Button';
 import { Badge } from '../features/emr/components/ui/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../features/emr/components/ui/Tabs';
 import Navbar from '../components/Navbar';
@@ -28,6 +36,26 @@ export default function EmrDashboard() {
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
+  const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
+  const [showVitalsModal, setShowVitalsModal] = useState(false);
+  const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
+  const [activeTab, setActiveTab] = useState('overview');
+  const forceBaseline = isSuperAdmin(profile);
+  const effectiveAssignmentId = forceBaseline ? undefined : assignmentId;
+  const [showMedModal, setShowMedModal] = useState(false);
+  const [medForm, setMedForm] = useState({
+    name: '',
+    dose: '',
+    route: '',
+    frequency: '',
+    priority: 'Routine' as 'Routine' | 'STAT' | 'Timed',
+  });
+  const [ioModalOpen, setIoModalOpen] = useState(false);
+  const [ioForm, setIoForm] = useState<IntakeOutput>({
+    intake: { iv: '', oral: '', other: '' },
+    output: { urine: '', stool: '', other: '' },
+    notes: '',
+  });
   const assignmentId = searchParams.get('assignmentId') || undefined;
   const isSandbox = !assignmentId;
 
@@ -84,11 +112,27 @@ export default function EmrDashboard() {
     if (!selectedPatient) return;
 
     void (async () => {
-      const orders = await emrApi.listOrders(selectedPatient.id, assignmentId);
+      const orders = await emrApi.listOrders(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
       const meds = orders.filter((order) => order.category === 'Medication');
       setMedicationOrders(meds);
+      const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
+      if (vitals.length) {
+        setOverviewVitals(vitals[0]);
+        setVitalsForm({
+          temperature: vitals[0].temperature,
+          bloodPressureSystolic: vitals[0].bloodPressureSystolic,
+          bloodPressureDiastolic: vitals[0].bloodPressureDiastolic,
+          heartRate: vitals[0].heartRate,
+          respiratoryRate: vitals[0].respiratoryRate,
+          oxygenSaturation: vitals[0].oxygenSaturation,
+          pain: vitals[0].pain,
+        });
+      } else {
+        setOverviewVitals(null);
+        setVitalsForm({});
+      }
     })();
-  }, [selectedPatient, assignmentId]);
+  }, [selectedPatient, effectiveAssignmentId]);
 
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
@@ -117,6 +161,40 @@ export default function EmrDashboard() {
       );
     }
     setIsEditingCustomSections(false);
+  };
+
+  const handleSaveVitals = async () => {
+    if (!selectedPatient) return;
+    const payload: VitalSigns = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+      patientId: selectedPatient.id,
+      assignmentId: forceBaseline ? null : assignmentId ?? null,
+      roomId: forceBaseline ? null : selectedPatient.roomId ?? null,
+      overrideScope: forceBaseline ? 'baseline' : undefined,
+      timestamp: new Date().toISOString(),
+      temperature: vitalsForm.temperature ? Number(vitalsForm.temperature) : undefined,
+      bloodPressureSystolic: vitalsForm.bloodPressureSystolic ? Number(vitalsForm.bloodPressureSystolic) : undefined,
+      bloodPressureDiastolic: vitalsForm.bloodPressureDiastolic ? Number(vitalsForm.bloodPressureDiastolic) : undefined,
+      heartRate: vitalsForm.heartRate ? Number(vitalsForm.heartRate) : undefined,
+      respiratoryRate: vitalsForm.respiratoryRate ? Number(vitalsForm.respiratoryRate) : undefined,
+      oxygenSaturation: vitalsForm.oxygenSaturation ? Number(vitalsForm.oxygenSaturation) : undefined,
+      pain: vitalsForm.pain ? Number(vitalsForm.pain) : undefined,
+    };
+    await emrApi.addVitals([payload], selectedPatient.roomId ?? null);
+    const vitals = await emrApi.listVitals(selectedPatient.id, assignmentId, selectedPatient.roomId ?? null);
+    if (vitals.length) {
+      setOverviewVitals(vitals[0]);
+      setVitalsForm({
+        temperature: vitals[0].temperature,
+        bloodPressureSystolic: vitals[0].bloodPressureSystolic,
+        bloodPressureDiastolic: vitals[0].bloodPressureDiastolic,
+        heartRate: vitals[0].heartRate,
+        respiratoryRate: vitals[0].respiratoryRate,
+        oxygenSaturation: vitals[0].oxygenSaturation,
+        pain: vitals[0].pain,
+      });
+    }
+    setShowVitalsModal(false);
   };
 
   const content = selectedPatient ? (
@@ -156,7 +234,7 @@ export default function EmrDashboard() {
 
         {/* Main Content Tabs */}
         <div className="p-6">
-          <Tabs defaultValue="overview" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
@@ -233,21 +311,34 @@ export default function EmrDashboard() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Temperature</span>
-                        <span className="text-sm font-medium">99.1°F</span>
+                        <span className="text-sm font-medium">
+                          {overviewVitals?.temperature ?? '—'}°F
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Blood Pressure</span>
-                        <span className="text-sm font-medium">135/88</span>
+                        <span className="text-sm font-medium">
+                          {overviewVitals?.bloodPressureSystolic ?? '—'}/{overviewVitals?.bloodPressureDiastolic ?? '—'}
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Heart Rate</span>
-                        <span className="text-sm font-medium">85 bpm</span>
+                        <span className="text-sm font-medium">
+                          {overviewVitals?.heartRate ?? '—'} bpm
+                        </span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">O2 Sat</span>
-                        <span className="text-sm font-medium">97%</span>
+                        <span className="text-sm font-medium">
+                          {overviewVitals?.oxygenSaturation ?? '—'}%
+                        </span>
                       </div>
                     </div>
+                    {isSuperAdmin(profile) && (
+                      <Button size="sm" className="mt-3" variant="outline" onClick={() => setShowVitalsModal(true)}>
+                        Edit vitals
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -265,12 +356,18 @@ export default function EmrDashboard() {
                         <div className="space-y-2">
                           <div className="flex justify-between">
                             <span className="text-sm text-muted-foreground">IV Fluids</span>
-                            <span className="text-sm font-medium">750 mL</span>
+                            <span className="text-sm font-medium">{selectedPatient.intakeOutput?.intake?.iv || '—'}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-sm text-muted-foreground">Oral Fluids</span>
-                            <span className="text-sm font-medium">420 mL</span>
+                            <span className="text-sm font-medium">{selectedPatient.intakeOutput?.intake?.oral || '—'}</span>
                           </div>
+                          {selectedPatient.intakeOutput?.intake?.other && (
+                            <div className="flex justify-between">
+                              <span className="text-sm text-muted-foreground">Other</span>
+                              <span className="text-sm font-medium">{selectedPatient.intakeOutput?.intake?.other}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div>
@@ -278,15 +375,37 @@ export default function EmrDashboard() {
                         <div className="space-y-2">
                           <div className="flex justify-between">
                             <span className="text-sm text-muted-foreground">Urine</span>
-                            <span className="text-sm font-medium">650 mL</span>
+                            <span className="text-sm font-medium">{selectedPatient.intakeOutput?.output?.urine || '—'}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-sm text-muted-foreground">Stool</span>
-                            <span className="text-sm font-medium">1 episode</span>
+                            <span className="text-sm font-medium">{selectedPatient.intakeOutput?.output?.stool || '—'}</span>
                           </div>
+                          {selectedPatient.intakeOutput?.output?.other && (
+                            <div className="flex justify-between">
+                              <span className="text-sm text-muted-foreground">Other</span>
+                              <span className="text-sm font-medium">{selectedPatient.intakeOutput?.output?.other}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
+                      {selectedPatient.intakeOutput?.notes && (
+                        <div>
+                          <h4 className="text-sm font-semibold text-muted-foreground mb-2">Notes</h4>
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                            {selectedPatient.intakeOutput?.notes}
+                          </p>
+                        </div>
+                      )}
                     </div>
+                    {isSuperAdmin(profile) && (
+                      <Button size="sm" className="mt-3" variant="outline" onClick={() => {
+                        setIoForm(selectedPatient.intakeOutput ?? { intake: { iv: '', oral: '', other: '' }, output: { urine: '', stool: '', other: '' }, notes: '' });
+                        setIoModalOpen(true);
+                      }}>
+                        Edit intake/output
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -308,6 +427,16 @@ export default function EmrDashboard() {
                             </div>
                           </div>
                         ))}
+                        {isSuperAdmin(profile) && (
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setActiveTab('orders')}>
+                              Manage orders
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setShowMedModal(true)}>
+                              Add medication
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <p className="text-sm text-muted-foreground">No active medications recorded.</p>
@@ -335,17 +464,17 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="vitals">
-              <VitalSignsComponent patient={selectedPatient} assignmentId={assignmentId} />
+              <VitalSignsComponent patient={selectedPatient} assignmentId={effectiveAssignmentId} />
             </TabsContent>
 
             <TabsContent value="notes">
-              <ClinicalNotes patient={selectedPatient} assignmentId={assignmentId} />
+              <ClinicalNotes patient={selectedPatient} assignmentId={effectiveAssignmentId} forceBaseline={forceBaseline} />
             </TabsContent>
 
             <TabsContent value="labs">
               <LabResults
                 patient={selectedPatient}
-                assignmentId={assignmentId}
+                assignmentId={effectiveAssignmentId}
                 isSandbox={isSandbox}
                 sandboxLabs={sandboxLabs}
                 onSandboxLabsChange={setSandboxLabs}
@@ -366,7 +495,8 @@ export default function EmrDashboard() {
             <TabsContent value="orders">
               <OrdersManagement
                 patient={selectedPatient}
-                assignmentId={assignmentId}
+                assignmentId={effectiveAssignmentId}
+                forceBaseline={forceBaseline}
               />
             </TabsContent>
 
@@ -488,14 +618,283 @@ export default function EmrDashboard() {
     </div>
   );
 
-  return showAdminLayout ? (
+  const adminShell = (
     <AdminLayout>
       <div className="flex-1">{content}</div>
+      {showVitalsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold">Edit vitals</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm text-muted-foreground">
+                Temp (°F)
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.temperature ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, temperature: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                Heart Rate
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.heartRate ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, heartRate: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                BP Systolic
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.bloodPressureSystolic ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, bloodPressureSystolic: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                BP Diastolic
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.bloodPressureDiastolic ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, bloodPressureDiastolic: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                Resp Rate
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.respiratoryRate ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, respiratoryRate: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                O2 Sat
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.oxygenSaturation ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, oxygenSaturation: e.target.value }))}
+                />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                Pain
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={vitalsForm.pain ?? ''}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, pain: e.target.value }))}
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowVitalsModal(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveVitals}>Save</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {ioModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg space-y-4">
+            <h3 className="text-lg font-semibold">Edit intake & output</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="text-sm font-semibold text-muted-foreground mb-2">Intake</h4>
+                <label className="text-xs text-muted-foreground">IV Fluids</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.intake?.iv ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      intake: { ...(prev.intake ?? {}), iv: e.target.value },
+                    }))
+                  }
+                />
+                <label className="text-xs text-muted-foreground mt-3 block">Oral Fluids</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.intake?.oral ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      intake: { ...(prev.intake ?? {}), oral: e.target.value },
+                    }))
+                  }
+                />
+                <label className="text-xs text-muted-foreground mt-3 block">Other Intake</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.intake?.other ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      intake: { ...(prev.intake ?? {}), other: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-muted-foreground mb-2">Output</h4>
+                <label className="text-xs text-muted-foreground">Urine</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.output?.urine ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      output: { ...(prev.output ?? {}), urine: e.target.value },
+                    }))
+                  }
+                />
+                <label className="text-xs text-muted-foreground mt-3 block">Stool</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.output?.stool ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      output: { ...(prev.output ?? {}), stool: e.target.value },
+                    }))
+                  }
+                />
+                <label className="text-xs text-muted-foreground mt-3 block">Other Output</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={ioForm.output?.other ?? ''}
+                  onChange={(e) =>
+                    setIoForm((prev) => ({
+                      ...prev,
+                      output: { ...(prev.output ?? {}), other: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Notes</label>
+              <textarea
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                rows={3}
+                value={ioForm.notes ?? ''}
+                onChange={(e) => setIoForm((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIoModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  const updated = await emrApi.updatePatientIntakeOutput(selectedPatient.id, ioForm);
+                  if (updated) {
+                    setSelectedPatient({ ...selectedPatient, intakeOutput: updated });
+                    setPatients((prev) =>
+                      prev.map((p) => (p.id === selectedPatient.id ? { ...p, intakeOutput: updated } : p)),
+                    );
+                  }
+                  setIoModalOpen(false);
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showMedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold">Add medication</h3>
+            <div className="space-y-2">
+              <label className="text-sm text-muted-foreground">Medication name</label>
+              <input
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={medForm.name}
+                onChange={(e) => setMedForm((prev) => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm text-muted-foreground">Dose</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={medForm.dose}
+                  onChange={(e) => setMedForm((prev) => ({ ...prev, dose: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Route</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={medForm.route}
+                  onChange={(e) => setMedForm((prev) => ({ ...prev, route: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Frequency</label>
+                <input
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={medForm.frequency}
+                  onChange={(e) => setMedForm((prev) => ({ ...prev, frequency: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground">Priority</label>
+                <select
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={medForm.priority}
+                  onChange={(e) => setMedForm((prev) => ({ ...prev, priority: e.target.value as 'Routine' | 'STAT' | 'Timed' }))}
+                >
+                  <option value="Routine">Routine</option>
+                  <option value="STAT">STAT</option>
+                  <option value="Timed">Timed</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowMedModal(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!medForm.name.trim()) return;
+                  const newOrder: MedicalOrder = {
+                    id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+                    patientId: selectedPatient.id,
+                    assignmentId: forceBaseline ? null : effectiveAssignmentId,
+                    roomId: forceBaseline ? null : selectedPatient.roomId ?? null,
+                    overrideScope: forceBaseline ? 'baseline' : 'assignment',
+                    category: 'Medication',
+                    orderName: medForm.name.trim(),
+                    dose: medForm.dose || undefined,
+                    route: medForm.route || undefined,
+                    frequency: medForm.frequency || undefined,
+                    priority: medForm.priority,
+                    status: 'Active',
+                    orderedBy: selectedPatient.attendingPhysician,
+                    orderTime: new Date().toISOString(),
+                  };
+                  setMedicationOrders((prev) => [newOrder, ...prev]);
+                  await emrApi.addOrder(newOrder, forceBaseline ? null : selectedPatient.roomId ?? null);
+                  setShowMedModal(false);
+                  setMedForm({ name: '', dose: '', route: '', frequency: '', priority: 'Routine' });
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
-  ) : (
+  );
+
+  const userShell = (
     <div className="min-h-screen bg-background">
       <Navbar />
       {content}
     </div>
   );
+
+  return showAdminLayout ? adminShell : userShell;
 }

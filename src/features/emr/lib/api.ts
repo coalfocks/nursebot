@@ -8,6 +8,7 @@ import type {
   MedicalOrder,
   RoomOrdersConfig,
   CustomOverviewSection,
+  IntakeOutput,
 } from './types';
 
 type OverrideScope = 'baseline' | 'room' | 'assignment';
@@ -64,6 +65,7 @@ const mapPatient = (
   customOverviewSections:
     (row.custom_overview_sections as { sections?: CustomOverviewSection[] } | null | undefined)?.sections ??
     undefined,
+  intakeOutput: (row.intake_output as IntakeOutput | null | undefined) ?? undefined,
 });
 
 export const emrApi = {
@@ -435,5 +437,21 @@ export const emrApi = {
     }
 
     return (data?.custom_overview_sections as { sections?: CustomOverviewSection[] } | null | undefined)?.sections ?? [];
+  },
+
+  async updatePatientIntakeOutput(patientId: string, intakeOutput: IntakeOutput): Promise<IntakeOutput | null> {
+    const { data, error } = await supabase
+      .from('patients')
+      .update({ intake_output: intakeOutput })
+      .eq('id', patientId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error updating intake/output', error);
+      return null;
+    }
+
+    return (data?.intake_output as IntakeOutput | null | undefined) ?? null;
   },
 };

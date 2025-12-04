@@ -12,9 +12,10 @@ import { emrApi } from '../lib/api';
 interface ClinicalNotesProps {
   patient: Patient;
   assignmentId?: string;
+  forceBaseline?: boolean;
 }
 
-export function ClinicalNotes({ patient, assignmentId }: ClinicalNotesProps) {
+export function ClinicalNotes({ patient, assignmentId, forceBaseline }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
 
   useEffect(() => {
@@ -27,14 +28,15 @@ export function ClinicalNotes({ patient, assignmentId }: ClinicalNotesProps) {
   const [showGenerator, setShowGenerator] = useState(false);
 
   const handleNoteGenerated = (newNote: ClinicalNote) => {
-    setNotes([newNote, ...notes]);
-    setShowGenerator(false);
-    void emrApi.addClinicalNote({
+    const adjustedNote: ClinicalNote = {
       ...newNote,
-      assignmentId: assignmentId ?? newNote.assignmentId ?? null,
-      roomId: patient.roomId ?? newNote.roomId ?? null,
-      overrideScope: assignmentId ? 'assignment' : patient.roomId ? 'room' : newNote.overrideScope,
-    });
+      assignmentId: forceBaseline ? null : assignmentId ?? newNote.assignmentId ?? null,
+      roomId: forceBaseline ? null : patient.roomId ?? newNote.roomId ?? null,
+      overrideScope: forceBaseline ? 'baseline' : newNote.overrideScope,
+    };
+    setNotes([adjustedNote, ...notes]);
+    setShowGenerator(false);
+    void emrApi.addClinicalNote(adjustedNote);
   };
 
   const notesByType = notes.reduce(

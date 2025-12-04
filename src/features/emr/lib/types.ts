@@ -16,6 +16,7 @@ export interface Patient {
   codeStatus?: 'Full Code' | 'DNR' | 'DNI' | 'DNR/DNI';
   deletedAt?: string | null;
   customOverviewSections?: CustomOverviewSection[];
+  intakeOutput?: IntakeOutput;
 }
 
 export type CustomOverviewSection = {
@@ -23,6 +24,20 @@ export type CustomOverviewSection = {
   title: string;
   type: 'text' | 'image';
   content: string;
+};
+
+export type IntakeOutput = {
+  intake?: {
+    iv?: string;
+    oral?: string;
+    other?: string;
+  };
+  output?: {
+    urine?: string;
+    stool?: string;
+    other?: string;
+  };
+  notes?: string;
 };
 
 export type LabOrderSetting = {
