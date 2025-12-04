@@ -103,8 +103,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     [labResults],
   );
 
-  const formatCollectionLabel = (value: string) =>
-    new Date(value).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const formatCollectionLabel = (_value: string, index: number) => `Run ${index + 1}`;
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -116,12 +115,19 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       acc[lab.testName] = [];
     }
     acc[lab.testName].push({
-      time: new Date(lab.collectionTime).toLocaleDateString(),
+      time: '',
       value: numericValue,
       status: lab.status,
     });
     return acc;
   }, {});
+
+  const labTrendsWithSequence = Object.fromEntries(
+    Object.entries(labTrends).map(([key, data]) => [
+      key,
+      data.map((entry, index) => ({ ...entry, time: `Run ${index + 1}` })),
+    ]),
+  );
 
   const abnormalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Abnormal'), [labResults]);
 
@@ -163,9 +169,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     <TableHeader>
                       <TableRow>
                         <TableHead>Test</TableHead>
-                        {sortedCollectionTimes.map((time) => (
+                        {sortedCollectionTimes.map((time, idx) => (
                           <TableHead key={time} className="whitespace-nowrap">
-                            {formatCollectionLabel(time)}
+                            {formatCollectionLabel(time, idx)}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -207,11 +213,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         </TabsContent>
 
         <TabsContent value="trends" className="mt-6">
-          {Object.keys(labTrends).length === 0 ? (
+          {Object.keys(labTrendsWithSequence).length === 0 ? (
             <p className="text-sm text-muted-foreground">No trendable labs yet. Order labs to see trends.</p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {Object.entries(labTrends)
+              {Object.entries(labTrendsWithSequence)
                 .slice(0, 4)
                 .map(([testName, data]) => (
                   <Card key={testName}>

@@ -39,6 +39,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
   const [patientLink, setPatientLink] = useState<{ patientId: string; roomId?: number } | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
+  const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
@@ -474,7 +475,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
             Open EMR
           </button>
           <button
-            onClick={completeAssignment}
+            onClick={() => setShowCompletionConfirm(true)}
             disabled={isCompleting}
             className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
             title="Complete assignment and generate feedback"
@@ -498,10 +499,49 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
                 <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs flex items-center">
                   <CheckCircle className="w-3 h-3 mr-1" />
                   Assignment completed
-                </div>
-              </div>
-            );
-          }
+      </div>
+
+      {showCompletionConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold">Finish this case?</h3>
+            <p className="text-sm text-gray-600">
+              Choose to complete the case now or return to the EMR if you need to finish bedside tasks or review labs/notes.
+            </p>
+            <div className="space-y-2">
+              <button
+                className="w-full inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                onClick={() => {
+                  setShowCompletionConfirm(false);
+                  void completeAssignment();
+                }}
+                disabled={isCompleting}
+              >
+                {isCompleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Complete case
+              </button>
+              <button
+                className="w-full inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => {
+                  setShowCompletionConfirm(false);
+                  handleGoToEmr();
+                }}
+              >
+                Return to EMR
+              </button>
+              <button
+                className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
+                onClick={() => setShowCompletionConfirm(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
           
           // Regular chat messages
           return (

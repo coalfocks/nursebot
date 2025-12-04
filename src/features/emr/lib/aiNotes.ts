@@ -43,28 +43,51 @@ const buildContext = (request: NoteGenerationRequest): NoteBuilderContext => {
 };
 
 const noteBuilders: Record<NoteType, (ctx: NoteBuilderContext) => string> = {
-  'H&P': (ctx) =>
-    [
-      section('Chief Complaint', ctx.chiefComplaint),
+  'H&P': (ctx) => {
+    const primaryProblem = ctx.caseDescription.split('.')[0] || ctx.caseDescription;
+    return [
+      'S — Subjective',
+      section(
+        'Demographics',
+        `${ctx.patientName} is a ${ctx.demographic}. Chief complaint: ${ctx.chiefComplaint}`,
+      ),
       section('History of Present Illness', ctx.caseDescription),
-      section('Past Medical History', 'See active problem list.'),
-      section('Medications', ctx.medications),
-      section('Allergies', ctx.allergies),
-      section('Social History', 'Lives independently. Denies tobacco, alcohol, or illicit drugs.'),
-      section('Family History', 'Non-contributory per patient report.'),
       section(
         'Review of Systems',
-        'Negative unless noted in HPI. No fever/chills. No new neurological deficits.',
+        'Pertinent positives/negatives as per HPI. Denies chest pain, dyspnea, focal neurologic deficits unless otherwise stated.',
       ),
+      section('Past Medical History', 'See active problem list. Additional history to be obtained on admission.'),
+      section('Past Surgical History', 'Not documented yet.'),
+      section('Medications', ctx.medications),
+      section('Allergies', ctx.allergies),
+      section('Family History', 'Non-contributory per patient report.'),
+      section('Social History', 'Tobacco: denies. Alcohol: social or denies. Lives independently; functional baseline preserved.'),
+      '',
+      'O — Objective',
+      section('Vital Signs', 'Reviewed. Abnormal values to be trended on admission.'),
       section(
-        'Physical Examination',
-        'General: Alert, oriented, no acute distress.\nCV: Regular rate and rhythm.\nPulm: Clear to auscultation.\nAbd: Soft, non-distended.',
+        'General / Physical Exam',
+        'General: alert, oriented, no acute distress. CV: regular rate/rhythm, no murmurs. Pulm: clear bilaterally. Abd: soft, non-distended, non-tender. Neuro: grossly intact. MSK: no focal deficits.',
       ),
+      section('Labs & Imaging', 'Pending or not yet available on admission.'),
+      '',
+      'A — Assessment, P — Plan',
       section(
-        'Assessment & Plan',
-        `1. ${ctx.caseDescription.split('.')[0]}. Continue diagnostics and supportive care.\n2. Pain control as needed.\n3. Monitor labs and vitals closely.`,
+        'Problem List with Differential',
+        `1) ${primaryProblem}\n- Differential and risks to refine with diagnostics.`,
       ),
-    ].join('\n'),
+      section('Primary Clinical Impression', primaryProblem),
+      section('Risk Factors / Modifiers', 'To be clarified during admission interview and chart review.'),
+      section('Diagnostics', 'Order baseline labs (CBC, BMP, LFTs), consider cultures/imaging as indicated.'),
+      section('Therapeutics', 'Supportive care; targeted therapies per evolving impression.'),
+      section('Monitoring', 'Serial vitals, I/Os, trend labs, monitor for clinical deterioration.'),
+      section('Consults', 'Request specialty input if indicated by admission findings.'),
+      section('Patient Education', 'Discuss admission plan, expected workup, and safety precautions.'),
+      section('Disposition', 'Admit to appropriate level of care; finalize after initial evaluation.'),
+    ]
+      .filter(Boolean)
+      .join('\n');
+  },
   Progress: (ctx) =>
     [
       section(
@@ -115,7 +138,6 @@ export async function generateClinicalNote(request: NoteGenerationRequest): Prom
 
 export function formatNoteForDisplay(content: string, noteType: string, author: string, timestamp: string): string {
   const header = `${noteType.toUpperCase()} NOTE
-Date/Time: ${new Date(timestamp).toLocaleString()}
 Author: ${author}
 ==================================================\n\n`;
 

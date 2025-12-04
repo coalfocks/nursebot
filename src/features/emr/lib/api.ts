@@ -7,6 +7,7 @@ import type {
   VitalSigns,
   MedicalOrder,
   RoomOrdersConfig,
+  CustomOverviewSection,
 } from './types';
 
 type OverrideScope = 'baseline' | 'room' | 'assignment';
@@ -60,6 +61,9 @@ const mapPatient = (
   allergies: row.allergies ?? [],
   codeStatus: (row.code_status as Patient['codeStatus']) ?? undefined,
   deletedAt: row.deleted_at,
+  customOverviewSections:
+    (row.custom_overview_sections as { sections?: CustomOverviewSection[] } | null | undefined)?.sections ??
+    undefined,
 });
 
 export const emrApi = {
@@ -411,5 +415,25 @@ export const emrApi = {
     }
 
     return null;
+  },
+
+  async updatePatientCustomSections(
+    patientId: string,
+    sections: CustomOverviewSection[],
+  ): Promise<CustomOverviewSection[] | null> {
+    const payload = { sections };
+    const { data, error } = await supabase
+      .from('patients')
+      .update({ custom_overview_sections: payload })
+      .eq('id', patientId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error updating custom overview sections', error);
+      return null;
+    }
+
+    return (data?.custom_overview_sections as { sections?: CustomOverviewSection[] } | null | undefined)?.sections ?? [];
   },
 };

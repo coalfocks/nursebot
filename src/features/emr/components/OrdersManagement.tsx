@@ -87,20 +87,8 @@ export function OrdersManagement({
     }
   };
 
-  const ordersByCategory = orders.reduce(
-    (acc, order) => {
-      if (!acc[order.category]) acc[order.category] = [];
-      acc[order.category].push(order);
-      return acc;
-    },
-    {} as Record<string, MedicalOrder[]>,
-  );
-
   const activeOrders = orders.filter((order) => order.status === 'Active');
   const pendingOrders = orders.filter((order) => order.status === 'Pending');
-  const labOrdersList = ordersByCategory['Lab'] ?? [];
-  const medicationOrdersList = ordersByCategory['Medication'] ?? [];
-  const imagingOrdersList = ordersByCategory['Imaging'] ?? [];
 
   const renderOrdersTable = (orderList: MedicalOrder[]) => (
     <div className="rounded-md border">
@@ -173,46 +161,18 @@ export function OrdersManagement({
         <OrderEntry patient={patient} assignmentId={assignmentId} onOrderPlaced={handleOrderPlaced} />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Lab Orders</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {labOrdersList.length ? (
-              renderOrdersTable(labOrdersList)
-            ) : (
-              <p className="text-sm text-muted-foreground">No lab orders yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Medication Orders</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {medicationOrdersList.length ? (
-              renderOrdersTable(medicationOrdersList)
-            ) : (
-              <p className="text-sm text-muted-foreground">No medication orders yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Imaging Orders</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {imagingOrdersList.length ? (
-              renderOrdersTable(imagingOrdersList)
-            ) : (
-              <p className="text-sm text-muted-foreground">No imaging orders yet.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>All Orders</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {orders.length ? (
+            renderOrdersTable(orders)
+          ) : (
+            <p className="text-sm text-muted-foreground">No orders yet.</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

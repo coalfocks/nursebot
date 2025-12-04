@@ -4,7 +4,7 @@ import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { ScrollArea } from './ui/ScrollArea';
-import { FileText, Plus, Calendar, User, CheckCircle, Clock } from 'lucide-react';
+import { FileText, Plus, User, CheckCircle, Clock } from 'lucide-react';
 import { AINotesGenerator } from './AINoteGenerator';
 import type { Patient, ClinicalNote } from '../lib/types';
 import { emrApi } from '../lib/api';
@@ -82,10 +82,6 @@ export function ClinicalNotes({ patient, assignmentId }: ClinicalNotesProps) {
                             <User className="h-3 w-3" />
                             {note.author}
                           </div>
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {new Date(note.timestamp).toLocaleString()}
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -130,10 +126,6 @@ export function ClinicalNotes({ patient, assignmentId }: ClinicalNotesProps) {
                             <div className="flex items-center gap-1">
                               <User className="h-3 w-3" />
                               {note.author}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              {new Date(note.timestamp).toLocaleString()}
                             </div>
                           </div>
                         </div>

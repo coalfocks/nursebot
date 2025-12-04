@@ -25,6 +25,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
+  const [useCustomFrequency, setUseCustomFrequency] = useState(false);
   const [orderDetails, setOrderDetails] = useState({
     frequency: '',
     route: '',
@@ -43,8 +44,9 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
 
   const handleOrderSelect = (order: OrderItem) => {
     setSelectedOrder(order);
+    setUseCustomFrequency(false);
     setOrderDetails({
-      frequency: order.frequencies?.[0] || '',
+      frequency: '',
       route: order.routes?.[0] || '',
       dose: order.defaultDose || '',
       unit: order.units?.[0] || '',
@@ -217,12 +219,20 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
                     </Select>
                   </div>
 
-                  {selectedOrder.frequencies && (
+                  {(selectedOrder.frequencies?.length ?? 0) > 0 ? (
                     <div className="space-y-2">
                       <Label htmlFor="frequency">Frequency</Label>
                       <Select
-                        value={orderDetails.frequency}
-                        onValueChange={(value) => setOrderDetails({ ...orderDetails, frequency: value })}
+                        value={useCustomFrequency ? '__custom' : orderDetails.frequency}
+                        onValueChange={(value) => {
+                          if (value === '__custom') {
+                            setUseCustomFrequency(true);
+                            setOrderDetails({ ...orderDetails, frequency: '' });
+                          } else {
+                            setUseCustomFrequency(false);
+                            setOrderDetails({ ...orderDetails, frequency: value });
+                          }
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -233,8 +243,27 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId }: OrderEntryP
                               {freq}
                             </SelectItem>
                           ))}
+                          <SelectItem value="__custom">Custom...</SelectItem>
                         </SelectContent>
                       </Select>
+                      {useCustomFrequency && (
+                        <Input
+                          id="frequency"
+                          placeholder="Enter custom frequency"
+                          value={orderDetails.frequency}
+                          onChange={(e) => setOrderDetails({ ...orderDetails, frequency: e.target.value })}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="frequency">Frequency</Label>
+                      <Input
+                        id="frequency"
+                        placeholder="Enter frequency"
+                        value={orderDetails.frequency}
+                        onChange={(e) => setOrderDetails({ ...orderDetails, frequency: e.target.value })}
+                      />
                     </div>
                   )}
 

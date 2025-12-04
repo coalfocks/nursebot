@@ -450,6 +450,7 @@ export interface Database {
           created_at: string
           updated_at: string
           deleted_at: string | null
+          custom_overview_sections: Json | null
         }
         Insert: {
           id?: string
@@ -468,6 +469,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           deleted_at?: string | null
+          custom_overview_sections?: Json | null
         }
         Update: {
           id?: string
@@ -486,6 +488,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           deleted_at?: string | null
+          custom_overview_sections?: Json | null
         }
       }
       clinical_notes: {

@@ -15,7 +15,15 @@ export interface Patient {
   allergies: string[];
   codeStatus?: 'Full Code' | 'DNR' | 'DNI' | 'DNR/DNI';
   deletedAt?: string | null;
+  customOverviewSections?: CustomOverviewSection[];
 }
+
+export type CustomOverviewSection = {
+  id: string;
+  title: string;
+  type: 'text' | 'image';
+  content: string;
+};
 
 export type LabOrderSetting = {
   name: string;

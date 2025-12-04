@@ -10,6 +10,7 @@ import type { RoomOrdersConfig } from '../features/emr/lib/types';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
+type AdmissionLabEntry = { labName: string; note: string };
 
 interface RoomEditorProps {
   room?: Room;
@@ -24,6 +25,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [error, setError] = useState<string>('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const labOptions = [...new Set([...instantLabs, ...pendingLabs])];
   
   // Form state
   const [roomNumber, setRoomNumber] = useState(room?.room_number || '');
@@ -32,7 +34,36 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [style, setStyle] = useState(room?.style || '');
   const [patientName, setPatientName] = useState('');
   const [nurseContext, setNurseContext] = useState(room?.nurse_context || room?.context || '');
-  const [emrContext, setEmrContext] = useState(room?.emr_context || '');
+  const parsedEmrContext = (() => {
+    const raw = room?.emr_context;
+    let contextText = raw || '';
+    let admissionLabs: AdmissionLabEntry[] = [];
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          if (typeof parsed.context === 'string') {
+            contextText = parsed.context;
+          }
+          const labs = (parsed as { admission?: { labs?: AdmissionLabEntry[] } })?.admission?.labs;
+          if (Array.isArray(labs)) {
+            admissionLabs = labs
+              .filter((entry) => entry && (entry.labName || entry.note))
+              .map((entry) => ({
+                labName: entry.labName || '',
+                note: entry.note || '',
+              }));
+          }
+        }
+      } catch (err) {
+        // If not JSON, treat as plain text context
+        contextText = raw;
+      }
+    }
+    return { contextText, admissionLabs };
+  })();
+  const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
+  const [admissionLabs, setAdmissionLabs] = useState<AdmissionLabEntry[]>(parsedEmrContext.admissionLabs);
   const [caseGoals, setCaseGoals] = useState(room?.case_goals || '');
   const [progressNote, setProgressNote] = useState(room?.progress_note || '');
   const [completionHint, setCompletionHint] = useState(room?.completion_hint || '');
@@ -270,8 +301,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         return acc;
       }, { ...normalVitals });
 
+      const cleanedAdmissionLabs = admissionLabs
+        .map((entry) => ({
+          labName: entry.labName.trim(),
+          note: entry.note.trim(),
+        }))
+        .filter((entry) => entry.labName || entry.note);
+
+      const emrContextPayloadObject: Record<string, unknown> = {};
+      if (cleanedAdmissionLabs.length > 0) {
+        emrContextPayloadObject.admission = { labs: cleanedAdmissionLabs };
+      }
+      if (emrContext.trim()) {
+        emrContextPayloadObject.context = emrContext.trim();
+      }
+      if (initialVitals) {
+        emrContextPayloadObject.initial_vitals = initialVitals;
+      }
+
       const emrContextPayload =
-        emrContext || (initialVitals ? JSON.stringify({ initial_vitals: initialVitals }) : null);
+        Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
       const roomData = {
         room_number: roomNumber,
@@ -544,32 +593,100 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-700">EHR Admission</label>
+              <button
+                type="button"
+                onClick={() => setAdmissionLabs((prev) => [...prev, { labName: '', note: '' }])}
+                className="text-xs text-blue-600 hover:text-blue-800"
+              >
+                + Add admission lab
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Pick admission labs and describe the expected baseline results for this room&apos;s patient.
+            </p>
+            {admissionLabs.length === 0 && (
+              <p className="text-xs text-gray-400">No admission labs yet.</p>
+            )}
+            <div className="space-y-3">
+              {admissionLabs.map((entry, index) => (
+                <div key={index} className="rounded-md border border-gray-200 p-3 space-y-2">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-gray-700">Lab</label>
+                      <input
+                        type="text"
+                        list="lab-options"
+                        value={entry.labName}
+                        onChange={(e) =>
+                          setAdmissionLabs((prev) =>
+                            prev.map((lab, i) => (i === index ? { ...lab, labName: e.target.value } : lab)),
+                          )
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                        placeholder="Metabolic panel, CBC, etc."
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAdmissionLabs((prev) => prev.filter((_, i) => i !== index))}
+                      className="text-xs text-red-600 hover:text-red-800 px-2 pt-5"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Result context</label>
+                    <textarea
+                      value={entry.note}
+                      onChange={(e) =>
+                        setAdmissionLabs((prev) =>
+                          prev.map((lab, i) => (i === index ? { ...lab, note: e.target.value } : lab)),
+                        )
+                      }
+                      rows={2}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      placeholder="All within normal limits except WBC is elevated..."
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <datalist id="lab-options">
+              {labOptions.map((lab) => (
+                <option key={lab} value={lab} />
+              ))}
+            </datalist>
+          </div>
           <div>
             <label htmlFor="emrContext" className="block text-sm font-medium text-gray-700">
-              EMR Context
+              EHR Context
             </label>
             <textarea
               id="emrContext"
               value={emrContext}
               onChange={(e) => setEmrContext(e.target.value)}
-              rows={2}
+              rows={4}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Any EMR-specific setup or notes"
+              placeholder="Ongoing EMR rules or responses (e.g., “if WBC ordered, increase each run”)."
             />
           </div>
-          <div>
-            <label htmlFor="caseGoals" className="block text-sm font-medium text-gray-700">
-              Goals of Case
-            </label>
-            <textarea
-              id="caseGoals"
-              value={caseGoals}
-              onChange={(e) => setCaseGoals(e.target.value)}
-              rows={2}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Key goals learners should hit"
-            />
-          </div>
+        </div>
+
+        <div>
+          <label htmlFor="caseGoals" className="block text-sm font-medium text-gray-700">
+            Goals of Case
+          </label>
+          <textarea
+            id="caseGoals"
+            value={caseGoals}
+            onChange={(e) => setCaseGoals(e.target.value)}
+            rows={2}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            placeholder="Key goals learners should hit"
+          />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -619,7 +736,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="block text-sm font-medium text-gray-700">
-              Initial Vitals (optional overrides)
+              Recent Vitals (optional overrides)
             </label>
             <button
               type="button"

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, FileText, TestTube, Pill, Calendar, User, Droplets } from 'lucide-react';
+import { Activity, FileText, TestTube, Pill, Calendar, User, Droplets, Plus, Edit } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import type { LabResult, Patient } from '../features/emr/lib/types';
+import type { LabResult, Patient, CustomOverviewSection } from '../features/emr/lib/types';
 import { mockPatients } from '../features/emr/lib/mockData';
 import { emrApi } from '../features/emr/lib/api';
 import { PatientSidebar } from '../features/emr/components/PatientSidebar';
@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../features/emr/compon
 import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
-import { hasAdminAccess } from '../lib/roles';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import type { MedicalOrder } from '../features/emr/lib/types';
 
 export default function EmrDashboard() {
@@ -26,6 +26,8 @@ export default function EmrDashboard() {
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
+  const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
+  const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
   const assignmentId = searchParams.get('assignmentId') || undefined;
   const isSandbox = !assignmentId;
 
@@ -87,6 +89,35 @@ export default function EmrDashboard() {
       setMedicationOrders(meds);
     })();
   }, [selectedPatient, assignmentId]);
+
+  const startEditCustomSections = () => {
+    if (!selectedPatient) return;
+    setCustomSectionDraft(
+      selectedPatient.customOverviewSections?.map((section) => ({ ...section })) ?? [],
+    );
+    setIsEditingCustomSections(true);
+  };
+
+  const handleSaveCustomSections = async () => {
+    if (!selectedPatient) return;
+    const filtered = customSectionDraft
+      .map((section) => ({
+        ...section,
+        id: section.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+        title: section.title.trim(),
+        content: section.content.trim(),
+      }))
+      .filter((section) => section.title && section.content);
+
+    const updated = await emrApi.updatePatientCustomSections(selectedPatient.id, filtered);
+    if (updated) {
+      setSelectedPatient({ ...selectedPatient, customOverviewSections: updated });
+      setPatients((prev) =>
+        prev.map((p) => (p.id === selectedPatient.id ? { ...p, customOverviewSections: updated } : p)),
+      );
+    }
+    setIsEditingCustomSections(false);
+  };
 
   const content = selectedPatient ? (
     <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
@@ -154,6 +185,42 @@ export default function EmrDashboard() {
             </TabsList>
 
             <TabsContent value="overview" className="mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-semibold">Overview</h2>
+                  {isSuperAdmin(profile) && (
+                    <Button
+                      size="sm"
+                      variant={isEditingCustomSections ? 'secondary' : 'outline'}
+                      onClick={startEditCustomSections}
+                      className="flex items-center gap-2"
+                    >
+                      {isEditingCustomSections ? (
+                        <>
+                          <Edit className="h-4 w-4" />
+                          Editing sections
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" />
+                          Add custom section
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+                {isEditingCustomSections && (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setIsEditingCustomSections(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleSaveCustomSections}>
+                      Save sections
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <Card>
                   <CardHeader>
@@ -247,6 +314,23 @@ export default function EmrDashboard() {
                     )}
                   </CardContent>
                 </Card>
+
+                {selectedPatient.customOverviewSections?.map((section) => (
+                  <Card key={section.id}>
+                    <CardHeader>
+                      <CardTitle>{section.title}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {section.type === 'image' ? (
+                        <div className="flex justify-center">
+                          <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             </TabsContent>
 
@@ -285,6 +369,108 @@ export default function EmrDashboard() {
                 assignmentId={assignmentId}
               />
             </TabsContent>
+
+            {isEditingCustomSections && (
+              <div className="mt-6 space-y-4">
+                <h3 className="text-lg font-semibold">Custom Overview Sections</h3>
+                <div className="space-y-3">
+                  {customSectionDraft.map((section, index) => (
+                    <Card key={section.id || index}>
+                      <CardContent className="space-y-3 pt-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-sm font-medium text-muted-foreground">Title</label>
+                            <input
+                              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                              value={section.title}
+                              onChange={(e) =>
+                                setCustomSectionDraft((prev) =>
+                                  prev.map((s, i) => (i === index ? { ...s, title: e.target.value } : s)),
+                                )
+                              }
+                              placeholder="Fetal Tracing"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-muted-foreground">Type</label>
+                            <select
+                              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                              value={section.type}
+                              onChange={(e) =>
+                                setCustomSectionDraft((prev) =>
+                                  prev.map((s, i) => (i === index ? { ...s, type: e.target.value as 'text' | 'image' } : s)),
+                                )
+                              }
+                            >
+                              <option value="text">Text</option>
+                              <option value="image">Image</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-muted-foreground">
+                            {section.type === 'image' ? 'Image URL' : 'Content'}
+                          </label>
+                          {section.type === 'image' ? (
+                            <input
+                              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                              value={section.content}
+                              onChange={(e) =>
+                                setCustomSectionDraft((prev) =>
+                                  prev.map((s, i) => (i === index ? { ...s, content: e.target.value } : s)),
+                                )
+                              }
+                              placeholder="https://example.com/image.png"
+                            />
+                          ) : (
+                            <textarea
+                              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                              rows={3}
+                              value={section.content}
+                              onChange={(e) =>
+                                setCustomSectionDraft((prev) =>
+                                  prev.map((s, i) => (i === index ? { ...s, content: e.target.value } : s)),
+                                )
+                              }
+                              placeholder="Describe monitoring instructions or findings..."
+                            />
+                          )}
+                        </div>
+                        <div className="flex justify-end">
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() =>
+                              setCustomSectionDraft((prev) => prev.filter((_, i) => i !== index))
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                  <Button
+                    variant="outline"
+                    className="flex items-center gap-2"
+                    onClick={() =>
+                      setCustomSectionDraft((prev) => [
+                        ...prev,
+                        {
+                          id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+                          title: '',
+                          type: 'text',
+                          content: '',
+                        },
+                      ])
+                    }
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add section
+                  </Button>
+                </div>
+              </div>
+            )}
           </Tabs>
         </div>
       </div>

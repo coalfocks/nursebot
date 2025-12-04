@@ -61,7 +61,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
   // Prepare data for trending charts
   const vitalTrends = vitals
     .map((vital) => ({
-      time: new Date(vital.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: 'Run',
       temperature: vital.temperature,
       systolic: vital.bloodPressureSystolic,
       diastolic: vital.bloodPressureDiastolic,
@@ -70,7 +70,8 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
       oxygenSaturation: vital.oxygenSaturation,
       pain: vital.pain,
     }))
-    .reverse();
+    .reverse()
+    .map((entry, index) => ({ ...entry, time: `Run ${index + 1}` }));
 
   const getVitalStatus = (vital: string, value: number | undefined) => {
     if (!value) return 'normal';
@@ -111,9 +112,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Vital Signs</h2>
-          <p className="text-muted-foreground">
-            Latest: {latestVitals ? new Date(latestVitals.timestamp).toLocaleString() : 'No data'}
-          </p>
+          <p className="text-muted-foreground">{latestVitals ? 'Latest vitals' : 'No data'}</p>
         </div>
         <Button onClick={handleGenerateVitals} disabled={isGenerating} className="flex items-center gap-2">
           <Sparkles className="h-4 w-4" />
