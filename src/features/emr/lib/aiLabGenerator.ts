@@ -1,4 +1,14 @@
-import type { LabResult, VitalSigns } from './types';
+import type { ClinicalNote, LabResult, Patient, VitalSigns } from './types';
+
+export type LabGenerationContext = {
+  patient?: Patient;
+  assignmentId?: string | null;
+  roomId?: number | null;
+  orderName?: string;
+  previousLabs?: LabResult[];
+  clinicalNotes?: ClinicalNote[];
+  vitals?: VitalSigns[];
+};
 
 type LabTemplate = {
   testName: string;
@@ -28,25 +38,156 @@ const deriveLabStatus = (value: number, [low, high]: [number, number]) => {
   return 'Normal';
 };
 
-export async function generateLabResults(patientId: string, caseDescription: string): Promise<LabResult[]> {
-  const emphasis = caseDescription.toLowerCase().includes('infection') ? 'Abnormal' : 'Normal';
+type ClinicalSignals = {
+  emphasis: 'Normal' | 'Abnormal' | 'Critical';
+  infectionHints: boolean;
+  bleedingHints: boolean;
+  anemiaHints: boolean;
+  renalHints: boolean;
+  dehydrationHints: boolean;
+  oxygenationHints: boolean;
+  latestLabValues: Record<string, number>;
+};
+
+const normalizeLabValue = (value: string | number): number | null => {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const deriveClinicalSignals = (caseDescription: string, context?: LabGenerationContext): ClinicalSignals => {
+  const previousLabs = context?.previousLabs ?? [];
+  const vitals = context?.vitals ?? [];
+  const notes = context?.clinicalNotes ?? [];
+
+  const latestLabValuesWithTimestamps = previousLabs.reduce<Record<string, { value: number; timestamp: number }>>((acc, lab) => {
+    const value = normalizeLabValue(lab.value);
+    if (value === null) return acc;
+    const timestamp = new Date(lab.collectionTime ?? lab.resultTime ?? '').getTime() || 0;
+    const current = acc[lab.testName];
+    if (!current || timestamp > current.timestamp) {
+      acc[lab.testName] = { value, timestamp };
+    }
+    return acc;
+  }, {});
+  const latestLabValues = Object.fromEntries(
+    Object.entries(latestLabValuesWithTimestamps).map(([key, entry]) => [key, entry.value]),
+  );
+
+  const corpus = [
+    caseDescription,
+    context?.orderName ?? '',
+    notes.map((note) => `${note.title} ${note.content}`).join(' '),
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const fever = vitals.some((v) => (v.temperature ?? 0) >= 100.4);
+  const tachycardia = vitals.some((v) => (v.heartRate ?? 0) >= 110);
+  const hypotension = vitals.some((v) => (v.bloodPressureSystolic ?? 0) <= 100);
+  const hypoxia = vitals.some((v) => (v.oxygenSaturation ?? 100) < 93);
+
+  const infectionHints =
+    fever ||
+    hypoxia ||
+    ['infection', 'sepsis', 'pneumonia', 'uti', 'abscess', 'fever', 'cough', 'sputum'].some((keyword) =>
+      corpus.includes(keyword),
+    );
+  const bleedingHints = ['bleed', 'hematemesis', 'melena', 'anemia', 'blood loss'].some((keyword) =>
+    corpus.includes(keyword),
+  );
+  const renalHints =
+    ['renal', 'kidney', 'aki', 'ckd', 'creatinine'].some((keyword) => corpus.includes(keyword)) ||
+    (typeof latestLabValues.Creatinine === 'number' && latestLabValues.Creatinine > 1.3);
+  const dehydrationHints =
+    ['dehydration', 'vomiting', 'diarrhea', 'poor intake'].some((keyword) => corpus.includes(keyword)) ||
+    (tachycardia && hypotension);
+  const anemiaHints =
+    bleedingHints ||
+    (typeof latestLabValues.Hemoglobin === 'number' && latestLabValues.Hemoglobin < 11) ||
+    corpus.includes('fatigue');
+
+  const abnormalLabs = previousLabs.filter((lab) => lab.status === 'Abnormal').length;
+  const criticalLabs = previousLabs.filter((lab) => lab.status === 'Critical').length;
+
+  let riskScore = 0;
+  if (infectionHints) riskScore += 2;
+  if (bleedingHints || anemiaHints) riskScore += 1;
+  if (renalHints) riskScore += 1;
+  if (dehydrationHints) riskScore += 1;
+  if (hypoxia) riskScore += 1;
+  if (tachycardia) riskScore += 0.5;
+  riskScore += abnormalLabs * 0.5 + criticalLabs;
+
+  const emphasis: ClinicalSignals['emphasis'] = riskScore >= 5 ? 'Critical' : riskScore >= 2 ? 'Abnormal' : 'Normal';
+
+  return {
+    emphasis,
+    infectionHints,
+    bleedingHints,
+    anemiaHints,
+    renalHints,
+    dehydrationHints,
+    oxygenationHints: hypoxia,
+    latestLabValues,
+  };
+};
+
+const applyClinicalBias = (template: LabTemplate, value: number, signals: ClinicalSignals) => {
+  const [low, high] = template.normal;
+  const range = high - low;
+
+  if (template.testName === 'White Blood Cell Count' && signals.infectionHints) {
+    const target = high + range * (signals.emphasis === 'Critical' ? 0.6 : 0.3);
+    value = Math.max(value, target + randomInRange(-range * 0.1, range * 0.1));
+  }
+
+  if (template.testName === 'Hemoglobin' && signals.anemiaHints) {
+    const target = low - range * (signals.emphasis === 'Critical' ? 0.35 : 0.2);
+    value = Math.min(value, target + randomInRange(-range * 0.05, range * 0.05));
+  }
+
+  if (template.testName === 'Platelets' && signals.bleedingHints) {
+    const drop = range * (signals.emphasis === 'Critical' ? 0.45 : 0.25);
+    value = Math.min(value, high - drop + randomInRange(-range * 0.05, range * 0.05));
+  }
+
+  if (template.testName === 'Creatinine' && (signals.renalHints || signals.dehydrationHints)) {
+    const bump = range * (signals.emphasis === 'Critical' ? 0.6 : 0.35);
+    value = Math.max(value, high + bump + randomInRange(-0.1, 0.1));
+  }
+
+  if (template.testName === 'Sodium' && signals.dehydrationHints) {
+    value = Math.max(value, high + range * 0.2 + randomInRange(-0.5, 0.5));
+  }
+
+  if (template.testName === 'Potassium' && signals.renalHints) {
+    value = Math.max(value, high + range * 0.15 + randomInRange(-0.3, 0.3));
+  }
+
+  return Number(Math.max(value, 0).toFixed(1));
+};
+
+export async function generateLabResults(
+  patientId: string,
+  caseDescription: string,
+  context?: LabGenerationContext,
+): Promise<LabResult[]> {
+  const signals = deriveClinicalSignals(caseDescription, context);
 
   const results = labTemplates.map((template, index) => {
-    const variance = emphasis === 'Abnormal' ? 0.25 : 0.1;
-    const low = template.normal[0];
-    const high = template.normal[1];
-    const multiplier = emphasis === 'Abnormal' && index % 2 === 0 ? 1 + variance : 1;
-    const value =
-      index % 2 === 0
-        ? randomInRange(low * (1 - variance), high * multiplier)
-        : randomInRange(low, high);
-    const status = emphasizeStatus(deriveLabStatus(value, template.normal), emphasis);
+    const [low, high] = template.normal;
+    const priorValue = signals.latestLabValues[template.testName];
+    const base = typeof priorValue === 'number' ? priorValue : randomInRange(low, high);
+    const variance = signals.emphasis === 'Critical' ? 0.3 : signals.emphasis === 'Abnormal' ? 0.18 : 0.08;
+    const drifted = base * (1 + randomInRange(-variance, variance));
+    const biasedValue = applyClinicalBias(template, drifted, signals);
+    const status = emphasizeStatus(deriveLabStatus(biasedValue, template.normal), signals.emphasis);
 
     return {
       id: `generated-lab-${Date.now()}-${index}`,
       patientId,
       testName: template.testName,
-      value,
+      value: biasedValue,
       unit: template.unit,
       referenceRange: template.referenceRange,
       status,

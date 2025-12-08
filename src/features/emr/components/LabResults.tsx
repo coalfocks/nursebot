@@ -44,7 +44,13 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     try {
       const caseDescription =
         '37-year-old male with epigastric pain, possible peptic ulcer disease, taking Excedrin for migraines, history of GERD';
-      const newLabs = await generateLabResults(patient.id, caseDescription);
+      const newLabs = await generateLabResults(patient.id, caseDescription, {
+        patient,
+        assignmentId: assignmentId ?? null,
+        roomId: patient.roomId ?? null,
+        orderName: caseDescription,
+        previousLabs: labResults,
+      });
       const labsWithAssignment = newLabs.map((lab) => ({
         ...lab,
         assignmentId: assignmentId ?? null,

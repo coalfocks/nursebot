@@ -41,27 +41,46 @@ export function OrdersManagement({
       roomId: forceBaseline ? null : newOrder.roomId,
       overrideScope: forceBaseline ? 'baseline' : newOrder.overrideScope,
     };
-    setOrders((prev) => [adjustedOrder, ...prev]);
-    onOrderAdded?.(adjustedOrder);
+    const contextualRoomId = adjustedOrder.roomId ?? patient.roomId ?? null;
+    const effectiveRoomId = forceBaseline ? null : contextualRoomId;
+    const effectiveAssignmentId = forceBaseline
+      ? adjustedOrder.assignmentId ?? assignmentId ?? null
+      : adjustedOrder.assignmentId ?? assignmentId ?? null;
+    const orderForState = { ...adjustedOrder, roomId: effectiveRoomId, assignmentId: effectiveAssignmentId };
+
+    setOrders((prev) => [orderForState, ...prev]);
+    onOrderAdded?.(orderForState);
     setShowOrderEntry(false);
     void emrApi.addOrder(
       {
-        ...adjustedOrder,
-        roomId: forceBaseline ? null : adjustedOrder.roomId ?? patient.roomId ?? null,
+        ...orderForState,
       },
-      forceBaseline ? null : patient.roomId ?? null,
+      effectiveRoomId,
     );
 
     if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
       try {
-        const labs = await generateLabResults(patient.id, adjustedOrder.orderName);
+        const [previousLabs, clinicalNotes, vitals] = await Promise.all([
+          emrApi.listLabResults(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+          emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+          emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+        ]);
+        const labs = await generateLabResults(patient.id, adjustedOrder.orderName, {
+          patient,
+          assignmentId: effectiveAssignmentId,
+          roomId: contextualRoomId,
+          orderName: adjustedOrder.orderName,
+          previousLabs,
+          clinicalNotes,
+          vitals,
+        });
         const labsWithScope = labs.map((lab) => ({
           ...lab,
-          assignmentId: forceBaseline ? null : adjustedOrder.assignmentId ?? assignmentId ?? null,
-          roomId: forceBaseline ? null : patient.roomId ?? null,
+          assignmentId: effectiveAssignmentId,
+          roomId: effectiveRoomId,
           overrideScope: forceBaseline ? 'baseline' : lab.overrideScope,
         }));
-        await emrApi.addLabResults(labsWithScope, forceBaseline ? null : patient.roomId ?? null);
+        await emrApi.addLabResults(labsWithScope, effectiveRoomId);
       } catch (err) {
         console.error('Failed to generate STAT labs', err);
       }
