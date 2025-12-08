@@ -14,6 +14,7 @@ interface OrdersManagementProps {
   assignmentId?: string;
   forceBaseline?: boolean;
   onOrderAdded?: (order: MedicalOrder) => void;
+  onLabsGenerated?: () => void;
 }
 
 export function OrdersManagement({
@@ -21,6 +22,7 @@ export function OrdersManagement({
   assignmentId,
   forceBaseline,
   onOrderAdded,
+  onLabsGenerated,
 }: OrdersManagementProps) {
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
@@ -49,7 +51,6 @@ export function OrdersManagement({
     const orderForState = { ...adjustedOrder, roomId: effectiveRoomId, assignmentId: effectiveAssignmentId };
 
     setOrders((prev) => [orderForState, ...prev]);
-    onOrderAdded?.(orderForState);
     setShowOrderEntry(false);
     void emrApi.addOrder(
       {
@@ -81,10 +82,12 @@ export function OrdersManagement({
           overrideScope: forceBaseline ? 'baseline' : lab.overrideScope,
         }));
         await emrApi.addLabResults(labsWithScope, effectiveRoomId);
+        onLabsGenerated?.();
       } catch (err) {
         console.error('Failed to generate STAT labs', err);
       }
     }
+    onOrderAdded?.(orderForState);
   };
 
   const handleOrderStatusChange = (orderId: string, newStatus: MedicalOrder['status']) => {

@@ -114,29 +114,4 @@ export const mockVitals: VitalSigns[] = [
   },
 ];
 
-export const mockOrders: MedicalOrder[] = [
-  {
-    id: '1',
-    patientId: '1',
-    category: 'Lab',
-    orderName: 'Complete Blood Count',
-    priority: 'Routine',
-    status: 'Active',
-    orderedBy: 'Dr. Smith',
-    orderTime: '2025-09-28T06:00:00Z',
-    scheduledTime: '2025-09-29T05:00:00Z',
-  },
-  {
-    id: '2',
-    patientId: '1',
-    category: 'Medication',
-    orderName: 'Lisinopril',
-    dose: '10mg',
-    route: 'PO',
-    frequency: 'Daily',
-    priority: 'Routine',
-    status: 'Active',
-    orderedBy: 'Dr. Smith',
-    orderTime: '2025-09-27T10:00:00Z',
-  },
-];
+export const mockOrders: MedicalOrder[] = [];

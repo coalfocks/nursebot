@@ -44,22 +44,35 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     try {
       const caseDescription =
         '37-year-old male with epigastric pain, possible peptic ulcer disease, taking Excedrin for migraines, history of GERD';
+      const [contextLabs, clinicalNotes, vitals] = isSandbox
+        ? [labResults, [], []]
+        : await Promise.all([
+            emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+            emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+            emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+          ]);
       const newLabs = await generateLabResults(patient.id, caseDescription, {
         patient,
         assignmentId: assignmentId ?? null,
         roomId: patient.roomId ?? null,
         orderName: caseDescription,
-        previousLabs: labResults,
+        previousLabs: isSandbox ? labResults : contextLabs,
+        clinicalNotes,
+        vitals,
       });
       const labsWithAssignment = newLabs.map((lab) => ({
         ...lab,
         assignmentId: assignmentId ?? null,
         roomId: patient.roomId ?? null,
       }));
-      setLabResults((prev) => [...labsWithAssignment, ...prev]);
-      if (isSandbox) {
-        onSandboxLabsChange?.([...labsWithAssignment, ...labResults]);
-      } else {
+      setLabResults((prev) => {
+        const updated = [...labsWithAssignment, ...prev];
+        if (isSandbox) {
+          onSandboxLabsChange?.(updated);
+        }
+        return updated;
+      });
+      if (!isSandbox) {
         void emrApi.addLabResults(labsWithAssignment, patient.roomId ?? null);
       }
     } catch (error) {

@@ -33,6 +33,7 @@ export default function EmrDashboard() {
   const [patients, setPatients] = useState<Patient[]>(mockPatients);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
+  const [labsRefreshToken, setLabsRefreshToken] = useState(0);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
@@ -56,7 +57,7 @@ export default function EmrDashboard() {
     notes: '',
   });
   const assignmentId = searchParams.get('assignmentId') || undefined;
-  const isSandbox = !assignmentId;
+  const isSandbox = !assignmentId && !forceBaseline;
 
   useEffect(() => {
     void (async () => {
@@ -476,6 +477,7 @@ export default function EmrDashboard() {
                 assignmentId={effectiveAssignmentId}
                 isSandbox={isSandbox}
                 sandboxLabs={sandboxLabs}
+                refreshToken={labsRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
               />
             </TabsContent>
@@ -496,6 +498,8 @@ export default function EmrDashboard() {
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
                 forceBaseline={forceBaseline}
+                onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
+                onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
               />
             </TabsContent>
 
