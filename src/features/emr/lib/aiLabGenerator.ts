@@ -109,7 +109,7 @@ const labTemplates: LabTemplate[] = [
 
 const randomInRange = (min: number, max: number) => Number((Math.random() * (max - min) + min).toFixed(1));
 
-const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
+export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
   const normalized = (orderName ?? '').toLowerCase().replace(/[–—]/g, '-');
   const templateMap = Object.fromEntries(labTemplates.map((t) => [t.testName.toLowerCase(), t]));
 

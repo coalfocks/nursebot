@@ -5,9 +5,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TestTube, TrendingUp, Sparkles } from 'lucide-react';
-import { generateLabResults } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
+import { supabase } from '../../../lib/supabase';
 
 interface LabResultsProps {
   patient: Patient;
@@ -27,6 +28,20 @@ type LabTrendPoint = {
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [roomMeta, setRoomMeta] = useState<{
+    id?: number | null;
+    room_number?: string | null;
+    context?: string | null;
+    nurse_context?: string | null;
+    emr_context?: Record<string, unknown> | string | null;
+    expected_diagnosis?: string | null;
+    expected_treatment?: string[] | null;
+    case_goals?: string | null;
+    difficulty_level?: string | null;
+    objective?: string | null;
+    progress_note?: string | null;
+    completion_hint?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     if (isSandbox) {
@@ -39,31 +54,141 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     })();
   }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs]);
 
+  useEffect(() => {
+    let isActive = true;
+    if (!patient.roomId) {
+      setRoomMeta(null);
+      return;
+    }
+    void (async () => {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select(
+          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint',
+        )
+        .eq('id', patient.roomId)
+        .maybeSingle();
+      if (!isActive) return;
+      if (error) {
+        console.error('Failed to load room context for labs', error);
+        return;
+      }
+      if (data) {
+        let emrContext = data.emr_context ?? null;
+        if (typeof emrContext === 'string') {
+          try {
+            emrContext = JSON.parse(emrContext);
+          } catch {
+            // leave as string
+          }
+        }
+        setRoomMeta({ ...data, emr_context: emrContext });
+      }
+    })();
+    return () => {
+      isActive = false;
+    };
+  }, [patient.roomId]);
+
   const handleGenerateLabResults = async () => {
     setIsGenerating(true);
     try {
       const caseDescription =
-        '37-year-old male with epigastric pain, possible peptic ulcer disease, taking Excedrin for migraines, history of GERD';
-      const [contextLabs, clinicalNotes, vitals] = isSandbox
-        ? [labResults, [], []]
-        : await Promise.all([
-            emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
-            emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
-            emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
-          ]);
-      const newLabs = await generateLabResults(patient.id, caseDescription, {
-        patient,
-        assignmentId: assignmentId ?? null,
-        roomId: patient.roomId ?? null,
-        orderName: caseDescription,
-        previousLabs: isSandbox ? labResults : contextLabs,
-        clinicalNotes,
-        vitals,
+        'Simulated AI-generated lab panel for current patient context.';
+      const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+
+      const tests = resolveLabTemplates('default');
+
+      const aiResponse = await supabase.functions.invoke('lab-results', {
+        body: {
+          orderName: 'AI Lab Panel',
+          priority: 'STAT',
+          tests: tests.map((t) => ({
+            testName: t.testName,
+            unit: t.unit,
+            referenceRange: t.referenceRange,
+          })),
+          context: {
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              gender: patient.gender,
+              mrn: patient.mrn,
+              allergies: patient.allergies,
+              codeStatus: patient.codeStatus,
+              attendingPhysician: patient.attendingPhysician,
+              service: patient.service,
+            },
+            room: {
+              id: patient.roomId,
+              number: patient.room,
+            },
+            assignmentId: assignmentId ?? null,
+            emrContext: roomMeta?.emr_context ?? null,
+            nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+            expectedDiagnosis: roomMeta?.expected_diagnosis ?? null,
+            expectedTreatment: roomMeta?.expected_treatment ?? null,
+            caseGoals: roomMeta?.case_goals ?? null,
+            difficultyLevel: roomMeta?.difficulty_level ?? null,
+            objective: roomMeta?.objective ?? null,
+            progressNote: roomMeta?.progress_note ?? null,
+            completionHint: roomMeta?.completion_hint ?? null,
+            clinicalNotes,
+            vitals,
+            previousLabs: contextLabs,
+            orders,
+          },
+        },
       });
-      const labsWithAssignment = newLabs.map((lab) => ({
-        ...lab,
+
+      if (aiResponse.error) {
+        throw aiResponse.error;
+      }
+
+      const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+        ? ((aiResponse.data as { labs: unknown }).labs as Array<{
+            testName?: string;
+            value?: string | number;
+            unit?: string;
+            referenceRange?: string;
+            status?: LabResult['status'];
+            collectionTime?: string;
+            resultTime?: string;
+          }>)
+        : null;
+
+      const generatedLabs =
+        aiLabs?.length && tests.length
+          ? aiLabs
+          : await generateLabResults(patient.id, caseDescription, {
+              patient,
+              assignmentId: assignmentId ?? null,
+              roomId: patient.roomId ?? null,
+              orderName: caseDescription,
+              previousLabs: contextLabs,
+              clinicalNotes,
+              vitals,
+            });
+
+      const labsWithAssignment = generatedLabs.map((lab, index) => ({
+        id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
+        patientId: patient.id,
         assignmentId: assignmentId ?? null,
         roomId: patient.roomId ?? null,
+        testName: (lab as { testName?: string }).testName ?? tests[index]?.testName ?? 'Lab',
+        value: (lab as { value?: string | number }).value ?? '',
+        unit: (lab as { unit?: string }).unit ?? tests[index]?.unit ?? '',
+        referenceRange: (lab as { referenceRange?: string }).referenceRange ?? tests[index]?.referenceRange ?? '',
+        status: (lab as { status?: string }).status ?? 'Normal',
+        collectionTime: (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
+        resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+        orderedBy: patient.attendingPhysician ?? 'Attending',
       }));
       setLabResults((prev) => {
         const updated = [...labsWithAssignment, ...prev];

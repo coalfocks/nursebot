@@ -19,6 +19,7 @@ import { mockVitals } from '../lib/mockData';
 import { generateVitalSigns } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, VitalSigns } from '../lib/types';
+import { supabase } from '../../../lib/supabase';
 
 interface VitalSignsProps {
   patient: Patient;
@@ -28,6 +29,20 @@ interface VitalSignsProps {
 export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) {
   const [vitals, setVitals] = useState<VitalSigns[]>(mockVitals);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [roomMeta, setRoomMeta] = useState<{
+    id?: number | null;
+    room_number?: string | null;
+    context?: string | null;
+    nurse_context?: string | null;
+    emr_context?: Record<string, unknown> | string | null;
+    expected_diagnosis?: string | null;
+    expected_treatment?: string[] | null;
+    case_goals?: string | null;
+    difficulty_level?: string | null;
+    objective?: string | null;
+    progress_note?: string | null;
+    completion_hint?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -38,15 +53,107 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     })();
   }, [patient.id, patient.roomId, assignmentId]);
 
+  useEffect(() => {
+    let isActive = true;
+    if (!patient.roomId) {
+      setRoomMeta(null);
+      return;
+    }
+    void (async () => {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select(
+          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint',
+        )
+        .eq('id', patient.roomId)
+        .maybeSingle();
+      if (!isActive) return;
+      if (error) {
+        console.error('Failed to load room context for vitals', error);
+        return;
+      }
+      if (data) {
+        let emrContext = data.emr_context ?? null;
+        if (typeof emrContext === 'string') {
+          try {
+            emrContext = JSON.parse(emrContext);
+          } catch {
+            // leave as string
+          }
+        }
+        setRoomMeta({ ...data, emr_context: emrContext });
+      }
+    })();
+    return () => {
+      isActive = false;
+    };
+  }, [patient.roomId]);
+
   const handleGenerateVitals = async () => {
     setIsGenerating(true);
     try {
-      const caseDescription = '37-year-old male with epigastric pain, possible peptic ulcer disease, stable condition';
-      const newVitals = (await generateVitalSigns(patient.id, caseDescription)).map((vital) => ({
-        ...vital,
-        assignmentId: assignmentId ?? null,
-        roomId: patient.roomId ?? null,
-      }));
+      const [contextVitals, clinicalNotes, labs, orders] = await Promise.all([
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+
+      const aiResponse = await supabase.functions.invoke('vitals-generator', {
+        body: {
+          context: {
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              gender: patient.gender,
+              mrn: patient.mrn,
+              allergies: patient.allergies,
+              codeStatus: patient.codeStatus,
+              attendingPhysician: patient.attendingPhysician,
+              service: patient.service,
+            },
+            room: {
+              id: patient.roomId,
+              number: patient.room,
+            },
+            assignmentId: assignmentId ?? null,
+            emrContext: roomMeta?.emr_context ?? null,
+            nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+            expectedDiagnosis: roomMeta?.expected_diagnosis ?? null,
+            expectedTreatment: roomMeta?.expected_treatment ?? null,
+            caseGoals: roomMeta?.case_goals ?? null,
+            difficultyLevel: roomMeta?.difficulty_level ?? null,
+            objective: roomMeta?.objective ?? null,
+            progressNote: roomMeta?.progress_note ?? null,
+            completionHint: roomMeta?.completion_hint ?? null,
+            clinicalNotes,
+            previousVitals: contextVitals,
+            previousLabs: labs,
+            orders,
+          },
+          count: 6,
+        },
+      });
+
+      if (aiResponse.error) {
+        throw aiResponse.error;
+      }
+
+      const aiVitals = Array.isArray((aiResponse.data as { vitals?: unknown })?.vitals)
+        ? ((aiResponse.data as { vitals: unknown }).vitals as VitalSigns[])
+        : null;
+
+      const newVitals = (aiVitals?.length ? aiVitals : await generateVitalSigns(patient.id, 'ai-vitals')).map(
+        (vital, index) => ({
+          ...vital,
+          id: (vital as { id?: string }).id ?? `vital-${Date.now()}-${index}`,
+          patientId: patient.id,
+          assignmentId: assignmentId ?? null,
+          roomId: patient.roomId ?? null,
+        }),
+      );
+
       setVitals([...newVitals, ...vitals]);
       void emrApi.addVitals(newVitals, patient.roomId ?? null);
     } catch (error) {

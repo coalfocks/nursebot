@@ -64,18 +64,22 @@
 .medical-grid {
   display: grid;
   grid-template-columns: 280px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   background: hsl(var(--background));
 }
 
 .patient-sidebar {
   background: hsl(var(--sidebar));
   border-right: 1px solid hsl(var(--sidebar-border));
+  overflow-y: auto;
 }
 
 .main-content {
   background: hsl(var(--background));
   overflow-y: auto;
+  max-height: 100vh;
 }
 
 .lab-value-normal {

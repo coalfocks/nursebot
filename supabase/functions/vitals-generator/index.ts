@@ -1,13 +1,7 @@
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { corsHeaders } from '../_shared/cors.ts';
 
-type LabTest = {
-  testName: string;
-  unit?: string | null;
-  referenceRange?: string | null;
-};
-
-type LabContext = {
+type VitalContext = {
   patient?: {
     firstName?: string;
     lastName?: string;
@@ -22,12 +16,11 @@ type LabContext = {
   room?: { id?: number | null; number?: string | null };
   assignmentId?: string | null;
   clinicalNotes?: Array<{ type?: string | null; title?: string | null; content?: string | null; timestamp?: string | null }>;
-  vitals?: Array<Record<string, unknown>>;
+  previousVitals?: Array<Record<string, unknown>>;
   previousLabs?: Array<{
     testName?: string;
     value?: string | number | null;
     unit?: string | null;
-    referenceRange?: string | null;
     status?: string | null;
     collectionTime?: string | null;
   }>;
@@ -49,21 +42,10 @@ type LabContext = {
   completionHint?: string | null;
 };
 
-type LabRequestPayload =
-  | {
-      labName: string;
-      patientId?: string;
-      priority?: 'Routine' | 'STAT' | 'Timed';
-      valueOverride?: string | null;
-      labType?: 'instant' | 'pending';
-      ordersConfig?: Record<string, unknown> | null;
-    }
-  | {
-      orderName: string;
-      priority?: 'Routine' | 'STAT' | 'Timed';
-      tests: LabTest[];
-      context?: LabContext;
-    };
+type VitalsRequestPayload = {
+  context?: VitalContext;
+  count?: number;
+};
 
 const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
 
@@ -73,7 +55,7 @@ const openai = openaiApiKey
     })
   : null;
 
-const summarizeContext = (ctx?: LabContext) => {
+const summarizeContext = (ctx?: VitalContext) => {
   if (!ctx) return '';
   const lines: string[] = [];
   if (ctx.patient) {
@@ -90,9 +72,7 @@ const summarizeContext = (ctx?: LabContext) => {
     lines.push(`Room: ${ctx.room?.number ?? 'n/a'}, Assignment: ${ctx.assignmentId ?? 'n/a'}.`);
   }
   if (ctx.difficultyLevel || ctx.objective) {
-    lines.push(
-      `Case difficulty: ${ctx.difficultyLevel ?? 'n/a'}. Objective: ${ctx.objective ?? 'n/a'}.`,
-    );
+    lines.push(`Case difficulty: ${ctx.difficultyLevel ?? 'n/a'}. Objective: ${ctx.objective ?? 'n/a'}.`);
   }
   if (ctx.expectedDiagnosis) {
     lines.push(`Expected/working diagnosis: ${ctx.expectedDiagnosis}.`);
@@ -115,9 +95,8 @@ const summarizeContext = (ctx?: LabContext) => {
   if (ctx.completionHint) {
     lines.push(`Completion hint: ${ctx.completionHint}`);
   }
-  if (ctx.vitals?.length) {
-    const latest = ctx.vitals[0];
-    lines.push(`Recent vitals: ${JSON.stringify(latest)}`);
+  if (ctx.previousVitals?.length) {
+    lines.push(`Recent vitals: ${JSON.stringify(ctx.previousVitals[0])}`);
   }
   if (ctx.previousLabs?.length) {
     const summary = ctx.previousLabs
@@ -143,49 +122,11 @@ const summarizeContext = (ctx?: LabContext) => {
   return lines.join('\n');
 };
 
-const buildPrompt = (payload: LabRequestPayload): { system: string; user: string } => {
-  if ('tests' in payload) {
-    const priorityText = payload.priority ? `Priority: ${payload.priority}.` : '';
-    const context = summarizeContext(payload.context);
-    const requested = payload.tests.map((t) => t.testName).join(', ');
-
-    const system = `You are a clinical lab engine for an EMR simulator. Given patient/room context and an order, you return realistic lab results. Always respond with JSON array only—no prose. Units and reference ranges must be clinically plausible.`;
-
-    const user = `
-Generate results for these tests: ${requested}.
-Order: ${payload.orderName}. ${priorityText}
-Context:
-${context}
-Return JSON array of objects:
-[
-  {
-    "testName": "<name>",
-    "value": <number|string>,
-    "unit": "<unit or empty>",
-    "referenceRange": "<range or empty>",
-    "status": "Normal" | "Abnormal" | "Critical",
-    "collectionTime": "<ISO8601>",
-    "resultTime": "<ISO8601>"
-  }
-]
-Match each requested test once. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context.`;
-
-    return { system, user };
-  }
-
-  const { labName, priority, valueOverride } = payload;
-  const priorityText = priority ? `Priority: ${priority}.` : '';
-  const overrideText = valueOverride ? `Use or anchor to this preset value when reasonable: ${valueOverride}.` : '';
-
-  const system = 'You produce realistic, concise lab results for EMR training. Return JSON only.';
-  const user = `
-You are generating a single lab result for a simulated EMR. Respond with compact JSON only:
-{ "value": <number|string>, "unit": "<unit or empty>", "referenceRange": "<range or empty>", "status": "Normal|Abnormal|Critical" }
-${priorityText}
-Lab: ${labName}.
-${overrideText}
-Keep values realistic for adult inpatients. Do not add commentary outside the JSON.`;
-
+const buildPrompt = (payload: VitalsRequestPayload) => {
+  const context = summarizeContext(payload.context);
+  const count = payload.count ?? 6;
+  const system = `You are a clinical vitals engine for an EMR simulator. You return realistic serial vital signs with timestamps. Always respond with JSON array only—no prose.`;
+  const user = `Generate ${count} recent vital sign entries for this inpatient. Context:\n${context}\nReturn JSON array of objects with keys: id (string), timestamp (ISO8601), temperature (F), bloodPressureSystolic, bloodPressureDiastolic, heartRate, respiratoryRate, oxygenSaturation, pain. Make trends plausible with the context; default to stable/normal if not specified.`;
   return { system, user };
 };
 
@@ -193,7 +134,7 @@ const parseJsonFromString = (content: string) => {
   try {
     return JSON.parse(content);
   } catch {
-    const match = content.match(/\{[\s\S]*\}/);
+    const match = content.match(/\[[\s\S]*\]/);
     if (match) {
       try {
         return JSON.parse(match[0]);
@@ -211,26 +152,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const payload: LabRequestPayload = await req.json();
-    const isBatch = 'tests' in payload;
-    if (!payload.labName && !isBatch) {
-      return new Response(JSON.stringify({ error: 'labName or tests/orderName is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (!isBatch && payload.labType === 'pending') {
-      return new Response(
-        JSON.stringify({
-          value: null,
-          unit: null,
-          referenceRange: null,
-          status: 'Pending',
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
-    }
+    const payload: VitalsRequestPayload = await req.json();
 
     if (!openai) {
       throw new Error('Missing OPENAI_API_KEY');
@@ -242,10 +164,7 @@ Deno.serve(async (req) => {
       model: 'gpt-4.1-mini',
       temperature: 0.25,
       messages: [
-        {
-          role: 'system',
-          content: prompt.system,
-        },
+        { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
       ],
     });
@@ -253,17 +172,15 @@ Deno.serve(async (req) => {
     const content = completion.choices[0]?.message?.content ?? '';
     const parsed = parseJsonFromString(content.trim() ?? '');
 
-    if (!parsed) {
+    if (!parsed || !Array.isArray(parsed)) {
       throw new Error('Unable to parse AI response');
     }
 
-    const responseBody = isBatch ? { labs: parsed } : parsed;
-
-    return new Response(JSON.stringify(responseBody), {
+    return new Response(JSON.stringify({ vitals: parsed }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('lab-results error', error);
+    console.error('vitals-generator error', error);
     return new Response(JSON.stringify({ error: error?.message ?? 'Unknown error' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

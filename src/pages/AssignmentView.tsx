@@ -4,11 +4,20 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AssignmentFeedback from '../components/AssignmentFeedback';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, Activity, TestTube, Pill } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
 import { generateFeedback } from '../lib/feedbackService';
+import type { Patient } from '../features/emr/lib/types';
+import { emrApi } from '../features/emr/lib/api';
+import { LabResults } from '../features/emr/components/LabResults';
+import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
+import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
+import { OrdersManagement } from '../features/emr/components/OrdersManagement';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../features/emr/components/ui/Tabs';
+import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
+import { Badge } from '../features/emr/components/ui/Badge';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -27,6 +36,9 @@ export default function AssignmentView() {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [ehrTab, setEhrTab] = useState('overview');
+  const [labsRefreshToken, setLabsRefreshToken] = useState(0);
 
   useEffect(() => {
     if (!user) {
@@ -100,6 +112,8 @@ export default function AssignmentView() {
 
       console.log('Fetched assignment data:', data);
       setAssignment(data);
+      const patientForRoom = await emrApi.getPatientByRoomId(data.room.id);
+      setPatient(patientForRoom);
 
       // If status is 'assigned', update it to 'in_progress'
       if (data.status === 'assigned') {
@@ -239,64 +253,147 @@ export default function AssignmentView() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Room Information */}
-            <div className="lg:col-span-1">
-              <div className="bg-white shadow rounded-lg p-6">
-                {assignment.status === 'in_progress' && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
-                    <div className="flex items-center">
-                      <AlertCircle className="w-5 h-5 text-red-400 mr-2" />
-                      <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
-                    </div>
-                  </div>
-                )}
-                <h2 className="text-lg font-medium text-gray-900 mb-4">Room Information</h2>
-                <div className="space-y-4">
-                  {assignment.room.initial_vitals && (
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+            <div className="xl:col-span-3">
+              <Card className="h-[calc(100vh-220px)] overflow-hidden">
+                <CardHeader className="border-b">
+                  <CardTitle className="flex items-center justify-between text-lg">
                     <div>
-                      <h3 className="text-sm font-medium text-gray-500">Initial Vitals</h3>
-                      <pre className="mt-1 text-sm text-gray-900 whitespace-pre-wrap font-sans">
-                        {JSON.stringify(assignment.room.initial_vitals, null, 2)}
-                      </pre>
+                      <div className="font-semibold">
+                        {patient ? `${patient.lastName}, ${patient.firstName}` : 'Loading patient...'}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Room {assignment.room.room_number} • {assignment.room.specialty?.name || 'General Practice'}
+                      </div>
+                    </div>
+                    {patient && (
+                      <Badge variant="outline" className="text-xs">
+                        MRN: {patient.mrn}
+                      </Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0 h-full">
+                  {patient ? (
+                    <Tabs value={ehrTab} onValueChange={setEhrTab} className="h-full flex flex-col">
+                      <TabsList className="grid w-full grid-cols-5 px-4 py-3">
+                        <TabsTrigger value="overview" className="flex items-center gap-2">
+                          <Activity className="h-4 w-4" /> Overview
+                        </TabsTrigger>
+                        <TabsTrigger value="vitals" className="flex items-center gap-2">
+                          <Activity className="h-4 w-4" /> Vitals
+                        </TabsTrigger>
+                        <TabsTrigger value="notes" className="flex items-center gap-2">
+                          <FileText className="h-4 w-4" /> Notes
+                        </TabsTrigger>
+                        <TabsTrigger value="labs" className="flex items-center gap-2">
+                          <TestTube className="h-4 w-4" /> Labs
+                        </TabsTrigger>
+                        <TabsTrigger value="orders" className="flex items-center gap-2">
+                          <Pill className="h-4 w-4" /> Orders
+                        </TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="overview" className="flex-1 overflow-y-auto p-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="bg-gray-50 rounded-lg p-4">
+                            <p className="text-sm text-gray-500">Attending</p>
+                            <p className="text-base font-semibold text-gray-900">
+                              {patient.attendingPhysician || 'Attending TBD'}
+                            </p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-4">
+                            <p className="text-sm text-gray-500">Allergies</p>
+                            <p className="text-base font-semibold text-gray-900">
+                              {patient.allergies.length ? patient.allergies.join(', ') : 'None reported'}
+                            </p>
+                          </div>
+                          {assignment.room.initial_vitals && (
+                            <div className="bg-gray-50 rounded-lg p-4 md:col-span-2">
+                              <p className="text-sm text-gray-500 mb-2">Initial Vitals</p>
+                              <pre className="text-sm text-gray-900 whitespace-pre-wrap font-sans">
+                                {JSON.stringify(assignment.room.initial_vitals, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          {pdfUrl && (
+                            <div className="md:col-span-2 h-[360px] border rounded-lg overflow-hidden">
+                              <EmbeddedPdfViewer pdfUrl={pdfUrl} />
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="vitals" className="flex-1 overflow-y-auto p-4">
+                        <VitalSignsComponent patient={patient} assignmentId={assignment.id} />
+                      </TabsContent>
+
+                      <TabsContent value="notes" className="flex-1 overflow-y-auto p-4">
+                        <ClinicalNotes patient={patient} assignmentId={assignment.id} />
+                      </TabsContent>
+
+                      <TabsContent value="labs" className="flex-1 overflow-y-auto p-4">
+                        <LabResults patient={patient} assignmentId={assignment.id} refreshToken={labsRefreshToken} />
+                      </TabsContent>
+
+                      <TabsContent value="orders" className="flex-1 overflow-y-auto p-4">
+                        <OrdersManagement
+                          patient={patient}
+                          assignmentId={assignment.id}
+                          onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
+                          onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
+                        />
+                      </TabsContent>
+                    </Tabs>
+                  ) : (
+                    <div className="p-6 text-muted-foreground">No patient associated with this room yet.</div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="xl:col-span-2 flex flex-col gap-6">
+              <ChatInterface assignmentId={assignment.id} roomNumber={assignment.room.room_number} roomId={assignment.room.id} />
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Room Resources
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {assignment.status === 'in_progress' && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                      <div className="flex items-center">
+                        <AlertCircle className="w-5 h-5 text-red-400 mr-2" />
+                        <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
+                      </div>
                     </div>
                   )}
                   {assignment.due_date && (
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-500">Due Date</h3>
-                      <p className="mt-1 text-sm text-gray-900">{new Date(assignment.due_date).toLocaleDateString()}</p>
+                    <div className="flex items-center gap-3">
+                      <Clock className="w-4 h-4 text-gray-500" />
+                      <div>
+                        <p className="text-xs text-gray-500">Due Date</p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {new Date(assignment.due_date).toLocaleDateString()}
+                        </p>
+                      </div>
                     </div>
                   )}
-                </div>
-              </div>
-
-              {/* PDF Viewer */}
-              <div className="mt-6 bg-white shadow rounded-lg p-6">
-                <h2 className="text-lg font-medium text-gray-900 mb-4">Progress Note</h2>
-                <div className="h-[400px]">
-                  <EmbeddedPdfViewer pdfUrl={pdfUrl} />
-                </div>
-              </div>
-
-              {/* Feedback Section */}
-              {(assignment.status === 'completed' || assignment.nurse_feedback) && (
-                <div className="mt-6">
-                  <AssignmentFeedback 
-                    assignment={assignment}
-                    onRetryFeedback={handleRetryFeedback}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Main Content Area */}
-            <div className="lg:col-span-2">
-              {/* Chat Section */}
-              <ChatInterface 
-                assignmentId={assignment.id}
-                roomNumber={assignment.room.room_number}
-                roomId={assignment.room.id}
-              />
+                  {pdfUrl ? (
+                    <div className="h-[240px] border rounded-lg overflow-hidden">
+                      <EmbeddedPdfViewer pdfUrl={pdfUrl} />
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">No progress note provided for this room.</p>
+                  )}
+                  {(assignment.status === 'completed' || assignment.nurse_feedback) && (
+                    <AssignmentFeedback assignment={assignment} onRetryFeedback={handleRetryFeedback} />
+                  )}
+                </CardContent>
+              </Card>
             </div>
           </div>
         </div>

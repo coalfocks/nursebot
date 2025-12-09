@@ -7,7 +7,8 @@ import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User } from 'lucide-react';
 import type { Patient, MedicalOrder } from '../lib/types';
 import { emrApi } from '../lib/api';
-import { generateLabResults } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
+import { supabase } from '../../../lib/supabase';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -16,6 +17,21 @@ interface OrdersManagementProps {
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
 }
+
+type RoomMeta = {
+  id?: number | null;
+  room_number?: string | null;
+  context?: string | null;
+  nurse_context?: string | null;
+  emr_context?: Record<string, unknown> | string | null;
+  expected_diagnosis?: string | null;
+  expected_treatment?: string[] | null;
+  case_goals?: string | null;
+  difficulty_level?: string | null;
+  objective?: string | null;
+  progress_note?: string | null;
+  completion_hint?: string | null;
+};
 
 export function OrdersManagement({
   patient,
@@ -26,6 +42,7 @@ export function OrdersManagement({
 }: OrdersManagementProps) {
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
+  const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -35,6 +52,45 @@ export function OrdersManagement({
       }
     })();
   }, [patient.id, patient.roomId, assignmentId]);
+
+  useEffect(() => {
+    let isActive = true;
+    if (!patient.roomId) {
+      setRoomMeta(null);
+      return;
+    }
+    void (async () => {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select(
+          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint',
+        )
+        .eq('id', patient.roomId)
+        .maybeSingle();
+      if (!isActive) return;
+      if (error) {
+        console.error('Failed to load room context', error);
+        return;
+      }
+      if (data) {
+        let emrContext: RoomMeta['emr_context'] = data.emr_context ?? null;
+        if (typeof emrContext === 'string') {
+          try {
+            emrContext = JSON.parse(emrContext);
+          } catch {
+            // keep original string
+          }
+        }
+        setRoomMeta({
+          ...data,
+          emr_context: emrContext,
+        });
+      }
+    })();
+    return () => {
+      isActive = false;
+    };
+  }, [patient.roomId]);
 
   const handleOrderPlaced = async (newOrder: MedicalOrder) => {
     const adjustedOrder: MedicalOrder = {
@@ -66,21 +122,116 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const labs = await generateLabResults(patient.id, adjustedOrder.orderName, {
-          patient,
-          assignmentId: effectiveAssignmentId,
-          roomId: contextualRoomId,
-          orderName: adjustedOrder.orderName,
-          previousLabs,
-          clinicalNotes,
-          vitals,
+        const requestedTests = resolveLabTemplates(adjustedOrder.orderName).map((template) => ({
+          testName: template.testName,
+          unit: template.unit,
+          referenceRange: template.referenceRange,
+        }));
+
+        const aiResponse = await supabase.functions.invoke('lab-results', {
+          body: {
+            orderName: adjustedOrder.orderName,
+            priority: adjustedOrder.priority,
+            tests: requestedTests,
+            context: {
+              patient: {
+                firstName: patient.firstName,
+                lastName: patient.lastName,
+                dateOfBirth: patient.dateOfBirth,
+                gender: patient.gender,
+                mrn: patient.mrn,
+                allergies: patient.allergies,
+                codeStatus: patient.codeStatus,
+                attendingPhysician: patient.attendingPhysician,
+                service: patient.service,
+              },
+              room: {
+                id: contextualRoomId,
+                number: patient.room,
+              },
+              assignmentId: effectiveAssignmentId,
+              emrContext: roomMeta?.emr_context ?? null,
+              nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+              expectedDiagnosis: roomMeta?.expected_diagnosis ?? null,
+              expectedTreatment: roomMeta?.expected_treatment ?? null,
+              caseGoals: roomMeta?.case_goals ?? null,
+              difficultyLevel: roomMeta?.difficulty_level ?? null,
+              objective: roomMeta?.objective ?? null,
+              progressNote: roomMeta?.progress_note ?? null,
+              completionHint: roomMeta?.completion_hint ?? null,
+              clinicalNotes: clinicalNotes.slice(0, 6).map((note) => ({
+                type: note.type,
+                title: note.title,
+                content: note.content,
+                timestamp: note.timestamp,
+              })),
+              vitals: vitals.slice(0, 6),
+              previousLabs: previousLabs.slice(0, 10).map((lab) => ({
+                testName: lab.testName,
+                value: lab.value,
+                unit: lab.unit,
+                referenceRange: lab.referenceRange,
+                status: lab.status,
+                collectionTime: lab.collectionTime,
+              })),
+              orders: orders.slice(0, 6).map((order) => ({
+                orderName: order.orderName,
+                category: order.category,
+                priority: order.priority,
+                status: order.status,
+                instructions: order.instructions,
+              })),
+            },
+          },
         });
-        const labsWithScope = labs.map((lab) => ({
-          ...lab,
+
+        if (aiResponse.error) {
+          throw aiResponse.error;
+        }
+
+        const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+          ? ((aiResponse.data as { labs: unknown }).labs as Array<{
+              testName: string;
+              value: string | number;
+              unit?: string;
+              referenceRange?: string;
+              status?: string;
+              collectionTime?: string;
+              resultTime?: string;
+            }>)
+          : null;
+
+        const generatedLabs =
+          aiLabs?.length && requestedTests.length
+            ? aiLabs
+            : await generateLabResults(patient.id, adjustedOrder.orderName, {
+                patient,
+                assignmentId: effectiveAssignmentId,
+                roomId: contextualRoomId,
+                orderName: adjustedOrder.orderName,
+                previousLabs,
+                clinicalNotes,
+                vitals,
+              });
+
+        const labsWithScope = generatedLabs.map((lab, index) => ({
+          id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
+          patientId: patient.id,
           assignmentId: effectiveAssignmentId,
           roomId: effectiveRoomId,
-          overrideScope: forceBaseline ? 'baseline' : lab.overrideScope,
+          overrideScope: forceBaseline ? 'baseline' : (lab as { overrideScope?: string }).overrideScope,
+          testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
+          value: (lab as { value?: string | number }).value ?? '',
+          unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
+          referenceRange:
+            (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
+          status: (lab as { status?: string }).status ?? 'Normal',
+          collectionTime:
+            (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
+          resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+          orderedBy: adjustedOrder.orderedBy,
         }));
+
         await emrApi.addLabResults(labsWithScope, effectiveRoomId);
         onLabsGenerated?.();
       } catch (err) {
