@@ -11,7 +11,14 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
-type AdmissionLabEntry = { labName: string; note: string };
+type AdmissionLabEntry = {
+  labName: string;
+  note: string;
+  value?: string;
+  unit?: string;
+  referenceRange?: string;
+  status?: string;
+};
 
 interface RoomEditorProps {
   room?: Room;
@@ -49,10 +56,14 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           const labs = (parsed as { admission?: { labs?: AdmissionLabEntry[] } })?.admission?.labs;
           if (Array.isArray(labs)) {
             admissionLabs = labs
-              .filter((entry) => entry && (entry.labName || entry.note))
+              .filter((entry) => entry && (entry.labName || entry.note || entry.value))
               .map((entry) => ({
                 labName: entry.labName || '',
                 note: entry.note || '',
+                value: entry.value ?? '',
+                unit: entry.unit ?? '',
+                referenceRange: entry.referenceRange ?? '',
+                status: entry.status ?? '',
               }));
           }
         }
@@ -112,6 +123,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   })();
   const [ordersConfig, setOrdersConfig] = useState<RoomOrdersConfig>(initialOrdersConfig);
   const [isActive, setIsActive] = useState(room?.is_active ?? true);
+  const [continuesFrom, setContinuesFrom] = useState<string>(room?.continues_from ? String(room.continues_from) : '');
+  const [roomOptions, setRoomOptions] = useState<Array<{ id: number; room_number: string }>>([]);
   const scopedSchoolId = isSuperAdmin(profile)
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
@@ -269,6 +282,24 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     void fetchPatients();
   }, [debouncedPatientSearch, scopedSchoolId]);
 
+  useEffect(() => {
+    const fetchRooms = async () => {
+      const { data, error } = await supabase.from('rooms').select('id, room_number').order('room_number');
+      if (error) {
+        console.error('Error fetching rooms list', error);
+        return;
+      }
+      if (data) {
+        setRoomOptions(
+          data
+            .filter((r) => !room || r.id !== room.id)
+            .map((r) => ({ id: r.id, room_number: r.room_number })),
+        );
+      }
+    };
+    void fetchRooms();
+  }, [room]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -334,8 +365,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         .map((entry) => ({
           labName: entry.labName.trim(),
           note: entry.note.trim(),
+          value: entry.value?.toString().trim() || undefined,
+          unit: entry.unit?.trim() || undefined,
+          referenceRange: entry.referenceRange?.trim() || undefined,
+          status: entry.status?.trim() || undefined,
         }))
-        .filter((entry) => entry.labName || entry.note);
+        .filter((entry) => entry.labName || entry.note || entry.value);
 
       const emrContextPayloadObject: Record<string, unknown> = {};
       if (cleanedAdmissionLabs.length > 0) {
@@ -371,6 +406,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         is_active: isActive,
         pdf_url: finalPdfUrl,
         school_id: finalSchoolId,
+        continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
       };
 
       if (room) {
@@ -551,6 +587,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         </div>
 
         <div>
+          <label htmlFor="continuesFrom" className="block text-sm font-medium text-gray-700">
+            Continues from (optional)
+          </label>
+          <select
+            id="continuesFrom"
+            value={continuesFrom}
+            onChange={(e) => setContinuesFrom(e.target.value)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+          >
+            <option value="">None</option>
+            {roomOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                Room {opt.room_number}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">Use this to carry over labs/orders/vitals from a prior room.</p>
+        </div>
+
+        <div>
           <label htmlFor="role" className="block text-sm font-medium text-gray-700">
             Role
           </label>
@@ -706,6 +762,64 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                     >
                       Remove
                     </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700">Value</label>
+                      <input
+                        type="text"
+                        value={entry.value ?? ''}
+                        onChange={(e) =>
+                          setAdmissionLabs((prev) =>
+                            prev.map((lab, i) => (i === index ? { ...lab, value: e.target.value } : lab)),
+                          )
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                        placeholder="e.g., 8.5"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700">Unit</label>
+                      <input
+                        type="text"
+                        value={entry.unit ?? ''}
+                        onChange={(e) =>
+                          setAdmissionLabs((prev) =>
+                            prev.map((lab, i) => (i === index ? { ...lab, unit: e.target.value } : lab)),
+                          )
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                        placeholder="e.g., g/dL"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700">Status</label>
+                      <input
+                        type="text"
+                        value={entry.status ?? ''}
+                        onChange={(e) =>
+                          setAdmissionLabs((prev) =>
+                            prev.map((lab, i) => (i === index ? { ...lab, status: e.target.value } : lab)),
+                          )
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                        placeholder="Normal / Abnormal / Critical"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700">Reference range</label>
+                    <input
+                      type="text"
+                      value={entry.referenceRange ?? ''}
+                      onChange={(e) =>
+                        setAdmissionLabs((prev) =>
+                          prev.map((lab, i) => (i === index ? { ...lab, referenceRange: e.target.value } : lab)),
+                        )
+                      }
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                      placeholder="e.g., 12.0-15.5"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700">Result context</label>

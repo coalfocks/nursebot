@@ -24,9 +24,10 @@ import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { supabase } from '../lib/supabase';
 
 export default function EmrDashboard() {
-  const { profile } = useAuthStore();
+  const { profile, user } = useAuthStore();
   const [searchParams] = useSearchParams();
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
@@ -40,8 +41,9 @@ export default function EmrDashboard() {
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
   const [activeTab, setActiveTab] = useState('overview');
+  const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
   const forceBaseline = isSuperAdmin(profile);
-  const effectiveAssignmentId = forceBaseline ? undefined : assignmentId;
+  const effectiveAssignmentId = forceBaseline ? undefined : assignmentId ?? derivedAssignmentId;
   const [showMedModal, setShowMedModal] = useState(false);
   const [medForm, setMedForm] = useState({
     name: '',
@@ -57,7 +59,7 @@ export default function EmrDashboard() {
     notes: '',
   });
   const assignmentId = searchParams.get('assignmentId') || undefined;
-  const isSandbox = !assignmentId && !forceBaseline;
+  const isSandbox = !effectiveAssignmentId && !forceBaseline;
 
   useEffect(() => {
     void (async () => {
@@ -133,6 +135,32 @@ export default function EmrDashboard() {
       }
     })();
   }, [selectedPatient, effectiveAssignmentId]);
+
+  useEffect(() => {
+    if (!selectedPatient || !user || forceBaseline) {
+      setDerivedAssignmentId(undefined);
+      return;
+    }
+    const fetchAssignmentForPatient = async () => {
+      if (!selectedPatient.roomId) {
+        setDerivedAssignmentId(undefined);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('student_room_assignments')
+        .select('id')
+        .eq('student_id', user.id)
+        .eq('room_id', selectedPatient.roomId)
+        .in('status', ['assigned', 'in_progress']);
+      if (error) {
+        console.error('Failed to fetch assignment for patient', error);
+        setDerivedAssignmentId(undefined);
+        return;
+      }
+      setDerivedAssignmentId(data?.[0]?.id ?? undefined);
+    };
+    void fetchAssignmentForPatient();
+  }, [selectedPatient, user, forceBaseline]);
 
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
@@ -444,22 +472,23 @@ export default function EmrDashboard() {
                   </CardContent>
                 </Card>
 
-                {selectedPatient.customOverviewSections?.map((section) => (
-                  <Card key={section.id}>
-                    <CardHeader>
-                      <CardTitle>{section.title}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {section.type === 'image' ? (
-                        <div className="flex justify-center">
-                          <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+                {activeTab === 'overview' &&
+                  selectedPatient.customOverviewSections?.map((section) => (
+                    <Card key={section.id}>
+                      <CardHeader>
+                        <CardTitle>{section.title}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {section.type === 'image' ? (
+                          <div className="flex justify-center">
+                            <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
               </div>
             </TabsContent>
 

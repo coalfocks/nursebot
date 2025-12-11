@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2 } from 'lucide-react';
+import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2, Trash2 } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
@@ -85,6 +85,21 @@ export default function RoomManagement() {
   const handleSave = () => {
     setIsEditing(false);
     fetchRooms();
+  };
+
+  const handleDeleteRoom = async (room: Room) => {
+    if (!isSuperAdmin(profile)) return;
+    if (!window.confirm(`Delete room ${room.room_number}? This will unlink any patient.`)) return;
+    try {
+      await supabase.from('patients').update({ room_id: null }).eq('room_id', room.id);
+      await supabase.from('rooms').update({ patient_id: null }).eq('id', room.id);
+      const { error } = await supabase.from('rooms').delete().eq('id', room.id);
+      if (error) throw error;
+      await fetchRooms();
+    } catch (err) {
+      console.error('Failed to delete room', err);
+      alert('Failed to delete room.');
+    }
   };
 
   const toggleRoomExpanded = (roomId: number) => {
@@ -258,7 +273,7 @@ export default function RoomManagement() {
                                 <h3 className="text-sm font-medium text-gray-900">
                                   Room {room.room_number}
                                 </h3>
-                                <div className="flex items-center space-x-2 mt-1">
+                          <div className="flex items-center space-x-2 mt-1">
                       {room.specialty && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {room.specialty.name}
@@ -276,18 +291,30 @@ export default function RoomManagement() {
                       )}
                       {linkedPatient && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          EMR linked
+                          {linkedPatient.first_name} {linkedPatient.last_name}
                         </span>
                       )}
                                 </div>
                               </div>
                             </div>
-                            <button
-                              onClick={() => handleEditRoom(room)}
-                              className="text-blue-600 hover:text-blue-900"
-                            >
-                              <Edit className="h-5 w-5" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleEditRoom(room)}
+                                className="text-blue-600 hover:text-blue-900"
+                                title="Edit room"
+                              >
+                                <Edit className="h-5 w-5" />
+                              </button>
+                              {isSuperAdmin(profile) && (
+                                <button
+                                  onClick={() => void handleDeleteRoom(room)}
+                                  className="text-red-600 hover:text-red-800"
+                                  title="Delete room"
+                                >
+                                  <Trash2 className="h-5 w-5" />
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           {expandedRooms.has(room.id) && (

@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { isSuperAdmin } from '../lib/roles';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import type { Database } from '../lib/database.types';
+import { Trash2, Edit } from 'lucide-react';
 
 type PatientRow = Database['public']['Tables']['patients']['Row'];
 
@@ -23,6 +24,7 @@ export default function AdminPatients() {
   });
   const [error, setError] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const schoolIdForCreate = useMemo(() => scopedSchoolId ?? null, [scopedSchoolId]);
 
@@ -70,8 +72,13 @@ export default function AdminPatients() {
         service: null,
         attending_physician: null,
       };
-      const { error: insertError } = await supabase.from('patients').insert([payload]);
-      if (insertError) throw insertError;
+      if (editingId) {
+        const { error: updateError } = await supabase.from('patients').update(payload).eq('id', editingId);
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await supabase.from('patients').insert([payload]);
+        if (insertError) throw insertError;
+      }
       setForm({
         firstName: '',
         lastName: '',
@@ -80,12 +87,44 @@ export default function AdminPatients() {
         gender: 'Other',
         allergies: '',
       });
+      setEditingId(null);
       await fetchPatients();
     } catch (err) {
-      console.error('Failed to create patient', err);
-      setError('Failed to create patient.');
+      console.error('Failed to save patient', err);
+      setError('Failed to save patient.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const startEdit = (patient: PatientRow) => {
+    setEditingId(patient.id);
+    setForm({
+      firstName: patient.first_name ?? '',
+      lastName: patient.last_name ?? '',
+      mrn: patient.mrn ?? '',
+      dob: patient.date_of_birth ?? '',
+      gender: (patient.gender as string) ?? 'Other',
+      allergies: (patient.allergies ?? []).join(', '),
+    });
+  };
+
+  const handleDelete = async (patient: PatientRow) => {
+    if (!window.confirm(`Delete patient ${patient.first_name} ${patient.last_name}? This will unlink from rooms.`)) {
+      return;
+    }
+    try {
+      const timestamp = new Date().toISOString();
+      await supabase.from('rooms').update({ patient_id: null }).eq('patient_id', patient.id);
+      const { error } = await supabase
+        .from('patients')
+        .update({ deleted_at: timestamp, room_id: null })
+        .eq('id', patient.id);
+      if (error) throw error;
+      await fetchPatients();
+    } catch (err) {
+      console.error('Failed to delete patient', err);
+      alert('Failed to delete patient.');
     }
   };
 
@@ -110,7 +149,28 @@ export default function AdminPatients() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-5 space-y-4">
-            <h2 className="text-lg font-semibold text-slate-900">Create Patient</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">{editingId ? 'Edit Patient' : 'Create Patient'}</h2>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingId(null);
+                    setForm({
+                      firstName: '',
+                      lastName: '',
+                      mrn: `MRN-${Date.now()}`,
+                      dob: '',
+                      gender: 'Other',
+                      allergies: '',
+                    });
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Cancel edit
+                </button>
+              )}
+            </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -181,7 +241,7 @@ export default function AdminPatients() {
               disabled={isSaving}
               className="inline-flex items-center justify-center rounded-md bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              {isSaving ? 'Saving...' : 'Create patient'}
+              {isSaving ? 'Saving...' : editingId ? 'Update patient' : 'Create patient'}
             </button>
           </form>
 
@@ -203,6 +263,9 @@ export default function AdminPatients() {
                       <th className="px-3 py-2 text-left font-semibold text-slate-700">MRN</th>
                       <th className="px-3 py-2 text-left font-semibold text-slate-700">DOB</th>
                       <th className="px-3 py-2 text-left font-semibold text-slate-700">School</th>
+                      {isSuperAdmin(profile) && (
+                        <th className="px-3 py-2 text-left font-semibold text-slate-700">Actions</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
@@ -216,6 +279,24 @@ export default function AdminPatients() {
                           {p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : '—'}
                         </td>
                         <td className="px-3 py-2 text-slate-600">{p.school_id || '—'}</td>
+                        {isSuperAdmin(profile) && (
+                          <td className="px-3 py-2 text-slate-600 space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(p)}
+                              className="inline-flex items-center px-2 py-1 text-xs rounded-md border border-gray-200 hover:bg-gray-50"
+                            >
+                              <Edit className="h-4 w-4 mr-1" /> Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(p)}
+                              className="inline-flex items-center px-2 py-1 text-xs rounded-md border border-red-200 text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" /> Delete
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

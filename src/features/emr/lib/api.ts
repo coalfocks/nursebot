@@ -12,6 +12,7 @@ import type {
 } from './types';
 
 type OverrideScope = 'baseline' | 'room' | 'assignment';
+type RoomLineage = number[];
 
 const deriveScope = (
   overrideScope: string | null | undefined,
@@ -29,7 +30,7 @@ const deriveScope = (
 const scopeMatchesContext = (
   scope: OverrideScope,
   rowRoomId: number | null,
-  targetRoomId?: number | null,
+  targetRoomIds?: RoomLineage | null,
   rowAssignmentId?: string | null,
   targetAssignmentId?: string | null,
 ) => {
@@ -37,10 +38,34 @@ const scopeMatchesContext = (
     return Boolean(targetAssignmentId && rowAssignmentId === targetAssignmentId);
   }
   if (scope === 'room') {
-    if (!targetRoomId) return true;
-    return rowRoomId === targetRoomId;
+    if (!targetRoomIds || targetRoomIds.length === 0) return true;
+    return targetRoomIds.includes(rowRoomId ?? -1);
   }
   return true;
+};
+
+const getRoomLineage = async (roomId?: number | null): Promise<RoomLineage | null> => {
+  if (!roomId) return null;
+  const visited = new Set<number>();
+  const lineage: number[] = [];
+  let current: number | null | undefined = roomId;
+
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    lineage.push(current);
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('continues_from')
+      .eq('id', current)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching room continuity', error);
+      break;
+    }
+    current = data?.continues_from ?? null;
+  }
+
+  return lineage;
 };
 
 const mapPatient = (
@@ -132,6 +157,7 @@ export const emrApi = {
   },
 
   async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
+    const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('clinical_notes')
       .select('*')
@@ -165,7 +191,7 @@ export const emrApi = {
         scopeMatchesContext(
           note.overrideScope ?? 'baseline',
           note.roomId ?? null,
-          roomId,
+          targetRooms,
           note.assignmentId ?? null,
           assignmentId,
         ),
@@ -193,6 +219,7 @@ export const emrApi = {
   },
 
   async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
+    const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('lab_results')
       .select('*')
@@ -229,7 +256,7 @@ export const emrApi = {
         scopeMatchesContext(
           lab.overrideScope ?? 'baseline',
           lab.roomId ?? null,
-          roomId,
+          targetRooms,
           lab.assignmentId ?? null,
           assignmentId,
         ),
@@ -259,6 +286,7 @@ export const emrApi = {
   },
 
   async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {
+    const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('vital_signs')
       .select('*')
@@ -297,7 +325,7 @@ export const emrApi = {
         scopeMatchesContext(
           vital.overrideScope ?? 'baseline',
           vital.roomId ?? null,
-          roomId,
+          targetRooms,
           vital.assignmentId ?? null,
           assignmentId,
         ),
@@ -329,6 +357,7 @@ export const emrApi = {
   },
 
   async listOrders(patientId: string, assignmentId?: string, roomId?: number | null): Promise<MedicalOrder[]> {
+    const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('medical_orders')
       .select('*')
@@ -368,7 +397,7 @@ export const emrApi = {
         scopeMatchesContext(
           order.overrideScope ?? 'baseline',
           order.roomId ?? null,
-          roomId,
+          targetRooms,
           order.assignmentId ?? null,
           assignmentId,
         ),

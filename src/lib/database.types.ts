@@ -215,6 +215,7 @@ export interface Database {
           school_id: string
           orders_config: Json | null
           patient_id: string | null
+          continues_from: number | null
         }
         Insert: {
           id?: number
@@ -242,6 +243,7 @@ export interface Database {
           school_id?: string
           orders_config?: Json | null
           patient_id?: string | null
+          continues_from?: number | null
         }
         Update: {
           id?: number
@@ -269,6 +271,7 @@ export interface Database {
           school_id?: string
           orders_config?: Json | null
           patient_id?: string | null
+          continues_from?: number | null
         }
       }
       student_room_assignments: {

@@ -4,11 +4,13 @@ import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TestTube, TrendingUp, Sparkles } from 'lucide-react';
+import { TestTube, TrendingUp, Sparkles, Trash2, Edit } from 'lucide-react';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
+import { useAuthStore } from '../../../stores/authStore';
+import { isSuperAdmin } from '../../../lib/roles';
 
 interface LabResultsProps {
   patient: Patient;
@@ -28,6 +30,8 @@ type LabTrendPoint = {
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
+  const { profile } = useAuthStore();
+  const canEdit = isSuperAdmin(profile);
   const [roomMeta, setRoomMeta] = useState<{
     id?: number | null;
     room_number?: string | null;
@@ -83,6 +87,25 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           }
         }
         setRoomMeta({ ...data, emr_context: emrContext });
+        if (emrContext && typeof emrContext === 'object' && 'admission' in emrContext) {
+          const labs = (emrContext as Record<string, unknown>)?.admission as { labs?: LabResult[] } | undefined;
+          if (labs?.labs && labs.labs.length) {
+            const admissionLabs = labs.labs
+              .filter((lab) => lab.testName && lab.value !== undefined)
+              .map((lab, idx) => ({
+                ...lab,
+                id: lab.id ?? `admission-${data.id}-${idx}`,
+                patientId: patient.id,
+                assignmentId: assignmentId ?? null,
+                roomId: patient.roomId ?? null,
+                collectionTime: lab.collectionTime ?? new Date().toISOString(),
+                resultTime: lab.resultTime ?? new Date().toISOString(),
+                orderedBy: lab.orderedBy ?? 'Admission',
+                status: lab.status ?? 'Normal',
+              }));
+            setLabResults((prev) => [...admissionLabs, ...prev]);
+          }
+        }
       }
     })();
     return () => {
@@ -275,6 +298,17 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const abnormalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Abnormal'), [labResults]);
 
+  const handleDeleteLab = async (labId: string) => {
+    if (!canEdit) return;
+    setLabResults((prev) => prev.filter((lab) => lab.id !== labId));
+    if (!isSandbox) {
+      const { error } = await supabase.from('lab_results').update({ deleted_at: new Date().toISOString() }).eq('id', labId);
+      if (error) {
+        console.error('Failed to delete lab', error);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -339,6 +373,19 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                     </div>
                                     <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
                                     <div className="text-xs text-muted-foreground">{lab.status}</div>
+                                    {canEdit && (
+                                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                        <button
+                                          type="button"
+                                          className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
+                                          onClick={() => void handleDeleteLab(lab.id)}
+                                          title="Delete lab"
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                          Delete
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
                                 ) : (
                                   <span className="text-muted-foreground">—</span>
