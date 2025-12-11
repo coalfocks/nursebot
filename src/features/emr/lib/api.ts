@@ -483,4 +483,42 @@ export const emrApi = {
 
     return (data?.intake_output as IntakeOutput | null | undefined) ?? null;
   },
+
+  async updatePatient(
+    patientId: string,
+    payload: Partial<Pick<Patient, 'firstName' | 'lastName' | 'mrn' | 'dateOfBirth' | 'gender' | 'allergies' | 'roomId'>>,
+  ): Promise<Patient | null> {
+    const { data, error } = await supabase
+      .from('patients')
+      .update({
+        first_name: payload.firstName,
+        last_name: payload.lastName,
+        mrn: payload.mrn,
+        date_of_birth: payload.dateOfBirth,
+        gender: payload.gender,
+        allergies: payload.allergies,
+        room_id: payload.roomId ?? null,
+      })
+      .eq('id', patientId)
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) console.error('Error updating patient', error);
+      return null;
+    }
+    return mapPatient(data);
+  },
+
+  async updateRoom(roomId: number, payload: Partial<{ room_number: string }>): Promise<void> {
+    const { error } = await supabase
+      .from('rooms')
+      .update({
+        room_number: payload.room_number,
+      })
+      .eq('id', roomId);
+    if (error) {
+      console.error('Error updating room', error);
+    }
+  },
 };

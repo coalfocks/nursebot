@@ -60,6 +60,21 @@ export default function EmrDashboard() {
   });
   const assignmentId = searchParams.get('assignmentId') || undefined;
   const isSandbox = !effectiveAssignmentId && !forceBaseline;
+  const [sandboxLabForm, setSandboxLabForm] = useState({
+    testName: '',
+    value: '',
+    unit: '',
+    referenceRange: '',
+    status: 'Normal',
+  });
+  const [isSavingSandboxLab, setIsSavingSandboxLab] = useState(false);
+  const [baselineEditForm, setBaselineEditForm] = useState({
+    firstName: '',
+    lastName: '',
+    mrn: '',
+    roomNumber: '',
+  });
+  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string } | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -105,6 +120,12 @@ export default function EmrDashboard() {
             return [...prev, patient];
           });
           setSelectedPatient(patient);
+          setBaselineEditForm({
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            mrn: patient.mrn,
+            roomNumber: patient.room ?? '',
+          });
         }
       })();
     }
@@ -114,6 +135,17 @@ export default function EmrDashboard() {
     if (!selectedPatient) return;
 
     void (async () => {
+      if (selectedPatient.roomId) {
+        const { data } = await supabase
+          .from('rooms')
+          .select('id, room_number')
+          .eq('id', selectedPatient.roomId)
+          .maybeSingle();
+        if (data) {
+          setRoomMeta({ id: data.id, room_number: data.room_number });
+          setBaselineEditForm((prev) => ({ ...prev, roomNumber: data.room_number }));
+        }
+      }
       const orders = await emrApi.listOrders(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
       const meds = orders.filter((order) => order.category === 'Medication');
       setMedicationOrders(meds);
@@ -472,23 +504,274 @@ export default function EmrDashboard() {
                   </CardContent>
                 </Card>
 
-                {activeTab === 'overview' &&
-                  selectedPatient.customOverviewSections?.map((section) => (
-                    <Card key={section.id}>
-                      <CardHeader>
-                        <CardTitle>{section.title}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {section.type === 'image' ? (
-                          <div className="flex justify-center">
-                            <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
-                          </div>
-                        ) : (
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
+              {activeTab === 'overview' &&
+                selectedPatient.customOverviewSections?.map((section) => (
+                  <Card key={section.id}>
+                    <CardHeader>
+                      <CardTitle>{section.title}</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {section.type === 'image' ? (
+                        <div className="flex justify-center">
+                          <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              {activeTab === 'overview' && isSuperAdmin(profile) && (
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">Sandbox Builder (Baseline)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Edit patient baseline</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="First name"
+                            value={baselineEditForm.firstName}
+                            onChange={(e) => setBaselineEditForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Last name"
+                            value={baselineEditForm.lastName}
+                            onChange={(e) => setBaselineEditForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="MRN"
+                            value={baselineEditForm.mrn}
+                            onChange={(e) => setBaselineEditForm((prev) => ({ ...prev, mrn: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Room number"
+                            value={baselineEditForm.roomNumber}
+                            onChange={(e) => setBaselineEditForm((prev) => ({ ...prev, roomNumber: e.target.value }))}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            if (!selectedPatient) return;
+                            const updated = await emrApi.updatePatient(selectedPatient.id, {
+                              firstName: baselineEditForm.firstName || selectedPatient.firstName,
+                              lastName: baselineEditForm.lastName || selectedPatient.lastName,
+                              mrn: baselineEditForm.mrn || selectedPatient.mrn,
+                            });
+                            if (roomMeta?.id && baselineEditForm.roomNumber) {
+                              await emrApi.updateRoom(roomMeta.id, { room_number: baselineEditForm.roomNumber });
+                            }
+                            if (updated) {
+                              setSelectedPatient({
+                                ...selectedPatient,
+                                ...updated,
+                                room: baselineEditForm.roomNumber || selectedPatient.room,
+                              });
+                              setPatients((prev) =>
+                                prev.map((p) =>
+                                  p.id === selectedPatient.id
+                                    ? { ...p, ...updated, room: baselineEditForm.roomNumber || p.room }
+                                    : p,
+                                ),
+                              );
+                            }
+                          }}
+                        >
+                          Save baseline
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-muted-foreground">Add lab (baseline)</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Lab name"
+                            value={sandboxLabForm.testName}
+                            onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, testName: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Value (optional)"
+                            value={sandboxLabForm.value}
+                            onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, value: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Unit"
+                            value={sandboxLabForm.unit}
+                            onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, unit: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Reference range"
+                            value={sandboxLabForm.referenceRange}
+                            onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, referenceRange: e.target.value }))}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Status"
+                            value={sandboxLabForm.status}
+                            onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, status: e.target.value }))}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
+                            onClick={async () => {
+                              if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
+                              setIsSavingSandboxLab(true);
+                              try {
+                                const labsWithAssignment = [
+                                  {
+                                    id: `manual-${Date.now()}`,
+                                    patientId: selectedPatient.id,
+                                    assignmentId: null,
+                                    roomId: selectedPatient.roomId ?? null,
+                                    overrideScope: 'baseline' as const,
+                                    testName: sandboxLabForm.testName.trim(),
+                                    value: sandboxLabForm.value || '',
+                                    unit: sandboxLabForm.unit,
+                                    referenceRange: sandboxLabForm.referenceRange,
+                                    status: (sandboxLabForm.status as LabResult['status']) || 'Normal',
+                                    collectionTime: new Date().toISOString(),
+                                    resultTime: new Date().toISOString(),
+                                    orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
+                                  },
+                                ];
+                                await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
+                                setLabsRefreshToken((t) => t + 1);
+                                setSandboxLabForm({
+                                  testName: '',
+                                  value: '',
+                                  unit: '',
+                                  referenceRange: '',
+                                  status: 'Normal',
+                                });
+                              } catch (err) {
+                                console.error('Failed to add manual lab', err);
+                              } finally {
+                                setIsSavingSandboxLab(false);
+                              }
+                            }}
+                          >
+                            Add lab (manual)
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
+                            onClick={async () => {
+                              if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
+                              setIsSavingSandboxLab(true);
+                              try {
+                                const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
+                                  emrApi.listLabResults(selectedPatient.id, null, selectedPatient.roomId ?? null),
+                                  emrApi.listClinicalNotes(selectedPatient.id, null, selectedPatient.roomId ?? null),
+                                  emrApi.listVitals(selectedPatient.id, null, selectedPatient.roomId ?? null),
+                                  emrApi.listOrders(selectedPatient.id, null, selectedPatient.roomId ?? null),
+                                ]);
+                                const tests = resolveLabTemplates(sandboxLabForm.testName.trim());
+                                const aiResponse = await supabase.functions.invoke('lab-results', {
+                                  body: {
+                                    orderName: sandboxLabForm.testName.trim(),
+                                    priority: 'STAT',
+                                    tests: tests.map((t) => ({
+                                      testName: t.testName,
+                                      unit: t.unit,
+                                      referenceRange: t.referenceRange,
+                                    })),
+                                    context: {
+                                      patient: {
+                                        firstName: selectedPatient.firstName,
+                                        lastName: selectedPatient.lastName,
+                                        dateOfBirth: selectedPatient.dateOfBirth,
+                                        gender: selectedPatient.gender,
+                                        mrn: selectedPatient.mrn,
+                                        allergies: selectedPatient.allergies,
+                                        codeStatus: selectedPatient.codeStatus,
+                                        attendingPhysician: selectedPatient.attendingPhysician,
+                                        service: selectedPatient.service,
+                                      },
+                                      room: {
+                                        id: selectedPatient.roomId,
+                                        number: selectedPatient.room,
+                                      },
+                                      assignmentId: null,
+                                      clinicalNotes,
+                                      vitals,
+                                      previousLabs: contextLabs,
+                                      orders,
+                                      emrContext: null,
+                                      nurseContext: null,
+                                    },
+                                  },
+                                });
+                                const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+                                  ? ((aiResponse.data as { labs: unknown }).labs as LabResult[])
+                                  : null;
+                                const generatedLabs =
+                                  aiLabs?.length
+                                    ? aiLabs
+                                    : await generateLabResults(selectedPatient.id, sandboxLabForm.testName.trim(), {
+                                        patient: selectedPatient,
+                                        assignmentId: null,
+                                        roomId: selectedPatient.roomId ?? null,
+                                        orderName: sandboxLabForm.testName.trim(),
+                                        previousLabs: contextLabs,
+                                        clinicalNotes,
+                                        vitals,
+                                      });
+                                const labsWithAssignment = generatedLabs.map((lab, index) => ({
+                                  id: (lab as { id?: string }).id ?? `manual-ai-${Date.now()}-${index}`,
+                                  patientId: selectedPatient.id,
+                                  assignmentId: null,
+                                  roomId: selectedPatient.roomId ?? null,
+                                  overrideScope: 'baseline' as const,
+                                  testName: (lab as { testName?: string }).testName ?? tests[index]?.testName ?? 'Lab',
+                                  value: (lab as { value?: string | number }).value ?? '',
+                                  unit: (lab as { unit?: string }).unit ?? tests[index]?.unit ?? '',
+                                  referenceRange:
+                                    (lab as { referenceRange?: string }).referenceRange ??
+                                    tests[index]?.referenceRange ??
+                                    '',
+                                  status: (lab as { status?: LabResult['status'] }).status ?? 'Normal',
+                                  collectionTime: (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
+                                  resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+                                  orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
+                                }));
+                                await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
+                                setLabsRefreshToken((t) => t + 1);
+                                setSandboxLabForm({
+                                  testName: '',
+                                  value: '',
+                                  unit: '',
+                                  referenceRange: '',
+                                  status: 'Normal',
+                                });
+                              } catch (err) {
+                                console.error('Failed to generate AI lab', err);
+                              } finally {
+                                setIsSavingSandboxLab(false);
+                              }
+                            }}
+                          >
+                            {isSavingSandboxLab ? 'Generating…' : 'Generate via AI'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
               </div>
             </TabsContent>
 
