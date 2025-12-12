@@ -78,26 +78,41 @@ export default function EmrDashboard() {
 
   useEffect(() => {
     void (async () => {
-      const data = await emrApi.listPatients();
+      if (!user) return;
+      if (hasAdminAccess(profile)) {
+        const data = await emrApi.listPatients();
+        if (data.length) {
+          setPatients(data);
+          setSelectedPatient(data[0]);
+        }
+        return;
+      }
+
+      const data = await emrApi.listPatientsForStudent(user.id);
+      setPatients(data);
       if (data.length) {
-        setPatients(data);
         setSelectedPatient(data[0]);
+      } else {
+        setSelectedPatient(null);
       }
     })();
-  }, []);
+  }, [profile, user]);
 
   useEffect(() => {
-    if (!patients.length) return;
-
     const patientIdParam = searchParams.get('patientId');
     const roomIdParam = searchParams.get('roomId');
-    const matchingPatient =
-      patients.find((p) => (patientIdParam && p.id === patientIdParam) || (roomIdParam && p.roomId && String(p.roomId) === roomIdParam)) ||
-      null;
+    if (patients.length) {
+      const matchingPatient =
+        patients.find(
+          (p) =>
+            (patientIdParam && p.id === patientIdParam) ||
+            (roomIdParam && p.roomId && String(p.roomId) === roomIdParam),
+        ) || null;
 
-    if (matchingPatient) {
-      setSelectedPatient(matchingPatient);
-      return;
+      if (matchingPatient) {
+        setSelectedPatient(matchingPatient);
+        return;
+      }
     }
 
     if (roomIdParam) {

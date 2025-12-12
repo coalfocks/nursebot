@@ -1,18 +1,20 @@
+import { instantLabs, pendingLabs } from './labCatalog';
+
 // Comprehensive orders data based on the provided CSV files
 export interface OrderItem {
-  id: string
-  name: string
-  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing'
-  subcategory?: string
-  frequencies?: string[]
-  routes?: string[]
-  priorities: ('Routine' | 'STAT' | 'Timed')[]
-  defaultDose?: string
-  units?: string[]
-  instructions?: string
+  id: string;
+  name: string;
+  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing';
+  subcategory?: string;
+  frequencies?: string[];
+  routes?: string[];
+  priorities: ('Routine' | 'STAT' | 'Timed')[];
+  defaultDose?: string;
+  units?: string[];
+  instructions?: string;
 }
 
-export const labOrders: OrderItem[] = [
+const curatedLabOrders: OrderItem[] = [
   {
     id: 'lab-1',
     name: 'Complete Blood Count with Differential',
@@ -63,7 +65,7 @@ export const labOrders: OrderItem[] = [
   },
   {
     id: 'lab-7',
-    name: 'Troponin High-Sensitivity',
+    name: 'Troponin High-Sensitivity — Now',
     category: 'Lab',
     subcategory: 'Cardiac',
     frequencies: ['Once', 'q6h', 'q8h'],
@@ -87,13 +89,41 @@ export const labOrders: OrderItem[] = [
   },
   {
     id: 'lab-10',
-    name: 'PT/INR',
+    name: 'Coagulation: PT/INR',
     category: 'Lab',
     subcategory: 'Coagulation',
     frequencies: ['Once', 'Daily', 'BID'],
     priorities: ['STAT', 'Routine', 'Timed'],
   },
 ];
+
+const instantLabOrders: OrderItem[] = instantLabs.map((name, index) => ({
+  id: `lab-instant-${index}`,
+  name,
+  category: 'Lab',
+  subcategory: 'Instant Lab',
+  frequencies: ['Once'],
+  priorities: ['Routine', 'STAT', 'Timed'],
+}));
+
+const pendingLabOrders: OrderItem[] = pendingLabs.map((name, index) => ({
+  id: `lab-pending-${index}`,
+  name,
+  category: 'Lab',
+  subcategory: 'Pending Lab',
+  frequencies: ['Once'],
+  priorities: ['Routine'],
+}));
+
+const labOrdersMap = new Map<string, OrderItem>();
+[...curatedLabOrders, ...instantLabOrders, ...pendingLabOrders].forEach((order) => {
+  const key = order.name.toLowerCase();
+  if (!labOrdersMap.has(key)) {
+    labOrdersMap.set(key, order);
+  }
+});
+
+export const labOrders: OrderItem[] = Array.from(labOrdersMap.values());
 
 export const medicationOrders: OrderItem[] = [
   {

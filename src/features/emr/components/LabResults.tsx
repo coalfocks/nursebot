@@ -11,6 +11,7 @@ import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
+import { instantLabs, pendingLabs } from '../lib/labCatalog';
 
 interface LabResultsProps {
   patient: Patient;
@@ -32,6 +33,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [isGenerating, setIsGenerating] = useState(false);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
+  const [aiLabName, setAiLabName] = useState('');
+  const [aiLabRequest, setAiLabRequest] = useState('');
   const [roomMeta, setRoomMeta] = useState<{
     id?: number | null;
     room_number?: string | null;
@@ -46,6 +49,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     progress_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
+  const labOptions = useMemo(
+    () => [...instantLabs, ...pendingLabs].sort((a, b) => a.localeCompare(b)),
+    [],
+  );
 
   useEffect(() => {
     if (isSandbox) {
@@ -114,10 +121,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   }, [patient.roomId]);
 
   const handleGenerateLabResults = async () => {
+    if (!aiLabName.trim()) return;
+    const orderName = aiLabName.trim();
+    const requestDetails = aiLabRequest.trim();
     setIsGenerating(true);
     try {
-      const caseDescription =
-        'Simulated AI-generated lab panel for current patient context.';
       const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
         emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
         emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
@@ -125,13 +133,15 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
       ]);
 
-      const tests = resolveLabTemplates('default');
+      const tests = resolveLabTemplates(orderName);
+      const requestedTests = tests.length ? tests : resolveLabTemplates('default');
 
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
-          orderName: 'AI Lab Panel',
+          orderName,
           priority: 'STAT',
-          tests: tests.map((t) => ({
+          instructions: requestDetails || undefined,
+          tests: requestedTests.map((t) => ({
             testName: t.testName,
             unit: t.unit,
             referenceRange: t.referenceRange,
@@ -166,6 +176,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             vitals,
             previousLabs: contextLabs,
             orders,
+            userRequest: requestDetails || undefined,
           },
         },
       });
@@ -187,13 +198,13 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         : null;
 
       const generatedLabs =
-        aiLabs?.length && tests.length
+        aiLabs?.length && requestedTests.length
           ? aiLabs
-          : await generateLabResults(patient.id, caseDescription, {
+          : await generateLabResults(patient.id, orderName, {
               patient,
               assignmentId: assignmentId ?? null,
               roomId: patient.roomId ?? null,
-              orderName: caseDescription,
+              orderName: requestDetails ? `${orderName} — ${requestDetails}` : orderName,
               previousLabs: contextLabs,
               clinicalNotes,
               vitals,
@@ -204,10 +215,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         patientId: patient.id,
         assignmentId: assignmentId ?? null,
         roomId: patient.roomId ?? null,
-        testName: (lab as { testName?: string }).testName ?? tests[index]?.testName ?? 'Lab',
+        testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
         value: (lab as { value?: string | number }).value ?? '',
-        unit: (lab as { unit?: string }).unit ?? tests[index]?.unit ?? '',
-        referenceRange: (lab as { referenceRange?: string }).referenceRange ?? tests[index]?.referenceRange ?? '',
+        unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
+        referenceRange:
+          (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
         status: (lab as { status?: string }).status ?? 'Normal',
         collectionTime: (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
         resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
@@ -223,6 +235,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!isSandbox) {
         void emrApi.addLabResults(labsWithAssignment, patient.roomId ?? null);
       }
+      setAiLabName('');
+      setAiLabRequest('');
     } catch (error) {
       console.error('Error generating labs:', error);
     } finally {
@@ -311,17 +325,54 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Laboratory Results</h2>
-          <p className="text-muted-foreground">
-            {abnormalLabs.length} Abnormal • {labResults.length} Total
-          </p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold">Laboratory Results</h2>
+            <p className="text-muted-foreground">
+              {abnormalLabs.length} Abnormal • {labResults.length} Total
+            </p>
+          </div>
         </div>
-        <Button onClick={handleGenerateLabResults} disabled={isGenerating} className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4" />
-          {isGenerating ? 'Generating...' : 'Generate AI Labs'}
-        </Button>
+        <div className="grid grid-cols-1 md:grid-cols-[1.3fr,1fr,auto] gap-3 items-end">
+          <div className="space-y-1">
+            <label className="text-sm text-muted-foreground">Choose a lab to generate</label>
+            <div className="flex gap-2">
+              <input
+                list="lab-options"
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                placeholder="Start typing a lab name"
+                value={aiLabName}
+                onChange={(e) => setAiLabName(e.target.value)}
+              />
+              <datalist id="lab-options">
+                {labOptions.map((lab) => (
+                  <option key={lab} value={lab} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm text-muted-foreground">AI instructions (optional)</label>
+            <textarea
+              rows={2}
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+              placeholder="E.g., simulate septic shock with rising lactate"
+              value={aiLabRequest}
+              onChange={(e) => setAiLabRequest(e.target.value)}
+            />
+          </div>
+          <div className="flex justify-end md:justify-start">
+            <Button
+              onClick={handleGenerateLabResults}
+              disabled={isGenerating || !aiLabName.trim()}
+              className="flex items-center gap-2 whitespace-nowrap"
+            >
+              <Sparkles className="h-4 w-4" />
+              {isGenerating ? 'Generating...' : 'Generate AI Labs'}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <Tabs defaultValue="results" className="w-full">

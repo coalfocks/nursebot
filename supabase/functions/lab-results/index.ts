@@ -47,6 +47,7 @@ type LabContext = {
   objective?: string | null;
   progressNote?: string | null;
   completionHint?: string | null;
+  userRequest?: string | null;
 };
 
 type LabRequestPayload =
@@ -62,6 +63,7 @@ type LabRequestPayload =
       orderName: string;
       priority?: 'Routine' | 'STAT' | 'Timed';
       tests: LabTest[];
+      instructions?: string | null;
       context?: LabContext;
     };
 
@@ -112,6 +114,9 @@ const summarizeContext = (ctx?: LabContext) => {
   if (ctx.nurseContext) {
     lines.push(`Nurse context: ${ctx.nurseContext}`);
   }
+  if (ctx.userRequest) {
+    lines.push(`User-provided request: ${ctx.userRequest}`);
+  }
   if (ctx.completionHint) {
     lines.push(`Completion hint: ${ctx.completionHint}`);
   }
@@ -144,6 +149,8 @@ const summarizeContext = (ctx?: LabContext) => {
 };
 
 const buildPrompt = (payload: LabRequestPayload): { system: string; user: string } => {
+  const instructionText =
+    'instructions' in payload && payload.instructions ? `User intent/context: ${payload.instructions}` : '';
   if ('tests' in payload) {
     const priorityText = payload.priority ? `Priority: ${payload.priority}.` : '';
     const context = summarizeContext(payload.context);
@@ -154,6 +161,7 @@ const buildPrompt = (payload: LabRequestPayload): { system: string; user: string
     const user = `
 Generate results for these tests: ${requested}.
 Order: ${payload.orderName}. ${priorityText}
+${instructionText}
 Context:
 ${context}
 Return JSON array of objects:
@@ -168,7 +176,7 @@ Return JSON array of objects:
     "resultTime": "<ISO8601>"
   }
 ]
-Match each requested test once. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context.`;
+Match each requested test once. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context or user intent.`;
 
     return { system, user };
   }
@@ -184,6 +192,7 @@ You are generating a single lab result for a simulated EMR. Respond with compact
 ${priorityText}
 Lab: ${labName}.
 ${overrideText}
+${instructionText}
 Keep values realistic for adult inpatients. Do not add commentary outside the JSON.`;
 
   return { system, user };

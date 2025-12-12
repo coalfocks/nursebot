@@ -13,6 +13,7 @@ import type {
 
 type OverrideScope = 'baseline' | 'room' | 'assignment';
 type RoomLineage = number[];
+type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 
 const deriveScope = (
   overrideScope: string | null | undefined,
@@ -93,6 +94,23 @@ const mapPatient = (
   intakeOutput: (row.intake_output as IntakeOutput | null | undefined) ?? undefined,
 });
 
+const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): ClinicalNote => {
+  const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+  return {
+    id: row.id,
+    patientId: row.patient_id ?? fallbackPatientId,
+    assignmentId: row.assignment_id ?? undefined,
+    roomId: row.room_id ?? undefined,
+    overrideScope: scope,
+    type: row.note_type as ClinicalNote['type'],
+    title: row.title,
+    content: row.content,
+    author: row.author ?? 'Unknown',
+    timestamp: row.timestamp,
+    signed: row.signed ?? false,
+  };
+};
+
 export const emrApi = {
   async getPatient(patientId: string): Promise<Patient | null> {
     const { data, error } = await supabase
@@ -156,6 +174,49 @@ export const emrApi = {
     return (data ?? []).map(mapPatient);
   },
 
+  async listPatientsForStudent(studentId: string): Promise<Patient[]> {
+    const { data, error } = await supabase
+      .from('student_room_assignments')
+      .select(
+        `
+        id,
+        status,
+        room:room_id (
+          id,
+          room_number,
+          patient:patient_id (*)
+        )
+      `,
+      )
+      .eq('student_id', studentId)
+      .in('status', ['assigned', 'in_progress', 'completed']);
+
+    if (error) {
+      console.error('Error fetching student patients', error);
+      return [];
+    }
+
+    const patients = (data ?? [])
+      .map((row) => {
+        const patientRow = row.room?.patient as Database['public']['Tables']['patients']['Row'] | null;
+        if (!patientRow) return null;
+        const roomId = row.room?.id ?? patientRow.room_id ?? null;
+        const patient = mapPatient(patientRow, roomId);
+        return {
+          ...patient,
+          room: row.room?.room_number ?? patient.room,
+        };
+      })
+      .filter(Boolean) as Patient[];
+
+    const seen = new Set<string>();
+    return patients.filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  },
+
   async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
     const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
@@ -171,22 +232,7 @@ export const emrApi = {
     }
 
     return (data ?? [])
-      .map((row) => {
-        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
-        return {
-          id: row.id,
-          patientId: row.patient_id ?? patientId,
-          assignmentId: row.assignment_id ?? undefined,
-          roomId: row.room_id ?? undefined,
-          overrideScope: scope,
-          type: row.note_type as ClinicalNote['type'],
-          title: row.title,
-          content: row.content,
-          author: row.author ?? 'Unknown',
-          timestamp: row.timestamp,
-          signed: row.signed ?? false,
-        };
-      })
+      .map((row) => mapClinicalNote(row, patientId))
       .filter((note) =>
         scopeMatchesContext(
           note.overrideScope ?? 'baseline',
@@ -216,6 +262,34 @@ export const emrApi = {
     if (error) {
       console.error('Error inserting clinical note', error);
     }
+  },
+
+  async updateClinicalNote(
+    noteId: string,
+    updates: Partial<Pick<ClinicalNote, 'title' | 'content' | 'type' | 'signed'>>,
+  ): Promise<ClinicalNote | null> {
+    const payload = {
+      title: updates.title,
+      content: updates.content,
+      note_type: updates.type,
+      signed: updates.signed,
+    };
+    const cleanPayload = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => value !== undefined),
+    );
+    const { data, error } = await supabase
+      .from('clinical_notes')
+      .update(cleanPayload)
+      .eq('id', noteId)
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error('Error updating clinical note', error);
+      return null;
+    }
+
+    return mapClinicalNote(data, data.patient_id ?? '');
   },
 
   async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {

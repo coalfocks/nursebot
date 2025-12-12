@@ -8,6 +8,8 @@ import { FileText, Plus, User, CheckCircle, Clock } from 'lucide-react';
 import { AINotesGenerator } from './AINoteGenerator';
 import type { Patient, ClinicalNote } from '../lib/types';
 import { emrApi } from '../lib/api';
+import { useAuthStore } from '../../../stores/authStore';
+import { isSuperAdmin } from '../../../lib/roles';
 
 interface ClinicalNotesProps {
   patient: Patient;
@@ -17,6 +19,14 @@ interface ClinicalNotesProps {
 
 export function ClinicalNotes({ patient, assignmentId, forceBaseline }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
+  const { profile } = useAuthStore();
+  const canEdit = isSuperAdmin(profile);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState<{ title: string; type: ClinicalNote['type']; content: string }>({
+    title: '',
+    type: 'Progress',
+    content: '',
+  });
 
   useEffect(() => {
     void (async () => {
@@ -34,9 +44,32 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
       roomId: forceBaseline ? null : patient.roomId ?? newNote.roomId ?? null,
       overrideScope: forceBaseline ? 'baseline' : newNote.overrideScope,
     };
-    setNotes([adjustedNote, ...notes]);
+    setNotes((prev) => [adjustedNote, ...prev]);
     setShowGenerator(false);
     void emrApi.addClinicalNote(adjustedNote);
+  };
+
+  const startEditing = (note: ClinicalNote) => {
+    setEditingNoteId(note.id);
+    setNoteDraft({
+      title: note.title,
+      type: note.type,
+      content: note.content,
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingNoteId) return;
+    const current = notes.find((note) => note.id === editingNoteId);
+    const updated = await emrApi.updateClinicalNote(editingNoteId, {
+      title: noteDraft.title.trim() || current?.title,
+      type: noteDraft.type,
+      content: noteDraft.content.trim() || current?.content,
+    });
+    if (updated) {
+      setNotes((prev) => prev.map((note) => (note.id === editingNoteId ? { ...note, ...updated } : note)));
+    }
+    setEditingNoteId(null);
   };
 
   const notesByType = notes.reduce(
@@ -47,6 +80,104 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     },
     {} as Record<string, ClinicalNote[]>,
   );
+
+  const renderNoteCard = (note: ClinicalNote) => {
+    const isEditing = editingNoteId === note.id;
+    return (
+      <Card key={note.id}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <FileText className="h-5 w-5" />
+              <div>
+                <CardTitle className="text-lg">{note.title}</CardTitle>
+                <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1">
+                    <User className="h-3 w-3" />
+                    {note.author}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={note.type === 'H&P' ? 'default' : 'secondary'}>{note.type}</Badge>
+              {note.signed ? (
+                <Badge variant="default" className="flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" />
+                  Signed
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Pending
+                </Badge>
+              )}
+              {canEdit &&
+                (isEditing ? (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setEditingNoteId(null)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={() => void handleSaveEdit()}>
+                      Save
+                    </Button>
+                  </div>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => startEditing(note)}>
+                    Edit
+                  </Button>
+                ))}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isEditing ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Title</label>
+                  <input
+                    className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                    value={noteDraft.title}
+                    onChange={(e) => setNoteDraft((prev) => ({ ...prev, title: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Type</label>
+                  <select
+                    className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                    value={noteDraft.type}
+                    onChange={(e) =>
+                      setNoteDraft((prev) => ({ ...prev, type: e.target.value as ClinicalNote['type'] }))
+                    }
+                  >
+                    {['H&P', 'Progress', 'Consult', 'Discharge'].map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Content</label>
+                <textarea
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  rows={8}
+                  value={noteDraft.content}
+                  onChange={(e) => setNoteDraft((prev) => ({ ...prev, content: e.target.value }))}
+                />
+              </div>
+            </div>
+          ) : (
+            <ScrollArea className="h-64 w-full">
+              <pre className="whitespace-pre-wrap text-sm font-mono bg-muted p-4 rounded-lg">{note.content}</pre>
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -71,89 +202,14 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
         <TabsContent value="all" className="mt-6">
           <div className="space-y-4">
-            {notes.map((note) => (
-              <Card key={note.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-5 w-5" />
-                      <div>
-                        <CardTitle className="text-lg">{note.title}</CardTitle>
-                        <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <User className="h-3 w-3" />
-                            {note.author}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={note.type === 'H&P' ? 'default' : 'secondary'}>{note.type}</Badge>
-                      {note.signed ? (
-                        <Badge variant="default" className="flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          Signed
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          Pending
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-64 w-full">
-                    <pre className="whitespace-pre-wrap text-sm font-mono bg-muted p-4 rounded-lg">{note.content}</pre>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            ))}
+            {notes.map(renderNoteCard)}
           </div>
         </TabsContent>
 
         {Object.entries(notesByType).map(([type, typeNotes]) => (
           <TabsContent key={type} value={type} className="mt-6">
             <div className="space-y-4">
-              {typeNotes.map((note) => (
-                <Card key={note.id}>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-5 w-5" />
-                        <div>
-                          <CardTitle className="text-lg">{note.title}</CardTitle>
-                          <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              {note.author}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      {note.signed ? (
-                        <Badge variant="default" className="flex items-center gap-1">
-                          <CheckCircle className="h-3 w-3" />
-                          Signed
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          Pending
-                        </Badge>
-                      )}
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <ScrollArea className="h-64 w-full">
-                      <pre className="whitespace-pre-wrap text-sm font-mono bg-muted p-4 rounded-lg">
-                        {note.content}
-                      </pre>
-                    </ScrollArea>
-                  </CardContent>
-                </Card>
-              ))}
+              {typeNotes.map(renderNoteCard)}
             </div>
           </TabsContent>
         ))}
