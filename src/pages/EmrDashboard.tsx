@@ -9,7 +9,6 @@ import type {
   IntakeOutput,
   MedicalOrder,
 } from '../features/emr/lib/types';
-import { mockPatients } from '../features/emr/lib/mockData';
 import { emrApi } from '../features/emr/lib/api';
 import { PatientSidebar } from '../features/emr/components/PatientSidebar';
 import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
@@ -30,8 +29,9 @@ export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
   const [searchParams] = useSearchParams();
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(mockPatients[0]);
-  const [patients, setPatients] = useState<Patient[]>(mockPatients);
+  const assignmentId = searchParams.get('assignmentId') || undefined;
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
@@ -58,7 +58,6 @@ export default function EmrDashboard() {
     output: { urine: '', stool: '', other: '' },
     notes: '',
   });
-  const assignmentId = searchParams.get('assignmentId') || undefined;
   const isSandbox = !effectiveAssignmentId && !forceBaseline;
   const [sandboxLabForm, setSandboxLabForm] = useState({
     testName: '',
