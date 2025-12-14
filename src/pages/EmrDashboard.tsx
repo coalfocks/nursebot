@@ -37,6 +37,7 @@ export default function EmrDashboard() {
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
+  const [customImageHeights, setCustomImageHeights] = useState<Record<string, number>>({});
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
@@ -520,20 +521,45 @@ export default function EmrDashboard() {
 
               {activeTab === 'overview' &&
                 selectedPatient.customOverviewSections?.map((section) => (
-                  <Card key={section.id}>
-                    <CardHeader>
-                      <CardTitle>{section.title}</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {section.type === 'image' ? (
-                        <div className="flex justify-center">
-                          <img src={section.content} alt={section.title} className="max-h-64 object-contain rounded" />
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
-                      )}
-                    </CardContent>
-                  </Card>
+                    <Card key={section.id}>
+                      <CardHeader>
+                        <CardTitle>{section.title}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {section.type === 'image' ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <div className="w-full flex justify-center">
+                              <img
+                                src={section.content}
+                                alt={section.title}
+                                className="w-full object-contain rounded border border-border"
+                                style={{ maxHeight: `${customImageHeights[section.id] ?? 320}px` }}
+                              />
+                            </div>
+                            <div className="flex items-center gap-3 w-full text-xs text-muted-foreground">
+                              <span className="whitespace-nowrap">Image size</span>
+                              <input
+                                type="range"
+                                min={200}
+                                max={900}
+                                step={50}
+                                value={customImageHeights[section.id] ?? 320}
+                                onChange={(e) =>
+                                  setCustomImageHeights((prev) => ({
+                                    ...prev,
+                                    [section.id]: Number(e.target.value),
+                                  }))
+                                }
+                                className="w-full"
+                              />
+                              <span className="tabular-nums">{customImageHeights[section.id] ?? 320}px</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
+                        )}
+                      </CardContent>
+                    </Card>
                 ))}
               {activeTab === 'overview' && isSuperAdmin(profile) && (
                 <Card className="lg:col-span-2">

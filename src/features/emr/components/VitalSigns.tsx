@@ -20,6 +20,8 @@ import { generateVitalSigns } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, VitalSigns } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
+import { useAuthStore } from '../../../stores/authStore';
+import { isSuperAdmin } from '../../../lib/roles';
 
 interface VitalSignsProps {
   patient: Patient;
@@ -29,6 +31,8 @@ interface VitalSignsProps {
 export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) {
   const [vitals, setVitals] = useState<VitalSigns[]>(mockVitals);
   const [isGenerating, setIsGenerating] = useState(false);
+  const { profile } = useAuthStore();
+  const isAdmin = isSuperAdmin(profile);
   const [roomMeta, setRoomMeta] = useState<{
     id?: number | null;
     room_number?: string | null;
@@ -43,6 +47,19 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     progress_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
+  const [customRanges, setCustomRanges] = useState<
+    Record<
+      'temperature' | 'heartRate' | 'bloodPressureSystolic' | 'bloodPressureDiastolic' | 'respiratoryRate' | 'oxygenSaturation',
+      { low: string; high: string }
+    >
+  >({
+    temperature: { low: '', high: '' },
+    heartRate: { low: '', high: '' },
+    bloodPressureSystolic: { low: '', high: '' },
+    bloodPressureDiastolic: { low: '', high: '' },
+    respiratoryRate: { low: '', high: '' },
+    oxygenSaturation: { low: '', high: '' },
+  });
 
   useEffect(() => {
     void (async () => {
@@ -154,8 +171,35 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
         }),
       );
 
-      setVitals([...newVitals, ...vitals]);
-      void emrApi.addVitals(newVitals, patient.roomId ?? null);
+      const parseRangeValue = (val: string) => {
+        if (!val.trim()) return undefined;
+        const num = Number(val);
+        return Number.isFinite(num) ? num : undefined;
+      };
+
+      const clampValue = (value: number | undefined, key: keyof typeof customRanges) => {
+        if (value === undefined) return value;
+        const low = parseRangeValue(customRanges[key].low);
+        const high = parseRangeValue(customRanges[key].high);
+        const hasLow = typeof low === 'number';
+        const hasHigh = typeof high === 'number';
+        if (hasLow && value < low) return low;
+        if (hasHigh && value > high) return high;
+        return value;
+      };
+
+      const rangedVitals = newVitals.map((vital) => ({
+        ...vital,
+        temperature: clampValue(vital.temperature, 'temperature'),
+        heartRate: clampValue(vital.heartRate, 'heartRate'),
+        bloodPressureSystolic: clampValue(vital.bloodPressureSystolic, 'bloodPressureSystolic'),
+        bloodPressureDiastolic: clampValue(vital.bloodPressureDiastolic, 'bloodPressureDiastolic'),
+        respiratoryRate: clampValue(vital.respiratoryRate, 'respiratoryRate'),
+        oxygenSaturation: clampValue(vital.oxygenSaturation, 'oxygenSaturation'),
+      }));
+
+      setVitals([...rangedVitals, ...vitals]);
+      void emrApi.addVitals(rangedVitals, patient.roomId ?? null);
     } catch (error) {
       console.error('Error generating vitals:', error);
     } finally {
@@ -226,6 +270,54 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
           {isGenerating ? 'Generating...' : 'Generate AI Vitals'}
         </Button>
       </div>
+
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Clamp AI vitals (optional)</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            {[
+              { key: 'temperature', label: 'Temp (°F)' },
+              { key: 'heartRate', label: 'HR' },
+              { key: 'bloodPressureSystolic', label: 'BP Systolic' },
+              { key: 'bloodPressureDiastolic', label: 'BP Diastolic' },
+              { key: 'respiratoryRate', label: 'Resp Rate' },
+              { key: 'oxygenSaturation', label: 'O2 Sat' },
+            ].map(({ key, label }) => (
+              <div key={key} className="space-y-1">
+                <div className="text-xs text-muted-foreground">{label}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    placeholder="Low"
+                    className="rounded-md border border-border px-2 py-1 text-sm"
+                    value={customRanges[key as keyof typeof customRanges].low}
+                    onChange={(e) =>
+                      setCustomRanges((prev) => ({
+                        ...prev,
+                        [key]: { ...prev[key as keyof typeof customRanges], low: e.target.value },
+                      }))
+                    }
+                  />
+                  <input
+                    type="number"
+                    placeholder="High"
+                    className="rounded-md border border-border px-2 py-1 text-sm"
+                    value={customRanges[key as keyof typeof customRanges].high}
+                    onChange={(e) =>
+                      setCustomRanges((prev) => ({
+                        ...prev,
+                        [key]: { ...prev[key as keyof typeof customRanges], high: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Current Vitals Overview */}
       {latestVitals && (

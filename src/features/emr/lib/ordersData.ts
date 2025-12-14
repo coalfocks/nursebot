@@ -1,4 +1,5 @@
 import { instantLabs, pendingLabs } from './labCatalog';
+import { medicationOrdersFromCsv } from './generatedMedicationOrders';
 
 // Comprehensive orders data based on the provided CSV files
 export interface OrderItem {
@@ -125,7 +126,7 @@ const labOrdersMap = new Map<string, OrderItem>();
 
 export const labOrders: OrderItem[] = Array.from(labOrdersMap.values());
 
-export const medicationOrders: OrderItem[] = [
+const baseMedicationOrders: OrderItem[] = [
   {
     id: 'med-1',
     name: 'Lisinopril',
@@ -182,6 +183,16 @@ export const medicationOrders: OrderItem[] = [
     units: ['mg'],
   },
 ];
+
+const medicationOrdersMap = new Map<string, OrderItem>();
+[...baseMedicationOrders, ...medicationOrdersFromCsv].forEach((order) => {
+  const key = order.name.toLowerCase();
+  if (!medicationOrdersMap.has(key)) {
+    medicationOrdersMap.set(key, order);
+  }
+});
+
+export const medicationOrders: OrderItem[] = Array.from(medicationOrdersMap.values());
 
 export const imagingOrders: OrderItem[] = [
   {
