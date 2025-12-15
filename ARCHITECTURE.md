@@ -20,9 +20,14 @@
   - STAT labs and manual “Generate AI Labs” call Supabase Edge Function `lab-results` with rich context (patient, room, assignment, clinical notes, vitals, prior labs, current orders, room EMR/nurse context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint). Results are saved to `lab_results`; Labs tab refreshes. Fallback to local generator only on error.
   - Lab templates mapped from order names (`resolveLabTemplates` in `aiLabGenerator.ts`) to select appropriate tests.
   - Pending/non-STAT labs are not auto-generated.
+- **Medications**
+  - Order picker pulls from `ordersData.ts` which now merges a CSV-driven set of ~360 meds (`generatedMedicationOrders.ts`) with the legacy 5 meds; deduped by name. Med entries carry routes, frequencies, default dose text, and renal/hepatic notes as instructions.
 - **Vitals**
   - UI: `VitalSignsComponent`.
   - “Generate” calls Supabase Edge Function `vitals-generator` with the same rich context; saves to `vital_signs`. Fallback to local generator only on error.
+  - Superadmins can optionally clamp generated vitals with min/max per parameter; superadmin saves are baseline (no assignment/room). Student views pull baseline + room/assignment-scoped rows via `emrApi.listVitals`.
+- **Custom Overview & Images**
+  - Custom overview sections on the dashboard support text/image; images now render larger and include a size slider per section (200–900px max height).
 - **Clinical Notes**
   - `ClinicalNotes` fetch/add notes scoped by room/assignment/baseline; stored in `clinical_notes`.
 
@@ -43,6 +48,7 @@
 - Room-config orders/labs scoped to that room.
 - Student assignment orders/labs/vitals scoped to that assignmentId + roomId; do not leak to other rooms/assignments.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
+- Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.
 
 ## Commands
 - Dev: `npm run dev`
@@ -67,4 +73,3 @@
 - Front-end env: `.env.local` (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, etc.).
 - Edge Functions: `OPENAI_API_KEY` required; set via `supabase secrets set`.
 - Service scripts: `SUPABASE_SERVICE_ROLE_KEY` as needed.
-

@@ -23,3 +23,11 @@ History mixes conventional commits such as `feat(assessments): add rerun button`
 
 ## Supabase & Environment Secrets
 Front-end environment variables belong in `.env.local`: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and any AI provider keys. Edge Functions require additional secrets like `OPENAI_API_KEY`; configure them through `supabase secrets set KEY=value`. Maintenance scripts also need `SUPABASE_SERVICE_ROLE_KEY`. Never commit secrets or sample data.
+
+## Coordination & Context for LLMs
+- Start by skimming `ARCHITECTURE.md` for current domain notes (EMR scope rules, AI functions, CSV-driven med orders, vitals clamping, image sizing).
+- When touching EMR data flows, keep scope semantics intact: baseline (no assignment/room), room-scoped, and assignment-scoped reads/writes go through `emrApi`.
+- Medication orders are sourced from the CSV-backed list (`generatedMedicationOrders.ts`); do not regress to the legacy 5-meds list.
+- Superadmin vitals saves are baseline-only; avoid sending invalid `room_id` values (no `0`). Student views pull baseline + room/assignment rows.
+- Custom overview images support user-resizable heights; preserve the slider UX.
+- If you add migrations or seed data (e.g., initial vitals on room creation), document the behavior in `ARCHITECTURE.md`.
