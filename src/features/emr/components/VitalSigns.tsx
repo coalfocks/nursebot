@@ -161,13 +161,16 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
         ? ((aiResponse.data as { vitals: unknown }).vitals as VitalSigns[])
         : null;
 
+      const roomIdForScope =
+        typeof patient.roomId === 'number' && patient.roomId > 0 ? patient.roomId : null;
       const newVitals = (aiVitals?.length ? aiVitals : await generateVitalSigns(patient.id, 'ai-vitals')).map(
         (vital, index) => ({
           ...vital,
           id: (vital as { id?: string }).id ?? `vital-${Date.now()}-${index}`,
           patientId: patient.id,
           assignmentId: assignmentId ?? null,
-          roomId: patient.roomId ?? null,
+          roomId: isAdmin ? null : roomIdForScope,
+          overrideScope: isAdmin ? 'baseline' : assignmentId ? 'assignment' : roomIdForScope ? 'room' : 'baseline',
         }),
       );
 
@@ -199,7 +202,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
       }));
 
       setVitals([...rangedVitals, ...vitals]);
-      void emrApi.addVitals(rangedVitals, patient.roomId ?? null);
+      void emrApi.addVitals(rangedVitals, isAdmin ? null : roomIdForScope);
     } catch (error) {
       console.error('Error generating vitals:', error);
     } finally {

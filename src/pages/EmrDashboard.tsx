@@ -240,11 +240,13 @@ export default function EmrDashboard() {
 
   const handleSaveVitals = async () => {
     if (!selectedPatient) return;
-    const payload: VitalSigns = {
+    const roomIdForScope =
+      !forceBaseline && typeof selectedPatient.roomId === 'number' ? selectedPatient.roomId : null;
+    const basePayload: VitalSigns = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: selectedPatient.id,
       assignmentId: forceBaseline ? null : assignmentId ?? null,
-      roomId: forceBaseline ? null : selectedPatient.roomId ?? null,
+      roomId: forceBaseline ? null : roomIdForScope,
       overrideScope: forceBaseline ? 'baseline' : undefined,
       timestamp: new Date().toISOString(),
       temperature: vitalsForm.temperature ? Number(vitalsForm.temperature) : undefined,
@@ -255,8 +257,8 @@ export default function EmrDashboard() {
       oxygenSaturation: vitalsForm.oxygenSaturation ? Number(vitalsForm.oxygenSaturation) : undefined,
       pain: vitalsForm.pain ? Number(vitalsForm.pain) : undefined,
     };
-    await emrApi.addVitals([payload], selectedPatient.roomId ?? null);
-    const vitals = await emrApi.listVitals(selectedPatient.id, assignmentId, selectedPatient.roomId ?? null);
+    await emrApi.addVitals([basePayload], forceBaseline ? null : roomIdForScope);
+    const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, roomIdForScope);
     if (vitals.length) {
       setOverviewVitals(vitals[0]);
       setVitalsForm({
