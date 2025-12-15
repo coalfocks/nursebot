@@ -4,11 +4,13 @@ import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { OrderEntry } from './OrderEntry';
-import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User } from 'lucide-react';
+import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
+import { useAuthStore } from '../../../stores/authStore';
+import { isSuperAdmin } from '../../../lib/roles';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -40,9 +42,21 @@ export function OrdersManagement({
   onOrderAdded,
   onLabsGenerated,
 }: OrdersManagementProps) {
+  const { profile } = useAuthStore();
+  const canEditOrders = isSuperAdmin(profile);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
   const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
+  const [editingOrder, setEditingOrder] = useState<MedicalOrder | null>(null);
+  const [editForm, setEditForm] = useState({
+    orderName: '',
+    dose: '',
+    route: '',
+    frequency: '',
+    priority: 'Routine' as MedicalOrder['priority'],
+    status: 'Active' as MedicalOrder['status'],
+    instructions: '',
+  });
 
   useEffect(() => {
     void (async () => {
@@ -286,6 +300,43 @@ export function OrdersManagement({
     }
   };
 
+  const startEdit = (order: MedicalOrder) => {
+    setEditingOrder(order);
+    setEditForm({
+      orderName: order.orderName,
+      dose: order.dose ?? '',
+      route: order.route ?? '',
+      frequency: order.frequency ?? '',
+      priority: order.priority,
+      status: order.status,
+      instructions: order.instructions ?? '',
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingOrder) return;
+    const updates: Partial<MedicalOrder> = {
+      orderName: editForm.orderName.trim() || editingOrder.orderName,
+      dose: editForm.dose || null,
+      route: editForm.route || null,
+      frequency: editForm.frequency || null,
+      priority: editForm.priority,
+      status: editForm.status,
+      instructions: editForm.instructions || undefined,
+    };
+
+    const updated = await emrApi.updateOrder(editingOrder.id, updates);
+    if (updated) {
+      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? { ...o, ...updated } : o)));
+    }
+    setEditingOrder(null);
+  };
+
+  const handleDelete = async (orderId: string) => {
+    await emrApi.deleteOrder(orderId);
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  };
+
   const activeOrders = orders.filter((order) => order.status === 'Active');
   const pendingOrders = orders.filter((order) => order.status === 'Pending');
 
@@ -454,6 +505,16 @@ export function OrdersManagement({
                           >
                             D/C
                           </Button>
+                          {canEditOrders && order.category === 'Medication' && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => startEdit(order)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleDelete(order.id)}>
+                                <Trash className="h-4 w-4 text-red-600" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -466,6 +527,131 @@ export function OrdersManagement({
           )}
         </CardContent>
       </Card>
+      <EditOrderModal
+        order={editingOrder}
+        form={editForm}
+        onChange={(field, value) =>
+          setEditForm((prev) => ({
+            ...prev,
+            [field]: value as (typeof editForm)[keyof typeof editForm],
+          }))
+        }
+        onSave={handleSaveEdit}
+        onCancel={() => setEditingOrder(null)}
+      />
+    </div>
+  );
+}
+
+function EditOrderModal({
+  order,
+  form,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  order: MedicalOrder | null;
+  form: {
+    orderName: string;
+    dose: string;
+    route: string;
+    frequency: string;
+    priority: MedicalOrder['priority'];
+    status: MedicalOrder['status'];
+    instructions: string;
+  };
+  onChange: (field: keyof typeof form, value: string | MedicalOrder['priority'] | MedicalOrder['status']) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  if (!order) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold">Edit order</h3>
+          <Badge variant="outline">{order.category}</Badge>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm text-muted-foreground">Order name</label>
+            <input
+              className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+              value={form.orderName}
+              onChange={(e) => onChange('orderName', e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-muted-foreground">Dose</label>
+              <input
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.dose}
+                onChange={(e) => onChange('dose', e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">Route</label>
+              <input
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.route}
+                onChange={(e) => onChange('route', e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-muted-foreground">Frequency</label>
+              <input
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.frequency}
+                onChange={(e) => onChange('frequency', e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">Priority</label>
+              <select
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.priority}
+                onChange={(e) => onChange('priority', e.target.value as MedicalOrder['priority'])}
+              >
+                <option value="Routine">Routine</option>
+                <option value="STAT">STAT</option>
+                <option value="Timed">Timed</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm text-muted-foreground">Status</label>
+              <select
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.status}
+                onChange={(e) => onChange('status', e.target.value as MedicalOrder['status'])}
+              >
+                <option value="Active">Active</option>
+                <option value="Pending">Pending</option>
+                <option value="Completed">Completed</option>
+                <option value="Discontinued">Discontinued</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">Instructions</label>
+              <input
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={form.instructions}
+                onChange={(e) => onChange('instructions', e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button onClick={onSave}>Save changes</Button>
+        </div>
+      </div>
     </div>
   );
 }

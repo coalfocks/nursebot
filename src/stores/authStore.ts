@@ -92,6 +92,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       .insert([
         {
           id: user.id,
+          email,
           full_name: fullName,
           study_year: studyYear,
           is_admin: false, // Default to student role

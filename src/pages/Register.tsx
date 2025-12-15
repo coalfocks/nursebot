@@ -136,6 +136,7 @@ export default function Register() {
                   name="fullName"
                   type="text"
                   autoComplete="name"
+                  autoFocus
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}

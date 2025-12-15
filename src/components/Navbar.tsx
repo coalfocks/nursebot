@@ -20,6 +20,10 @@ export default function Navbar() {
     }
   };
 
+  const goProfile = () => {
+    navigate('/profile');
+  };
+
   return (
     <nav className="bg-white shadow">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -96,13 +100,17 @@ export default function Navbar() {
             <div className="relative">
               <div className="flex items-center">
                 <div className="flex items-center">
-                  <Link
-                    to="/profile"
-                    className={`flex items-center max-w-xs text-sm bg-white focus:outline-none p-2 rounded-full hover:bg-gray-100 mr-2 ${location.pathname === '/profile' ? 'ring-2 ring-blue-500' : ''}`}
+                  <button
+                    type="button"
+                    onClick={goProfile}
+                    className={`flex items-center max-w-xs text-sm bg-white focus:outline-none p-2 rounded-full hover:bg-gray-100 mr-2 ${
+                      location.pathname === '/profile' ? 'ring-2 ring-blue-500' : ''
+                    }`}
+                    title="Profile settings"
                   >
                     <UserCog className="h-5 w-5 text-gray-600" />
-                    <span className="ml-2 text-gray-700">{profile?.full_name}</span>
-                  </Link>
+                    <span className="ml-2 text-gray-700">{profile?.full_name || 'Profile'}</span>
+                  </button>
                   <button
                     onClick={handleSignOut}
                     className="p-2 rounded-full hover:bg-gray-100 text-gray-600"

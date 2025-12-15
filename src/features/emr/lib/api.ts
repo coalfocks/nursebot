@@ -502,6 +502,60 @@ export const emrApi = {
     }
   },
 
+  async updateOrder(orderId: string, updates: Partial<MedicalOrder>): Promise<MedicalOrder | null> {
+    const { error, data } = await supabase
+      .from('medical_orders')
+      .update({
+        order_name: updates.orderName,
+        frequency: updates.frequency,
+        route: updates.route,
+        dose: updates.dose,
+        priority: updates.priority,
+        status: updates.status,
+        instructions: updates.instructions,
+        ordered_by: updates.orderedBy,
+      })
+      .eq('id', orderId)
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) console.error('Error updating order', error);
+      return null;
+    }
+
+    const scope = deriveScope(data.override_scope, data.assignment_id, data.room_id);
+    return {
+      id: data.id,
+      patientId: data.patient_id ?? '',
+      assignmentId: data.assignment_id ?? undefined,
+      roomId: data.room_id ?? undefined,
+      overrideScope: scope,
+      category: data.category as MedicalOrder['category'],
+      orderName: data.order_name,
+      frequency: data.frequency ?? undefined,
+      route: data.route ?? undefined,
+      dose: data.dose ?? undefined,
+      priority: (data.priority as MedicalOrder['priority']) ?? 'Routine',
+      status: (data.status as MedicalOrder['status']) ?? 'Active',
+      orderedBy: data.ordered_by ?? 'Unknown',
+      orderTime: data.order_time ?? new Date().toISOString(),
+      scheduledTime: data.scheduled_time ?? undefined,
+      instructions: data.instructions ?? undefined,
+      deletedAt: data.deleted_at,
+    };
+  },
+
+  async deleteOrder(orderId: string): Promise<void> {
+    const { error } = await supabase
+      .from('medical_orders')
+      .update({ deleted_at: new Date().toISOString(), status: 'Discontinued' })
+      .eq('id', orderId);
+    if (error) {
+      console.error('Error deleting order', error);
+    }
+  },
+
   async getRoomOrdersConfig(roomId: number): Promise<RoomOrdersConfig | null> {
     const { data, error } = await supabase
       .from('rooms')
