@@ -46,11 +46,28 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
   const handleOrderSelect = (order: OrderItem) => {
     setSelectedOrder(order);
     setUseCustomFrequency(false);
+    
+    // Extract numeric dose and unit from defaultDose
+    // e.g., "10-40 units SC q24h" -> dose: "10", unit: "units"
+    // e.g., "1-2 g IV q24h" -> dose: "1", unit: "g"
+    let extractedDose = '';
+    let extractedUnit = '';
+    
+    if (order.defaultDose) {
+      // Try to extract the first number
+      const doseMatch = order.defaultDose.match(/^([\d.]+)/);
+      extractedDose = doseMatch ? doseMatch[1] : '';
+      
+      // Try to extract the unit (mg, g, mcg, units, mL, L, mEq, mmol, etc.)
+      const unitMatch = order.defaultDose.match(/[\d.]+\s*-?\s*[\d.]*\s*(mg|g|mcg|units?|mL|L|mEq|mmol|tabs?|capsules?)/i);
+      extractedUnit = unitMatch ? unitMatch[1] : '';
+    }
+    
     setOrderDetails({
       frequency: '',
       route: order.routes?.[0] || '',
-      dose: order.defaultDose || '',
-      unit: order.units?.[0] || '',
+      dose: extractedDose,
+      unit: order.units?.[0] || extractedUnit,
       priority: 'Routine',
       scheduledTime: '',
       instructions: '',
@@ -70,7 +87,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       orderName: selectedOrder.name,
       frequency: orderDetails.frequency,
       route: orderDetails.route,
-      dose: orderDetails.dose ? `${orderDetails.dose} ${orderDetails.unit}` : undefined,
+      dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
       priority: orderDetails.priority,
       status: 'Active',
       orderedBy: patient.attendingPhysician,
@@ -299,13 +316,14 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                           placeholder="Dose"
                           value={orderDetails.dose}
                           onChange={(e) => setOrderDetails({ ...orderDetails, dose: e.target.value })}
+                          className="flex-1"
                         />
-                        {selectedOrder.units && (
+                        {selectedOrder.units ? (
                           <Select
                             value={orderDetails.unit}
                             onValueChange={(value) => setOrderDetails({ ...orderDetails, unit: value })}
                           >
-                            <SelectTrigger className="w-20">
+                            <SelectTrigger className="w-24">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -316,6 +334,13 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                               ))}
                             </SelectContent>
                           </Select>
+                        ) : (
+                          <Input
+                            placeholder="Unit"
+                            value={orderDetails.unit}
+                            onChange={(e) => setOrderDetails({ ...orderDetails, unit: e.target.value })}
+                            className="w-24"
+                          />
                         )}
                       </div>
                     </div>
