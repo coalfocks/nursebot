@@ -33,6 +33,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [isGenerating, setIsGenerating] = useState(false);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
+  const forceBaseline = isSuperAdmin(profile);
   const [aiLabName, setAiLabName] = useState('');
   const [aiLabRequest, setAiLabRequest] = useState('');
   const [roomMeta, setRoomMeta] = useState<{
@@ -49,7 +50,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     progress_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
-  const labOptions = useMemo(
+      const labOptions = useMemo(
     () => [...instantLabs, ...pendingLabs].sort((a, b) => a.localeCompare(b)),
     [],
   );
@@ -197,13 +198,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           }>)
         : null;
 
+      const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
+      const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
+
       const generatedLabs =
         aiLabs?.length && requestedTests.length
           ? aiLabs
           : await generateLabResults(patient.id, orderName, {
               patient,
-              assignmentId: assignmentId ?? null,
-              roomId: patient.roomId ?? null,
+              assignmentId: assignmentForScope,
+              roomId: roomIdForScope,
               orderName: requestDetails ? `${orderName} — ${requestDetails}` : orderName,
               previousLabs: contextLabs,
               clinicalNotes,
@@ -213,8 +217,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
-        assignmentId: assignmentId ?? null,
-        roomId: patient.roomId ?? null,
+        assignmentId: assignmentForScope,
+        roomId: roomIdForScope,
+        overrideScope: forceBaseline ? 'baseline' : undefined,
         testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
         value: (lab as { value?: string | number }).value ?? '',
         unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
@@ -233,7 +238,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         return updated;
       });
       if (!isSandbox) {
-        void emrApi.addLabResults(labsWithAssignment, patient.roomId ?? null);
+        await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
       }
       setAiLabName('');
       setAiLabRequest('');

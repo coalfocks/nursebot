@@ -150,13 +150,15 @@ const summarizeContext = (ctx?: LabContext) => {
 
 const buildPrompt = (payload: LabRequestPayload): { system: string; user: string } => {
   const instructionText =
-    'instructions' in payload && payload.instructions ? `User intent/context: ${payload.instructions}` : '';
+    'instructions' in payload && payload.instructions
+      ? `User intent/context (must be honored): ${payload.instructions}`
+      : '';
   if ('tests' in payload) {
     const priorityText = payload.priority ? `Priority: ${payload.priority}.` : '';
     const context = summarizeContext(payload.context);
     const requested = payload.tests.map((t) => t.testName).join(', ');
 
-    const system = `You are a clinical lab engine for an EMR simulator. Given patient/room context and an order, you return realistic lab results. Always respond with JSON array only—no prose. Units and reference ranges must be clinically plausible.`;
+    const system = `You are a clinical lab engine for an EMR simulator. Given patient/room context and an order, you return realistic lab results. Always respond with JSON array only—no prose. Units and reference ranges must be clinically plausible. When the user provides intent/values, honor them explicitly (prefer user-requested values over context defaults unless they are physiologically impossible).`;
 
     const user = `
 Generate results for these tests: ${requested}.
@@ -176,7 +178,7 @@ Return JSON array of objects:
     "resultTime": "<ISO8601>"
   }
 ]
-Match each requested test once. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context or user intent.`;
+Match each requested test once. If user intent or requested values are present, use them directly unless they are unsafe/implausible—do not ignore userRequest. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context or user intent.`;
 
     return { system, user };
   }
