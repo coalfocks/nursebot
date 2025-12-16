@@ -37,7 +37,7 @@ export default function EmrDashboard() {
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
-  const [customImageHeights, setCustomImageHeights] = useState<Record<string, number>>({});
+  const [modalContent, setModalContent] = useState<{ type: 'image' | 'text'; content: string; title: string } | null>(null);
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
@@ -531,36 +531,24 @@ export default function EmrDashboard() {
                       </CardHeader>
                       <CardContent>
                         {section.type === 'image' ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="w-full flex justify-center">
-                              <img
-                                src={section.content}
-                                alt={section.title}
-                                className="w-full object-contain rounded border border-border"
-                                style={{ maxHeight: `${customImageHeights[section.id] ?? 320}px` }}
-                              />
-                            </div>
-                            <div className="flex items-center gap-3 w-full text-xs text-muted-foreground">
-                              <span className="whitespace-nowrap">Image size</span>
-                              <input
-                                type="range"
-                                min={200}
-                                max={900}
-                                step={50}
-                                value={customImageHeights[section.id] ?? 320}
-                                onChange={(e) =>
-                                  setCustomImageHeights((prev) => ({
-                                    ...prev,
-                                    [section.id]: Number(e.target.value),
-                                  }))
-                                }
-                                className="w-full"
-                              />
-                              <span className="tabular-nums">{customImageHeights[section.id] ?? 320}px</span>
-                            </div>
+                          <div 
+                            className="w-full flex justify-center cursor-pointer hover:opacity-80 transition-opacity"
+                            onClick={() => setModalContent({ type: 'image', content: section.content, title: section.title })}
+                          >
+                            <img
+                              src={section.content}
+                              alt={section.title}
+                              className="w-full object-contain rounded border border-border"
+                              style={{ maxHeight: '320px' }}
+                            />
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{section.content}</p>
+                          <p 
+                            className="text-sm text-muted-foreground whitespace-pre-wrap cursor-pointer hover:bg-muted/50 p-2 rounded transition-colors"
+                            onClick={() => setModalContent({ type: 'text', content: section.content, title: section.title })}
+                          >
+                            {section.content}
+                          </p>
                         )}
                       </CardContent>
                     </Card>
@@ -1245,6 +1233,42 @@ export default function EmrDashboard() {
           </div>
         </div>
       )}
+
+      {/* Modal for viewing images and text in fullscreen */}
+      {modalContent && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setModalContent(null)}
+        >
+          <div 
+            className="relative w-full max-w-6xl max-h-[90vh] bg-background rounded-lg shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-semibold">{modalContent.title}</h3>
+              <button
+                onClick={() => setModalContent(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 overflow-auto max-h-[calc(90vh-80px)]">
+              {modalContent.type === 'image' ? (
+                <img
+                  src={modalContent.content}
+                  alt={modalContent.title}
+                  className="w-full h-auto object-contain"
+                />
+              ) : (
+                <p className="text-base whitespace-pre-wrap leading-relaxed">{modalContent.content}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 
@@ -1252,6 +1276,42 @@ export default function EmrDashboard() {
     <div className="min-h-screen bg-background">
       <Navbar />
       {content}
+      
+      {/* Modal for viewing images and text in fullscreen */}
+      {modalContent && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setModalContent(null)}
+        >
+          <div 
+            className="relative w-full max-w-6xl max-h-[90vh] bg-background rounded-lg shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-semibold">{modalContent.title}</h3>
+              <button
+                onClick={() => setModalContent(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 overflow-auto max-h-[calc(90vh-80px)]">
+              {modalContent.type === 'image' ? (
+                <img
+                  src={modalContent.content}
+                  alt={modalContent.title}
+                  className="w-full h-auto object-contain"
+                />
+              ) : (
+                <p className="text-base whitespace-pre-wrap leading-relaxed">{modalContent.content}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
