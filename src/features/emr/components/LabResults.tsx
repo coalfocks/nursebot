@@ -36,6 +36,14 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const forceBaseline = isSuperAdmin(profile);
   const [aiLabName, setAiLabName] = useState('');
   const [aiLabRequest, setAiLabRequest] = useState('');
+  const [showManualLabModal, setShowManualLabModal] = useState(false);
+  const [manualLabForm, setManualLabForm] = useState({
+    testName: '',
+    value: '',
+    unit: '',
+    referenceRange: '',
+    status: 'Normal' as LabResult['status'],
+  });
   const [roomMeta, setRoomMeta] = useState<{
     id?: number | null;
     room_number?: string | null;
@@ -339,6 +347,14 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 {abnormalLabs.length} Abnormal • {labResults.length} Total
               </p>
             </div>
+            <Button
+              onClick={() => setShowManualLabModal(true)}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <TestTube className="h-4 w-4" />
+              Add Manual Lab
+            </Button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-[1.3fr,1fr,auto] gap-3 items-end">
             <div className="space-y-1">
@@ -509,6 +525,129 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           )}
         </TabsContent>
       </Tabs>
+
+      {/* Manual Lab Entry Modal */}
+      {showManualLabModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowManualLabModal(false)}
+        >
+          <div 
+            className="relative w-full max-w-md bg-background rounded-lg shadow-xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-4">Add Manual Lab Result</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Test Name</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm mt-1"
+                  placeholder="e.g., Hemoglobin"
+                  value={manualLabForm.testName}
+                  onChange={(e) => setManualLabForm((prev) => ({ ...prev, testName: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Value</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm mt-1"
+                  placeholder="e.g., 12.5"
+                  value={manualLabForm.value}
+                  onChange={(e) => setManualLabForm((prev) => ({ ...prev, value: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Unit (optional)</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm mt-1"
+                  placeholder="e.g., g/dL"
+                  value={manualLabForm.unit}
+                  onChange={(e) => setManualLabForm((prev) => ({ ...prev, unit: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Reference Range (optional)</label>
+                <input
+                  type="text"
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm mt-1"
+                  placeholder="e.g., 12.0-15.5"
+                  value={manualLabForm.referenceRange}
+                  onChange={(e) => setManualLabForm((prev) => ({ ...prev, referenceRange: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Status</label>
+                <select
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm mt-1"
+                  value={manualLabForm.status}
+                  onChange={(e) => setManualLabForm((prev) => ({ ...prev, status: e.target.value as LabResult['status'] }))}
+                >
+                  <option value="Normal">Normal</option>
+                  <option value="Abnormal">Abnormal</option>
+                  <option value="Critical">Critical</option>
+                  <option value="Pending">Pending</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowManualLabModal(false);
+                  setManualLabForm({ testName: '', value: '', unit: '', referenceRange: '', status: 'Normal' });
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!manualLabForm.testName.trim() || !manualLabForm.value.trim()) return;
+                  
+                  const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
+                  const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
+
+                  const newLab: LabResult = {
+                    id: `lab-${Date.now()}`,
+                    patientId: patient.id,
+                    assignmentId: assignmentForScope,
+                    roomId: roomIdForScope,
+                    overrideScope: forceBaseline ? 'baseline' : undefined,
+                    testName: manualLabForm.testName.trim(),
+                    value: manualLabForm.value.trim(),
+                    unit: manualLabForm.unit.trim(),
+                    referenceRange: manualLabForm.referenceRange.trim(),
+                    status: manualLabForm.status,
+                    collectionTime: new Date().toISOString(),
+                    resultTime: new Date().toISOString(),
+                    orderedBy: patient.attendingPhysician ?? 'Manual Entry',
+                  };
+
+                  setLabResults((prev) => {
+                    const updated = [newLab, ...prev];
+                    if (isSandbox) {
+                      onSandboxLabsChange?.(updated);
+                    }
+                    return updated;
+                  });
+
+                  if (!isSandbox) {
+                    await emrApi.addLabResults([newLab], roomIdForScope);
+                  }
+
+                  setShowManualLabModal(false);
+                  setManualLabForm({ testName: '', value: '', unit: '', referenceRange: '', status: 'Normal' });
+                }}
+                disabled={!manualLabForm.testName.trim() || !manualLabForm.value.trim()}
+              >
+                Add Lab
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
