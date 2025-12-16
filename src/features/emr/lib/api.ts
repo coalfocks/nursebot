@@ -81,7 +81,7 @@ const mapPatient = (
   lastName: row.last_name,
   dateOfBirth: row.date_of_birth,
   gender: (row.gender as Patient['gender']) ?? 'Other',
-  room: roomIdOverride ? String(roomIdOverride) : row.room_id ? String(row.room_id) : undefined,
+  room: roomIdOverride ? String(roomIdOverride) : row.room_id ? String(row.room_id) : row.service ?? undefined,
   service: row.service ?? undefined,
   admissionDate: row.admission_date ?? undefined,
   attendingPhysician: row.attending_physician ?? undefined,
@@ -690,7 +690,7 @@ export const emrApi = {
 
   async updatePatient(
     patientId: string,
-    payload: Partial<Pick<Patient, 'firstName' | 'lastName' | 'mrn' | 'dateOfBirth' | 'gender' | 'allergies' | 'roomId'>>,
+    payload: Partial<Pick<Patient, 'firstName' | 'lastName' | 'mrn' | 'dateOfBirth' | 'gender' | 'allergies' | 'roomId' | 'service'>>,
   ): Promise<Patient | null> {
     const { data, error } = await supabase
       .from('patients')
@@ -702,6 +702,7 @@ export const emrApi = {
         gender: payload.gender,
         allergies: payload.allergies,
         room_id: payload.roomId ?? null,
+        service: payload.service,
       })
       .eq('id', patientId)
       .select('*')

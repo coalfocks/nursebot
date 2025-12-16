@@ -597,6 +597,7 @@ export default function EmrDashboard() {
                               firstName: baselineEditForm.firstName || selectedPatient.firstName,
                               lastName: baselineEditForm.lastName || selectedPatient.lastName,
                               mrn: baselineEditForm.mrn || selectedPatient.mrn,
+                              service: baselineEditForm.roomNumber || selectedPatient.service,
                             });
                             if (roomMeta?.id && baselineEditForm.roomNumber) {
                               await emrApi.updateRoom(roomMeta.id, { room_number: baselineEditForm.roomNumber });
