@@ -212,6 +212,12 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
 
   const latestVitals = vitals[0];
 
+  // Convert Fahrenheit to Celsius
+  const fahrenheitToCelsius = (f: number | undefined) => {
+    if (!f) return undefined;
+    return Number(((f - 32) * 5 / 9).toFixed(1));
+  };
+
   // Prepare data for trending charts
   const vitalTrends = vitals
     .map((vital) => ({
@@ -226,12 +232,6 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     }))
     .reverse()
     .map((entry, index) => ({ ...entry, time: `Run ${index + 1}` }));
-
-  // Convert Fahrenheit to Celsius
-  const fahrenheitToCelsius = (f: number | undefined) => {
-    if (!f) return undefined;
-    return Number(((f - 32) * 5 / 9).toFixed(1));
-  };
 
   const getVitalStatus = (vital: string, value: number | undefined) => {
     if (!value) return 'normal';

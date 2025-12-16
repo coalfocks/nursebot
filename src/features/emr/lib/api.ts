@@ -365,6 +365,11 @@ export const emrApi = {
         (existingLabs ?? []).map((lab) => [lab.test_name, lab])
       );
 
+      // Use a consistent baseline collection time - either from existing labs or a fixed baseline time
+      const baselineCollectionTime = existingLabs && existingLabs.length > 0 
+        ? existingLabs[0].collection_time 
+        : '2000-01-01T00:00:00.000Z'; // Fixed baseline timestamp
+
       const labsToInsert = [];
       const labsToUpdate = [];
 
@@ -380,16 +385,16 @@ export const emrApi = {
           unit: lab.unit,
           reference_range: lab.referenceRange,
           status: lab.status,
-          collection_time: lab.collectionTime,
+          collection_time: baselineCollectionTime, // Use consistent baseline time
           result_time: lab.resultTime,
           ordered_by: lab.orderedBy,
         };
 
         if (existingLab) {
-          // Update existing lab
+          // Update existing lab (keeping the same collection_time)
           labsToUpdate.push({ id: existingLab.id, data: labData });
         } else {
-          // Insert new lab
+          // Insert new lab with baseline collection time
           labsToInsert.push(labData);
         }
       }

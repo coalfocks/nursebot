@@ -238,15 +238,19 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
         orderedBy: patient.attendingPhysician ?? 'Attending',
       }));
-      setLabResults((prev) => {
-        const updated = [...labsWithAssignment, ...prev];
-        if (isSandbox) {
+      if (isSandbox) {
+        setLabResults((prev) => {
+          const updated = [...labsWithAssignment, ...prev];
           onSandboxLabsChange?.(updated);
-        }
-        return updated;
-      });
-      if (!isSandbox) {
+          return updated;
+        });
+      } else {
+        // Save to database
         await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
+        
+        // Refresh labs from database to get merged results
+        const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
+        setLabResults(refreshedLabs);
       }
       setAiLabName('');
       setAiLabRequest('');
@@ -737,16 +741,19 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     orderedBy: patient.attendingPhysician ?? 'Manual Entry',
                   };
 
-                  setLabResults((prev) => {
-                    const updated = [newLab, ...prev];
-                    if (isSandbox) {
+                  if (isSandbox) {
+                    setLabResults((prev) => {
+                      const updated = [newLab, ...prev];
                       onSandboxLabsChange?.(updated);
-                    }
-                    return updated;
-                  });
-
-                  if (!isSandbox) {
+                      return updated;
+                    });
+                  } else {
+                    // Save to database
                     await emrApi.addLabResults([newLab], roomIdForScope);
+                    
+                    // Refresh labs from database to get merged results
+                    const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
+                    setLabResults(refreshedLabs);
                   }
 
                   setShowManualLabModal(false);
