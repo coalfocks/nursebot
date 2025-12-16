@@ -216,7 +216,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
   const vitalTrends = vitals
     .map((vital) => ({
       time: 'Run',
-      temperature: vital.temperature,
+      temperature: fahrenheitToCelsius(vital.temperature),
       systolic: vital.bloodPressureSystolic,
       diastolic: vital.bloodPressureDiastolic,
       heartRate: vital.heartRate,
@@ -227,11 +227,18 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     .reverse()
     .map((entry, index) => ({ ...entry, time: `Run ${index + 1}` }));
 
+  // Convert Fahrenheit to Celsius
+  const fahrenheitToCelsius = (f: number | undefined) => {
+    if (!f) return undefined;
+    return Number(((f - 32) * 5 / 9).toFixed(1));
+  };
+
   const getVitalStatus = (vital: string, value: number | undefined) => {
     if (!value) return 'normal';
 
     switch (vital) {
       case 'temperature':
+        // Check in Fahrenheit (stored value), display in Celsius
         return value < 97 || value > 100.4 ? 'abnormal' : 'normal';
       case 'heartRate':
         return value < 60 || value > 100 ? 'abnormal' : 'normal';
@@ -281,7 +288,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
           </CardHeader>
           <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
             {[
-              { key: 'temperature', label: 'Temp (°F)' },
+              { key: 'temperature', label: 'Temp (°C)' },
               { key: 'heartRate', label: 'HR' },
               { key: 'bloodPressureSystolic', label: 'BP Systolic' },
               { key: 'bloodPressureDiastolic', label: 'BP Diastolic' },
@@ -334,7 +341,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
               <div
                 className={`text-2xl font-bold ${getStatusColor(getVitalStatus('temperature', latestVitals.temperature))}`}
               >
-                {latestVitals.temperature}°F
+                {fahrenheitToCelsius(latestVitals.temperature)}°C
               </div>
             </CardContent>
           </Card>
@@ -528,7 +535,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
                   <TableHeader>
                     <TableRow>
                       <TableHead>Date/Time</TableHead>
-                      <TableHead>Temp (°F)</TableHead>
+                      <TableHead>Temp (°C)</TableHead>
                       <TableHead>HR</TableHead>
                       <TableHead>BP</TableHead>
                       <TableHead>RR</TableHead>
@@ -541,7 +548,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
                       <TableRow key={vital.id}>
                         <TableCell className="font-medium">{new Date(vital.timestamp).toLocaleString()}</TableCell>
                         <TableCell className={getStatusColor(getVitalStatus('temperature', vital.temperature))}>
-                          {vital.temperature}
+                          {fahrenheitToCelsius(vital.temperature)}
                         </TableCell>
                         <TableCell className={getStatusColor(getVitalStatus('heartRate', vital.heartRate))}>
                           {vital.heartRate}

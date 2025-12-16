@@ -391,7 +391,7 @@ export default function EmrDashboard() {
                       <div className="flex justify-between">
                         <span className="text-sm text-muted-foreground">Temperature</span>
                         <span className="text-sm font-medium">
-                          {overviewVitals?.temperature ?? '—'}°F
+                          {overviewVitals?.temperature ? `${((overviewVitals.temperature - 32) * 5 / 9).toFixed(1)}°C` : '—'}
                         </span>
                       </div>
                       <div className="flex justify-between">
