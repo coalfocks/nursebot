@@ -275,10 +275,12 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
           <h2 className="text-2xl font-bold">Vital Signs</h2>
           <p className="text-muted-foreground">{latestVitals ? 'Latest vitals' : 'No data'}</p>
         </div>
-        <Button onClick={handleGenerateVitals} disabled={isGenerating} className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4" />
-          {isGenerating ? 'Generating...' : 'Generate AI Vitals'}
-        </Button>
+        {isAdmin && (
+          <Button onClick={handleGenerateVitals} disabled={isGenerating} className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4" />
+            {isGenerating ? 'Generating...' : 'Generate AI Vitals'}
+          </Button>
+        )}
       </div>
 
       {isAdmin && (

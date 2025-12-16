@@ -447,6 +447,7 @@ export const emrApi = {
       .select('*')
       .eq('patient_id', patientId)
       .is('deleted_at', null)
+      .order('updated_at', { ascending: false })
       .order('timestamp', { ascending: false });
 
     if (error) {
@@ -489,25 +490,88 @@ export const emrApi = {
 
   async addVitals(vitals: VitalSigns[], roomId?: number | null): Promise<void> {
     if (!vitals.length) return;
-    const payload = vitals.map((v) => ({
-      patient_id: v.patientId,
-      assignment_id: v.assignmentId ?? null,
-      room_id: v.roomId ?? roomId ?? null,
-      override_scope: deriveScope(v.overrideScope, v.assignmentId, v.roomId ?? roomId ?? null),
-      timestamp: v.timestamp,
-      temperature: v.temperature,
-      blood_pressure_systolic: v.bloodPressureSystolic,
-      blood_pressure_diastolic: v.bloodPressureDiastolic,
-      heart_rate: v.heartRate,
-      respiratory_rate: v.respiratoryRate,
-      oxygen_saturation: v.oxygenSaturation,
-      pain: v.pain,
-      weight: v.weight,
-      height: v.height,
-    }));
-    const { error } = await supabase.from('vital_signs').insert(payload);
-    if (error) {
-      console.error('Error inserting vitals', error);
+    
+    // Check if all vitals are baseline scope (no assignment, no room)
+    const allBaseline = vitals.every((vital) => {
+      const scope = deriveScope(vital.overrideScope, vital.assignmentId, vital.roomId ?? roomId ?? null);
+      return scope === 'baseline';
+    });
+
+    // If all vitals are baseline, update or insert (keep only one baseline vital)
+    if (allBaseline && vitals.length > 0) {
+      const patientId = vitals[0].patientId;
+      
+      // Fetch existing baseline vitals for this patient
+      const { data: existingVitals } = await supabase
+        .from('vital_signs')
+        .select('*')
+        .eq('patient_id', patientId)
+        .eq('override_scope', 'baseline')
+        .is('assignment_id', null)
+        .is('room_id', null)
+        .is('deleted_at', null)
+        .limit(1);
+
+      // Use a consistent baseline timestamp
+      const baselineTimestamp = existingVitals && existingVitals.length > 0 
+        ? existingVitals[0].timestamp 
+        : '2000-01-01T00:00:00.000Z';
+
+      const vitalData = {
+        patient_id: vitals[0].patientId,
+        assignment_id: null,
+        room_id: null,
+        override_scope: 'baseline' as const,
+        timestamp: baselineTimestamp,
+        temperature: vitals[0].temperature,
+        blood_pressure_systolic: vitals[0].bloodPressureSystolic,
+        blood_pressure_diastolic: vitals[0].bloodPressureDiastolic,
+        heart_rate: vitals[0].heartRate,
+        respiratory_rate: vitals[0].respiratoryRate,
+        oxygen_saturation: vitals[0].oxygenSaturation,
+        pain: vitals[0].pain,
+        weight: vitals[0].weight,
+        height: vitals[0].height,
+      };
+
+      if (existingVitals && existingVitals.length > 0) {
+        // Update existing baseline vital
+        const { error } = await supabase
+          .from('vital_signs')
+          .update(vitalData)
+          .eq('id', existingVitals[0].id);
+        if (error) {
+          console.error('Error updating baseline vital', error);
+        }
+      } else {
+        // Insert new baseline vital
+        const { error } = await supabase.from('vital_signs').insert(vitalData);
+        if (error) {
+          console.error('Error inserting baseline vital', error);
+        }
+      }
+    } else {
+      // For non-baseline vitals (room/assignment scoped), insert as new entries
+      const payload = vitals.map((v) => ({
+        patient_id: v.patientId,
+        assignment_id: v.assignmentId ?? null,
+        room_id: v.roomId ?? roomId ?? null,
+        override_scope: deriveScope(v.overrideScope, v.assignmentId, v.roomId ?? roomId ?? null),
+        timestamp: v.timestamp,
+        temperature: v.temperature,
+        blood_pressure_systolic: v.bloodPressureSystolic,
+        blood_pressure_diastolic: v.bloodPressureDiastolic,
+        heart_rate: v.heartRate,
+        respiratory_rate: v.respiratoryRate,
+        oxygen_saturation: v.oxygenSaturation,
+        pain: v.pain,
+        weight: v.weight,
+        height: v.height,
+      }));
+      const { error } = await supabase.from('vital_signs').insert(payload);
+      if (error) {
+        console.error('Error inserting vitals', error);
+      }
     }
   },
 

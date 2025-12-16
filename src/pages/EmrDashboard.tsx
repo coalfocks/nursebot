@@ -260,7 +260,8 @@ export default function EmrDashboard() {
       pain: vitalsForm.pain ? Number(vitalsForm.pain) : undefined,
     };
     await emrApi.addVitals([basePayload], forceBaseline ? null : roomIdForScope);
-    const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, roomIdForScope);
+    // Refresh vitals using the same parameters as initial load
+    const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
     if (vitals.length) {
       setOverviewVitals(vitals[0]);
       setVitalsForm({
@@ -272,6 +273,9 @@ export default function EmrDashboard() {
         oxygenSaturation: vitals[0].oxygenSaturation,
         pain: vitals[0].pain,
       });
+    } else {
+      setOverviewVitals(null);
+      setVitalsForm({});
     }
     setShowVitalsModal(false);
   };
@@ -975,11 +979,18 @@ export default function EmrDashboard() {
             <h3 className="text-lg font-semibold">Edit vitals</h3>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-sm text-muted-foreground">
-                Temp (°F)
+                Temp (°C)
                 <input
+                  type="number"
+                  step="0.1"
                   className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
-                  value={vitalsForm.temperature ?? ''}
-                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, temperature: e.target.value }))}
+                  value={vitalsForm.temperature !== undefined ? Number(((Number(vitalsForm.temperature) - 32) * 5 / 9).toFixed(1)) : ''}
+                  onChange={(e) => {
+                    // Convert Celsius input to Fahrenheit for storage
+                    const celsius = e.target.value ? Number(e.target.value) : undefined;
+                    const fahrenheit = celsius !== undefined ? celsius * 9 / 5 + 32 : undefined;
+                    setVitalsForm((prev) => ({ ...prev, temperature: fahrenheit }));
+                  }}
                 />
               </label>
               <label className="text-sm text-muted-foreground">
