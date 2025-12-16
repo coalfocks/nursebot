@@ -283,6 +283,74 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     );
   }, [labResults]);
 
+  // Categorize labs by type
+  const getLabCategory = (testName: string): string => {
+    const name = testName.toLowerCase();
+    
+    // Hematology
+    if (name.includes('hemoglobin') || name.includes('hematocrit') || name.includes('wbc') || 
+        name.includes('white blood cell') || name.includes('platelet') || name.includes('neutrophil') ||
+        name.includes('lymphocyte') || name.includes('rbc') || name.includes('red blood cell')) {
+      return 'Hematology';
+    }
+    
+    // Chemistry/Electrolytes
+    if (name.includes('sodium') || name.includes('potassium') || name.includes('chloride') || 
+        name.includes('co2') || name.includes('bicarbonate') || name.includes('calcium') || 
+        name.includes('magnesium') || name.includes('phosphorus')) {
+      return 'Chemistry/Electrolytes';
+    }
+    
+    // Renal Function
+    if (name.includes('bun') || name.includes('creatinine') || name.includes('gfr')) {
+      return 'Renal Function';
+    }
+    
+    // Liver Function
+    if (name.includes('ast') || name.includes('alt') || name.includes('alkaline phosphatase') || 
+        name.includes('bilirubin') || name.includes('albumin') || name.includes('protein')) {
+      return 'Liver Function';
+    }
+    
+    // Coagulation
+    if (name.includes('pt') || name.includes('inr') || name.includes('ptt') || name.includes('aptt') ||
+        name.includes('fibrinogen') || name.includes('d-dimer')) {
+      return 'Coagulation';
+    }
+    
+    // Cardiac
+    if (name.includes('troponin') || name.includes('bnp') || name.includes('ck') || 
+        name.includes('creatine kinase')) {
+      return 'Cardiac Markers';
+    }
+    
+    // Blood Gas
+    if (name.includes('ph') || name.includes('paco2') || name.includes('pao2') || 
+        name.includes('hco3') || name.includes('lactate') || name.includes('base excess')) {
+      return 'Blood Gas';
+    }
+    
+    // Inflammatory
+    if (name.includes('crp') || name.includes('esr') || name.includes('procalcitonin')) {
+      return 'Inflammatory Markers';
+    }
+    
+    // Metabolic
+    if (name.includes('glucose') || name.includes('a1c') || name.includes('hemoglobin a1c') ||
+        name.includes('cholesterol') || name.includes('triglyceride') || name.includes('hdl') || 
+        name.includes('ldl')) {
+      return 'Metabolic';
+    }
+    
+    // Endocrine
+    if (name.includes('tsh') || name.includes('t3') || name.includes('t4') || name.includes('thyroid')) {
+      return 'Endocrine';
+    }
+    
+    // Other
+    return 'Other';
+  };
+
   const labsByTest = useMemo(
     () =>
       labResults.reduce<Record<string, Record<string, LabResult>>>((acc, lab) => {
@@ -296,6 +364,43 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       }, {}),
     [labResults],
   );
+
+  // Group labs by category
+  const labsByCategory = useMemo(() => {
+    const categories: Record<string, Record<string, Record<string, LabResult>>> = {};
+    
+    Object.entries(labsByTest).forEach(([testName, timeMap]) => {
+      const category = getLabCategory(testName);
+      if (!categories[category]) {
+        categories[category] = {};
+      }
+      categories[category][testName] = timeMap;
+    });
+    
+    // Sort categories
+    const categoryOrder = [
+      'Hematology',
+      'Chemistry/Electrolytes',
+      'Renal Function',
+      'Liver Function',
+      'Metabolic',
+      'Coagulation',
+      'Cardiac Markers',
+      'Blood Gas',
+      'Inflammatory Markers',
+      'Endocrine',
+      'Other',
+    ];
+    
+    const sorted: Record<string, Record<string, Record<string, LabResult>>> = {};
+    categoryOrder.forEach(cat => {
+      if (categories[cat]) {
+        sorted[cat] = categories[cat];
+      }
+    });
+    
+    return sorted;
+  }, [labsByTest]);
 
   const formatCollectionLabel = (_value: string, index: number) => `Run ${index + 1}`;
 
@@ -426,61 +531,68 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               {labResults.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
               ) : (
-                <div className="rounded-md border overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Test</TableHead>
-                        {sortedCollectionTimes.map((time, idx) => (
-                          <TableHead key={time} className="whitespace-nowrap">
-                            {formatCollectionLabel(time, idx)}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {Object.entries(labsByTest).map(([testName, resultsByTime]) => (
-                        <TableRow key={testName}>
-                          <TableCell className="font-medium whitespace-nowrap">{testName}</TableCell>
-                          {sortedCollectionTimes.map((time) => {
-                            const lab = resultsByTime?.[time];
-                            return (
-                              <TableCell
-                                key={time}
-                                className={lab ? getStatusColor(lab.status) : 'text-muted-foreground'}
-                              >
-                                {lab ? (
-                                  <div className="space-y-1">
-                                    <div className="font-semibold">
-                                      {lab.value}
-                                      {lab.unit ? ` ${lab.unit}` : ''}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
-                                    <div className="text-xs text-muted-foreground">{lab.status}</div>
-                                    {canEdit && (
-                                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                        <button
-                                          type="button"
-                                          className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
-                                          onClick={() => void handleDeleteLab(lab.id)}
-                                          title="Delete lab"
-                                        >
-                                          <Trash2 className="h-3 w-3" />
-                                          Delete
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </TableCell>
-                            );
-                          })}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="space-y-6">
+                  {Object.entries(labsByCategory).map(([category, tests]) => (
+                    <div key={category}>
+                      <h3 className="text-sm font-semibold text-muted-foreground mb-2 px-1">{category}</h3>
+                      <div className="rounded-md border overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Test</TableHead>
+                              {sortedCollectionTimes.map((time, idx) => (
+                                <TableHead key={time} className="whitespace-nowrap">
+                                  {formatCollectionLabel(time, idx)}
+                                </TableHead>
+                              ))}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {Object.entries(tests).map(([testName, resultsByTime]) => (
+                              <TableRow key={testName}>
+                                <TableCell className="font-medium whitespace-nowrap">{testName}</TableCell>
+                                {sortedCollectionTimes.map((time) => {
+                                  const lab = resultsByTime?.[time];
+                                  return (
+                                    <TableCell
+                                      key={time}
+                                      className={lab ? getStatusColor(lab.status) : 'text-muted-foreground'}
+                                    >
+                                      {lab ? (
+                                        <div className="space-y-1">
+                                          <div className="font-semibold">
+                                            {lab.value}
+                                            {lab.unit ? ` ${lab.unit}` : ''}
+                                          </div>
+                                          <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
+                                          <div className="text-xs text-muted-foreground">{lab.status}</div>
+                                          {canEdit && (
+                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                              <button
+                                                type="button"
+                                                className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
+                                                onClick={() => void handleDeleteLab(lab.id)}
+                                                title="Delete lab"
+                                              >
+                                                <Trash2 className="h-3 w-3" />
+                                                Delete
+                                              </button>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <span className="text-muted-foreground">—</span>
+                                      )}
+                                    </TableCell>
+                                  );
+                                })}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
