@@ -59,7 +59,9 @@ export default function EmrDashboard() {
     output: { urine: '', stool: '', other: '' },
     notes: '',
   });
-  const isSandbox = !effectiveAssignmentId && !forceBaseline;
+  // Disable sandbox mode - everyone should fetch from database
+  // Superadmins see baseline scope, students see baseline + room + assignment scope
+  const isSandbox = false;
   const [sandboxLabForm, setSandboxLabForm] = useState({
     testName: '',
     value: '',

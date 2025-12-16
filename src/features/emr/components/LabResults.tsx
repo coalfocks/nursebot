@@ -330,7 +330,58 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
+      {canEdit && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">Laboratory Results</h2>
+              <p className="text-muted-foreground">
+                {abnormalLabs.length} Abnormal • {labResults.length} Total
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-[1.3fr,1fr,auto] gap-3 items-end">
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">Choose a lab to generate</label>
+              <div className="flex gap-2">
+                <input
+                  list="lab-options"
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                  placeholder="Start typing a lab name"
+                  value={aiLabName}
+                  onChange={(e) => setAiLabName(e.target.value)}
+                />
+                <datalist id="lab-options">
+                  {labOptions.map((lab) => (
+                    <option key={lab} value={lab} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">AI instructions (optional)</label>
+              <textarea
+                rows={2}
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                placeholder="E.g., simulate septic shock with rising lactate"
+                value={aiLabRequest}
+                onChange={(e) => setAiLabRequest(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end md:justify-start">
+              <Button
+                onClick={handleGenerateLabResults}
+                disabled={isGenerating || !aiLabName.trim()}
+                className="flex items-center gap-2 whitespace-nowrap"
+              >
+                <Sparkles className="h-4 w-4" />
+                {isGenerating ? 'Generating...' : 'Generate AI Labs'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {!canEdit && (
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold">Laboratory Results</h2>
@@ -339,46 +390,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             </p>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-[1.3fr,1fr,auto] gap-3 items-end">
-          <div className="space-y-1">
-            <label className="text-sm text-muted-foreground">Choose a lab to generate</label>
-            <div className="flex gap-2">
-              <input
-                list="lab-options"
-                className="w-full rounded-md border border-border px-3 py-2 text-sm"
-                placeholder="Start typing a lab name"
-                value={aiLabName}
-                onChange={(e) => setAiLabName(e.target.value)}
-              />
-              <datalist id="lab-options">
-                {labOptions.map((lab) => (
-                  <option key={lab} value={lab} />
-                ))}
-              </datalist>
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm text-muted-foreground">AI instructions (optional)</label>
-            <textarea
-              rows={2}
-              className="w-full rounded-md border border-border px-3 py-2 text-sm"
-              placeholder="E.g., simulate septic shock with rising lactate"
-              value={aiLabRequest}
-              onChange={(e) => setAiLabRequest(e.target.value)}
-            />
-          </div>
-          <div className="flex justify-end md:justify-start">
-            <Button
-              onClick={handleGenerateLabResults}
-              disabled={isGenerating || !aiLabName.trim()}
-              className="flex items-center gap-2 whitespace-nowrap"
-            >
-              <Sparkles className="h-4 w-4" />
-              {isGenerating ? 'Generating...' : 'Generate AI Labs'}
-            </Button>
-          </div>
-        </div>
-      </div>
+      )}
 
       <Tabs defaultValue="results" className="w-full">
         <TabsList>
