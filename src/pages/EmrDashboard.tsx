@@ -15,6 +15,7 @@ import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
 import { LabResults } from '../features/emr/components/LabResults';
 import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
 import { OrdersManagement } from '../features/emr/components/OrdersManagement';
+import { ImagingStudies } from '../features/emr/components/ImagingStudies';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
 import { Button } from '../features/emr/components/ui/Button';
 import { Badge } from '../features/emr/components/ui/Badge';
@@ -59,6 +60,7 @@ export default function EmrDashboard() {
     output: { urine: '', stool: '', other: '' },
     notes: '',
   });
+  const [imagingRefreshToken, setImagingRefreshToken] = useState(0);
   // Disable sandbox mode - everyone should fetch from database
   // Superadmins see baseline scope, students see baseline + room + assignment scope
   const isSandbox = false;
@@ -832,14 +834,12 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="imaging">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Imaging Studies</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">Imaging results will appear here...</p>
-                </CardContent>
-              </Card>
+              <ImagingStudies
+                patient={selectedPatient}
+                assignmentId={effectiveAssignmentId}
+                forceBaseline={forceBaseline}
+                refreshToken={imagingRefreshToken}
+              />
             </TabsContent>
 
             <TabsContent value="orders">
@@ -849,6 +849,7 @@ export default function EmrDashboard() {
                 forceBaseline={forceBaseline}
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
+                onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}
               />
             </TabsContent>
 

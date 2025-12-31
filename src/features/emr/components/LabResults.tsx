@@ -301,7 +301,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     // Chemistry/Electrolytes
     if (name.includes('sodium') || name.includes('potassium') || name.includes('chloride') || 
         name.includes('co2') || name.includes('bicarbonate') || name.includes('calcium') || 
-        name.includes('magnesium') || name.includes('phosphorus')) {
+        name.includes('magnesium') || name.includes('phosphorus') || name.includes('lactate')) {
       return 'Chemistry/Electrolytes';
     }
     
@@ -330,7 +330,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     
     // Blood Gas
     if (name.includes('ph') || name.includes('paco2') || name.includes('pao2') || 
-        name.includes('hco3') || name.includes('lactate') || name.includes('base excess')) {
+        name.includes('hco3') || name.includes('base excess')) {
       return 'Blood Gas';
     }
     

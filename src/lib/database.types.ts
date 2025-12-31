@@ -742,6 +742,71 @@ export interface Database {
           deleted_at?: string | null
         }
       }
+      imaging_studies: {
+        Row: {
+          id: string
+          patient_id: string | null
+          assignment_id: string | null
+          room_id: number | null
+          override_scope: 'baseline' | 'room' | 'assignment'
+          school_id: string | null
+          order_name: string | null
+          study_type: string
+          contrast: string | null
+          priority: string | null
+          status: string | null
+          ordered_by: string | null
+          order_time: string
+          report: string | null
+          report_generated_at: string | null
+          images: Json | null
+          created_at: string
+          updated_at: string
+          deleted_at: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
+          school_id?: string | null
+          order_name?: string | null
+          study_type: string
+          contrast?: string | null
+          priority?: string | null
+          status?: string | null
+          ordered_by?: string | null
+          order_time?: string
+          report?: string | null
+          report_generated_at?: string | null
+          images?: Json | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string | null
+          assignment_id?: string | null
+          room_id?: number | null
+          override_scope?: 'baseline' | 'room' | 'assignment'
+          school_id?: string | null
+          order_name?: string | null
+          study_type?: string
+          contrast?: string | null
+          priority?: string | null
+          status?: string | null
+          ordered_by?: string | null
+          order_time?: string
+          report?: string | null
+          report_generated_at?: string | null
+          images?: Json | null
+          created_at?: string
+          updated_at?: string
+          deleted_at?: string | null
+        }
+      }
     Enums: {
       message_role: 'student' | 'assistant'
       feedback_status: 'pending' | 'processing' | 'completed' | 'failed'

@@ -5,7 +5,7 @@ import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User, Pencil, Trash } from 'lucide-react';
-import type { Patient, MedicalOrder } from '../lib/types';
+import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
@@ -18,6 +18,7 @@ interface OrdersManagementProps {
   forceBaseline?: boolean;
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
+  onImagingStudyUpdated?: () => void;
 }
 
 type RoomMeta = {
@@ -41,6 +42,7 @@ export function OrdersManagement({
   forceBaseline,
   onOrderAdded,
   onLabsGenerated,
+  onImagingStudyUpdated,
 }: OrdersManagementProps) {
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
@@ -106,6 +108,149 @@ export function OrdersManagement({
     };
   }, [patient.roomId]);
 
+  const deriveImagingDetails = (orderName: string) => {
+    const normalized = orderName.toLowerCase();
+    let studyType = orderName;
+    if (normalized.includes('ct')) {
+      studyType = 'CT';
+    } else if (normalized.includes('mri')) {
+      studyType = 'MRI';
+    } else if (normalized.includes('ultrasound')) {
+      studyType = 'Ultrasound';
+    } else if (normalized.includes('echo')) {
+      studyType = 'Echocardiogram';
+    } else if (normalized.includes('x-ray') || normalized.includes('xray')) {
+      studyType = 'X-ray';
+    }
+
+    let contrast: ImagingStudy['contrast'] = null;
+    if (normalized.includes('with') && normalized.includes('contrast')) {
+      contrast = 'with';
+    } else if (normalized.includes('without') || normalized.includes('no contrast')) {
+      contrast = 'without';
+    }
+
+    return { studyType, contrast };
+  };
+
+  const createImagingStudyForOrder = async (
+    order: MedicalOrder,
+    contextualRoomId: number | null,
+    effectiveRoomId: number | null,
+    effectiveAssignmentId: string | null,
+  ) => {
+    const { studyType, contrast } = deriveImagingDetails(order.orderName);
+    const now = order.orderTime || new Date().toISOString();
+    const overrideScope = forceBaseline
+      ? 'baseline'
+      : order.overrideScope ?? (effectiveAssignmentId ? 'assignment' : effectiveRoomId ? 'room' : 'baseline');
+    const imagingStudy: ImagingStudy = {
+      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}`,
+      patientId: patient.id,
+      assignmentId: effectiveAssignmentId ?? null,
+      roomId: effectiveRoomId ?? null,
+      overrideScope,
+      orderName: order.orderName,
+      studyType,
+      contrast,
+      priority: order.priority,
+      status: 'Pending',
+      orderedBy: order.orderedBy ?? 'Unknown',
+      orderTime: now,
+      images: [],
+    };
+
+    const inserted = await emrApi.addImagingStudy(imagingStudy);
+    if (!inserted) return;
+    onImagingStudyUpdated?.();
+
+    try {
+      const [previousLabs, clinicalNotes, vitals] = await Promise.all([
+        emrApi.listLabResults(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+        emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+        emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
+      ]);
+
+      const response = await supabase.functions.invoke('imaging-results', {
+        body: {
+          orderName: order.orderName,
+          priority: order.priority,
+          modality: studyType,
+          contrast,
+          context: {
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              gender: patient.gender,
+              mrn: patient.mrn,
+              allergies: patient.allergies,
+              codeStatus: patient.codeStatus,
+              attendingPhysician: patient.attendingPhysician,
+              service: patient.service,
+            },
+            room: {
+              id: contextualRoomId,
+              number: patient.room,
+            },
+            assignmentId: effectiveAssignmentId,
+            emrContext: roomMeta?.emr_context ?? null,
+            nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+            expectedDiagnosis: roomMeta?.expected_diagnosis ?? null,
+            expectedTreatment: roomMeta?.expected_treatment ?? null,
+            caseGoals: roomMeta?.case_goals ?? null,
+            difficultyLevel: roomMeta?.difficulty_level ?? null,
+            objective: roomMeta?.objective ?? null,
+            progressNote: roomMeta?.progress_note ?? null,
+            completionHint: roomMeta?.completion_hint ?? null,
+            clinicalNotes: clinicalNotes.slice(0, 6).map((note) => ({
+              type: note.type,
+              title: note.title,
+              content: note.content,
+              timestamp: note.timestamp,
+            })),
+            vitals: vitals.slice(0, 6),
+            previousLabs: previousLabs.slice(0, 10).map((lab) => ({
+              testName: lab.testName,
+              value: lab.value,
+              unit: lab.unit,
+              referenceRange: lab.referenceRange,
+              status: lab.status,
+              collectionTime: lab.collectionTime,
+            })),
+            orders: orders.slice(0, 6).map((existingOrder) => ({
+              orderName: existingOrder.orderName,
+              category: existingOrder.category,
+              priority: existingOrder.priority,
+              status: existingOrder.status,
+              instructions: existingOrder.instructions,
+            })),
+          },
+        },
+      });
+
+      if (response.error) {
+        throw response.error;
+      }
+
+      const report = (response.data as { report?: string })?.report;
+      if (!report) {
+        throw new Error('Imaging report missing from response');
+      }
+
+      await emrApi.updateImagingStudy(inserted.id, {
+        report,
+        reportGeneratedAt: new Date().toISOString(),
+        status: 'Completed',
+      });
+    } catch (error) {
+      console.error('Failed to generate imaging report', error);
+      await emrApi.updateImagingStudy(inserted.id, { status: 'Failed' });
+    } finally {
+      onImagingStudyUpdated?.();
+    }
+  };
+
   const handleOrderPlaced = async (newOrder: MedicalOrder) => {
     const adjustedOrder: MedicalOrder = {
       ...newOrder,
@@ -128,6 +273,15 @@ export function OrdersManagement({
       },
       effectiveRoomId,
     );
+
+    if (adjustedOrder.category === 'Imaging') {
+      void createImagingStudyForOrder(
+        orderForState,
+        contextualRoomId,
+        effectiveRoomId,
+        effectiveAssignmentId,
+      );
+    }
 
     if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
       try {

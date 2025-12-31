@@ -123,6 +123,31 @@ export interface MedicalOrder {
   deletedAt?: string | null;
 }
 
+export type ImagingImage = {
+  id: string;
+  url: string;
+  annotation?: string;
+};
+
+export interface ImagingStudy {
+  id: string;
+  patientId: string;
+  assignmentId?: string | null;
+  roomId?: number | null;
+  overrideScope?: 'baseline' | 'room' | 'assignment';
+  orderName?: string | null;
+  studyType: string;
+  contrast?: 'with' | 'without' | null;
+  priority?: 'Routine' | 'STAT' | 'Timed' | null;
+  status?: string | null;
+  orderedBy?: string | null;
+  orderTime?: string;
+  report?: string | null;
+  reportGeneratedAt?: string | null;
+  images?: ImagingImage[];
+  deletedAt?: string | null;
+}
+
 export interface ImagingResult {
   id: string;
   patientId: string;

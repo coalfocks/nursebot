@@ -6,6 +6,8 @@ import type {
   LabResult,
   VitalSigns,
   MedicalOrder,
+  ImagingStudy,
+  ImagingImage,
   RoomOrdersConfig,
   CustomOverviewSection,
   IntakeOutput,
@@ -14,6 +16,7 @@ import type {
 type OverrideScope = 'baseline' | 'room' | 'assignment';
 type RoomLineage = number[];
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
+type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 
 const deriveScope = (
   overrideScope: string | null | undefined,
@@ -108,6 +111,29 @@ const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): Clini
     author: row.author ?? 'Unknown',
     timestamp: row.timestamp,
     signed: row.signed ?? false,
+  };
+};
+
+const mapImagingStudy = (row: ImagingStudyRow, fallbackPatientId: string): ImagingStudy => {
+  const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+  const images = Array.isArray(row.images) ? (row.images as ImagingImage[]) : [];
+  return {
+    id: row.id,
+    patientId: row.patient_id ?? fallbackPatientId,
+    assignmentId: row.assignment_id ?? undefined,
+    roomId: row.room_id ?? undefined,
+    overrideScope: scope,
+    orderName: row.order_name ?? undefined,
+    studyType: row.study_type,
+    contrast: (row.contrast as ImagingStudy['contrast']) ?? undefined,
+    priority: (row.priority as ImagingStudy['priority']) ?? undefined,
+    status: row.status ?? undefined,
+    orderedBy: row.ordered_by ?? undefined,
+    orderTime: row.order_time,
+    report: row.report ?? undefined,
+    reportGeneratedAt: row.report_generated_at ?? undefined,
+    images,
+    deletedAt: row.deleted_at,
   };
 };
 
@@ -699,6 +725,98 @@ export const emrApi = {
     if (error) {
       console.error('Error deleting order', error);
     }
+  },
+
+  async listImagingStudies(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+  ): Promise<ImagingStudy[]> {
+    const targetRooms = await getRoomLineage(roomId);
+    const { data, error } = await supabase
+      .from('imaging_studies')
+      .select('*')
+      .eq('patient_id', patientId)
+      .is('deleted_at', null)
+      .order('order_time', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching imaging studies', error);
+      return [];
+    }
+
+    return (data ?? [])
+      .map((row) => mapImagingStudy(row, patientId))
+      .filter((study) =>
+        scopeMatchesContext(
+          study.overrideScope ?? 'baseline',
+          study.roomId ?? null,
+          targetRooms,
+          study.assignmentId ?? null,
+          assignmentId,
+        ),
+      );
+  },
+
+  async addImagingStudy(study: ImagingStudy): Promise<ImagingStudy | null> {
+    const overrideScope = deriveScope(study.overrideScope, study.assignmentId, study.roomId ?? null);
+    const { data, error } = await supabase
+      .from('imaging_studies')
+      .insert({
+        id: study.id,
+        patient_id: study.patientId,
+        assignment_id: study.assignmentId ?? null,
+        room_id: study.roomId ?? null,
+        override_scope: overrideScope,
+        order_name: study.orderName ?? null,
+        study_type: study.studyType,
+        contrast: study.contrast ?? null,
+        priority: study.priority ?? null,
+        status: study.status ?? null,
+        ordered_by: study.orderedBy ?? null,
+        order_time: study.orderTime ?? new Date().toISOString(),
+        report: study.report ?? null,
+        report_generated_at: study.reportGeneratedAt ?? null,
+        images: study.images ?? [],
+      })
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error('Error inserting imaging study', error);
+      return null;
+    }
+
+    return mapImagingStudy(data, study.patientId);
+  },
+
+  async updateImagingStudy(
+    studyId: string,
+    updates: Partial<Pick<ImagingStudy, 'report' | 'reportGeneratedAt' | 'status' | 'images'>>,
+  ): Promise<ImagingStudy | null> {
+    const payload = {
+      report: updates.report,
+      report_generated_at: updates.reportGeneratedAt,
+      status: updates.status,
+      images: updates.images,
+    };
+    const cleanPayload = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => value !== undefined),
+    );
+
+    const { data, error } = await supabase
+      .from('imaging_studies')
+      .update(cleanPayload)
+      .eq('id', studyId)
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error('Error updating imaging study', error);
+      return null;
+    }
+
+    return mapImagingStudy(data, data.patient_id ?? '');
   },
 
   async getRoomOrdersConfig(roomId: number): Promise<RoomOrdersConfig | null> {

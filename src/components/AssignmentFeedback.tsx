@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, UserCircle, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Loader2 } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -68,7 +68,6 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
   console.log('Rendering feedback for assignment:', assignment.id, {
     hasClinicalReasoning: !!feedback.clinical_reasoning,
     hasCommunication: !!feedback.communication_skills,
-    hasProfessionalism: !!feedback.professionalism,
     overallScore: feedback.overall_score,
     summary: feedback.summary?.substring(0, 50) + '...',
     recommendationsCount: feedback.recommendations?.length
@@ -89,13 +88,6 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
     areas_for_improvement: []
   };
 
-  const professionalism = feedback.professionalism || {
-    score: 0,
-    comments: '',
-    strengths: [],
-    areas_for_improvement: []
-  };
-
   console.log('Processed feedback sections:', {
     clinicalReasoning: {
       score: clinicalReasoning.score,
@@ -106,11 +98,6 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
       score: communication.score,
       strengthsCount: communication.strengths.length,
       areasCount: communication.areas_for_improvement.length
-    },
-    professionalism: {
-      score: professionalism.score,
-      strengthsCount: professionalism.strengths.length,
-      areasCount: professionalism.areas_for_improvement.length
     }
   });
 
@@ -234,15 +221,6 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
           sectionKey="communication"
         />
 
-        <FeedbackSection
-          title="Professionalism"
-          icon={UserCircle}
-          score={professionalism.score}
-          comments={professionalism.comments}
-          strengths={professionalism.strengths}
-          areasForImprovement={professionalism.areas_for_improvement}
-          sectionKey="professionalism"
-        />
       </div>
 
       <div className="border-t pt-4">
