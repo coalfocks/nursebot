@@ -24,7 +24,7 @@ interface CaseWithDetails {
 
 interface CaseAssignment {
   id: string;
-  status: 'assigned' | 'in_progress' | 'completed';
+  status: 'assigned' | 'in_progress' | 'bedside' | 'completed';
   due_date: string | null;
   created_at: string;
   updated_at: string;

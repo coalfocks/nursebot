@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
+import { Tabs, TabsList, TabsTrigger } from './ui/Tabs';
 import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
@@ -50,6 +51,7 @@ export function OrdersManagement({
   const [showOrderEntry, setShowOrderEntry] = useState(false);
   const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
   const [editingOrder, setEditingOrder] = useState<MedicalOrder | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'Lab' | 'Medication' | 'Imaging' | 'Other'>('all');
   const [editForm, setEditForm] = useState({
     orderName: '',
     dose: '',
@@ -203,6 +205,7 @@ export function OrdersManagement({
             objective: roomMeta?.objective ?? null,
             progressNote: roomMeta?.progress_note ?? null,
             completionHint: roomMeta?.completion_hint ?? null,
+            userRequest: order.instructions ?? null,
             clinicalNotes: clinicalNotes.slice(0, 6).map((note) => ({
               type: note.type,
               title: note.title,
@@ -382,6 +385,7 @@ export function OrdersManagement({
                 vitals,
               });
 
+        const runTimestamp = new Date().toISOString();
         const labsWithScope = generatedLabs.map((lab, index) => ({
           id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
           patientId: patient.id,
@@ -394,9 +398,8 @@ export function OrdersManagement({
           referenceRange:
             (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
           status: (lab as { status?: string }).status ?? 'Normal',
-          collectionTime:
-            (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
-          resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+          collectionTime: runTimestamp,
+          resultTime: runTimestamp,
           orderedBy: adjustedOrder.orderedBy,
         }));
 
@@ -491,8 +494,17 @@ export function OrdersManagement({
     setOrders((prev) => prev.filter((o) => o.id !== orderId));
   };
 
-  const activeOrders = orders.filter((order) => order.status === 'Active');
-  const pendingOrders = orders.filter((order) => order.status === 'Pending');
+  const matchesCategory = (order: MedicalOrder) => {
+    if (selectedCategory === 'all') return true;
+    if (selectedCategory === 'Other') {
+      return !['Lab', 'Medication', 'Imaging'].includes(order.category);
+    }
+    return order.category === selectedCategory;
+  };
+
+  const filteredOrders = orders.filter((order) => matchesCategory(order));
+  const activeOrders = filteredOrders.filter((order) => order.status === 'Active');
+  const pendingOrders = filteredOrders.filter((order) => order.status === 'Pending');
 
   const renderOrdersTable = (orderList: MedicalOrder[]) => (
     <div className="rounded-md border">
@@ -552,7 +564,7 @@ export function OrdersManagement({
         <div>
           <h2 className="text-2xl font-bold">Medical Orders</h2>
           <p className="text-muted-foreground">
-            {activeOrders.length} Active • {pendingOrders.length} Pending • {orders.length} Total
+            {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
           </p>
         </div>
         <Button onClick={() => setShowOrderEntry(!showOrderEntry)} className="flex items-center gap-2">
@@ -560,6 +572,16 @@ export function OrdersManagement({
           New Order
         </Button>
       </div>
+
+      <Tabs value={selectedCategory} onValueChange={(value) => setSelectedCategory(value as typeof selectedCategory)}>
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="Lab">Labs</TabsTrigger>
+          <TabsTrigger value="Medication">Meds</TabsTrigger>
+          <TabsTrigger value="Imaging">Imaging</TabsTrigger>
+          <TabsTrigger value="Other">Other</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {showOrderEntry && (
         <OrderEntry
@@ -575,8 +597,8 @@ export function OrdersManagement({
           <CardTitle>All Orders</CardTitle>
         </CardHeader>
         <CardContent>
-          {orders.length ? (
-            renderOrdersTable(orders)
+          {filteredOrders.length ? (
+            renderOrdersTable(filteredOrders)
           ) : (
             <p className="text-sm text-muted-foreground">No orders yet.</p>
           )}
@@ -590,7 +612,7 @@ export function OrdersManagement({
             Active Orders
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            {activeOrders.length} Active • {pendingOrders.length} Pending • {orders.length} Total
+            {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
           </p>
         </CardHeader>
         <CardContent>
@@ -620,6 +642,7 @@ export function OrdersManagement({
                           {order.dose && <div>Dose: {order.dose}</div>}
                           {order.frequency && <div>Frequency: {order.frequency}</div>}
                           {order.route && <div>Route: {order.route}</div>}
+                          {order.instructions && <div>Notes: {order.instructions}</div>}
                         </div>
                       </TableCell>
                       <TableCell>

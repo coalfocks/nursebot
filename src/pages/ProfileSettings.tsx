@@ -24,30 +24,14 @@ export default function ProfileSettings() {
 
   const [phoneError, setPhoneError] = useState('');
 
-  const specializations = [
-    'Anesthesiology',
-    'Cardiology',
-    'Dermatology',
-    'Emergency Medicine',
-    'Endocrinology',
-    'Family Medicine',
-    'Gastroenterology',
-    'General Surgery',
-    'Hematology',
-    'Infectious Disease',
+  const caseDesignations = [
     'Internal Medicine',
-    'Neurology',
-    'Obstetrics and Gynecology',
-    'Oncology',
-    'Ophthalmology',
-    'Orthopedic Surgery',
-    'Otolaryngology',
-    'Pediatrics',
+    'OB/GYN',
+    'Surgery',
     'Psychiatry',
-    'Pulmonology',
-    'Radiology',
-    'Rheumatology',
-    'Urology',
+    'Pediatrics',
+    'Emergency Medicine',
+    'Family Medicine',
   ];
 
   useEffect(() => {
@@ -221,22 +205,22 @@ export default function ProfileSettings() {
 
           <div>
             <label htmlFor="specialization_interest" className="block text-sm font-medium text-gray-700">
-              Specialization Interest
+              Case Designation
             </label>
-            <input
-              list="specializations"
+            <select
               id="specialization_interest"
               name="specialization_interest"
               value={formData.specialization_interest}
               onChange={handleChange}
-              placeholder="Start typing to search..."
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-            />
-            <datalist id="specializations">
-              {specializations.map((specialty) => (
-                <option key={specialty} value={specialty} />
+            >
+              <option value="">Select designation</option>
+              {caseDesignations.map((designation) => (
+                <option key={designation} value={designation}>
+                  {designation}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
           <div>

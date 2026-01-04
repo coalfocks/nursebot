@@ -280,7 +280,7 @@ export interface Database {
           student_id: string
           room_id: number
           assigned_by: string
-          status: 'assigned' | 'in_progress' | 'completed'
+          status: 'assigned' | 'in_progress' | 'bedside' | 'completed'
           due_date: string | null
           effective_date: string | null
           notification_sent: boolean | null
@@ -307,12 +307,6 @@ export interface Database {
               strengths: string[];
               areas_for_improvement: string[];
             };
-            professionalism: {
-              score: number;
-              comments: string;
-              strengths: string[];
-              areas_for_improvement: string[];
-            };
             recommendations: string[];
           } | null;
           feedback_generated_at: string | null
@@ -325,7 +319,7 @@ export interface Database {
           student_id: string
           room_id: number
           assigned_by: string
-          status?: 'assigned' | 'in_progress' | 'completed'
+          status?: 'assigned' | 'in_progress' | 'bedside' | 'completed'
           due_date?: string | null
           effective_date?: string | null
           notification_sent?: boolean | null
@@ -347,12 +341,6 @@ export interface Database {
               areas_for_improvement: string[];
             };
             communication_skills: {
-              score: number;
-              comments: string;
-              strengths: string[];
-              areas_for_improvement: string[];
-            };
-            professionalism: {
               score: number;
               comments: string;
               strengths: string[];
@@ -370,7 +358,7 @@ export interface Database {
           student_id?: string
           room_id?: number
           assigned_by?: string
-          status?: 'assigned' | 'in_progress' | 'completed'
+          status?: 'assigned' | 'in_progress' | 'bedside' | 'completed'
           due_date?: string | null
           effective_date?: string | null
           notification_sent?: boolean | null
@@ -392,12 +380,6 @@ export interface Database {
               areas_for_improvement: string[];
             };
             communication_skills: {
-              score: number;
-              comments: string;
-              strengths: string[];
-              areas_for_improvement: string[];
-            };
-            professionalism: {
               score: number;
               comments: string;
               strengths: string[];

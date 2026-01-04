@@ -5,7 +5,7 @@ import { medicationOrdersFromCsv } from './generatedMedicationOrders';
 export interface OrderItem {
   id: string;
   name: string;
-  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing';
+  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing' | 'Consult' | 'General';
   subcategory?: string;
   frequencies?: string[];
   routes?: string[];
@@ -319,7 +319,41 @@ export const imagingOrders: OrderItem[] = [
   },
 ];
 
-export const allOrders: OrderItem[] = [...labOrders, ...medicationOrders, ...imagingOrders];
+const consultOrders: OrderItem[] = [
+  {
+    id: 'consult-1',
+    name: 'Consult',
+    category: 'Consult',
+    priorities: ['Routine', 'STAT'],
+  },
+];
+
+const nursingOrders: OrderItem[] = [
+  {
+    id: 'nursing-1',
+    name: 'Nursing',
+    category: 'Nursing',
+    priorities: ['Routine', 'STAT'],
+  },
+];
+
+const generalOrders: OrderItem[] = [
+  {
+    id: 'general-1',
+    name: 'General',
+    category: 'General',
+    priorities: ['Routine', 'STAT'],
+  },
+];
+
+export const allOrders: OrderItem[] = [
+  ...labOrders,
+  ...medicationOrders,
+  ...imagingOrders,
+  ...consultOrders,
+  ...nursingOrders,
+  ...generalOrders,
+];
 
 export const frequencies = [
   { code: 'Once', description: 'One time only', category: 'Single' },

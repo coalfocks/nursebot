@@ -15,12 +15,6 @@ export interface FeedbackResponse {
     strengths: string[];
     areasForImprovement: string[];
   };
-  professionalism: {
-    score: number;
-    comments: string;
-    strengths: string[];
-    areasForImprovement: string[];
-  };
   summary: string;
   recommendations: string[];
 }

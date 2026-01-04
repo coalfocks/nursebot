@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, User2, CheckCircle, Wand2, ExternalLink } from 'lucide-react';
+import { Send, Loader2, User2, CheckCircle, Wand2, ExternalLink, Stethoscope } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
+import { useAuthStore } from '../stores/authStore';
 
 const ASSISTANT_RESPONSE_DELAY = {
   min: 600,
@@ -40,6 +41,13 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
   const [patientLink, setPatientLink] = useState<{ patientId: string; roomId?: number } | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
+  const [bedsideHint, setBedsideHint] = useState<string | null>(null);
+  const [completionHint, setCompletionHint] = useState<string | null>(null);
+  const [showBedsideHint, setShowBedsideHint] = useState(false);
+  const [showProgressNote, setShowProgressNote] = useState(false);
+  const [progressNoteDraft, setProgressNoteDraft] = useState('');
+  const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
+  const { profile } = useAuthStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
@@ -182,6 +190,19 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
 
     setIsLoadingPatient(true);
     void (async () => {
+      const { data: roomData, error: roomError } = await supabase
+        .from('rooms')
+        .select('bedside_hint, completion_hint')
+        .eq('id', roomId)
+        .maybeSingle();
+      if (roomError) {
+        console.error('Error loading room hints', roomError);
+      }
+      if (isActive) {
+        setBedsideHint(roomData?.bedside_hint ?? null);
+        setCompletionHint(roomData?.completion_hint ?? null);
+      }
+
       const patient = await emrApi.getPatientByRoomId(roomId);
       if (!isActive) return;
       setPatientLink(patient ? { patientId: patient.id, roomId } : null);
@@ -401,7 +422,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
         .from('student_room_assignments')
         .update({ 
           status: 'completed',
-          feedback_status: 'pending'
+          feedback_status: 'pending',
+          completed_at: new Date().toISOString(),
         })
         .eq('id', assignmentId);
       
@@ -414,11 +436,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
       
       if (feedbackError) throw feedbackError;
       
-      // Show success message
-      alert('Assignment completed! Feedback is being generated.');
-      
-      // Refresh the page to show the feedback section
-      navigate(0);
+      setShowProgressNote(true);
     } catch (error) {
       console.error('Error completing assignment:', error);
       alert('Error completing assignment. Please try again.');
@@ -449,6 +467,68 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
     });
   };
 
+  const handleSaveProgressNote = async () => {
+    if (!patientLink?.patientId || !roomId || !assignmentId) return;
+    const content = progressNoteDraft.trim();
+    if (!content) return;
+    setIsSavingProgressNote(true);
+    try {
+      const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Student';
+      const note = {
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+        patientId: patientLink.patientId,
+        assignmentId,
+        roomId,
+        overrideScope: 'assignment' as const,
+        type: 'Progress' as const,
+        title: `Progress Note - ${new Date().toLocaleDateString()}`,
+        content,
+        author,
+        timestamp: new Date().toISOString(),
+        signed: false,
+      };
+      await emrApi.addClinicalNote(note);
+      setShowProgressNote(false);
+      setProgressNoteDraft('');
+      alert('Progress note saved. Feedback is being generated.');
+      navigate(0);
+    } catch (error) {
+      console.error('Error saving progress note', error);
+      alert('Error saving progress note. Please try again.');
+    } finally {
+      setIsSavingProgressNote(false);
+    }
+  };
+
+  const handleBedsideContinue = async () => {
+    if (!assignmentId || isCompleting) return;
+    setIsCompleting(true);
+    try {
+      const { error: updateError } = await supabase
+        .from('student_room_assignments')
+        .update({
+          status: 'bedside',
+          feedback_status: 'pending',
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', assignmentId);
+      if (updateError) throw updateError;
+
+      const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
+        body: { assignmentId },
+      });
+      if (feedbackError) throw feedbackError;
+
+      alert('Bedside assessment started. Feedback is being generated.');
+      navigate(0);
+    } catch (error) {
+      console.error('Error starting bedside assessment:', error);
+      alert('Error starting bedside assessment. Please try again.');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-16rem)] bg-white shadow rounded-lg">
       <div className="p-4 bg-blue-600 text-white rounded-t-lg flex justify-between items-center">
@@ -461,6 +541,15 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowBedsideHint(true)}
+            disabled={!bedsideHint}
+            className="flex items-center px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-sm font-medium transition-colors disabled:opacity-50"
+            title={bedsideHint ? 'View bedside hint' : 'No bedside hint available'}
+          >
+            <Stethoscope className="w-4 h-4 mr-1" />
+            Go to Bedside
+          </button>
           <button
             onClick={handleGoToEmr}
             disabled={isLoadingPatient || (!patientLink && !roomId)}
@@ -506,7 +595,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
             <h3 className="text-lg font-semibold">Finish this case?</h3>
             <p className="text-sm text-gray-600">
-              Choose to complete the case now or return to the EMR if you need to finish bedside tasks or review labs/notes.
+              {completionHint || 'Review the completion steps before finishing the case.'}
             </p>
             <div className="space-y-2">
               <button
@@ -521,19 +610,74 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
                 Complete case
               </button>
               <button
-                className="w-full inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                onClick={() => {
-                  setShowCompletionConfirm(false);
-                  handleGoToEmr();
-                }}
-              >
-                Return to EMR
-              </button>
-              <button
                 className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
                 onClick={() => setShowCompletionConfirm(false)}
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBedsideHint && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold">Bedside Hint</h3>
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">
+              {bedsideHint || 'No bedside hint available.'}
+            </p>
+            <div className="space-y-2">
+              <button
+                className="w-full inline-flex items-center justify-center rounded-md bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                onClick={() => {
+                  setShowBedsideHint(false);
+                  void handleBedsideContinue();
+                }}
+                disabled={isCompleting}
+              >
+                {isCompleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Continue to Bedside
+              </button>
+              <button
+                className="w-full inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowBedsideHint(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProgressNote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
+            <h3 className="text-lg font-semibold">Progress Note</h3>
+            <p className="text-sm text-gray-600">
+              Add a brief progress note to finalize this case.
+            </p>
+            <textarea
+              className="w-full min-h-[200px] rounded-md border border-gray-300 px-3 py-2 text-sm"
+              placeholder="Write your progress note..."
+              value={progressNoteDraft}
+              onChange={(e) => setProgressNoteDraft(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowProgressNote(false)}
+                disabled={isSavingProgressNote}
+              >
+                Close
+              </button>
+              <button
+                className="inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                onClick={() => void handleSaveProgressNote()}
+                disabled={isSavingProgressNote || !progressNoteDraft.trim() || !patientLink?.patientId}
+              >
+                {isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Save Progress Note
               </button>
             </div>
           </div>

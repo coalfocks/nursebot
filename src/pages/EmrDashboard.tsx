@@ -202,7 +202,7 @@ export default function EmrDashboard() {
         .select('id')
         .eq('student_id', user.id)
         .eq('room_id', selectedPatient.roomId)
-        .in('status', ['assigned', 'in_progress']);
+        .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
       if (error) {
         console.error('Failed to fetch assignment for patient', error);
         setDerivedAssignmentId(undefined);
@@ -302,7 +302,6 @@ export default function EmrDashboard() {
               </div>
             </div>
             <div className="text-right">
-              <p className="text-sm text-muted-foreground">Attending: {selectedPatient.attendingPhysician}</p>
             </div>
           </div>
 

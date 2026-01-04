@@ -58,7 +58,7 @@ export interface ClinicalNote {
   patientId: string;
   roomId?: number | null;
   overrideScope?: 'baseline' | 'room' | 'assignment';
-  type: 'H&P' | 'Progress' | 'Discharge' | 'Consult';
+  type: 'H&P' | 'Progress' | 'Discharge' | 'Consult' | 'Nurse';
   title: string;
   content: string;
   author: string;
@@ -81,6 +81,7 @@ export interface LabResult {
   collectionTime: string;
   resultTime?: string;
   orderedBy: string;
+  createdAt?: string;
   deletedAt?: string | null;
 }
 
@@ -109,7 +110,7 @@ export interface MedicalOrder {
   assignmentId?: string | null;
   roomId?: number | null;
   overrideScope?: 'baseline' | 'room' | 'assignment';
-  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity';
+  category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Consult' | 'Nursing' | 'General';
   orderName: string;
   frequency?: string;
   route?: string;

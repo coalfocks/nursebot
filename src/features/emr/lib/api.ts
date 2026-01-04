@@ -215,7 +215,7 @@ export const emrApi = {
       `,
       )
       .eq('student_id', studentId)
-      .in('status', ['assigned', 'in_progress', 'completed']);
+      .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
 
     if (error) {
       console.error('Error fetching student patients', error);
@@ -349,6 +349,7 @@ export const emrApi = {
           collectionTime: row.collection_time ?? new Date().toISOString(),
           resultTime: row.result_time ?? undefined,
           orderedBy: row.ordered_by ?? 'Unknown',
+          createdAt: row.created_at ?? undefined,
           deletedAt: row.deleted_at,
         };
       })
@@ -372,97 +373,24 @@ export const emrApi = {
       return scope === 'baseline';
     });
 
-    // If all labs are baseline, merge with existing baseline labs
-    if (allBaseline && labs.length > 0) {
-      const patientId = labs[0].patientId;
-      
-      // Fetch existing baseline labs for this patient
-      const { data: existingLabs } = await supabase
-        .from('lab_results')
-        .select('*')
-        .eq('patient_id', patientId)
-        .eq('override_scope', 'baseline')
-        .is('assignment_id', null)
-        .is('room_id', null)
-        .is('deleted_at', null);
-
-      // Create a map of existing labs by test name
-      const existingLabMap = new Map(
-        (existingLabs ?? []).map((lab) => [lab.test_name, lab])
-      );
-
-      // Use a consistent baseline collection time - either from existing labs or a fixed baseline time
-      const baselineCollectionTime = existingLabs && existingLabs.length > 0 
-        ? existingLabs[0].collection_time 
-        : '2000-01-01T00:00:00.000Z'; // Fixed baseline timestamp
-
-      const labsToInsert = [];
-      const labsToUpdate = [];
-
-      for (const lab of labs) {
-        const existingLab = existingLabMap.get(lab.testName);
-        const labData = {
-          patient_id: lab.patientId,
-          assignment_id: null,
-          room_id: null,
-          override_scope: 'baseline' as const,
-          test_name: lab.testName,
-          value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
-          unit: lab.unit,
-          reference_range: lab.referenceRange,
-          status: lab.status,
-          collection_time: baselineCollectionTime, // Use consistent baseline time
-          result_time: lab.resultTime,
-          ordered_by: lab.orderedBy,
-        };
-
-        if (existingLab) {
-          // Update existing lab (keeping the same collection_time)
-          labsToUpdate.push({ id: existingLab.id, data: labData });
-        } else {
-          // Insert new lab with baseline collection time
-          labsToInsert.push(labData);
-        }
-      }
-
-      // Perform updates
-      for (const { id, data } of labsToUpdate) {
-        const { error } = await supabase
-          .from('lab_results')
-          .update(data)
-          .eq('id', id);
-        if (error) {
-          console.error('Error updating baseline lab', error);
-        }
-      }
-
-      // Perform inserts
-      if (labsToInsert.length > 0) {
-        const { error } = await supabase.from('lab_results').insert(labsToInsert);
-        if (error) {
-          console.error('Error inserting baseline labs', error);
-        }
-      }
-    } else {
-      // For non-baseline labs (room/assignment scoped), insert as new entries
-      const payload = labs.map((lab) => ({
-        patient_id: lab.patientId,
-        assignment_id: lab.assignmentId ?? null,
-        room_id: lab.roomId ?? roomId ?? null,
-        override_scope: deriveScope(lab.overrideScope, lab.assignmentId, lab.roomId ?? roomId ?? null),
-        test_name: lab.testName,
-        value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
-        unit: lab.unit,
-        reference_range: lab.referenceRange,
-        status: lab.status,
-        collection_time: lab.collectionTime,
-        result_time: lab.resultTime,
-        ordered_by: lab.orderedBy,
-      }));
-      const { error } = await supabase.from('lab_results').insert(payload);
-      if (error) {
-        console.error('Error inserting labs', error);
-      }
+    // Insert new entries for each run (including baseline) to preserve multiple runs.
+    const payload = labs.map((lab) => ({
+      patient_id: lab.patientId,
+      assignment_id: lab.assignmentId ?? null,
+      room_id: lab.roomId ?? roomId ?? null,
+      override_scope: deriveScope(lab.overrideScope, lab.assignmentId, lab.roomId ?? roomId ?? null),
+      test_name: lab.testName,
+      value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+      unit: lab.unit,
+      reference_range: lab.referenceRange,
+      status: lab.status,
+      collection_time: lab.collectionTime,
+      result_time: lab.resultTime,
+      ordered_by: lab.orderedBy,
+    }));
+    const { error } = await supabase.from('lab_results').insert(payload);
+    if (error) {
+      console.error('Error inserting labs', error);
     }
   },
 

@@ -135,6 +135,8 @@ export default function AdminStudentCases() {
     switch (status) {
       case 'completed':
         return <span className={`${base} bg-emerald-100 text-emerald-700`}>Completed</span>;
+      case 'bedside':
+        return <span className={`${base} bg-emerald-100 text-emerald-700`}>Completed</span>;
       case 'in_progress':
         return <span className={`${base} bg-amber-100 text-amber-700`}>In Progress</span>;
       default:

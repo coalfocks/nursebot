@@ -22,6 +22,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [nurseNoteDraft, setNurseNoteDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState<{ title: string; type: ClinicalNote['type']; content: string }>({
     title: '',
     type: 'Progress',
@@ -47,6 +48,32 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     setNotes((prev) => [adjustedNote, ...prev]);
     setShowGenerator(false);
     void emrApi.addClinicalNote(adjustedNote);
+  };
+
+  const handleAddNurseNote = () => {
+    const content = nurseNoteDraft.trim();
+    if (!content) return;
+    const resolvedAssignmentId = forceBaseline ? null : assignmentId ?? null;
+    const resolvedRoomId = forceBaseline ? null : patient.roomId ?? null;
+    const overrideScope = resolvedAssignmentId ? 'assignment' : resolvedRoomId ? 'room' : 'baseline';
+    const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Nurse';
+    const timestamp = new Date().toISOString();
+    const newNote: ClinicalNote = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+      patientId: patient.id,
+      assignmentId: resolvedAssignmentId,
+      roomId: resolvedRoomId,
+      overrideScope,
+      type: 'Nurse',
+      title: `Nurse Note - ${new Date().toLocaleDateString()}`,
+      content,
+      author,
+      timestamp,
+      signed: false,
+    };
+    setNotes((prev) => [newNote, ...prev]);
+    setNurseNoteDraft('');
+    void emrApi.addClinicalNote(newNote);
   };
 
   const startEditing = (note: ClinicalNote) => {
@@ -151,7 +178,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
                       setNoteDraft((prev) => ({ ...prev, type: e.target.value as ClinicalNote['type'] }))
                     }
                   >
-                    {['H&P', 'Progress', 'Consult', 'Discharge'].map((type) => (
+                    {['H&P', 'Progress', 'Consult', 'Discharge', 'Nurse'].map((type) => (
                       <option key={type} value={type}>
                         {type}
                       </option>
@@ -189,6 +216,28 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
         </Button>
       </div>
 
+      {canEdit && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Nurse Note</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <textarea
+              className="w-full rounded-md border border-border px-3 py-2 text-sm"
+              rows={6}
+              placeholder="Write a nurse note..."
+              value={nurseNoteDraft}
+              onChange={(e) => setNurseNoteDraft(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <Button onClick={handleAddNurseNote} disabled={!nurseNoteDraft.trim()}>
+                Add Nurse Note
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {showGenerator && <AINotesGenerator patient={patient} onNoteGenerated={handleNoteGenerated} />}
 
       <Tabs defaultValue="all" className="w-full">
@@ -196,6 +245,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
           <TabsTrigger value="all">All Notes ({notes.length})</TabsTrigger>
           <TabsTrigger value="H&P">H&P ({notesByType['H&P']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Progress">Progress ({notesByType['Progress']?.length || 0})</TabsTrigger>
+          <TabsTrigger value="Nurse">Nurse ({notesByType['Nurse']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Consult">Consult ({notesByType['Consult']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Discharge">Discharge ({notesByType['Discharge']?.length || 0})</TabsTrigger>
         </TabsList>

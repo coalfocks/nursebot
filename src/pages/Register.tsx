@@ -10,6 +10,7 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [studyYear, setStudyYear] = useState(1);
+  const [caseDesignation, setCaseDesignation] = useState('Internal Medicine');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
   const [schoolId, setSchoolId] = useState('');
@@ -82,7 +83,7 @@ export default function Register() {
       // Format phone number for storage
       const formattedPhoneNumber = phoneNumber ? formatPhoneNumber(phoneNumber) : null;
       
-      await signUp(email, password, fullName, studyYear, formattedPhoneNumber, smsConsent, schoolId);
+      await signUp(email, password, fullName, studyYear, caseDesignation, formattedPhoneNumber, smsConsent, schoolId);
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to create account');
@@ -211,6 +212,30 @@ export default function Register() {
                   <option value={4}>MS-4</option>
                   <option value={5}>PGY-1</option>
                   <option value={6}>PGY-2</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="caseDesignation" className="block text-sm font-medium text-gray-700">
+                Case Designation
+              </label>
+              <div className="mt-1">
+                <select
+                  id="caseDesignation"
+                  name="caseDesignation"
+                  required
+                  value={caseDesignation}
+                  onChange={(e) => setCaseDesignation(e.target.value)}
+                  className="block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 placeholder-gray-400 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                >
+                  <option value="Internal Medicine">Internal Medicine</option>
+                  <option value="OB/GYN">OB/GYN</option>
+                  <option value="Surgery">Surgery</option>
+                  <option value="Psychiatry">Psychiatry</option>
+                  <option value="Pediatrics">Pediatrics</option>
+                  <option value="Emergency Medicine">Emergency Medicine</option>
+                  <option value="Family Medicine">Family Medicine</option>
                 </select>
               </div>
             </div>

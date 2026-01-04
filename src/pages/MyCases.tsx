@@ -77,6 +77,13 @@ export default function MyCases() {
             Completed
           </span>
         );
+      case 'bedside':
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Completed
+          </span>
+        );
       default:
         return null;
     }
@@ -99,7 +106,7 @@ export default function MyCases() {
   const filteredAssignments = assignments.filter(assignment => {
     // For completed assignments, show all of them
     if (activeTab === 'completed') {
-      return assignment.status === 'completed';
+      return ['completed', 'bedside'].includes(assignment.status);
     }
     
     // For active assignments, only show those that:

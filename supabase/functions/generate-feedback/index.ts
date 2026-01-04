@@ -91,6 +91,9 @@ Deno.serve(async (req) => {
         .from('student_room_assignments')
         .select(`
           *,
+          student:student_id (
+            specialization_interest
+          ),
           room:room_id (
             *,
             specialty:specialty_id (name)
@@ -105,7 +108,7 @@ Deno.serve(async (req) => {
       }
 
       // Verify assignment is completed before generating feedback
-      if (assignment.status !== 'completed') {
+      if (!['completed', 'bedside'].includes(assignment.status)) {
         console.error('Cannot generate feedback for incomplete assignment:', {
           assignmentId,
           status: assignment.status
@@ -131,12 +134,18 @@ Deno.serve(async (req) => {
 
       // Prepare conversation context
       const conversation = messages.map(msg => `${msg.role}: ${msg.content}`).join('\n\n');
+      const caseDesignationLine = assignment.student?.specialization_interest
+        ? `Case Designation: ${assignment.student.specialization_interest}`
+        : '';
+
       const context = `
 Room Information:
 Specialty: ${assignment.room.specialty?.name || 'General'}
 Difficulty Level: ${assignment.room.difficulty_level || 'Not specified'}
 Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
 Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
+
+${caseDesignationLine ? `Student Profile:\n${caseDesignationLine}\n` : ''}
 
 Student's Diagnosis: ${assignment.diagnosis || 'Not provided'}
 Student's Treatment Plan: ${assignment.treatment_plan || 'Not provided'}

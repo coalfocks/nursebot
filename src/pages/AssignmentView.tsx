@@ -170,6 +170,13 @@ export default function AssignmentView() {
             Completed
           </span>
         );
+      case 'bedside':
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            <CheckCircle className="w-3 h-3 mr-1" />
+            Completed
+          </span>
+        );
       default:
         return null;
     }
@@ -303,7 +310,7 @@ export default function AssignmentView() {
                 ) : (
                   <p className="text-sm text-gray-500">No progress note provided for this room.</p>
                 )}
-                {(assignment.status === 'completed' || assignment.nurse_feedback) && (
+                {(['completed', 'bedside'].includes(assignment.status) || assignment.nurse_feedback) && (
                   <AssignmentFeedback assignment={assignment} onRetryFeedback={handleRetryFeedback} />
                 )}
               </div>

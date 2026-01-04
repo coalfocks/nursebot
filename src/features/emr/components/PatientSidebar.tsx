@@ -3,7 +3,7 @@ import type { Patient } from '../lib/types';
 import { Card } from './ui/Card';
 import { Badge } from './ui/Badge';
 import { Input } from './ui/Input';
-import { Search, User, Calendar } from 'lucide-react';
+import { Search, User } from 'lucide-react';
 
 interface PatientSidebarProps {
   selectedPatient: Patient | null;
@@ -61,18 +61,10 @@ export function PatientSidebar({ selectedPatient, onPatientSelect, patients }: P
               </Badge>
             </div>
 
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Calendar className="h-3 w-3" />
-                <span>Admitted {new Date(patient.admissionDate).toLocaleDateString()}</span>
-              </div>
-            </div>
-
             <div className="mt-2 flex items-center justify-between">
               <Badge variant={patient.codeStatus === 'Full Code' ? 'default' : 'destructive'} className="text-xs">
                 {patient.codeStatus}
               </Badge>
-              <span className="text-xs text-muted-foreground">{patient.attendingPhysician}</span>
             </div>
           </Card>
         ))}

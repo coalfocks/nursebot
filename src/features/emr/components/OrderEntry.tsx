@@ -8,11 +8,11 @@ import { Tabs, TabsList, TabsTrigger } from './ui/Tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/Select';
 import { Textarea } from './ui/Textarea';
 import { ScrollArea } from './ui/ScrollArea';
-import { Search, Plus, Clock, AlertCircle, CheckCircle, Pill, TestTube, Camera } from 'lucide-react';
+import { Search, Plus, Clock, AlertCircle, CheckCircle, Pill, TestTube, Camera, ClipboardList } from 'lucide-react';
 import { allOrders, type OrderItem } from '../lib/ordersData';
 import type { Patient, MedicalOrder } from '../lib/types';
 
-type OrderCategory = 'all' | 'Lab' | 'Medication' | 'Imaging';
+type OrderCategory = 'all' | 'Lab' | 'Medication' | 'Imaging' | 'Other';
 type OrderPriority = 'Routine' | 'STAT' | 'Timed';
 
 interface OrderEntryProps {
@@ -35,11 +35,17 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
     priority: 'Routine' as OrderPriority,
     scheduledTime: '',
     instructions: '',
+    orderFor: '',
+    orderAction: '',
   });
 
   const filteredOrders = allOrders.filter((order) => {
     const matchesSearch = order.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || order.category === selectedCategory;
+    const matchesCategory =
+      selectedCategory === 'all' ||
+      (selectedCategory === 'Other'
+        ? !['Lab', 'Medication', 'Imaging'].includes(order.category)
+        : order.category === selectedCategory);
     return matchesSearch && matchesCategory;
   });
 
@@ -71,11 +77,20 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       priority: 'Routine',
       scheduledTime: '',
       instructions: '',
+      orderFor: '',
+      orderAction: '',
     });
   };
 
   const handlePlaceOrder = () => {
     if (!selectedOrder) return;
+    const isOtherOrder = !['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category);
+    const orderFor = orderDetails.orderFor.trim();
+    const orderAction = orderDetails.orderAction.trim();
+    if (isOtherOrder && (!orderFor || !orderAction)) return;
+    const instructions = isOtherOrder
+      ? `Order for: ${orderFor}\nRequested action: ${orderAction}${orderDetails.instructions.trim() ? `\nNotes: ${orderDetails.instructions.trim()}` : ''}`
+      : orderDetails.instructions.trim() || undefined;
 
     const newOrder: MedicalOrder = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
@@ -84,7 +99,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       roomId: forceBaseline ? null : patient.roomId ?? null,
       overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: selectedOrder.category,
-      orderName: selectedOrder.name,
+      orderName: isOtherOrder ? `${selectedOrder.name} - ${orderFor}` : selectedOrder.name,
       frequency: orderDetails.frequency,
       route: orderDetails.route,
       dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
@@ -93,7 +108,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       orderedBy: patient.attendingPhysician,
       orderTime: new Date().toISOString(),
       scheduledTime: orderDetails.scheduledTime || undefined,
-      instructions: orderDetails.instructions || undefined,
+      instructions,
     };
 
     onOrderPlaced(newOrder);
@@ -106,6 +121,8 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       priority: 'Routine',
       scheduledTime: '',
       instructions: '',
+      orderFor: '',
+      orderAction: '',
     });
   };
 
@@ -118,7 +135,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       case 'Imaging':
         return <Camera className="h-4 w-4" />;
       default:
-        return <Plus className="h-4 w-4" />;
+        return <ClipboardList className="h-4 w-4" />;
     }
   };
 
@@ -154,11 +171,12 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
             </div>
 
             <Tabs value={selectedCategory} onValueChange={setSelectedCategory}>
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="Lab">Labs</TabsTrigger>
                 <TabsTrigger value="Medication">Meds</TabsTrigger>
                 <TabsTrigger value="Imaging">Imaging</TabsTrigger>
+                <TabsTrigger value="Other">Other</TabsTrigger>
               </TabsList>
             </Tabs>
 
@@ -359,18 +377,60 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                   )}
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="instructions">Special Instructions</Label>
-                  <Textarea
-                    id="instructions"
-                    placeholder="Enter any special instructions..."
-                    value={orderDetails.instructions}
-                    onChange={(e) => setOrderDetails({ ...orderDetails, instructions: e.target.value })}
-                    rows={3}
-                  />
-                </div>
+                {!['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category) ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="orderFor">Order for</Label>
+                      <Input
+                        id="orderFor"
+                        placeholder="e.g., suspected sepsis, consult reason, nursing focus"
+                        value={orderDetails.orderFor}
+                        onChange={(e) => setOrderDetails({ ...orderDetails, orderFor: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="orderAction">What should it do</Label>
+                      <Textarea
+                        id="orderAction"
+                        placeholder="Describe what you want done..."
+                        value={orderDetails.orderAction}
+                        onChange={(e) => setOrderDetails({ ...orderDetails, orderAction: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="instructions">Additional Details</Label>
+                      <Textarea
+                        id="instructions"
+                        placeholder="Add any extra details for this order..."
+                        value={orderDetails.instructions}
+                        onChange={(e) => setOrderDetails({ ...orderDetails, instructions: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="instructions">Additional Details</Label>
+                    <Textarea
+                      id="instructions"
+                      placeholder="Add any extra details for this order..."
+                      value={orderDetails.instructions}
+                      onChange={(e) => setOrderDetails({ ...orderDetails, instructions: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
+                )}
 
-                <Button onClick={handlePlaceOrder} className="w-full">
+                <Button
+                  onClick={handlePlaceOrder}
+                  className="w-full"
+                  disabled={
+                    !selectedOrder ||
+                    (!['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category) &&
+                      (!orderDetails.orderFor.trim() || !orderDetails.orderAction.trim()))
+                  }
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Place Order
                 </Button>

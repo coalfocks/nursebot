@@ -19,7 +19,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   // Only show feedback when status is completed
-  if (assignment.status !== 'completed') {
+  if (!['completed', 'bedside'].includes(assignment.status)) {
     return null;
   }
 

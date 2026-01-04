@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
@@ -222,6 +222,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               vitals,
             });
 
+      const runTimestamp = new Date().toISOString();
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
@@ -234,8 +235,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         referenceRange:
           (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
         status: (lab as { status?: string }).status ?? 'Normal',
-        collectionTime: (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
-        resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+        collectionTime: runTimestamp,
+        resultTime: runTimestamp,
         orderedBy: patient.attendingPhysician ?? 'Attending',
       }));
       if (isSandbox) {
@@ -278,7 +279,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     const uniqueTimes = Array.from(
       new Set(
         labResults
-          .map((lab) => lab.collectionTime)
+          .map((lab) => lab.createdAt ?? lab.collectionTime ?? lab.resultTime)
           .filter((time): time is string => Boolean(time)),
       ),
     );
@@ -290,7 +291,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   // Categorize labs by type
   const getLabCategory = (testName: string): string => {
     const name = testName.toLowerCase();
-    
+
+    if (name.includes('serum lactate')) {
+      return 'Chemistry/Electrolytes';
+    }
+
     // Hematology
     if (name.includes('hemoglobin') || name.includes('hematocrit') || name.includes('wbc') || 
         name.includes('white blood cell') || name.includes('platelet') || name.includes('neutrophil') ||
@@ -358,7 +363,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const labsByTest = useMemo(
     () =>
       labResults.reduce<Record<string, Record<string, LabResult>>>((acc, lab) => {
-        const time = lab.collectionTime;
+        const time = lab.createdAt ?? lab.collectionTime ?? lab.resultTime;
         if (!time) return acc;
         if (!acc[lab.testName]) {
           acc[lab.testName] = {};
@@ -535,68 +540,73 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               {labResults.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
               ) : (
-                <div className="space-y-6">
-                  {Object.entries(labsByCategory).map(([category, tests]) => (
-                    <div key={category}>
-                      <h3 className="text-sm font-semibold text-muted-foreground mb-2 px-1">{category}</h3>
-                      <div className="rounded-md border overflow-x-auto">
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Test</TableHead>
-                              {sortedCollectionTimes.map((time, idx) => (
-                                <TableHead key={time} className="whitespace-nowrap">
-                                  {formatCollectionLabel(time, idx)}
-                                </TableHead>
-                              ))}
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {Object.entries(tests).map(([testName, resultsByTime]) => (
-                              <TableRow key={testName}>
-                                <TableCell className="font-medium whitespace-nowrap">{testName}</TableCell>
-                                {sortedCollectionTimes.map((time) => {
-                                  const lab = resultsByTime?.[time];
-                                  return (
-                                    <TableCell
-                                      key={time}
-                                      className={lab ? getStatusColor(lab.status) : 'text-muted-foreground'}
-                                    >
-                                      {lab ? (
-                                        <div className="space-y-1">
-                                          <div className="font-semibold">
-                                            {lab.value}
-                                            {lab.unit ? ` ${lab.unit}` : ''}
-                                          </div>
-                                          <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
-                                          <div className="text-xs text-muted-foreground">{lab.status}</div>
-                                          {canEdit && (
-                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                              <button
-                                                type="button"
-                                                className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
-                                                onClick={() => void handleDeleteLab(lab.id)}
-                                                title="Delete lab"
-                                              >
-                                                <Trash2 className="h-3 w-3" />
-                                                Delete
-                                              </button>
-                                            </div>
-                                          )}
+                <div className="rounded-md border overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Test</TableHead>
+                        {sortedCollectionTimes.map((time, idx) => (
+                          <TableHead key={time} className="whitespace-nowrap">
+                            {formatCollectionLabel(time, idx)}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Object.entries(labsByCategory).map(([category, tests]) => (
+                        <Fragment key={category}>
+                          <TableRow>
+                            <TableCell
+                              className="bg-muted font-semibold text-muted-foreground"
+                              colSpan={sortedCollectionTimes.length + 1}
+                            >
+                              {category}
+                            </TableCell>
+                          </TableRow>
+                          {Object.entries(tests).map(([testName, resultsByTime]) => (
+                            <TableRow key={`${category}-${testName}`}>
+                              <TableCell className="font-medium whitespace-nowrap">{testName}</TableCell>
+                              {sortedCollectionTimes.map((time) => {
+                                const lab = resultsByTime?.[time];
+                                return (
+                                  <TableCell
+                                    key={time}
+                                    className={lab ? getStatusColor(lab.status) : 'text-muted-foreground'}
+                                  >
+                                    {lab ? (
+                                      <div className="space-y-1">
+                                        <div className="font-semibold">
+                                          {lab.value}
+                                          {lab.unit ? ` ${lab.unit}` : ''}
                                         </div>
-                                      ) : (
-                                        <span className="text-muted-foreground">—</span>
-                                      )}
-                                    </TableCell>
-                                  );
-                                })}
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  ))}
+                                        <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
+                                        <div className="text-xs text-muted-foreground">{lab.status}</div>
+                                        {canEdit && (
+                                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                            <button
+                                              type="button"
+                                              className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
+                                              onClick={() => void handleDeleteLab(lab.id)}
+                                              title="Delete lab"
+                                            >
+                                              <Trash2 className="h-3 w-3" />
+                                              Delete
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </TableCell>
+                                );
+                              })}
+                            </TableRow>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </CardContent>

@@ -117,7 +117,7 @@ export default function AdminDashboard() {
         let completedQuery = supabase
           .from('student_room_assignments')
           .select('id', { count: 'exact', head: true })
-          .eq('status', 'completed');
+          .in('status', ['completed', 'bedside']);
         if (scopedSchoolId) {
           completedQuery = completedQuery.eq('school_id', scopedSchoolId);
         }

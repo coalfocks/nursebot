@@ -75,8 +75,12 @@ export default function AdminStudents() {
 
         const summaries: StudentSummary[] = (profileRows as ProfileRow[] | null)?.map((profile) => {
           const studentAssignments = assignmentsByStudent.get(profile.id) ?? [];
-          const completedAssignments = studentAssignments.filter((assignment) => assignment.status === 'completed');
-          const activeAssignments = studentAssignments.filter((assignment) => assignment.status !== 'completed');
+          const completedAssignments = studentAssignments.filter((assignment) =>
+            ['completed', 'bedside'].includes(assignment.status),
+          );
+          const activeAssignments = studentAssignments.filter(
+            (assignment) => !['completed', 'bedside'].includes(assignment.status),
+          );
 
           const scores = completedAssignments
             .map((assignment) => {
