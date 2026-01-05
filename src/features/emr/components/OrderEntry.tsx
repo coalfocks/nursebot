@@ -411,10 +411,18 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <Label htmlFor="instructions">Additional Details</Label>
+                    <Label htmlFor="instructions">
+                      {selectedOrder.category === 'Imaging'
+                        ? 'Please insert location and indication descriptions'
+                        : 'Additional Details'}
+                    </Label>
                     <Textarea
                       id="instructions"
-                      placeholder="Add any extra details for this order..."
+                      placeholder={
+                        selectedOrder.category === 'Imaging'
+                          ? 'Location and indication for imaging...'
+                          : 'Add any extra details for this order...'
+                      }
                       value={orderDetails.instructions}
                       onChange={(e) => setOrderDetails({ ...orderDetails, instructions: e.target.value })}
                       rows={3}
