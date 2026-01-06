@@ -578,17 +578,83 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
           </button>
         </div>
       </div>
-      
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((message) => {
-          // Special handling for completion message
           if (message.content === '<completed>' && message.role === 'assistant') {
             return (
               <div key={message.id} className="w-full flex justify-center my-2">
                 <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs flex items-center">
                   <CheckCircle className="w-3 h-3 mr-1" />
                   Assignment completed
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={message.id}
+              className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[80%] p-4 rounded-lg ${
+                  message.role === 'student'
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                }`}
+              >
+                <div className="flex items-center mb-1">
+                  <User2 className="w-4 h-4 mr-2" />
+                  <span className="text-xs font-medium">
+                    {message.role === 'student' ? 'You' : 'Nurse'}
+                  </span>
+                  <span className="text-xs ml-2 opacity-75">
+                    {formatDate(message.created_at)}
+                  </span>
+                </div>
+                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+              </div>
+            </div>
+          );
+        })}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 p-4 rounded-lg">
+              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+            </div>
+          </div>
+        )}
+        {isAssistantTyping && !isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 px-4 py-3 rounded-lg flex items-center space-x-2">
+              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
+              <span className="text-sm text-gray-600">Nurse is typing...</span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
+
+      <form onSubmit={handleSubmit} className="p-4 border-t">
+        <div className="flex space-x-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type your message..."
+            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={isLoading || isCompleting}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || isCompleting}
+            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </div>
+      </form>
 
       {showCompletionConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
@@ -683,74 +749,6 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
           </div>
         </div>
       )}
-    </div>
-  );
-}
-          
-          // Regular chat messages
-          return (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[80%] p-4 rounded-lg ${
-                  message.role === 'student'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 text-gray-900'
-                }`}
-              >
-                <div className="flex items-center mb-1">
-                  <User2 className="w-4 h-4 mr-2" />
-                  <span className="text-xs font-medium">
-                    {message.role === 'student' ? 'You' : 'Nurse'}
-                  </span>
-                  <span className="text-xs ml-2 opacity-75">
-                    {formatDate(message.created_at)}
-                  </span>
-                </div>
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-              </div>
-            </div>
-          );
-        })}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
-            </div>
-          </div>
-        )}
-        {isAssistantTyping && !isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 px-4 py-3 rounded-lg flex items-center space-x-2">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-              <span className="text-sm text-gray-600">Nurse is typing...</span>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <form onSubmit={handleSubmit} className="p-4 border-t">
-        <div className="flex space-x-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
-            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading || isCompleting}
-          />
-          <button
-            type="submit"
-            disabled={isLoading || isCompleting}
-            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </div>
-      </form>
     </div>
   );
 }

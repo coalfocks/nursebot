@@ -279,7 +279,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     const uniqueTimes = Array.from(
       new Set(
         labResults
-          .map((lab) => lab.createdAt ?? lab.collectionTime ?? lab.resultTime)
+          .map((lab) => lab.collectionTime ?? lab.resultTime)
           .filter((time): time is string => Boolean(time)),
       ),
     );
@@ -363,7 +363,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const labsByTest = useMemo(
     () =>
       labResults.reduce<Record<string, Record<string, LabResult>>>((acc, lab) => {
-        const time = lab.createdAt ?? lab.collectionTime ?? lab.resultTime;
+        const time = lab.collectionTime ?? lab.resultTime;
         if (!time) return acc;
         if (!acc[lab.testName]) {
           acc[lab.testName] = {};

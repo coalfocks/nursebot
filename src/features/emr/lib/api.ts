@@ -373,7 +373,97 @@ export const emrApi = {
       return scope === 'baseline';
     });
 
-    // Insert new entries for each run (including baseline) to preserve multiple runs.
+    if (allBaseline) {
+      const patientId = labs[0].patientId;
+      const { data: existingLabs, error: existingError } = await supabase
+        .from('lab_results')
+        .select('id, test_name, collection_time, result_time')
+        .eq('patient_id', patientId)
+        .eq('override_scope', 'baseline')
+        .is('assignment_id', null)
+        .is('room_id', null)
+        .is('deleted_at', null);
+
+      if (existingError) {
+        console.error('Error fetching baseline labs', existingError);
+      }
+
+      const baselineTimestamp =
+        existingLabs && existingLabs.length > 0
+          ? existingLabs[0].collection_time ?? existingLabs[0].result_time ?? '2000-01-01T00:00:00.000Z'
+          : '2000-01-01T00:00:00.000Z';
+
+      const existingByTest = new Map(
+        (existingLabs ?? []).map((lab) => [lab.test_name, lab]),
+      );
+
+      const updates = labs
+        .map((lab) => {
+          const existing = existingByTest.get(lab.testName);
+          if (!existing) return null;
+          return {
+            id: existing.id,
+            payload: {
+              patient_id: lab.patientId,
+              assignment_id: null,
+              room_id: null,
+              override_scope: 'baseline' as const,
+              test_name: lab.testName,
+              value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+              unit: lab.unit,
+              reference_range: lab.referenceRange,
+              status: lab.status,
+              collection_time: baselineTimestamp,
+              result_time: baselineTimestamp,
+              ordered_by: lab.orderedBy,
+            },
+          };
+        })
+        .filter((entry): entry is { id: string; payload: Record<string, unknown> } => Boolean(entry));
+
+      const inserts = labs
+        .filter((lab) => !existingByTest.has(lab.testName))
+        .map((lab) => ({
+          patient_id: lab.patientId,
+          assignment_id: null,
+          room_id: null,
+          override_scope: 'baseline' as const,
+          test_name: lab.testName,
+          value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+          unit: lab.unit,
+          reference_range: lab.referenceRange,
+          status: lab.status,
+          collection_time: baselineTimestamp,
+          result_time: baselineTimestamp,
+          ordered_by: lab.orderedBy,
+        }));
+
+      if (updates.length) {
+        const updateResults = await Promise.all(
+          updates.map((update) =>
+            supabase
+              .from('lab_results')
+              .update(update.payload)
+              .eq('id', update.id),
+          ),
+        );
+        updateResults.forEach(({ error }) => {
+          if (error) {
+            console.error('Error updating baseline lab', error);
+          }
+        });
+      }
+
+      if (inserts.length) {
+        const { error: insertError } = await supabase.from('lab_results').insert(inserts);
+        if (insertError) {
+          console.error('Error inserting baseline labs', insertError);
+        }
+      }
+      return;
+    }
+
+    // Insert new entries for each non-baseline run to preserve multiple runs.
     const payload = labs.map((lab) => ({
       patient_id: lab.patientId,
       assignment_id: lab.assignmentId ?? null,
