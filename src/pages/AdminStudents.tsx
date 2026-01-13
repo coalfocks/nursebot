@@ -19,17 +19,25 @@ type StudentSummary = {
 };
 
 const STUDY_YEARS = [1, 2, 3, 4, 5, 6];
+const ROLE_OPTIONS: Array<{ value: ProfileRow['role']; label: string }> = [
+  { value: 'student', label: 'Student' },
+  { value: 'test_user', label: 'Test User' },
+];
 
 export default function AdminStudents() {
   const { profile, activeSchoolId } = useAuthStore();
   const hasAdmin = hasAdminAccess(profile);
+  const isSuper = isSuperAdmin(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [roleMessage, setRoleMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [students, setStudents] = useState<StudentSummary[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [yearFilter, setYearFilter] = useState<'all' | number>('all');
   const [performanceFilter, setPerformanceFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'test_user'>('all');
+  const [roleUpdating, setRoleUpdating] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let isMounted = true;
@@ -42,11 +50,16 @@ export default function AdminStudents() {
         let profileQuery = supabase
           .from('profiles')
           .select('id, full_name, study_year, specialization_interest, phone_number, sms_consent, created_at, role, school_id')
-          .eq('role', 'student')
           .order('full_name');
 
         if (scopedSchoolId) {
           profileQuery = profileQuery.eq('school_id', scopedSchoolId);
+        }
+
+        if (isSuper) {
+          profileQuery = profileQuery.in('role', ['student', 'test_user']);
+        } else {
+          profileQuery = profileQuery.eq('role', 'student');
         }
 
         let assignmentQuery = supabase
@@ -106,10 +119,11 @@ export default function AdminStudents() {
             completedCount: completedAssignments.length,
             activeCount: activeAssignments.length,
           };
-        }) ?? [];
+      }) ?? [];
 
         if (isMounted) {
           setStudents(summaries);
+          setRoleMessage(null);
         }
       } catch (err) {
         console.error('Failed to load students', err);
@@ -128,7 +142,7 @@ export default function AdminStudents() {
     return () => {
       isMounted = false;
     };
-  }, [hasAdmin, scopedSchoolId]);
+  }, [hasAdmin, scopedSchoolId, isSuper]);
 
   const filteredStudents = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -146,26 +160,32 @@ export default function AdminStudents() {
         (performanceFilter === 'medium' && (averageScore ?? 0) >= 2.5 && (averageScore ?? 0) < 4) ||
         (performanceFilter === 'low' && (averageScore ?? 5) < 2.5);
 
-      return matchesSearch && matchesYear && matchesPerformance;
+      const matchesRole =
+        roleFilter === 'all' || profile.role === roleFilter;
+
+      return matchesSearch && matchesYear && matchesPerformance && (!isSuper || matchesRole);
     });
-  }, [students, searchTerm, yearFilter, performanceFilter]);
+  }, [students, searchTerm, yearFilter, performanceFilter, roleFilter, isSuper]);
 
   const stats = useMemo(() => {
     if (students.length === 0) {
       return {
         totalStudents: 0,
+        totalTestUsers: 0,
         activeAssignments: 0,
         completedAssignments: 0,
         averageScore: null as number | null,
       };
     }
 
-    const totalStudents = students.length;
+    const studentSummaries = students.filter((student) => student.profile.role === 'student');
+    const totalStudents = studentSummaries.length;
+    const totalTestUsers = students.filter((student) => student.profile.role === 'test_user').length;
     let activeAssignments = 0;
     let completedAssignments = 0;
     const scoreValues: number[] = [];
 
-    students.forEach((student) => {
+    studentSummaries.forEach((student) => {
       activeAssignments += student.activeCount;
       completedAssignments += student.completedCount;
       if (typeof student.averageScore === 'number') {
@@ -177,8 +197,50 @@ export default function AdminStudents() {
       ? Number((scoreValues.reduce((sum, score) => sum + score, 0) / scoreValues.length).toFixed(2))
       : null;
 
-    return { totalStudents, activeAssignments, completedAssignments, averageScore };
+    return { totalStudents, totalTestUsers, activeAssignments, completedAssignments, averageScore };
   }, [students]);
+
+  const handleRoleChange = async (userId: string, nextRole: ProfileRow['role']) => {
+    if (!isSuper) return;
+    setRoleMessage(null);
+
+    const existing = students.find((student) => student.profile.id === userId);
+    if (!existing || existing.profile.role === nextRole) return;
+    const previousRole = existing.profile.role;
+
+    setRoleUpdating((prev) => new Set(prev).add(userId));
+    setStudents((prev) =>
+      prev.map((student) =>
+        student.profile.id === userId
+          ? { ...student, profile: { ...student.profile, role: nextRole } }
+          : student,
+      ),
+    );
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ role: nextRole })
+      .eq('id', userId);
+
+    if (updateError) {
+      console.error('Failed to update role', updateError);
+      setRoleMessage({ type: 'error', text: 'Failed to update role. Please try again.' });
+      setStudents((prev) =>
+        prev.map((student) =>
+          student.profile.id === userId
+            ? { ...student, profile: { ...student.profile, role: previousRole } }
+            : student,
+        ),
+      );
+    } else {
+      setRoleMessage({ type: 'success', text: 'Role updated.' });
+    }
+
+    setRoleUpdating((prev) => {
+      const next = new Set(prev);
+      next.delete(userId);
+      return next;
+    });
+  };
 
   if (!hasAdmin) {
     return (
@@ -243,14 +305,18 @@ export default function AdminStudents() {
           <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500">Total Students</p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900">{stats.totalStudents}</p>
+                <p className="text-sm text-slate-500">Total Users</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                  {stats.totalStudents + stats.totalTestUsers}
+                </p>
               </div>
               <span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600">
                 <Users className="h-5 w-5" />
               </span>
             </div>
-            <p className="mt-2 text-xs text-slate-500">All non-admin profiles across schools</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Students: {stats.totalStudents} · Test users: {stats.totalTestUsers}
+            </p>
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -334,7 +400,31 @@ export default function AdminStudents() {
               <option value="medium">Medium (2.5 - 3.9)</option>
               <option value="low">Low (&lt; 2.5)</option>
             </select>
+
+            {isSuper && (
+              <select
+                value={roleFilter}
+                onChange={(event) => setRoleFilter(event.target.value as 'all' | 'student' | 'test_user')}
+                className="rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">All Roles</option>
+                <option value="student">Students</option>
+                <option value="test_user">Test Users</option>
+              </select>
+            )}
           </div>
+
+          {roleMessage && (
+            <div
+              className={`mt-4 rounded-md border px-3 py-2 text-sm ${
+                roleMessage.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-red-200 bg-red-50 text-red-700'
+              }`}
+            >
+              {roleMessage.text}
+            </div>
+          )}
 
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-100 text-sm">
@@ -342,6 +432,7 @@ export default function AdminStudents() {
                 <tr>
                   <th className="px-4 py-3">Student</th>
                   <th className="px-4 py-3">Year</th>
+                  <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Active</th>
                   <th className="px-4 py-3">Completed</th>
                   <th className="px-4 py-3">Avg. Score</th>
@@ -351,8 +442,8 @@ export default function AdminStudents() {
               <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
                 {filteredStudents.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-sm text-slate-500">
-                      No students match the current filters.
+                    <td colSpan={8} className="px-4 py-6 text-center text-sm text-slate-500">
+                      No users match the current filters.
                     </td>
                   </tr>
                 )}
@@ -360,17 +451,43 @@ export default function AdminStudents() {
                 {filteredStudents.map((student) => (
                   <tr key={student.profile.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3">
-                      <Link
-                        to={`/students/${student.profile.id}`}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        {student.profile.full_name}
-                      </Link>
+                      {student.profile.role === 'student' ? (
+                        <Link
+                          to={`/students/${student.profile.id}`}
+                          className="font-medium text-blue-600 hover:underline"
+                        >
+                          {student.profile.full_name}
+                        </Link>
+                      ) : (
+                        <div className="font-medium text-slate-900">{student.profile.full_name}</div>
+                      )}
                       {student.profile.specialization_interest && (
                         <div className="text-xs text-slate-400">{student.profile.specialization_interest}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-600">Year {student.profile.study_year}</td>
+                    <td className="px-4 py-3">
+                      {isSuper ? (
+                        <select
+                          value={student.profile.role}
+                          onChange={(event) =>
+                            handleRoleChange(student.profile.id, event.target.value as ProfileRow['role'])
+                          }
+                          className="rounded-md border border-slate-200 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+                          disabled={roleUpdating.has(student.profile.id)}
+                        >
+                          {ROLE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs font-medium text-slate-600">
+                          {student.profile.role === 'test_user' ? 'Test User' : 'Student'}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-sm text-slate-600">{student.activeCount}</td>
                     <td className="px-4 py-3 text-sm text-slate-600">{student.completedCount}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-slate-900">
@@ -378,12 +495,14 @@ export default function AdminStudents() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex gap-2 justify-end">
-                        <Link
-                          to={`/students/${student.profile.id}`}
-                          className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100"
-                        >
-                          View Assignments
-                        </Link>
+                        {student.profile.role === 'student' && (
+                          <Link
+                            to={`/students/${student.profile.id}`}
+                            className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                          >
+                            View Assignments
+                          </Link>
+                        )}
                       </div>
                     </td>
                   </tr>
