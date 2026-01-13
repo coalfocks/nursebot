@@ -490,7 +490,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
       await emrApi.addClinicalNote(note);
       setShowProgressNote(false);
       setProgressNoteDraft('');
-      alert('Progress note saved. Feedback is being generated.');
+      alert('Progress note saved.');
       navigate(0);
     } catch (error) {
       console.error('Error saving progress note', error);
@@ -508,22 +508,13 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
         .from('student_room_assignments')
         .update({
           status: 'bedside',
-          feedback_status: 'pending',
-          completed_at: new Date().toISOString(),
         })
         .eq('id', assignmentId);
       if (updateError) throw updateError;
-
-      const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
-        body: { assignmentId },
-      });
-      if (feedbackError) throw feedbackError;
-
-      alert('Bedside assessment started. Feedback is being generated.');
-      navigate(0);
+      alert('Bedside visit recorded.');
     } catch (error) {
       console.error('Error starting bedside assessment:', error);
-      alert('Error starting bedside assessment. Please try again.');
+      alert('Error recording bedside visit. Please try again.');
     } finally {
       setIsCompleting(false);
     }
@@ -542,10 +533,12 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowBedsideHint(true)}
-            disabled={!bedsideHint}
+            onClick={() => {
+              setShowBedsideHint(true);
+              void handleBedsideContinue();
+            }}
             className="flex items-center px-3 py-1 bg-white/10 hover:bg-white/20 rounded text-sm font-medium transition-colors disabled:opacity-50"
-            title={bedsideHint ? 'View bedside hint' : 'No bedside hint available'}
+            title={bedsideHint ? 'View bedside hint' : 'Go to bedside'}
           >
             <Stethoscope className="w-4 h-4 mr-1" />
             Go to Bedside
@@ -567,7 +560,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
             onClick={() => setShowCompletionConfirm(true)}
             disabled={isCompleting}
             className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
-            title="Complete assignment and generate feedback"
+            title="Complete assignment"
           >
             {isCompleting ? (
               <Loader2 className="w-4 h-4 mr-1 animate-spin" />
@@ -679,7 +672,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
                 className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
                 onClick={() => setShowCompletionConfirm(false)}
               >
-                Cancel
+                Back to case
               </button>
             </div>
           </div>
@@ -695,21 +688,10 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
             </p>
             <div className="space-y-2">
               <button
-                className="w-full inline-flex items-center justify-center rounded-md bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-                onClick={() => {
-                  setShowBedsideHint(false);
-                  void handleBedsideContinue();
-                }}
-                disabled={isCompleting}
-              >
-                {isCompleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Continue to Bedside
-              </button>
-              <button
                 className="w-full inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
                 onClick={() => setShowBedsideHint(false)}
               >
-                Cancel
+                Back to case
               </button>
             </div>
           </div>

@@ -317,6 +317,14 @@ export const imagingOrders: OrderItem[] = [
     frequencies: ['Once'],
     priorities: ['Routine', 'STAT'],
   },
+  {
+    id: 'img-8',
+    name: 'EKG',
+    category: 'Imaging',
+    subcategory: 'Cardiac',
+    frequencies: ['Once'],
+    priorities: ['Routine', 'STAT'],
+  },
 ];
 
 const consultOrders: OrderItem[] = [

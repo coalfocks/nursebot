@@ -3,12 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import AssignmentFeedback from '../components/AssignmentFeedback';
 import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
-import { generateFeedback } from '../lib/feedbackService';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -26,7 +24,6 @@ export default function AssignmentView() {
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [processing, setProcessing] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -133,20 +130,6 @@ export default function AssignmentView() {
     }
   };
 
-  const handleRetryFeedback = async () => {
-    if (!assignmentId || processing) return;
-    
-    setProcessing(true);
-    try {
-      await generateFeedback(assignmentId);
-      await fetchAssignment();
-    } catch (error) {
-      console.error('Error retrying feedback:', error);
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'assigned':
@@ -172,9 +155,9 @@ export default function AssignmentView() {
         );
       case 'bedside':
         return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
             <CheckCircle className="w-3 h-3 mr-1" />
-            Completed
+            Bedside
           </span>
         );
       default:
@@ -309,9 +292,6 @@ export default function AssignmentView() {
                   </div>
                 ) : (
                   <p className="text-sm text-gray-500">No progress note provided for this room.</p>
-                )}
-                {(['completed', 'bedside'].includes(assignment.status) || assignment.nurse_feedback) && (
-                  <AssignmentFeedback assignment={assignment} onRetryFeedback={handleRetryFeedback} />
                 )}
               </div>
             </div>

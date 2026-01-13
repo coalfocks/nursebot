@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
-import { Loader2, Clock, Book, CheckCircle, ArrowRight, Award, AlertCircle } from 'lucide-react';
+import { Loader2, Clock, Book, CheckCircle, ArrowRight, AlertCircle } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 import { hasAdminAccess } from '../lib/roles';
 
@@ -79,9 +79,9 @@ export default function MyCases() {
         );
       case 'bedside':
         return (
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
             <CheckCircle className="w-3 h-3 mr-1" />
-            Completed
+            Bedside
           </span>
         );
       default:
@@ -106,7 +106,7 @@ export default function MyCases() {
   const filteredAssignments = assignments.filter(assignment => {
     // For completed assignments, show all of them
     if (activeTab === 'completed') {
-      return ['completed', 'bedside'].includes(assignment.status);
+      return assignment.status === 'completed';
     }
     
     // For active assignments, only show those that:
@@ -115,7 +115,7 @@ export default function MyCases() {
     const now = new Date();
     const effectiveDate = assignment.effective_date ? new Date(assignment.effective_date) : null;
 
-    return ['assigned', 'in_progress'].includes(assignment.status) && 
+    return ['assigned', 'in_progress', 'bedside'].includes(assignment.status) && 
            (!effectiveDate || effectiveDate <= now);
   });
 
@@ -199,44 +199,6 @@ export default function MyCases() {
                         </p>
                       )}
 
-                      {activeTab === 'completed' && assignment.nurse_feedback && (
-                        <div className="mt-4 bg-gray-50 p-4 rounded-md">
-                          <h4 className="font-medium text-gray-900 flex items-center">
-                            <Award className="w-4 h-4 mr-2 text-yellow-500" />
-                            Feedback
-                            {assignment.nurse_feedback.overall_score && (
-                              <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md">
-                                Score: {assignment.nurse_feedback.overall_score}/5
-                              </span>
-                            )}
-                          </h4>
-                          {assignment.nurse_feedback.summary && (
-                            <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
-                          )}
-
-                          {assignment.nurse_feedback.clinical_reasoning?.strengths?.length > 0 && (
-                            <div className="mt-2">
-                              <h5 className="text-sm font-medium text-gray-900">Strengths:</h5>
-                              <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                {assignment.nurse_feedback.clinical_reasoning.strengths.map((strength: string, idx: number) => (
-                                  <li key={idx}>{strength}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {assignment.nurse_feedback.clinical_reasoning?.areas_for_improvement?.length > 0 && (
-                            <div className="mt-2">
-                              <h5 className="text-sm font-medium text-gray-900">Areas for Improvement:</h5>
-                              <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                {assignment.nurse_feedback.clinical_reasoning.areas_for_improvement.map((area: string, idx: number) => (
-                                  <li key={idx}>{area}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                     <div className="ml-6 text-sm text-gray-500">
                       <p className="font-medium text-gray-700">Assigned</p>
@@ -339,44 +301,6 @@ export default function MyCases() {
                           </p>
                         )}
 
-                        {activeTab === 'completed' && assignment.nurse_feedback && (
-                          <div className="mt-4 bg-gray-50 p-4 rounded-md">
-                            <h4 className="font-medium text-gray-900 flex items-center">
-                              <Award className="w-4 h-4 mr-2 text-yellow-500" />
-                              Feedback
-                              {assignment.nurse_feedback.overall_score && (
-                                <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-md">
-                                  Score: {assignment.nurse_feedback.overall_score}/5
-                                </span>
-                              )}
-                            </h4>
-                            {assignment.nurse_feedback.summary && (
-                              <p className="mt-2 text-sm text-gray-700">{assignment.nurse_feedback.summary}</p>
-                            )}
-                            
-                            {assignment.nurse_feedback.clinical_reasoning?.strengths?.length > 0 && (
-                              <div className="mt-2">
-                                <h5 className="text-sm font-medium text-gray-900">Strengths:</h5>
-                                <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                  {assignment.nurse_feedback.clinical_reasoning.strengths.map((strength: string, idx: number) => (
-                                    <li key={idx}>{strength}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                            
-                            {assignment.nurse_feedback.clinical_reasoning?.areas_for_improvement?.length > 0 && (
-                              <div className="mt-2">
-                                <h5 className="text-sm font-medium text-gray-900">Areas for Improvement:</h5>
-                                <ul className="mt-1 text-sm text-gray-700 list-disc pl-5">
-                                  {assignment.nurse_feedback.clinical_reasoning.areas_for_improvement.map((area: string, idx: number) => (
-                                    <li key={idx}>{area}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
 
                       <div className="ml-4">
