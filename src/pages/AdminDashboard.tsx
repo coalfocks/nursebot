@@ -5,9 +5,10 @@ import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import StudentDashboard from './StudentDashboard';
+import TestRooms from './TestRooms';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
-import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
 type RoomRow = Database['public']['Tables']['rooms']['Row'];
@@ -78,6 +79,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const hasAdmin = hasAdminAccess(profile);
+  const isTester = isTestUser(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
@@ -254,7 +256,7 @@ export default function AdminDashboard() {
   }, [stats]);
 
   if (!hasAdmin) {
-    return <StudentDashboard />;
+    return isTester ? <TestRooms /> : <StudentDashboard />;
   }
 
   return (

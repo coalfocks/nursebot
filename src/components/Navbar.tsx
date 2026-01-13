@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog, Activity } from 'lucide-react';
+import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog, Activity, TestTube } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
-import { hasAdminAccess } from '../lib/roles';
+import { hasAdminAccess, isTestUser } from '../lib/roles';
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { profile, signOut } = useAuthStore();
   const showAdminLinks = hasAdminAccess(profile);
+  const showTestRooms = isTestUser(profile);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -47,17 +48,31 @@ export default function Navbar() {
                 <Activity className="h-4 w-4 mr-1" />
                 EHR
               </Link>
-              <Link
-                to="/cases"
-                className={`${
-                  location.pathname === '/cases' 
-                    ? 'border-blue-500 text-gray-900' 
-                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
-              >
-                <Book className="h-4 w-4 mr-1" />
-                Secure Chat
-              </Link>
+              {showTestRooms ? (
+                <Link
+                  to="/test-rooms"
+                  className={`${
+                    location.pathname === '/test-rooms'
+                      ? 'border-blue-500 text-gray-900'
+                      : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                  } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                >
+                  <TestTube className="h-4 w-4 mr-1" />
+                  Test Rooms
+                </Link>
+              ) : (
+                <Link
+                  to="/cases"
+                  className={`${
+                    location.pathname === '/cases' 
+                      ? 'border-blue-500 text-gray-900' 
+                      : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                  } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                >
+                  <Book className="h-4 w-4 mr-1" />
+                  Secure Chat
+                </Link>
+              )}
               {showAdminLinks && (
                 <>
                   <Link
@@ -142,17 +157,31 @@ export default function Navbar() {
               <Activity className="h-4 w-4 mr-2" />
               EHR
             </Link>
-            <Link
-              to="/cases"
-              className={`${
-                location.pathname === '/cases'
-                  ? 'bg-blue-50 border-blue-500 text-blue-700'
-                  : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
-              } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
-            >
-              <Book className="h-4 w-4 mr-2" />
-              My Cases
-            </Link>
+            {showTestRooms ? (
+              <Link
+                to="/test-rooms"
+                className={`${
+                  location.pathname === '/test-rooms'
+                    ? 'bg-blue-50 border-blue-500 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
+                } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
+              >
+                <TestTube className="h-4 w-4 mr-2" />
+                Test Rooms
+              </Link>
+            ) : (
+              <Link
+                to="/cases"
+                className={`${
+                  location.pathname === '/cases'
+                    ? 'bg-blue-50 border-blue-500 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'
+                } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
+              >
+                <Book className="h-4 w-4 mr-2" />
+                My Cases
+              </Link>
+            )}
             <Link
               to="/profile"
               className={`${

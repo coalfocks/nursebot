@@ -21,10 +21,13 @@ import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
 import CaseBuilder from './pages/CaseBuilder';
 import AdminPatients from './pages/AdminPatients';
+import TestRooms from './pages/TestRooms';
+import { hasAdminAccess, isTestUser } from './lib/roles';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
-  const hasAdminAccess = profile?.role === 'school_admin' || profile?.role === 'super_admin';
+  const hasAdmin = hasAdminAccess(profile);
+  const isTester = isTestUser(profile);
 
   useEffect(() => {
     loadUser();
@@ -73,7 +76,13 @@ function App() {
         />
         <Route 
           path="/dashboard" 
-          element={user ? <AdminDashboard /> : <Navigate to="/login" replace />} 
+          element={
+            user ? (
+              isTester ? <TestRooms /> : <AdminDashboard />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } 
         />
         <Route 
           path="/emr" 
@@ -90,7 +99,7 @@ function App() {
         <Route 
           path="/admin" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <AdminPage />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -100,7 +109,7 @@ function App() {
         <Route 
           path="/admin-dashboard" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <AdminDashboard />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -110,7 +119,7 @@ function App() {
         <Route 
           path="/cases/:caseId/manage" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <CaseManager />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -125,7 +134,7 @@ function App() {
           path="/cases"
           element={
             user ? (
-              hasAdminAccess ? <AdminStudents /> : <MyCases />
+              isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
             ) : (
               <Navigate to="/login" replace />
             )
@@ -134,7 +143,7 @@ function App() {
         <Route
           path="/students/:studentId"
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <AdminStudentCases />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -144,7 +153,7 @@ function App() {
         <Route 
           path="/admin/rooms" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <RoomManagement />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -154,7 +163,7 @@ function App() {
         <Route 
           path="/admin/patients" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <AdminPatients />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -164,7 +173,7 @@ function App() {
         <Route 
           path="/admin/assignments" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <AssignmentManager />
             ) : (
               <Navigate to="/dashboard" replace />
@@ -174,12 +183,22 @@ function App() {
         <Route 
           path="/admin/case-builder" 
           element={
-            user?.id && hasAdminAccess ? (
+            user?.id && hasAdmin ? (
               <CaseBuilder />
             ) : (
               <Navigate to="/dashboard" replace />
             )
           } 
+        />
+        <Route
+          path="/test-rooms"
+          element={
+            user?.id && isTester ? (
+              <TestRooms />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          }
         />
         <Route 
           path="/assignments" 

@@ -19,7 +19,7 @@ export interface Database {
           sms_consent: boolean
           is_admin: boolean
           email: string
-          role: 'student' | 'school_admin' | 'super_admin'
+          role: 'student' | 'school_admin' | 'super_admin' | 'test_user'
           school_id: string | null
           created_at: string
           updated_at: string
@@ -33,7 +33,7 @@ export interface Database {
           sms_consent?: boolean
           is_admin?: boolean
           email?: string
-          role?: 'student' | 'school_admin' | 'super_admin'
+          role?: 'student' | 'school_admin' | 'super_admin' | 'test_user'
           school_id?: string | null
           created_at?: string
           updated_at?: string
@@ -47,7 +47,7 @@ export interface Database {
           sms_consent?: boolean
           is_admin?: boolean
           email?: string
-          role?: 'student' | 'school_admin' | 'super_admin'
+          role?: 'student' | 'school_admin' | 'super_admin' | 'test_user'
           school_id?: string | null
           created_at?: string
           updated_at?: string

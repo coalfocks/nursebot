@@ -8,6 +8,9 @@ export const isSuperAdmin = (profile: Profile | null | undefined): boolean =>
 export const isSchoolAdmin = (profile: Profile | null | undefined): boolean =>
   profile?.role === 'school_admin';
 
+export const isTestUser = (profile: Profile | null | undefined): boolean =>
+  profile?.role === 'test_user';
+
 export const hasAdminAccess = (profile: Profile | null | undefined): boolean =>
   isSuperAdmin(profile) || isSchoolAdmin(profile);
 
