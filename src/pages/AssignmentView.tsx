@@ -236,7 +236,7 @@ export default function AssignmentView() {
                   <h2 className="text-lg font-semibold text-gray-900">Nurse Chat</h2>
                   <button
                     type="button"
-                    onClick={() => navigate('/emr')}
+                    onClick={() => navigate(`/emr?assignmentId=${assignment.id}&roomId=${assignment.room.id}`)}
                     className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
                     title="Open EHR"
                   >

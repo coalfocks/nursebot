@@ -4,7 +4,7 @@ import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { ScrollArea } from './ui/ScrollArea';
-import { FileText, Plus, User, CheckCircle, Clock } from 'lucide-react';
+import { FileText, Plus, User, CheckCircle, Clock, Trash2 } from 'lucide-react';
 import { AINotesGenerator } from './AINoteGenerator';
 import type { Patient, ClinicalNote } from '../lib/types';
 import { emrApi } from '../lib/api';
@@ -99,6 +99,13 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     setEditingNoteId(null);
   };
 
+  const handleDeleteNote = async (noteId: string) => {
+    if (!canEdit) return;
+    if (!window.confirm('Delete this note? This cannot be undone.')) return;
+    setNotes((prev) => prev.filter((note) => note.id !== noteId));
+    await emrApi.deleteClinicalNote(noteId);
+  };
+
   const notesByType = notes.reduce(
     (acc, note) => {
       if (!acc[note.type]) acc[note.type] = [];
@@ -150,9 +157,14 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
                     </Button>
                   </div>
                 ) : (
-                  <Button size="sm" variant="outline" onClick={() => startEditing(note)}>
-                    Edit
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => startEditing(note)}>
+                      Edit
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => void handleDeleteNote(note.id)}>
+                      <Trash2 className="h-4 w-4 text-red-600" />
+                    </Button>
+                  </div>
                 ))}
             </div>
           </div>

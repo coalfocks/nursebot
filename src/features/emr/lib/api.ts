@@ -318,6 +318,17 @@ export const emrApi = {
     return mapClinicalNote(data, data.patient_id ?? '');
   },
 
+  async deleteClinicalNote(noteId: string): Promise<void> {
+    const { error } = await supabase
+      .from('clinical_notes')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', noteId);
+
+    if (error) {
+      console.error('Error deleting clinical note', error);
+    }
+  },
+
   async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
     const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase

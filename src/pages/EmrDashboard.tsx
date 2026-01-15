@@ -23,7 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../features/emr/compon
 import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
-import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
 
 export default function EmrDashboard() {
@@ -44,7 +44,10 @@ export default function EmrDashboard() {
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
   const [activeTab, setActiveTab] = useState('overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
+  const [isEnsuringAssignment, setIsEnsuringAssignment] = useState(false);
+  const [testAssignmentError, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
+  const isTestUserProfile = isTestUser(profile);
   const effectiveAssignmentId = forceBaseline ? undefined : assignmentId ?? derivedAssignmentId;
   const [showMedModal, setShowMedModal] = useState(false);
   const [medForm, setMedForm] = useState({
@@ -190,13 +193,27 @@ export default function EmrDashboard() {
   useEffect(() => {
     if (!selectedPatient || !user || forceBaseline) {
       setDerivedAssignmentId(undefined);
+      setIsEnsuringAssignment(false);
+      setTestAssignmentError(null);
       return;
     }
     const fetchAssignmentForPatient = async () => {
-      if (!selectedPatient.roomId) {
+      if (assignmentId) {
         setDerivedAssignmentId(undefined);
+        setIsEnsuringAssignment(false);
+        setTestAssignmentError(null);
         return;
       }
+      if (!selectedPatient.roomId) {
+        setDerivedAssignmentId(undefined);
+        setIsEnsuringAssignment(false);
+        setTestAssignmentError(null);
+        return;
+      }
+      if (isTestUserProfile) {
+        setIsEnsuringAssignment(true);
+      }
+      setTestAssignmentError(null);
       const { data, error } = await supabase
         .from('student_room_assignments')
         .select('id')
@@ -206,12 +223,41 @@ export default function EmrDashboard() {
       if (error) {
         console.error('Failed to fetch assignment for patient', error);
         setDerivedAssignmentId(undefined);
+        setIsEnsuringAssignment(false);
+        setTestAssignmentError('Unable to load the test session.');
         return;
       }
-      setDerivedAssignmentId(data?.[0]?.id ?? undefined);
+      let assignmentRecord = data?.[0] ?? null;
+      if (!assignmentRecord && isTestUserProfile) {
+        const { data: insertedAssignment, error: insertError } = await supabase
+          .from('student_room_assignments')
+          .insert({
+            student_id: user.id,
+            room_id: selectedPatient.roomId,
+            assigned_by: user.id,
+            status: 'assigned',
+            school_id: profile?.school_id ?? undefined,
+          })
+          .select('id')
+          .maybeSingle();
+        if (insertError) {
+          console.error('Failed to create test assignment', insertError);
+          setDerivedAssignmentId(undefined);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('Unable to start a test session for this room.');
+          return;
+        }
+        assignmentRecord = insertedAssignment ?? null;
+      }
+      setDerivedAssignmentId(assignmentRecord?.id ?? undefined);
+      setIsEnsuringAssignment(false);
     };
     void fetchAssignmentForPatient();
-  }, [selectedPatient, user, forceBaseline]);
+  }, [selectedPatient, user, forceBaseline, assignmentId, isTestUserProfile, profile?.school_id]);
+
+  const testAssignmentPending = Boolean(
+    isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,
+  );
 
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
@@ -286,7 +332,24 @@ export default function EmrDashboard() {
     <div className="medical-grid" style={{ minHeight: showAdminLayout ? 'calc(100vh - 64px)' : undefined }}>
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
 
-      <div className="main-content">
+      <div className="main-content relative">
+        {testAssignmentPending && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/80 backdrop-blur-sm px-6">
+            <div className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
+              <p className="font-semibold">
+                {isEnsuringAssignment ? 'Preparing test session...' : 'Test session unavailable'}
+              </p>
+              <p className="mt-1">
+                {isEnsuringAssignment
+                  ? 'Hold tight while we attach this room to your test session.'
+                  : 'Open this room from Test Rooms to create a test session before editing the EHR.'}
+              </p>
+              {testAssignmentError && (
+                <p className="mt-2 text-red-700">{testAssignmentError}</p>
+              )}
+            </div>
+          </div>
+        )}
         {/* Patient Header */}
         <div className="bg-card border-b border-border p-6">
           <div className="flex items-center justify-between">
