@@ -89,8 +89,13 @@ export default function RoomManagement() {
 
   const handleDeleteRoom = async (room: Room) => {
     if (!isSuperAdmin(profile)) return;
-    if (!window.confirm(`Delete room ${room.room_number}? This will unlink any patient.`)) return;
+    if (!window.confirm(`Delete room ${room.room_number}? This will remove assignments and unlink any patient.`)) return;
     try {
+      const { error: assignmentError } = await supabase
+        .from('student_room_assignments')
+        .delete()
+        .eq('room_id', room.id);
+      if (assignmentError) throw assignmentError;
       await supabase.from('patients').update({ room_id: null }).eq('room_id', room.id);
       await supabase.from('rooms').update({ patient_id: null }).eq('id', room.id);
       const { error } = await supabase.from('rooms').delete().eq('id', room.id);

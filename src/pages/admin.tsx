@@ -33,10 +33,17 @@ export default function AdminPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this room?')) return;
+  const handleDelete = async (id: number, roomNumber: string) => {
+    if (!confirm(`Are you sure you want to delete room ${roomNumber}? This will remove assignments and unlink any patient.`)) return;
 
     try {
+      const { error: assignmentError } = await supabase
+        .from('student_room_assignments')
+        .delete()
+        .eq('room_id', id);
+      if (assignmentError) throw assignmentError;
+      await supabase.from('patients').update({ room_id: null }).eq('room_id', id);
+      await supabase.from('rooms').update({ patient_id: null }).eq('id', id);
       const { error } = await supabase
         .from('rooms')
         .delete()
@@ -113,7 +120,7 @@ export default function AdminPage() {
                         <Pencil className="w-5 h-5" />
                       </button>
                       <button
-                        onClick={() => handleDelete(room.id)}
+                        onClick={() => handleDelete(room.id, room.room_number)}
                         className="p-2 text-gray-600 hover:text-red-600"
                       >
                         <Trash2 className="w-5 h-5" />
