@@ -145,6 +145,10 @@ export default function TestRooms() {
   const handleResetRoom = async (roomId: number) => {
     const assignment = assignmentsByRoom.get(roomId);
     if (!assignment) return;
+    if (!user) {
+      setError('You must be signed in to reset a test session.');
+      return;
+    }
     if (!window.confirm('Reset this room? This clears labs, orders, vitals, notes, imaging, and chat for your test session.')) {
       return;
     }
@@ -155,30 +159,12 @@ export default function TestRooms() {
 
     try {
       const results = await Promise.all([
-        supabase.from('lab_results').update({ deleted_at: now }).eq('assignment_id', assignment.id),
-        supabase
-          .from('medical_orders')
-          .update({ deleted_at: now, status: 'Discontinued' })
-          .eq('assignment_id', assignment.id),
-        supabase.from('vital_signs').update({ deleted_at: now }).eq('assignment_id', assignment.id),
-        supabase.from('clinical_notes').update({ deleted_at: now }).eq('assignment_id', assignment.id),
-        supabase.from('imaging_studies').update({ deleted_at: now }).eq('assignment_id', assignment.id),
+        supabase.from('lab_results').delete().eq('assignment_id', assignment.id),
+        supabase.from('medical_orders').delete().eq('assignment_id', assignment.id),
+        supabase.from('vital_signs').delete().eq('assignment_id', assignment.id),
+        supabase.from('clinical_notes').delete().eq('assignment_id', assignment.id),
+        supabase.from('imaging_studies').delete().eq('assignment_id', assignment.id),
         supabase.from('chat_messages').delete().eq('assignment_id', assignment.id),
-        supabase
-          .from('student_room_assignments')
-          .update({
-            status: 'assigned',
-            completion_token_matched: false,
-            feedback_status: 'pending',
-            feedback_error: null,
-            feedback: null,
-            grade: null,
-            diagnosis: null,
-            treatment_plan: null,
-            nurse_feedback: null,
-            feedback_generated_at: null,
-          })
-          .eq('id', assignment.id),
       ]);
 
       const firstError = results.find((result) => result.error);
@@ -187,12 +173,45 @@ export default function TestRooms() {
         setError('Reset failed. Please try again.');
       }
 
-      const refreshedAssignments = new Map(assignmentsByRoom);
-      const updatedAssignment = refreshedAssignments.get(roomId);
-      if (updatedAssignment) {
-        refreshedAssignments.set(roomId, { ...updatedAssignment, status: 'assigned' });
-        setAssignmentsByRoom(refreshedAssignments);
+      const { error: deleteError } = await supabase
+        .from('student_room_assignments')
+        .delete()
+        .eq('id', assignment.id);
+
+      if (deleteError) {
+        console.error('Failed to remove old test session', deleteError);
+        setError('Reset failed. Please try again.');
+        return;
       }
+
+      const { data: newAssignment, error: insertError } = await supabase
+        .from('student_room_assignments')
+        .insert({
+          student_id: user.id,
+          room_id: roomId,
+          assigned_by: user.id,
+          status: 'assigned',
+          school_id: profile?.school_id ?? undefined,
+        })
+        .select('id, room_id, status, created_at')
+        .maybeSingle();
+
+      if (insertError || !newAssignment) {
+        console.error('Failed to create fresh test session', insertError);
+        setError('Reset succeeded, but a fresh session could not be created.');
+        setAssignmentsByRoom((prev) => {
+          const next = new Map(prev);
+          next.delete(roomId);
+          return next;
+        });
+        return;
+      }
+
+      setAssignmentsByRoom((prev) => {
+        const next = new Map(prev);
+        next.set(roomId, newAssignment as AssignmentSummary);
+        return next;
+      });
     } catch (err) {
       console.error('Failed to reset test session', err);
       setError('Reset failed. Please try again.');

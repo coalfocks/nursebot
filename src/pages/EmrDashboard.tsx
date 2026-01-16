@@ -38,6 +38,10 @@ export default function EmrDashboard() {
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
+  const [customSectionErrors, setCustomSectionErrors] = useState<Record<string, string>>({});
+  const [imageUploadState, setImageUploadState] = useState<Record<string, { uploading: boolean; error?: string }>>(
+    {},
+  );
   const [modalContent, setModalContent] = useState<{ type: 'image' | 'text'; content: string; title: string } | null>(null);
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
@@ -265,18 +269,63 @@ export default function EmrDashboard() {
       selectedPatient.customOverviewSections?.map((section) => ({ ...section })) ?? [],
     );
     setIsEditingCustomSections(true);
+    setCustomSectionErrors({});
+    setImageUploadState({});
   };
 
   const handleSaveCustomSections = async () => {
     if (!selectedPatient) return;
-    const filtered = customSectionDraft
-      .map((section) => ({
-        ...section,
-        id: section.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-        title: section.title.trim(),
-        content: section.content.trim(),
-      }))
-      .filter((section) => section.title && section.content);
+    const normalizeImageUrl = (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed.includes('#:~:text=')) {
+        return trimmed.split('#:~:text=')[0];
+      }
+      return trimmed;
+    };
+
+    const isValidImageUrl = (value: string) => {
+      if (value.startsWith('data:image/')) return true;
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    };
+
+    const nextSections = customSectionDraft.map((section) => ({
+      ...section,
+      id: section.id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+      title: section.title.trim(),
+      content: section.content.trim(),
+    }));
+
+    const nextErrors: Record<string, string> = {};
+    const normalized = nextSections.map((section) => {
+      if (section.type !== 'image') return section;
+      const normalizedContent = normalizeImageUrl(section.content);
+      if (!normalizedContent) {
+        nextErrors[section.id] = 'Image URL is required.';
+        return { ...section, content: normalizedContent };
+      }
+      if (!isValidImageUrl(normalizedContent)) {
+        nextErrors[section.id] = 'Paste a direct image URL (https://... or data:image/...).';
+      }
+      if (section.content.includes('#:~:text=')) {
+        nextErrors[section.id] =
+          'Paste a direct image URL, not a text-highlight link.';
+      }
+      return { ...section, content: normalizedContent };
+    });
+
+    if (Object.keys(nextErrors).length > 0) {
+      setCustomSectionDraft(normalized);
+      setCustomSectionErrors(nextErrors);
+      return;
+    }
+
+    setCustomSectionErrors({});
+    const filtered = normalized.filter((section) => section.title && section.content);
 
     const updated = await emrApi.updatePatientCustomSections(selectedPatient.id, filtered);
     if (updated) {
@@ -286,6 +335,53 @@ export default function EmrDashboard() {
       );
     }
     setIsEditingCustomSections(false);
+  };
+
+  const handleImageUpload = async (sectionId: string, file: File | null) => {
+    if (!file) return;
+    if (!selectedPatient) {
+      setImageUploadState((prev) => ({ ...prev, [sectionId]: { uploading: false, error: 'No patient selected.' } }));
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      setImageUploadState((prev) => ({
+        ...prev,
+        [sectionId]: { uploading: false, error: 'Please select an image file.' },
+      }));
+      return;
+    }
+
+    setImageUploadState((prev) => ({ ...prev, [sectionId]: { uploading: true } }));
+    const extension = file.name.split('.').pop() || 'png';
+    const safeExtension = extension.replace(/[^a-zA-Z0-9]/g, '') || 'png';
+    const path = `overview/${selectedPatient.id}/${sectionId}-${Date.now()}.${safeExtension}`;
+
+    const { error: uploadError } = await supabase
+      .storage
+      .from('imaging_studies')
+      .upload(path, file, { contentType: file.type });
+
+    if (uploadError) {
+      console.error('Failed to upload overview image', uploadError);
+      setImageUploadState((prev) => ({
+        ...prev,
+        [sectionId]: { uploading: false, error: 'Upload failed. Please try again.' },
+      }));
+      return;
+    }
+
+    const { data } = supabase.storage.from('imaging_studies').getPublicUrl(path);
+    const publicUrl = data.publicUrl;
+    setCustomSectionDraft((prev) =>
+      prev.map((section) => (section.id === sectionId ? { ...section, content: publicUrl } : section)),
+    );
+    setCustomSectionErrors((prev) => {
+      if (!prev[sectionId]) return prev;
+      const next = { ...prev };
+      delete next[sectionId];
+      return next;
+    });
+    setImageUploadState((prev) => ({ ...prev, [sectionId]: { uploading: false } }));
   };
 
   const handleSaveVitals = async () => {
@@ -957,16 +1053,50 @@ export default function EmrDashboard() {
                             {section.type === 'image' ? 'Image URL' : 'Content'}
                           </label>
                           {section.type === 'image' ? (
-                            <input
-                              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                              value={section.content}
-                              onChange={(e) =>
-                                setCustomSectionDraft((prev) =>
-                                  prev.map((s, i) => (i === index ? { ...s, content: e.target.value } : s)),
-                                )
-                              }
-                              placeholder="https://example.com/image.png"
-                            />
+                            <div className="mt-1 space-y-2">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <input
+                                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                                  value={section.content}
+                                  onChange={(e) => {
+                                    const nextValue = e.target.value;
+                                    setCustomSectionDraft((prev) =>
+                                      prev.map((s, i) => (i === index ? { ...s, content: nextValue } : s)),
+                                    );
+                                    if (customSectionErrors[section.id]) {
+                                      setCustomSectionErrors((prev) => {
+                                        const next = { ...prev };
+                                        delete next[section.id];
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  placeholder="https://example.com/image.png"
+                                />
+                                <label className="inline-flex items-center justify-center rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted cursor-pointer">
+                                  {imageUploadState[section.id]?.uploading ? 'Uploading...' : 'Upload image'}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(event) => {
+                                      const file = event.target.files?.[0] ?? null;
+                                      void handleImageUpload(section.id, file);
+                                      event.currentTarget.value = '';
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                              {customSectionErrors[section.id] && (
+                                <p className="text-xs text-red-600">{customSectionErrors[section.id]}</p>
+                              )}
+                              {imageUploadState[section.id]?.error && (
+                                <p className="text-xs text-red-600">{imageUploadState[section.id]?.error}</p>
+                              )}
+                              {section.content && !customSectionErrors[section.id] && (
+                                <p className="text-xs text-muted-foreground">Current image URL saved.</p>
+                              )}
+                            </div>
                           ) : (
                             <textarea
                               className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
