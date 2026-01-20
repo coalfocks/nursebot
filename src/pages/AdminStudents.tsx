@@ -292,10 +292,10 @@ export default function AdminStudents() {
               <Filter className="mr-2 h-4 w-4" />
               Advanced Filters
             </button>
-            {scopedSchoolId && <BulkUserUpload schoolId={scopedSchoolId} onSuccess={() => {
+            <BulkUserUpload onSuccess={() => {
               // Trigger a refresh by reloading the page
               window.location.reload();
-            }} />}
+            }} />
           </div>
         </div>
 

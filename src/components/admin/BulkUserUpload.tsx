@@ -3,18 +3,15 @@ import { Upload, X, Check, AlertCircle, Loader2, Download } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface BulkUserUploadProps {
-  schoolId: string;
   onSuccess?: (count: number) => void;
 }
 
 interface CsvRow {
+  school: string;
+  name: string;
   email: string;
   password: string;
-  full_name: string;
-  study_year: string;
-  specialization_interest: string;
-  phone_number?: string;
-  sms_consent?: string;
+  specialty: string;
 }
 
 interface UploadResult {
@@ -34,7 +31,7 @@ interface BulkCreateResponse {
   };
 }
 
-export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadProps) {
+export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
@@ -51,8 +48,6 @@ export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadPr
     'Emergency Medicine',
     'Family Medicine',
   ];
-
-  const STUDY_YEARS = ['MS-1', 'MS-2', 'MS-3', 'MS-4', 'PGY-1', 'PGY-2'];
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -85,23 +80,16 @@ export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadPr
       });
 
       // Validate required fields
-      if (!row.email || !row.password || !row.full_name) {
-        throw new Error(`Row ${i + 1}: Missing required fields (email, password, full_name)`);
-      }
-
-      // Validate study year format
-      if (!STUDY_YEARS.includes(row.study_year)) {
+      if (!row.school || !row.name || !row.email || !row.password || !row.specialty) {
         throw new Error(
-          `Row ${i + 1}: Invalid study_year "${row.study_year}". Must be one of: ${STUDY_YEARS.join(', ')}`,
+          `Row ${i + 1}: Missing required fields (school, name, email, password, specialty)`,
         );
       }
 
       // Validate specialty
-      if (row.specialization_interest && !SPECIALTIES.includes(row.specialization_interest)) {
+      if (!SPECIALTIES.includes(row.specialty)) {
         throw new Error(
-          `Row ${i + 1}: Invalid specialization_interest "${row.specialization_interest}". Must be one of: ${SPECIALTIES.join(
-            ', ',
-          )}`,
+          `Row ${i + 1}: Invalid specialty "${row.specialty}". Must be one of: ${SPECIALTIES.join(', ')}`,
         );
       }
 
@@ -125,7 +113,6 @@ export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadPr
       const { data, error } = await supabase.functions.invoke<BulkCreateResponse>('bulk-create-users', {
         body: {
           users,
-          schoolId,
         },
       });
 
@@ -155,11 +142,11 @@ export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadPr
   };
 
   const downloadTemplate = () => {
-    const headers = ['email', 'password', 'full_name', 'study_year', 'specialization_interest', 'phone_number', 'sms_consent'];
+    const headers = ['school', 'name', 'email', 'password', 'specialty'];
     const sampleData = [
-      'student1@example.com,Password123,John Doe,MS-1,Internal Medicine,+1234567890,true',
-      'student2@example.com,Password123,Jane Smith,MS-2,Pediatrics,,false',
-      'student3@example.com,Password123,Bob Johnson,MS-3,Emergency Medicine,+1987654321,true',
+      'Harvard Medical School,John Doe,john.doe@example.com,Password123,Internal Medicine',
+      'Stanford Medicine,Jane Smith,jane.smith@example.com,Password123,Pediatrics',
+      'Johns Hopkins,Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine',
     ];
     const csvContent = [headers.join(','), ...sampleData].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -218,8 +205,8 @@ export default function BulkUserUpload({ schoolId, onSuccess }: BulkUserUploadPr
                 <div className="flex-1">
                   <h3 className="text-sm font-medium text-blue-900">CSV Template</h3>
                   <p className="mt-1 text-xs text-blue-700">
-                    Download a template file to see the required format. Required fields: email, password,
-                    full_name, study_year, specialization_interest
+                    Download a template file to see the required format. Required fields: school, name,
+                    email, password, specialty
                   </p>
                   <button
                     type="button"

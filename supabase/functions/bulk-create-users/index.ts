@@ -2,18 +2,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 
 interface CsvUser {
+  school: string;
+  name: string;
   email: string;
   password: string;
-  full_name: string;
-  study_year: string;
-  specialization_interest: string;
-  phone_number?: string;
-  sms_consent?: string;
+  specialty: string;
 }
 
 interface BulkCreateRequest {
   users: CsvUser[];
-  schoolId: string;
 }
 
 interface CreateResult {
@@ -31,22 +28,6 @@ if (!supabaseUrl || !serviceRoleKey) {
 }
 
 const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
-
-function parseStudyYear(year: string): number {
-  const yearMap: Record<string, number> = {
-    'MS-1': 1,
-    'MS-2': 2,
-    'MS-3': 3,
-    'MS-4': 4,
-    'PGY-1': 5,
-    'PGY-2': 6,
-  };
-  return yearMap[year] || parseInt(year, 10) || 1;
-}
-
-function parseSmsConsent(consent: string = ''): boolean {
-  return consent.toLowerCase() === 'true' || consent.toLowerCase() === 'yes' || consent === '1';
-}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -67,7 +48,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { users, schoolId }: BulkCreateRequest = await req.json();
+    const { users }: BulkCreateRequest = await req.json();
 
     if (!users || !Array.isArray(users) || users.length === 0) {
       return new Response(
@@ -82,56 +63,38 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (!schoolId) {
-      return new Response(
-        JSON.stringify({ error: 'schoolId is required' }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-    }
-
-    // Verify school exists
-    const { data: school, error: schoolError } = await supabaseAdmin
-      .from('schools')
-      .select('id')
-      .eq('id', schoolId)
-      .single();
-
-    if (schoolError || !school) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid school ID' }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-    }
-
     const results: CreateResult[] = [];
 
     for (const user of users) {
-      const { email, password, full_name, study_year, specialization_interest, phone_number, sms_consent } =
-        user;
+      const { school, name, email, password, specialty } = user;
 
       // Validate required fields
-      if (!email || !password || !full_name) {
+      if (!school || !name || !email || !password || !specialty) {
         results.push({
           success: false,
           email: email || 'unknown',
-          error: 'Missing required fields: email, password, and full_name are required',
+          error: 'Missing required fields: school, name, email, password, and specialty are required',
         });
         continue;
       }
 
       try {
+        // Look up school by name
+        const { data: schoolData, error: schoolError } = await supabaseAdmin
+          .from('schools')
+          .select('id')
+          .ilike('name', school.trim())
+          .single();
+
+        if (schoolError || !schoolData) {
+          results.push({
+            success: false,
+            email,
+            error: `School "${school}" not found`,
+          });
+          continue;
+        }
+
         // Create auth user
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
           email,
@@ -158,21 +121,17 @@ Deno.serve(async (req) => {
         }
 
         // Create profile
-        const parsedStudyYear = parseStudyYear(study_year);
-        const parsedSmsConsent = parseSmsConsent(sms_consent);
-        const formattedPhoneNumber = phone_number?.trim() || null;
-
         const { error: profileError } = await supabaseAdmin.from('profiles').insert([
           {
             id: authData.user.id,
             email,
-            full_name: full_name.trim(),
-            study_year: parsedStudyYear,
-            specialization_interest: specialization_interest?.trim() || null,
-            phone_number: formattedPhoneNumber,
-            sms_consent: parsedSmsConsent,
+            full_name: name.trim(),
+            study_year: 1,
+            specialization_interest: specialty.trim(),
+            phone_number: null,
+            sms_consent: false,
             role: 'student',
-            school_id: schoolId,
+            school_id: schoolData.id,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
