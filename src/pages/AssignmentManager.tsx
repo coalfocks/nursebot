@@ -214,7 +214,6 @@ export default function AssignmentManager() {
     try {
       // Convert effective date to UTC
       const effectiveDateTime = new Date(effectiveDate);
-      const effectiveDateUTC = effectiveDateTime.toISOString();
 
       // Calculate default due date if not specified and convert to UTC
       let calculatedDueDate = dueDate;
@@ -229,14 +228,25 @@ export default function AssignmentManager() {
       const windowStartUTC = windowStart ? new Date(windowStart).toISOString() : null;
       const windowEndUTC = windowEnd ? new Date(windowEnd).toISOString() : null;
 
-      // Create assignments for all selected students
-      const assignments = studentsToAssign.map((studentId) => {
+      // Create assignments for all selected students with staggered delivery
+      const assignments = studentsToAssign.map((studentId, index) => {
         const studentProfile = students.find((s) => s.id === studentId);
         const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
 
         if (!assignmentSchoolId) {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
+
+        // Calculate staggered effective date
+        // For bulk assignments, add random 5-10 minute offset
+        // For individual assignments, use the base effective date
+        let studentEffectiveDate = effectiveDateTime;
+        if (targetingMode === 'bulk' && studentsToAssign.length > 1) {
+          // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
+          const randomOffset = Math.floor(Math.random() * 300000) + 300000;
+          studentEffectiveDate = new Date(effectiveDateTime.getTime() + randomOffset);
+        }
+        const effectiveDateUTC = studentEffectiveDate.toISOString();
 
         return {
           student_id: studentId,
