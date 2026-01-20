@@ -7,12 +7,11 @@ import AdminLayout from '../components/admin/AdminLayout';
 import { Loader2, Clock, Book, CheckCircle, ArrowRight, AlertCircle } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 import { hasAdminAccess } from '../lib/roles';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string;
-    };
+    specialties?: Database['public']['Tables']['specialties']['Row'][];
   };
 };
 
@@ -31,14 +30,13 @@ export default function MyCases() {
   const fetchAssignments = async () => {
     try {
       const now = new Date().toISOString();
-      
+
       const { data, error } = await supabase
         .from('student_room_assignments')
         .select(`
           *,
           room:room_id (
-            *,
-            specialty:specialty_id (name)
+            *
           )
         `)
         .eq('student_id', user?.id)
@@ -46,7 +44,19 @@ export default function MyCases() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setAssignments(data || []);
+
+      // Fetch specialties for each room
+      const assignmentsWithSpecialties = await Promise.all(
+        (data || []).map(async (assignment) => ({
+          ...assignment,
+          room: {
+            ...assignment.room,
+            specialties: await fetchSpecialtiesForRoom(assignment.room),
+          },
+        }))
+      );
+
+      setAssignments(assignmentsWithSpecialties);
     } catch (error) {
       console.error('Error fetching assignments:', error);
     } finally {
@@ -183,7 +193,9 @@ export default function MyCases() {
                         </div>
                       )}
                       <p className="mt-2 text-sm text-gray-500">
-                        {assignment.room.specialty?.name || 'General Practice'}
+                        {assignment.room.specialties && assignment.room.specialties.length > 0
+                          ? assignment.room.specialties.map(s => s.name).join(', ')
+                          : 'General Practice'}
                       </p>
 
                       {assignment.due_date && (

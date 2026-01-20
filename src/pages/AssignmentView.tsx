@@ -7,12 +7,11 @@ import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, Ex
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string;
-    };
+    specialties?: Database['public']['Tables']['specialties']['Row'][];
   };
 };
 
@@ -78,10 +77,7 @@ export default function AssignmentView() {
           ),
           room:room_id (
             id,
-            room_number,
-            specialty:specialty_id (
-              name
-            )
+            room_number
           )
         `)
         .eq('id', assignmentId)
@@ -89,14 +85,25 @@ export default function AssignmentView() {
 
       if (error) throw error;
       if (!data) throw new Error('Assignment not found');
-      
+
       // Verify this assignment belongs to the current user
       if (data.student_id !== user?.id) {
         throw new Error('Unauthorized');
       }
 
-      console.log('Fetched assignment data:', data);
-      setAssignment(data);
+      // Fetch specialties for the room
+      const roomWithSpecialties = {
+        ...data.room,
+        specialties: await fetchSpecialtiesForRoom(data.room),
+      };
+
+      const assignmentWithSpecialties = {
+        ...data,
+        room: roomWithSpecialties,
+      };
+
+      console.log('Fetched assignment data:', assignmentWithSpecialties);
+      setAssignment(assignmentWithSpecialties);
 
       // If status is 'assigned', update it to 'in_progress'
       if (data.status === 'assigned') {
@@ -223,7 +230,9 @@ export default function AssignmentView() {
                   {getStatusBadge(assignment.status)}
                 </div>
                 <p className="mt-1 text-sm text-gray-500">
-                  {assignment.room.specialty?.name || 'General Practice'} - {assignment.room.difficulty_level || 'Standard'} difficulty
+                  {assignment.room.specialties && assignment.room.specialties.length > 0
+                    ? assignment.room.specialties.map(s => s.name).join(', ')
+                    : 'General Practice'} - {assignment.room.difficulty_level || 'Standard'} difficulty
                 </p>
               </div>
             </div>

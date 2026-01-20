@@ -6,15 +6,14 @@ import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
 
 type AssignmentWithRoom = AssignmentRow & {
   room: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string | null;
-    } | null;
+    specialties?: Database['public']['Tables']['specialties']['Row'][];
   } | null;
 };
 
@@ -53,8 +52,7 @@ export default function AdminStudentCases() {
           .select(`
             *,
             room:room_id (
-              *,
-              specialty:specialty_id (name)
+              *
             )
           `)
           .eq('student_id', studentId)
@@ -72,9 +70,20 @@ export default function AdminStudentCases() {
         if (studentError) throw studentError;
         if (assignmentError) throw assignmentError;
 
+        // Fetch specialties for each assignment's room
+        const assignmentsWithSpecialties = await Promise.all(
+          (assignmentRows ?? []).map(async (assignment) => ({
+            ...assignment,
+            room: assignment.room ? {
+              ...assignment.room,
+              specialties: await fetchSpecialtiesForRoom(assignment.room),
+            } : null,
+          }))
+        );
+
         if (isMounted) {
           setStudent(studentRow as ProfileRow);
-          setAssignments((assignmentRows ?? []) as AssignmentWithRoom[]);
+          setAssignments(assignmentsWithSpecialties as AssignmentWithRoom[]);
         }
       } catch (err) {
         console.error('Failed to load student assignments', err);
@@ -187,7 +196,9 @@ export default function AdminStudentCases() {
                           Room {room?.room_number ?? '—'}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {room?.specialty?.name ?? 'General Practice'}
+                          {room?.specialties && room.specialties.length > 0
+                            ? room.specialties.map(s => s.name).join(', ')
+                            : 'General Practice'}
                         </div>
                       </td>
                       <td className="px-4 py-3">{getStatusBadge(assignment.status)}</td>

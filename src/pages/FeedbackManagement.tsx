@@ -9,13 +9,12 @@ import { generateFeedback } from '../lib/feedbackService';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: Database['public']['Tables']['profiles']['Row'];
   room: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string;
-    };
+    specialties?: Database['public']['Tables']['specialties']['Row'][];
   };
 };
 
@@ -55,10 +54,7 @@ export default function FeedbackManagement() {
           ),
           room:room_id (
             id,
-            room_number,
-            specialty:specialty_id (
-              name
-            )
+            room_number
           )
         `)
         .order('created_at', { ascending: false });
@@ -70,7 +66,19 @@ export default function FeedbackManagement() {
       const { data, error } = await query;
 
       if (error) throw error;
-      setAssignments(data || []);
+
+      // Fetch specialties for each room
+      const assignmentsWithSpecialties = await Promise.all(
+        (data || []).map(async (assignment) => ({
+          ...assignment,
+          room: {
+            ...assignment.room,
+            specialties: await fetchSpecialtiesForRoom(assignment.room),
+          },
+        }))
+      );
+
+      setAssignments(assignmentsWithSpecialties);
     } catch (error) {
       console.error('Error fetching assignments:', error);
     } finally {
@@ -180,7 +188,7 @@ export default function FeedbackManagement() {
                     </h3>
                     <p className="text-sm text-gray-500">
                       Room {assignment.room.room_number}
-                      {assignment.room.specialty?.name && ` - ${assignment.room.specialty.name}`}
+                      {assignment.room.specialties && assignment.room.specialties.length > 0 && ` - ${assignment.room.specialties.map(s => s.name).join(', ')}`}
                     </p>
                     {assignment.student.email && (
                       <p className="text-sm text-gray-500">{assignment.student.email}</p>

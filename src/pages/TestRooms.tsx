@@ -6,11 +6,10 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { isTestUser } from '../lib/roles';
 import type { Database } from '../lib/database.types';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
-  specialty?: {
-    name: string | null;
-  } | null;
+  specialties?: Database['public']['Tables']['specialties']['Row'][];
 };
 
 type AssignmentSummary = Pick<
@@ -45,12 +44,21 @@ export default function TestRooms() {
       try {
         const { data, error: roomsError } = await supabase
           .from('rooms')
-          .select('*, specialty:specialty_id (name)')
+          .select('*')
           .order('room_number');
 
         if (roomsError) throw roomsError;
+
+        // Fetch specialties for each room
+        const roomsWithSpecialties = await Promise.all(
+          (data ?? []).map(async (room) => ({
+            ...room,
+            specialties: await fetchSpecialtiesForRoom(room),
+          }))
+        );
+
         if (isMounted) {
-          setRooms((data ?? []) as Room[]);
+          setRooms(roomsWithSpecialties as Room[]);
         }
       } catch (err) {
         console.error('Failed to load rooms', err);
@@ -266,7 +274,9 @@ export default function TestRooms() {
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900">Room {room.room_number}</h2>
                       <p className="mt-1 text-sm text-gray-500">
-                        {room.specialty?.name || 'General Practice'}
+                        {room.specialties && room.specialties.length > 0
+                          ? room.specialties.map(s => s.name).join(', ')
+                          : 'General Practice'}
                         {room.difficulty_level ? ` • ${room.difficulty_level}` : ''}
                       </p>
                     </div>

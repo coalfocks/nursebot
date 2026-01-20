@@ -5,12 +5,11 @@ import { Loader2, FileText } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
+import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string;
-    };
+    specialties?: Database['public']['Tables']['specialties']['Row'][];
   };
 };
 
@@ -60,8 +59,7 @@ export default function StudentDashboard() {
         .select(`
           *,
           room:room_id (
-            *,
-            specialty:specialty_id (name)
+            *
           )
         `)
         .eq('student_id', user?.id)
@@ -69,7 +67,19 @@ export default function StudentDashboard() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setAssignments(data || []);
+
+      // Fetch specialties for each room
+      const assignmentsWithSpecialties = await Promise.all(
+        (data || []).map(async (assignment) => ({
+          ...assignment,
+          room: {
+            ...assignment.room,
+            specialties: await fetchSpecialtiesForRoom(assignment.room),
+          },
+        }))
+      );
+
+      setAssignments(assignmentsWithSpecialties);
 
       // Get signed URLs for all PDFs
       const urls: Record<string, string> = {};
@@ -124,7 +134,9 @@ export default function StudentDashboard() {
                       Room {assignment.room.room_number}
                     </h3>
                     <p className="text-sm text-gray-500">
-                      {assignment.room.specialty?.name || 'General Practice'}
+                      {assignment.room.specialties && assignment.room.specialties.length > 0
+                        ? assignment.room.specialties.map(s => s.name).join(', ')
+                        : 'General Practice'}
                     </p>
                   </div>
                   {assignment.room.pdf_url && (
@@ -142,7 +154,9 @@ export default function StudentDashboard() {
             <div className="h-full">
               <div className="mb-4">
                 <h2 className="text-lg font-semibold text-gray-900">
-                  Room {selectedRoom.room.room_number} - {selectedRoom.room.specialty?.name || 'General Practice'}
+                  Room {selectedRoom.room.room_number} - {selectedRoom.room.specialties && selectedRoom.room.specialties.length > 0
+                    ? selectedRoom.room.specialties.map(s => s.name).join(', ')
+                    : 'General Practice'}
                 </h2>
               </div>
               {selectedRoom.room.pdf_url && pdfUrls[selectedRoom.room.pdf_url] ? (

@@ -2,21 +2,19 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Trash2, AlertTriangle } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
-import { getRoomDisplayName } from '../lib/roomHelpers';
+import { getRoomDisplayName, fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
-  specialty: {
-    name: string;
-  } | null;
   patients?: Database['public']['Tables']['patients']['Row'][] | null;
   patient?: Database['public']['Tables']['patients']['Row'] | null;
+  specialties?: Database['public']['Tables']['specialties']['Row'][];
 };
 
 export default function RoomManagement() {
@@ -48,9 +46,6 @@ export default function RoomManagement() {
         .from('rooms')
         .select(`
           *,
-          specialty:specialty_id (
-            name
-          ),
           patients:patients!patients_room_id_fkey (*),
           patient:patient_id (*)
         `)
@@ -61,9 +56,18 @@ export default function RoomManagement() {
       }
 
       const { data, error } = await query;
-      
+
       if (error) throw error;
-      setRooms(data || []);
+
+      // Fetch specialties for each room
+      const roomsWithSpecialties = await Promise.all(
+        (data || []).map(async (room) => ({
+          ...room,
+          specialties: await fetchSpecialtiesForRoom(room),
+        }))
+      );
+
+      setRooms(roomsWithSpecialties);
     } catch (error) {
       console.error('Error fetching rooms:', error);
     } finally {
@@ -280,10 +284,12 @@ export default function RoomManagement() {
                                   Room {room.room_number}
                                 </h3>
                           <div className="flex items-center space-x-2 mt-1">
-                      {room.specialty && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          {room.specialty.name}
-                        </span>
+                      {room.specialties && room.specialties.length > 0 && (
+                        room.specialties.map((specialty) => (
+                          <span key={specialty.id} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {specialty.name}
+                          </span>
+                        ))
                       )}
                       {room.difficulty_level && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">

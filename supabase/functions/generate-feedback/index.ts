@@ -96,7 +96,8 @@ Deno.serve(async (req) => {
           ),
           room:room_id (
             *,
-            specialty:specialty_id (name)
+            specialty_id,
+            specialty_ids
           )
         `)
         .eq('id', assignmentId)
@@ -117,6 +118,23 @@ Deno.serve(async (req) => {
       }
 
       console.log('Fetched assignment details');
+
+      // Fetch specialty names if specialty_ids exist
+      let specialtyNames: string[] = [];
+      if (assignment.room.specialty_ids && assignment.room.specialty_ids.length > 0) {
+        const { data: specialties } = await supabaseClient
+          .from('specialties')
+          .select('name')
+          .in('id', assignment.room.specialty_ids);
+        specialtyNames = specialties?.map(s => s.name) || [];
+      } else if (assignment.room.specialty_id) {
+        const { data: specialty } = await supabaseClient
+          .from('specialties')
+          .select('name')
+          .eq('id', assignment.room.specialty_id)
+          .single();
+        if (specialty) specialtyNames = [specialty.name];
+      }
 
       // Fetch chat messages
       const { data: messages, error: messagesError } = await supabaseClient
@@ -140,7 +158,7 @@ Deno.serve(async (req) => {
 
       const context = `
 Room Information:
-Specialty: ${assignment.room.specialty?.name || 'General'}
+Specialty: ${specialtyNames.length > 0 ? specialtyNames.join(', ') : 'General'}
 Difficulty Level: ${assignment.room.difficulty_level || 'Not specified'}
 Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
 Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
