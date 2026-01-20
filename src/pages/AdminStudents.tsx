@@ -6,6 +6,7 @@ import type { Database } from '../lib/database.types';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
+import BulkUserUpload from '../components/admin/BulkUserUpload';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
@@ -291,13 +292,10 @@ export default function AdminStudents() {
               <Filter className="mr-2 h-4 w-4" />
               Advanced Filters
             </button>
-            <button
-              type="button"
-              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-              onClick={() => alert('Student creation flow coming soon')}
-            >
-              Add Student
-            </button>
+            {scopedSchoolId && <BulkUserUpload schoolId={scopedSchoolId} onSuccess={() => {
+              // Trigger a refresh by reloading the page
+              window.location.reload();
+            }} />}
           </div>
         </div>
 
