@@ -65,7 +65,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               }));
           }
         }
-      } catch (err) {
+      } catch {
         // If not JSON, treat as plain text context
         contextText = raw;
       }
@@ -136,7 +136,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const scopedSchoolId = isSuperAdmin(profile)
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
-  const [schoolId, setSchoolId] = useState<string>(scopedSchoolId ?? '');
+  const [schoolId, setSchoolId] = useState<string>(() => scopedSchoolId ?? '');
   const initialAvailableSchoolIds = (() => {
     const ids = new Set<string>();
     if (room?.school_id) ids.add(room.school_id);
@@ -227,15 +227,15 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     let isMounted = true;
 
     const loadSpecialties = async () => {
+      if (!schoolId) return;
+
       try {
         let query = supabase
           .from('specialties')
           .select('*')
           .order('name');
 
-        if (schoolId) {
-          query = query.eq('school_id', schoolId);
-        }
+        query = query.eq('school_id', schoolId);
 
         const { data, error } = await query;
 
@@ -260,7 +260,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   }, [schoolId]);
 
   useEffect(() => {
-    if (!schoolId && scopedSchoolId) {
+    if (scopedSchoolId && scopedSchoolId !== schoolId) {
       setSchoolId(scopedSchoolId);
     }
   }, [scopedSchoolId, schoolId]);
