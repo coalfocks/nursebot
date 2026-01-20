@@ -14,6 +14,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     study_year: number;
     email: string | null;
     school_id: string | null;
+    specialization_interest: string | null;
   };
   room: {
     id: number;
@@ -28,6 +29,7 @@ type Room = Database['public']['Tables']['rooms']['Row'];
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
+type School = Database['public']['Tables']['schools']['Row'];
 
 export default function AssignmentManager() {
   const { user, profile, activeSchoolId } = useAuthStore();
@@ -38,6 +40,7 @@ export default function AssignmentManager() {
   const [students, setStudents] = useState<Profile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
+  const [schools, setSchools] = useState<School[]>([]);
   const [filters, setFilters] = useState({
     status: '',
     studentId: '',
@@ -46,11 +49,15 @@ export default function AssignmentManager() {
     search: ''
   });
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [targetingMode, setTargetingMode] = useState<'individual' | 'bulk'>('individual');
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedRoom, setSelectedRoom] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
   const [effectiveDate, setEffectiveDate] = useState<string>('');
+  const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
+  const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
+  const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
   const [editingAssignment, setEditingAssignment] = useState<{
     id: string;
     effective_date: string;
@@ -73,7 +80,8 @@ export default function AssignmentManager() {
         fetchAssignments(),
         fetchStudents(),
         fetchRooms(),
-        fetchSpecialties()
+        fetchSpecialties(),
+        fetchSchools()
       ]);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -92,7 +100,8 @@ export default function AssignmentManager() {
           full_name,
           study_year,
           email,
-          school_id
+          school_id,
+          specialization_interest
         ),
         room:room_id (
           id,
@@ -117,7 +126,7 @@ export default function AssignmentManager() {
   const fetchStudents = async () => {
     let query = supabase
       .from('profiles')
-      .select('id, full_name, study_year, email, role, school_id')
+      .select('id, full_name, study_year, email, role, school_id, specialization_interest')
       .eq('role', 'student')
       .order('full_name');
 
@@ -164,18 +173,38 @@ export default function AssignmentManager() {
     setSpecialties(data || []);
   };
 
+  const fetchSchools = async () => {
+    const { data, error } = await supabase
+      .from('schools')
+      .select('*')
+      .order('name');
+
+    if (error) throw error;
+    setSchools(data || []);
+  };
+
   const handleAssign = async () => {
-    if (!selectedRoom || !selectedStudent || !user || !effectiveDate) {
-      alert('Please select a room, student, and effective date');
+    if (!selectedRoom || !user || !effectiveDate) {
+      alert('Please select a room and effective date');
       return;
     }
 
-    const selectedStudentProfile = students.find((student) => student.id === selectedStudent);
-    const assignmentSchoolId = selectedStudentProfile?.school_id ?? scopedSchoolId;
+    // Determine which students to assign
+    let studentsToAssign: string[] = [];
 
-    if (!assignmentSchoolId) {
-      alert('Unable to determine school for this assignment. Please select a school scope first.');
-      return;
+    if (targetingMode === 'individual') {
+      if (!selectedStudent) {
+        alert('Please select a student');
+        return;
+      }
+      studentsToAssign = [selectedStudent];
+    } else {
+      // Bulk mode
+      if (selectedBulkStudents.length === 0) {
+        alert('Please select at least one student');
+        return;
+      }
+      studentsToAssign = selectedBulkStudents;
     }
 
     try {
@@ -192,17 +221,29 @@ export default function AssignmentManager() {
         calculatedDueDate = new Date(calculatedDueDate).toISOString();
       }
 
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .insert({
-          student_id: selectedStudent,
+      // Create assignments for all selected students
+      const assignments = studentsToAssign.map((studentId) => {
+        const studentProfile = students.find((s) => s.id === studentId);
+        const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
+
+        if (!assignmentSchoolId) {
+          throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
+        }
+
+        return {
+          student_id: studentId,
           room_id: parseInt(selectedRoom),
           assigned_by: user.id,
-          status: 'assigned',
+          status: 'assigned' as const,
           due_date: calculatedDueDate || null,
           effective_date: effectiveDateUTC || null,
           school_id: assignmentSchoolId,
-        });
+        };
+      });
+
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .insert(assignments);
 
       if (error) throw error;
 
@@ -212,10 +253,14 @@ export default function AssignmentManager() {
       setSelectedRoom('');
       setDueDate('');
       setEffectiveDate('');
+      setTargetingMode('individual');
+      setBulkTargetSchoolId('');
+      setBulkTargetSpecialty('');
+      setSelectedBulkStudents([]);
       await fetchAssignments();
     } catch (error) {
       console.error('Error assigning case:', error);
-      alert('Error assigning case. Please try again.');
+      alert(`Error assigning case: ${error instanceof Error ? error.message : 'Please try again.'}`);
     }
   };
 
@@ -582,6 +627,7 @@ export default function AssignmentManager() {
                       </div>
                       <div className="text-sm text-gray-500">
                         Year {assignment.student.study_year}
+                        {assignment.student.specialization_interest && ` • ${assignment.student.specialization_interest}`}
                       </div>
                       {assignment.student.email && (
                         <div className="text-sm text-gray-500">{assignment.student.email}</div>
@@ -687,10 +733,44 @@ export default function AssignmentManager() {
         <div className="fixed z-10 inset-0 overflow-y-auto">
           <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
-            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6">
+            <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6">
               <div>
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Assign Case</h3>
                 <div className="space-y-4">
+                  {/* Targeting Mode Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Targeting Mode</label>
+                    <div className="mt-2 flex gap-4">
+                      <label className="inline-flex items-center">
+                        <input
+                          type="radio"
+                          value="individual"
+                          checked={targetingMode === 'individual'}
+                          onChange={(e) => {
+                            setTargetingMode(e.target.value as 'individual' | 'bulk');
+                            setSelectedBulkStudents([]);
+                          }}
+                          className="form-radio h-4 w-4 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">Individual Student</span>
+                      </label>
+                      <label className="inline-flex items-center">
+                        <input
+                          type="radio"
+                          value="bulk"
+                          checked={targetingMode === 'bulk'}
+                          onChange={(e) => {
+                            setTargetingMode(e.target.value as 'individual' | 'bulk');
+                            setSelectedStudent('');
+                          }}
+                          className="form-radio h-4 w-4 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">Bulk by School/Specialty</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Room Selection */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Select Room</label>
                     <select
@@ -706,40 +786,143 @@ export default function AssignmentManager() {
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Search Students</label>
-                    <div className="mt-1">
-                      <input
-                        type="text"
-                        value={studentSearch}
-                        onChange={(e) => setStudentSearch(e.target.value)}
-                        placeholder="Type to search students..."
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
-                      {filteredStudents.map(student => (
-                        <button
-                          key={student.id}
-                          type="button"
-                          onClick={() => setSelectedStudent(student.id)}
-                          className={`w-full text-left px-4 py-2 hover:bg-gray-50 focus:outline-none ${
-                            selectedStudent === student.id ? 'bg-blue-50' : ''
-                          }`}
-                        >
-                          <div className="font-medium text-gray-900">{student.full_name}</div>
-                          <div className="text-sm text-gray-500">
-                            Year {student.study_year}
+
+                  {/* Individual Student Selection */}
+                  {targetingMode === 'individual' ? (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Search Students</label>
+                      <div className="mt-1">
+                        <input
+                          type="text"
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          placeholder="Type to search students..."
+                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
+                        {filteredStudents.map(student => (
+                          <button
+                            key={student.id}
+                            type="button"
+                            onClick={() => setSelectedStudent(student.id)}
+                            className={`w-full text-left px-4 py-2 hover:bg-gray-50 focus:outline-none ${
+                              selectedStudent === student.id ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <div className="font-medium text-gray-900">{student.full_name}</div>
+                            <div className="text-sm text-gray-500">
+                              Year {student.study_year}
+                              {student.specialization_interest && ` • ${student.specialization_interest}`}
+                            </div>
+                          </button>
+                        ))}
+                        {filteredStudents.length === 0 && (
+                          <div className="px-4 py-2 text-sm text-gray-500">
+                            No students found
                           </div>
-                        </button>
-                      ))}
-                      {filteredStudents.length === 0 && (
-                        <div className="px-4 py-2 text-sm text-gray-500">
-                          No students found
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    /* Bulk Student Selection */
+                    <div className="space-y-4">
+                      {/* School Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Filter by School</label>
+                        <select
+                          value={bulkTargetSchoolId}
+                          onChange={(e) => {
+                            setBulkTargetSchoolId(e.target.value);
+                            setSelectedBulkStudents([]);
+                          }}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        >
+                          <option value="">All Schools</option>
+                          {schools.map(school => (
+                            <option key={school.id} value={school.id}>
+                              {school.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Specialty Filter */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Filter by Specialty Interest</label>
+                        <select
+                          value={bulkTargetSpecialty}
+                          onChange={(e) => {
+                            setBulkTargetSpecialty(e.target.value);
+                            setSelectedBulkStudents([]);
+                          }}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        >
+                          <option value="">All Specialties</option>
+                          {specialties.map(specialty => (
+                            <option key={specialty.id} value={specialty.name}>
+                              {specialty.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Student List */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">
+                          Select Students ({selectedBulkStudents.length} selected)
+                        </label>
+                        <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
+                          {students
+                            .filter(student => {
+                              if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
+                              if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
+                              return true;
+                            })
+                            .map(student => (
+                              <label
+                                key={student.id}
+                                className={`flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer ${
+                                  selectedBulkStudents.includes(student.id) ? 'bg-blue-50' : ''
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedBulkStudents.includes(student.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedBulkStudents([...selectedBulkStudents, student.id]);
+                                    } else {
+                                      setSelectedBulkStudents(selectedBulkStudents.filter(id => id !== student.id));
+                                    }
+                                  }}
+                                  className="form-checkbox h-4 w-4 text-blue-600 focus:ring-blue-500"
+                                />
+                                <div className="ml-3 flex-1">
+                                  <div className="font-medium text-gray-900">{student.full_name}</div>
+                                  <div className="text-sm text-gray-500">
+                                    Year {student.study_year}
+                                    {student.specialization_interest && ` • ${student.specialization_interest}`}
+                                    {student.school_id && ` • ${schools.find(s => s.id === student.school_id)?.name || student.school_id}`}
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
+                          {students.filter(student => {
+                            if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
+                            if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
+                            return true;
+                          }).length === 0 && (
+                            <div className="px-4 py-2 text-sm text-gray-500">
+                              No students match the selected filters
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Effective Date */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Effective Date <span className="text-red-500">*</span></label>
                     <input
@@ -753,6 +936,8 @@ export default function AssignmentManager() {
                       When should this assignment become active? This is required.
                     </p>
                   </div>
+
+                  {/* Due Date */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
                     <input
@@ -770,7 +955,7 @@ export default function AssignmentManager() {
                   onClick={handleAssign}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
                 >
-                  Assign
+                  {targetingMode === 'individual' ? 'Assign' : `Assign to ${selectedBulkStudents.length} student${selectedBulkStudents.length !== 1 ? 's' : ''}`}
                 </button>
                 <button
                   type="button"
@@ -781,6 +966,10 @@ export default function AssignmentManager() {
                     setSelectedRoom('');
                     setDueDate('');
                     setEffectiveDate('');
+                    setTargetingMode('individual');
+                    setBulkTargetSchoolId('');
+                    setBulkTargetSpecialty('');
+                    setSelectedBulkStudents([]);
                   }}
                   className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1"
                 >
