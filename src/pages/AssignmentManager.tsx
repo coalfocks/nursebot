@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, RefreshCw, X } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -41,7 +41,7 @@ export default function AssignmentManager() {
   const [filters, setFilters] = useState({
     status: '',
     studentId: '',
-    roomId: '',
+    roomIds: [] as string[],
     specialtyId: '',
     search: ''
   });
@@ -338,7 +338,7 @@ export default function AssignmentManager() {
   const filteredAssignments = assignments.filter((assignment) => {
     if (filters.status && assignment.status !== filters.status) return false;
     if (filters.studentId && assignment.student_id !== filters.studentId) return false;
-    if (filters.roomId && assignment.room_id.toString() !== filters.roomId) return false;
+    if (filters.roomIds.length > 0 && !filters.roomIds.includes(assignment.room_id.toString())) return false;
     if (filters.specialtyId) {
       // Check if the room's specialty_id or specialty_ids matches the filter
       const roomSpecialtyIds = [assignment.room.specialty_id, ...(assignment.room.specialty_ids || [])].filter(Boolean);
@@ -354,6 +354,16 @@ export default function AssignmentManager() {
     }
     return true;
   });
+
+  const getRoomsForSpecialty = () => {
+    if (!filters.specialtyId) {
+      return rooms;
+    }
+    return rooms.filter(room => {
+      const roomSpecialtyIds = [room.specialty_id, ...(room.specialty_ids || [])].filter(Boolean);
+      return roomSpecialtyIds.includes(filters.specialtyId);
+    });
+  };
 
   const getStatusBadge = (status: string) => {
     const badges = {
@@ -456,24 +466,58 @@ export default function AssignmentManager() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Room</label>
-                <select
-                  value={filters.roomId}
-                  onChange={(e) => setFilters({ ...filters, roomId: e.target.value })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                >
-                  <option value="">All Rooms</option>
-                  {rooms.map(room => (
-                    <option key={room.id} value={room.id}>
-                      Room {room.room_number}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const roomId = e.target.value;
+                      if (roomId && !filters.roomIds.includes(roomId)) {
+                        setFilters({ ...filters, roomIds: [...filters.roomIds, roomId] });
+                      }
+                    }}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value="">Add room filter...</option>
+                    {getRoomsForSpecialty()
+                      .filter(room => !filters.roomIds.includes(room.id.toString()))
+                      .map(room => (
+                        <option key={room.id} value={room.id}>
+                          Room {room.room_number}
+                        </option>
+                      ))}
+                  </select>
+                  {filters.roomIds.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {filters.roomIds.map(roomId => {
+                        const room = rooms.find(r => r.id.toString() === roomId);
+                        return room ? (
+                          <span
+                            key={roomId}
+                            className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800"
+                          >
+                            Room {room.room_number}
+                            <button
+                              type="button"
+                              onClick={() => setFilters({
+                                ...filters,
+                                roomIds: filters.roomIds.filter(id => id !== roomId)
+                              })}
+                              className="ml-2 inline-flex items-center"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ) : null;
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Specialty</label>
                 <select
                   value={filters.specialtyId}
-                  onChange={(e) => setFilters({ ...filters, specialtyId: e.target.value })}
+                  onChange={(e) => setFilters({ ...filters, specialtyId: e.target.value, roomIds: [] })}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 >
                   <option value="">All Specialties</option>
