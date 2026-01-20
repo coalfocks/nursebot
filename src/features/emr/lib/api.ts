@@ -188,7 +188,7 @@ export const emrApi = {
   async listPatients(): Promise<Patient[]> {
     const { data, error } = await supabase
       .from('patients')
-      .select('*')
+      .select('*, room:room_id(id, room_number)')
       .is('deleted_at', null)
       .order('last_name');
 
@@ -197,7 +197,14 @@ export const emrApi = {
       return [];
     }
 
-    return (data ?? []).map(mapPatient);
+    return (data ?? []).map((row) => {
+      const patient = mapPatient(row);
+      const roomData = row.room as { id: number; room_number: string } | null;
+      if (roomData?.room_number) {
+        patient.room = roomData.room_number;
+      }
+      return patient;
+    });
   },
 
   async listPatientsForStudent(studentId: string): Promise<Patient[]> {
