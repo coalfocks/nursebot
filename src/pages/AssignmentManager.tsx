@@ -52,7 +52,7 @@ export default function AssignmentManager() {
   const [targetingMode, setTargetingMode] = useState<'individual' | 'bulk'>('individual');
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState('');
-  const [selectedRoom, setSelectedRoom] = useState<string>('');
+  const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [dueDate, setDueDate] = useState<string>('');
   const [effectiveDate, setEffectiveDate] = useState<string>('');
   const [windowStart, setWindowStart] = useState<string>('');
@@ -194,20 +194,21 @@ export default function AssignmentManager() {
   };
 
   const handleAssign = async () => {
-    if (!selectedRoom || !user || !effectiveDate) {
-      alert('Please select a room and effective date');
+    if (selectedRooms.length === 0 || !user || !effectiveDate) {
+      alert('Please select at least one room and an effective date');
       return;
     }
 
-    // Validate that the room has orders configured
-    const selectedRoomData = rooms.find(r => r.id.toString() === selectedRoom);
-    if (!selectedRoomData) {
-      alert('Selected room not found');
+    // Validate that all selected rooms have orders configured
+    const selectedRoomsData = rooms.filter(r => selectedRooms.includes(r.id.toString()));
+    if (selectedRoomsData.length !== selectedRooms.length) {
+      alert('Some selected rooms not found');
       return;
     }
 
-    if (!validateRoomOrdersConfig(selectedRoomData)) {
-      alert('This room does not have orders configured. Please configure orders for this room before creating assignments.');
+    const invalidRooms = selectedRoomsData.filter(room => !validateRoomOrdersConfig(room));
+    if (invalidRooms.length > 0) {
+      alert(`The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Please configure orders for these rooms before creating assignments.`);
       return;
     }
 
@@ -246,8 +247,20 @@ export default function AssignmentManager() {
       const windowStartUTC = windowStart ? new Date(windowStart).toISOString() : null;
       const windowEndUTC = windowEnd ? new Date(windowEnd).toISOString() : null;
 
-      // Create assignments for all selected students with staggered delivery
-      const assignments = studentsToAssign.map((studentId) => {
+      // Create N x M assignments (each student gets each room)
+      const assignments: Array<{
+        student_id: string;
+        room_id: number;
+        assigned_by: string;
+        status: 'assigned';
+        due_date: string | null;
+        effective_date: string | null;
+        window_start: string | null;
+        window_end: string | null;
+        school_id: string;
+      }> = [];
+
+      for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
         const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
 
@@ -255,29 +268,31 @@ export default function AssignmentManager() {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
 
-        // Calculate staggered effective date
-        // For bulk assignments, add random 5-10 minute offset
-        // For individual assignments, use the base effective date
-        let studentEffectiveDate = effectiveDateTime;
-        if (targetingMode === 'bulk' && studentsToAssign.length > 1) {
-          // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
-          const randomOffset = Math.floor(Math.random() * 300000) + 300000;
-          studentEffectiveDate = new Date(effectiveDateTime.getTime() + randomOffset);
-        }
-        const effectiveDateUTC = studentEffectiveDate.toISOString();
+        for (const roomId of selectedRooms) {
+          // Calculate staggered effective date
+          // For bulk assignments with multiple students/rooms, add random 5-10 minute offset per assignment
+          // For single student/room assignments, use the base effective date
+          let studentEffectiveDate = effectiveDateTime;
+          if ((targetingMode === 'bulk' && studentsToAssign.length > 1) || selectedRooms.length > 1) {
+            // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
+            const randomOffset = Math.floor(Math.random() * 300000) + 300000;
+            studentEffectiveDate = new Date(effectiveDateTime.getTime() + randomOffset);
+          }
+          const effectiveDateUTC = studentEffectiveDate.toISOString();
 
-        return {
-          student_id: studentId,
-          room_id: parseInt(selectedRoom),
-          assigned_by: user.id,
-          status: 'assigned' as const,
-          due_date: calculatedDueDate || null,
-          effective_date: effectiveDateUTC || null,
-          window_start: windowStartUTC,
-          window_end: windowEndUTC,
-          school_id: assignmentSchoolId,
-        };
-      });
+          assignments.push({
+            student_id: studentId,
+            room_id: parseInt(roomId),
+            assigned_by: user.id,
+            status: 'assigned' as const,
+            due_date: calculatedDueDate || null,
+            effective_date: effectiveDateUTC || null,
+            window_start: windowStartUTC,
+            window_end: windowEndUTC,
+            school_id: assignmentSchoolId,
+          });
+        }
+      }
 
       const { error } = await supabase
         .from('student_room_assignments')
@@ -288,7 +303,7 @@ export default function AssignmentManager() {
       setShowAssignModal(false);
       setSelectedStudent('');
       setStudentSearch('');
-      setSelectedRoom('');
+      setSelectedRooms([]);
       setDueDate('');
       setEffectiveDate('');
       setWindowStart('');
@@ -829,25 +844,45 @@ export default function AssignmentManager() {
 
                   {/* Room Selection */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Select Room</label>
-                    <select
-                      value={selectedRoom}
-                      onChange={(e) => setSelectedRoom(e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    >
-                      <option value="">Choose a room...</option>
+                    <label className="block text-sm font-medium text-gray-700">Select Rooms ({selectedRooms.length} selected)</label>
+                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
                       {rooms.map(room => {
                         const hasOrdersConfig = validateRoomOrdersConfig(room);
+                        const isSelected = selectedRooms.includes(room.id.toString());
                         return (
-                          <option key={room.id} value={room.id} disabled={!hasOrdersConfig}>
-                            Room {room.room_number}{!hasOrdersConfig ? ' (No orders configured)' : ''}
-                          </option>
+                          <label
+                            key={room.id}
+                            className={`flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer ${
+                              isSelected ? 'bg-blue-50' : ''
+                            } ${!hasOrdersConfig ? 'opacity-50' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={!hasOrdersConfig}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedRooms([...selectedRooms, room.id.toString()]);
+                                } else {
+                                  setSelectedRooms(selectedRooms.filter(id => id !== room.id.toString()));
+                                }
+                              }}
+                              className="form-checkbox h-4 w-4 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div className="ml-3 flex-1">
+                              <div className="font-medium text-gray-900">Room {room.room_number}</div>
+                              <div className="text-sm text-gray-500">
+                                {room.difficulty_level || 'No difficulty set'}
+                                {!hasOrdersConfig && ' • No orders configured'}
+                              </div>
+                            </div>
+                          </label>
                         );
                       })}
-                    </select>
-                    {selectedRoom && !validateRoomOrdersConfig(rooms.find(r => r.id.toString() === selectedRoom)!) && (
-                      <p className="mt-1 text-sm text-red-600">
-                        This room does not have orders configured. Please configure orders for this room before creating assignments.
+                    </div>
+                    {selectedRooms.length > 0 && (
+                      <p className="mt-2 text-sm text-gray-600">
+                        {selectedRooms.length} room{selectedRooms.length !== 1 ? 's' : ''} selected. Each student will be assigned to all selected rooms.
                       </p>
                     )}
                   </div>
@@ -1048,7 +1083,13 @@ export default function AssignmentManager() {
                   onClick={handleAssign}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
                 >
-                  {targetingMode === 'individual' ? 'Assign' : `Assign to ${selectedBulkStudents.length} student${selectedBulkStudents.length !== 1 ? 's' : ''}`}
+                  {(() => {
+                    const studentCount = targetingMode === 'individual' ? 1 : selectedBulkStudents.length;
+                    const totalAssignments = studentCount * selectedRooms.length;
+                    return targetingMode === 'individual'
+                      ? `Create ${totalAssignments} assignment${totalAssignments !== 1 ? 's' : ''}`
+                      : `Create ${totalAssignments} assignment${totalAssignments !== 1 ? 's' : ''} for ${studentCount} student${studentCount !== 1 ? 's' : ''}`;
+                  })()}
                 </button>
                 <button
                   type="button"
@@ -1056,7 +1097,7 @@ export default function AssignmentManager() {
                     setShowAssignModal(false);
                     setSelectedStudent('');
                     setStudentSearch('');
-                    setSelectedRoom('');
+                    setSelectedRooms([]);
                     setDueDate('');
                     setEffectiveDate('');
                     setWindowStart('');
