@@ -29,14 +29,16 @@ interface ChatInterfaceProps {
   assignmentId: string;
   roomNumber: string;
   roomId?: number;
+  assignmentStatus?: string;
 }
 
-export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfaceProps) {
+export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStatus }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const [status, setStatus] = useState(assignmentStatus);
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
   const [patientLink, setPatientLink] = useState<{ patientId: string; roomId?: number } | null>(null);
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
@@ -336,7 +338,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading || !assignmentId) return;
+    if (!input.trim() || isLoading || !assignmentId || status === 'completed') return;
 
     const userMessage = input.trim();
     setInput('');
@@ -420,14 +422,16 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
       // Update the assignment status
       const { error: updateError } = await supabase
         .from('student_room_assignments')
-        .update({ 
+        .update({
           status: 'completed',
           feedback_status: 'pending',
           completed_at: new Date().toISOString(),
         })
         .eq('id', assignmentId);
-      
+
       if (updateError) throw updateError;
+
+      setStatus('completed');
       
       // Trigger feedback generation
       const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
@@ -636,11 +640,11 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type your message..."
             className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isLoading || isCompleting}
+            disabled={isLoading || isCompleting || status === 'completed'}
           />
           <button
             type="submit"
-            disabled={isLoading || isCompleting}
+            disabled={isLoading || isCompleting || status === 'completed'}
             className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
             <Send className="w-5 h-5" />

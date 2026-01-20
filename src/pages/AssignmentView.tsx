@@ -244,7 +244,12 @@ export default function AssignmentView() {
                     Open EHR
                   </button>
                 </div>
-                <ChatInterface assignmentId={assignment.id} roomNumber={assignment.room.room_number} roomId={assignment.room.id} />
+                <ChatInterface
+                  assignmentId={assignment.id}
+                  roomNumber={assignment.room.room_number}
+                  roomId={assignment.room.id}
+                  assignmentStatus={assignment.status}
+                />
               </div>
             </div>
 
