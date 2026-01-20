@@ -272,7 +272,7 @@ export const emrApi = {
 
   async addClinicalNote(note: ClinicalNote): Promise<void> {
     const overrideScope = deriveScope(note.overrideScope, note.assignmentId, note.roomId);
-    const { error } = await supabase.from('clinical_notes').insert({
+    const payload = {
       patient_id: note.patientId,
       assignment_id: note.assignmentId ?? null,
       room_id: note.roomId ?? null,
@@ -283,7 +283,11 @@ export const emrApi = {
       author: note.author,
       timestamp: note.timestamp,
       signed: note.signed,
-    });
+    };
+    const cleanPayload = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => value !== undefined),
+    );
+    const { error } = await supabase.from('clinical_notes').insert(cleanPayload);
 
     if (error) {
       console.error('Error inserting clinical note', error);
@@ -552,45 +556,55 @@ export const emrApi = {
       return scope === 'baseline';
     });
 
-    // If all vitals are baseline, update or insert (keep only one baseline vital)
+    // If all vitals are baseline, update latest for single saves or insert for generated runs
     if (allBaseline && vitals.length > 0) {
       const patientId = vitals[0].patientId;
-      
-      // Fetch existing baseline vitals for this patient
+      const baselinePayload = vitals.map((vital) => ({
+        patient_id: vital.patientId,
+        assignment_id: null,
+        room_id: null,
+        override_scope: 'baseline' as const,
+        timestamp: vital.timestamp ?? new Date().toISOString(),
+        temperature: vital.temperature,
+        blood_pressure_systolic: vital.bloodPressureSystolic,
+        blood_pressure_diastolic: vital.bloodPressureDiastolic,
+        heart_rate: vital.heartRate,
+        respiratory_rate: vital.respiratoryRate,
+        oxygen_saturation: vital.oxygenSaturation,
+        pain: vital.pain,
+        weight: vital.weight,
+        height: vital.height,
+      }));
+
+      if (vitals.length > 1) {
+        const { error } = await supabase.from('vital_signs').insert(baselinePayload);
+        if (error) {
+          console.error('Error inserting baseline vitals', error);
+        }
+        return;
+      }
+
+      // Fetch latest baseline vital for this patient
       const { data: existingVitals } = await supabase
         .from('vital_signs')
-        .select('*')
+        .select('id, timestamp')
         .eq('patient_id', patientId)
         .eq('override_scope', 'baseline')
         .is('assignment_id', null)
         .is('room_id', null)
         .is('deleted_at', null)
+        .order('timestamp', { ascending: false })
         .limit(1);
 
-      // Use a consistent baseline timestamp
-      const baselineTimestamp = existingVitals && existingVitals.length > 0 
-        ? existingVitals[0].timestamp 
-        : '2000-01-01T00:00:00.000Z';
+      const baselineTimestamp =
+        vitals[0].timestamp ?? existingVitals?.[0]?.timestamp ?? new Date().toISOString();
 
       const vitalData = {
-        patient_id: vitals[0].patientId,
-        assignment_id: null,
-        room_id: null,
-        override_scope: 'baseline' as const,
+        ...baselinePayload[0],
         timestamp: baselineTimestamp,
-        temperature: vitals[0].temperature,
-        blood_pressure_systolic: vitals[0].bloodPressureSystolic,
-        blood_pressure_diastolic: vitals[0].bloodPressureDiastolic,
-        heart_rate: vitals[0].heartRate,
-        respiratory_rate: vitals[0].respiratoryRate,
-        oxygen_saturation: vitals[0].oxygenSaturation,
-        pain: vitals[0].pain,
-        weight: vitals[0].weight,
-        height: vitals[0].height,
       };
 
       if (existingVitals && existingVitals.length > 0) {
-        // Update existing baseline vital
         const { error } = await supabase
           .from('vital_signs')
           .update(vitalData)
@@ -599,7 +613,6 @@ export const emrApi = {
           console.error('Error updating baseline vital', error);
         }
       } else {
-        // Insert new baseline vital
         const { error } = await supabase.from('vital_signs').insert(vitalData);
         if (error) {
           console.error('Error inserting baseline vital', error);

@@ -56,7 +56,7 @@ export default function RoomManagement() {
         .order('room_number');
 
       if (scopedSchoolId) {
-        query = query.eq('school_id', scopedSchoolId);
+        query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}}`);
       }
 
       const { data, error } = await query;

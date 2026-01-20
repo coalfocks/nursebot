@@ -97,7 +97,17 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   })();
   
   // Advanced settings
-  const [specialtyId, setSpecialtyId] = useState(room?.specialty_id || '');
+  const initialSpecialtyIds = (() => {
+    const ids = new Set<string>();
+    if (room?.specialty_id) ids.add(room.specialty_id);
+    if (Array.isArray(room?.specialty_ids)) {
+      room.specialty_ids.forEach((id) => {
+        if (id) ids.add(id);
+      });
+    }
+    return Array.from(ids);
+  })();
+  const [specialtyIds, setSpecialtyIds] = useState<string[]>(initialSpecialtyIds);
   const [difficultyLevel, setDifficultyLevel] = useState<'beginner' | 'intermediate' | 'advanced' | null>(
     room?.difficulty_level || null
   );
@@ -127,6 +137,18 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
   const [schoolId, setSchoolId] = useState<string>(scopedSchoolId ?? '');
+  const initialAvailableSchoolIds = (() => {
+    const ids = new Set<string>();
+    if (room?.school_id) ids.add(room.school_id);
+    if (Array.isArray(room?.available_school_ids)) {
+      room.available_school_ids.forEach((id) => {
+        if (id) ids.add(id);
+      });
+    }
+    if (scopedSchoolId) ids.add(scopedSchoolId);
+    return Array.from(ids);
+  })();
+  const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
   const pdfUrl = room?.pdf_url ?? null;
   const buildInitialLabResults = (patientId: string, schoolId?: string | null, roomId?: number | null) => {
     const now = new Date().toISOString();
@@ -243,6 +265,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   }, [scopedSchoolId, schoolId]);
 
   useEffect(() => {
+    if (!schoolId) return;
+    setAvailableSchoolIds((prev) => (prev.includes(schoolId) ? prev : [...prev, schoolId]));
+  }, [schoolId]);
+
+  useEffect(() => {
     const fetchRooms = async () => {
       const { data, error } = await supabase.from('rooms').select('id, room_number').order('room_number');
       if (error) {
@@ -311,6 +338,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
+      const normalizedSchoolIds = Array.from(
+        new Set([...(availableSchoolIds ?? []), finalSchoolId].filter(Boolean)),
+      );
+
       const roomData = {
         room_number: roomNumber,
         role,
@@ -319,7 +350,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         nurse_context: nurseContext,
         emr_context: emrContextPayload,
         style,
-        specialty_id: specialtyId || null,
+        specialty_id: specialtyIds[0] ?? null,
+        specialty_ids: specialtyIds.length > 0 ? specialtyIds : null,
         difficulty_level: difficultyLevel,
         expected_diagnosis: expectedDiagnosis || null,
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
@@ -331,6 +363,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         is_active: isActive,
         pdf_url: finalPdfUrl,
         school_id: finalSchoolId,
+        available_school_ids: normalizedSchoolIds.length > 0 ? normalizedSchoolIds : null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
       };
 
@@ -423,26 +456,54 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       {/* Basic Information */}
       <div className="space-y-4">
         {hasAdminAccess(profile) && isSuperAdmin(profile) && (
-          <div>
-            <label htmlFor="school" className="block text-sm font-medium text-gray-700">
-              School
-            </label>
-            <select
-              id="school"
-              value={schoolId}
-              onChange={(e) => setSchoolId(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              required
-            >
-              <option value="" disabled>
-                Select a school
-              </option>
-              {schools.map((school) => (
-                <option key={school.id} value={school.id}>
-                  {school.name}
+          <div className="space-y-3">
+            <div>
+              <label htmlFor="school" className="block text-sm font-medium text-gray-700">
+                Primary school
+              </label>
+              <select
+                id="school"
+                value={schoolId}
+                onChange={(e) => setSchoolId(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                required
+              >
+                <option value="" disabled>
+                  Select a school
                 </option>
-              ))}
-            </select>
+                {schools.map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="availableSchools" className="block text-sm font-medium text-gray-700">
+                Available to schools
+              </label>
+              <select
+                id="availableSchools"
+                multiple
+                value={availableSchoolIds.filter((id) => id !== schoolId)}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions)
+                    .map((option) => option.value)
+                    .filter(Boolean);
+                  setAvailableSchoolIds(
+                    schoolId ? Array.from(new Set([schoolId, ...selected])) : selected,
+                  );
+                }}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              >
+                {(schoolId ? schools.filter((school) => school.id !== schoolId) : schools).map((school) => (
+                  <option key={school.id} value={school.id}>
+                    {school.name}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">Primary school is always included.</p>
+            </div>
           </div>
         )}
         {hasAdminAccess(profile) && !isSuperAdmin(profile) && (
@@ -678,21 +739,24 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           <div className="space-y-4">
             <div>
               <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
-                Specialty
+                Specialties
               </label>
               <select
                 id="specialty"
-                value={specialtyId}
-                onChange={(e) => setSpecialtyId(e.target.value)}
+                multiple
+                value={specialtyIds}
+                onChange={(e) =>
+                  setSpecialtyIds(Array.from(e.target.selectedOptions).map((option) => option.value).filter(Boolean))
+                }
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               >
-                <option value="">No specialty</option>
                 {specialties.map((specialty) => (
                   <option key={specialty.id} value={specialty.id}>
                     {specialty.name}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">Select one or more specialties.</p>
             </div>
 
             <div>

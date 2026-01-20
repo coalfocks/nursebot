@@ -57,7 +57,6 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     const resolvedRoomId = forceBaseline ? null : patient.roomId ?? null;
     const overrideScope = resolvedAssignmentId ? 'assignment' : resolvedRoomId ? 'room' : 'baseline';
     const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Nurse';
-    const timestamp = new Date().toISOString();
     const newNote: ClinicalNote = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: patient.id,
@@ -65,10 +64,9 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
       roomId: resolvedRoomId,
       overrideScope,
       type: 'Nurse',
-      title: `Nurse Note - ${new Date().toLocaleDateString()}`,
+      title: 'Nurse Note',
       content,
       author,
-      timestamp,
       signed: false,
     };
     setNotes((prev) => [newNote, ...prev]);

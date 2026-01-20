@@ -133,7 +133,7 @@ export async function generateClinicalNote(request: NoteGenerationRequest): Prom
   );
 }
 
-export function formatNoteForDisplay(content: string, noteType: string, author: string, timestamp: string): string {
+export function formatNoteForDisplay(content: string, noteType: string, author: string): string {
   const header = `${noteType.toUpperCase()} NOTE
 Author: ${author}
 ==================================================\n\n`;

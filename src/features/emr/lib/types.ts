@@ -62,7 +62,7 @@ export interface ClinicalNote {
   title: string;
   content: string;
   author: string;
-  timestamp: string;
+  timestamp?: string;
   signed: boolean;
   assignmentId?: string | null;
 }

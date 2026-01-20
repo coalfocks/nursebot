@@ -5,7 +5,7 @@ import { Badge } from './ui/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { Tabs, TabsList, TabsTrigger } from './ui/Tabs';
 import { OrderEntry } from './OrderEntry';
-import { Plus, Clock, CheckCircle, XCircle, AlertCircle, Calendar, User, Pencil, Trash } from 'lucide-react';
+import { Plus, Clock, CheckCircle, XCircle, AlertCircle, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
@@ -210,7 +210,6 @@ export function OrdersManagement({
               type: note.type,
               title: note.title,
               content: note.content,
-              timestamp: note.timestamp,
             })),
             vitals: vitals.slice(0, 6),
             previousLabs: previousLabs.slice(0, 10).map((lab) => ({
@@ -334,7 +333,6 @@ export function OrdersManagement({
                 type: note.type,
                 title: note.title,
                 content: note.content,
-                timestamp: note.timestamp,
               })),
               vitals: vitals.slice(0, 6),
               previousLabs: previousLabs.slice(0, 10).map((lab) => ({
@@ -515,7 +513,7 @@ export function OrdersManagement({
             <TableHead>Details</TableHead>
             <TableHead>Priority</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Ordered</TableHead>
+            <TableHead>Ordered By</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -544,10 +542,6 @@ export function OrdersManagement({
                   <div className="flex items-center gap-1">
                     <User className="h-3 w-3" />
                     {order.orderedBy}
-                  </div>
-                  <div className="flex items-center gap-1 text-muted-foreground">
-                    <Calendar className="h-3 w-3" />
-                    {new Date(order.orderTime).toLocaleString()}
                   </div>
                 </div>
               </TableCell>
@@ -626,7 +620,7 @@ export function OrdersManagement({
                     <TableHead>Details</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Ordered</TableHead>
+                    <TableHead>Ordered By</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -659,10 +653,6 @@ export function OrdersManagement({
                           <div className="flex items-center gap-1">
                             <User className="h-3 w-3" />
                             {order.orderedBy}
-                          </div>
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            <Calendar className="h-3 w-3" />
-                            {new Date(order.orderTime).toLocaleString()}
                           </div>
                         </div>
                       </TableCell>

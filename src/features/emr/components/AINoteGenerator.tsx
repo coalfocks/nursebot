@@ -52,7 +52,6 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
         noteContent,
         noteType,
         patient.attendingPhysician,
-        new Date().toISOString(),
       );
 
       setGeneratedNote(formattedNote);
@@ -64,10 +63,9 @@ export function AINotesGenerator({ patient, onNoteGenerated }: AINotesGeneratorP
         roomId: patient.roomId ?? null,
         overrideScope: patient.roomId ? 'room' : 'baseline',
         type: noteType,
-        title: `${noteType} Note - ${new Date().toLocaleDateString()}`,
+        title: `${noteType} Note`,
         content: formattedNote,
         author: patient.attendingPhysician,
-        timestamp: new Date().toISOString(),
         signed: false,
       };
 

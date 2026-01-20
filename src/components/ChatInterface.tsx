@@ -481,10 +481,9 @@ export function ChatInterface({ assignmentId, roomNumber, roomId }: ChatInterfac
         roomId,
         overrideScope: 'assignment' as const,
         type: 'Progress' as const,
-        title: `Progress Note - ${new Date().toLocaleDateString()}`,
+        title: 'Progress Note',
         content,
         author,
-        timestamp: new Date().toISOString(),
         signed: false,
       };
       await emrApi.addClinicalNote(note);

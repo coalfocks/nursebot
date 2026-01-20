@@ -15,6 +15,25 @@ export interface OrderItem {
   instructions?: string;
 }
 
+const expandFrequencyRange = (frequency: string): string[] => {
+  const trimmed = frequency.trim();
+  const match = trimmed.match(/^q\s*(\d+)\s*-\s*(\d+)\s*h(\s*PRN)?$/i);
+  if (!match) return [trimmed];
+  const suffix = match[3] ? ' PRN' : '';
+  const start = match[1];
+  const end = match[2];
+  return [`q${start}h${suffix}`, `q${end}h${suffix}`];
+};
+
+const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
+  if (!frequencies?.length) return frequencies;
+  const normalized = frequencies
+    .flatMap(expandFrequencyRange)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+};
+
 const curatedLabOrders: OrderItem[] = [
   {
     id: 'lab-1',
@@ -254,7 +273,10 @@ const medicationOrdersMap = new Map<string, OrderItem>();
 [...baseMedicationOrders, ...medicationOrdersFromCsv].forEach((order) => {
   const key = order.name.toLowerCase();
   if (!medicationOrdersMap.has(key)) {
-    medicationOrdersMap.set(key, order);
+    medicationOrdersMap.set(key, {
+      ...order,
+      frequencies: normalizeFrequencies(order.frequencies),
+    });
   }
 });
 
@@ -342,6 +364,18 @@ const nursingOrders: OrderItem[] = [
     name: 'Nursing',
     category: 'Nursing',
     priorities: ['Routine', 'STAT'],
+  },
+  {
+    id: 'nursing-2',
+    name: 'Bladder Scan',
+    category: 'Nursing',
+    priorities: ['Routine'],
+  },
+  {
+    id: 'nursing-3',
+    name: 'Straight Cath',
+    category: 'Nursing',
+    priorities: ['Routine'],
   },
 ];
 

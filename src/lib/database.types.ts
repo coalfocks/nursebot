@@ -199,6 +199,7 @@ export interface Database {
           nurse_context: string | null
           emr_context: string | null
           specialty_id: string | null
+          specialty_ids: string[] | null
           difficulty_level: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis: string | null
           expected_treatment: string[] | null
@@ -213,6 +214,7 @@ export interface Database {
           updated_at: string
           pdf_url: string | null
           school_id: string
+          available_school_ids: string[] | null
           orders_config: Json | null
           patient_id: string | null
           continues_from: number | null
@@ -227,6 +229,7 @@ export interface Database {
           nurse_context?: string | null
           emr_context?: string | null
           specialty_id?: string | null
+          specialty_ids?: string[] | null
           difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
@@ -241,6 +244,7 @@ export interface Database {
           updated_at?: string
           pdf_url?: string | null
           school_id?: string
+          available_school_ids?: string[] | null
           orders_config?: Json | null
           patient_id?: string | null
           continues_from?: number | null
@@ -255,6 +259,7 @@ export interface Database {
           nurse_context?: string | null
           emr_context?: string | null
           specialty_id?: string | null
+          specialty_ids?: string[] | null
           difficulty_level?: 'beginner' | 'intermediate' | 'advanced' | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
@@ -269,6 +274,7 @@ export interface Database {
           updated_at?: string
           pdf_url?: string | null
           school_id?: string
+          available_school_ids?: string[] | null
           orders_config?: Json | null
           patient_id?: string | null
           continues_from?: number | null

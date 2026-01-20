@@ -536,7 +536,6 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date/Time</TableHead>
                       <TableHead>Temp (°C)</TableHead>
                       <TableHead>HR</TableHead>
                       <TableHead>BP</TableHead>
@@ -548,7 +547,6 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
                   <TableBody>
                     {vitals.map((vital) => (
                       <TableRow key={vital.id}>
-                        <TableCell className="font-medium">{new Date(vital.timestamp).toLocaleString()}</TableCell>
                         <TableCell className={getStatusColor(getVitalStatus('temperature', vital.temperature))}>
                           {fahrenheitToCelsius(vital.temperature)}
                         </TableCell>
