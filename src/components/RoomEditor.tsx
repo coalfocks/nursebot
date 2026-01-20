@@ -137,6 +137,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
   const [schoolId, setSchoolId] = useState<string>(() => scopedSchoolId ?? '');
+  // Check if room is available to all schools (empty array or all school IDs)
+  const isAllSchools = (() => {
+    if (!room?.available_school_ids) return false;
+    if (room.available_school_ids.length === 0) return true;
+    return false;
+  })();
+
   const initialAvailableSchoolIds = (() => {
     const ids = new Set<string>();
     if (room?.school_id) ids.add(room.school_id);
@@ -149,6 +156,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     return Array.from(ids);
   })();
   const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
+  const [allSchoolsSelected, setAllSchoolsSelected] = useState(isAllSchools);
   const pdfUrl = room?.pdf_url ?? null;
   const buildInitialLabResults = (patientId: string, schoolId?: string | null) => {
     // Use consolidated baseline timestamp for all initial labs
@@ -339,9 +347,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
-      const normalizedSchoolIds = Array.from(
-        new Set([...(availableSchoolIds ?? []), finalSchoolId].filter(Boolean)),
-      );
+      // If "All Schools" is selected, save empty array; otherwise include primary + selected schools
+      const normalizedSchoolIds = allSchoolsSelected
+        ? []
+        : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId].filter(Boolean)));
 
       const roomData = {
         room_number: roomNumber,
@@ -479,30 +488,51 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               </select>
             </div>
             <div>
-              <label htmlFor="availableSchools" className="block text-sm font-medium text-gray-700">
-                Available to schools
-              </label>
-              <select
-                id="availableSchools"
-                multiple
-                value={availableSchoolIds.filter((id) => id !== schoolId)}
-                onChange={(e) => {
-                  const selected = Array.from(e.target.selectedOptions)
-                    .map((option) => option.value)
-                    .filter(Boolean);
-                  setAvailableSchoolIds(
-                    schoolId ? Array.from(new Set([schoolId, ...selected])) : selected,
-                  );
-                }}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              >
-                {(schoolId ? schools.filter((school) => school.id !== schoolId) : schools).map((school) => (
-                  <option key={school.id} value={school.id}>
-                    {school.name}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">Primary school is always included.</p>
+              <div className="flex items-center mb-2">
+                <input
+                  type="checkbox"
+                  id="allSchools"
+                  checked={allSchoolsSelected}
+                  onChange={(e) => {
+                    setAllSchoolsSelected(e.target.checked);
+                    if (e.target.checked) {
+                      setAvailableSchoolIds([]);
+                    }
+                  }}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="allSchools" className="ml-2 block text-sm font-medium text-gray-700">
+                  Available to all schools
+                </label>
+              </div>
+              {!allSchoolsSelected && (
+                <>
+                  <label htmlFor="availableSchools" className="block text-sm font-medium text-gray-700">
+                    Available to specific schools
+                  </label>
+                  <select
+                    id="availableSchools"
+                    multiple
+                    value={availableSchoolIds.filter((id) => id !== schoolId)}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions)
+                        .map((option) => option.value)
+                        .filter(Boolean);
+                      setAvailableSchoolIds(
+                        schoolId ? Array.from(new Set([schoolId, ...selected])) : selected,
+                      );
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  >
+                    {(schoolId ? schools.filter((school) => school.id !== schoolId) : schools).map((school) => (
+                      <option key={school.id} value={school.id}>
+                        {school.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">Primary school is always included.</p>
+                </>
+              )}
             </div>
           </div>
         )}

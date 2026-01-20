@@ -129,7 +129,8 @@ export default function AdminDashboard() {
           .select('id', { count: 'exact', head: true })
           .eq('is_active', true);
         if (scopedSchoolId) {
-          roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}}`);
+          // Include rooms available to all schools (empty array)
+          roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
         }
 
         let gradeQuery = supabase

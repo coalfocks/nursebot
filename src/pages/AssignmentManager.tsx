@@ -134,7 +134,8 @@ export default function AssignmentManager() {
       .order('room_number');
 
     if (scopedSchoolId) {
-      query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}}`);
+      // Include rooms available to all schools (empty array)
+      query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
     }
 
     const { data, error } = await query;

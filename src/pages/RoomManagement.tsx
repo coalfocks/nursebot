@@ -52,7 +52,11 @@ export default function RoomManagement() {
         .order('room_number');
 
       if (scopedSchoolId) {
-        query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}}`);
+        // Filter to show rooms where:
+        // 1. school_id matches scoped school, OR
+        // 2. available_school_ids contains scoped school, OR
+        // 3. available_school_ids is empty array (all schools)
+        query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
       }
 
       const { data, error } = await query;
