@@ -161,6 +161,12 @@ export default function AssignmentManager() {
     setRooms(data || []);
   };
 
+  const validateRoomOrdersConfig = (room: Room): boolean => {
+    if (!room.orders_config) return false;
+    const config = room.orders_config as { labs?: Array<{ name: string; type: string }> };
+    return config.labs && config.labs.length > 0;
+  };
+
   const fetchSpecialties = async () => {
     let query = supabase
       .from('specialties')
@@ -190,6 +196,18 @@ export default function AssignmentManager() {
   const handleAssign = async () => {
     if (!selectedRoom || !user || !effectiveDate) {
       alert('Please select a room and effective date');
+      return;
+    }
+
+    // Validate that the room has orders configured
+    const selectedRoomData = rooms.find(r => r.id.toString() === selectedRoom);
+    if (!selectedRoomData) {
+      alert('Selected room not found');
+      return;
+    }
+
+    if (!validateRoomOrdersConfig(selectedRoomData)) {
+      alert('This room does not have orders configured. Please configure orders for this room before creating assignments.');
       return;
     }
 
@@ -229,7 +247,7 @@ export default function AssignmentManager() {
       const windowEndUTC = windowEnd ? new Date(windowEnd).toISOString() : null;
 
       // Create assignments for all selected students with staggered delivery
-      const assignments = studentsToAssign.map((studentId, index) => {
+      const assignments = studentsToAssign.map((studentId) => {
         const studentProfile = students.find((s) => s.id === studentId);
         const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
 
@@ -818,12 +836,20 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     >
                       <option value="">Choose a room...</option>
-                      {rooms.map(room => (
-                        <option key={room.id} value={room.id}>
-                          Room {room.room_number}
-                        </option>
-                      ))}
+                      {rooms.map(room => {
+                        const hasOrdersConfig = validateRoomOrdersConfig(room);
+                        return (
+                          <option key={room.id} value={room.id} disabled={!hasOrdersConfig}>
+                            Room {room.room_number}{!hasOrdersConfig ? ' (No orders configured)' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
+                    {selectedRoom && !validateRoomOrdersConfig(rooms.find(r => r.id.toString() === selectedRoom)!) && (
+                      <p className="mt-1 text-sm text-red-600">
+                        This room does not have orders configured. Please configure orders for this room before creating assignments.
+                      </p>
+                    )}
                   </div>
 
                   {/* Individual Student Selection */}
