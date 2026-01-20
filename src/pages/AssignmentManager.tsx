@@ -55,6 +55,8 @@ export default function AssignmentManager() {
   const [selectedRoom, setSelectedRoom] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
   const [effectiveDate, setEffectiveDate] = useState<string>('');
+  const [windowStart, setWindowStart] = useState<string>('');
+  const [windowEnd, setWindowEnd] = useState<string>('');
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
@@ -62,6 +64,8 @@ export default function AssignmentManager() {
     id: string;
     effective_date: string;
     due_date: string | null;
+    window_start: string | null;
+    window_end: string | null;
   } | null>(null);
   const [showChatModal, setShowChatModal] = useState(false);
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
@@ -221,6 +225,10 @@ export default function AssignmentManager() {
         calculatedDueDate = new Date(calculatedDueDate).toISOString();
       }
 
+      // Convert window dates to UTC if provided
+      const windowStartUTC = windowStart ? new Date(windowStart).toISOString() : null;
+      const windowEndUTC = windowEnd ? new Date(windowEnd).toISOString() : null;
+
       // Create assignments for all selected students
       const assignments = studentsToAssign.map((studentId) => {
         const studentProfile = students.find((s) => s.id === studentId);
@@ -237,6 +245,8 @@ export default function AssignmentManager() {
           status: 'assigned' as const,
           due_date: calculatedDueDate || null,
           effective_date: effectiveDateUTC || null,
+          window_start: windowStartUTC,
+          window_end: windowEndUTC,
           school_id: assignmentSchoolId,
         };
       });
@@ -253,6 +263,8 @@ export default function AssignmentManager() {
       setSelectedRoom('');
       setDueDate('');
       setEffectiveDate('');
+      setWindowStart('');
+      setWindowEnd('');
       setTargetingMode('individual');
       setBulkTargetSchoolId('');
       setBulkTargetSpecialty('');
@@ -287,13 +299,22 @@ export default function AssignmentManager() {
     if (!editingAssignment) return;
 
     try {
+      const updateData: Record<string, string | null> = {
+        effective_date: new Date(editingAssignment.effective_date).toISOString(),
+        due_date: editingAssignment.due_date ? new Date(editingAssignment.due_date).toISOString() : null,
+        updated_at: new Date().toISOString()
+      };
+
+      if (editingAssignment.window_start) {
+        updateData.window_start = new Date(editingAssignment.window_start).toISOString();
+      }
+      if (editingAssignment.window_end) {
+        updateData.window_end = new Date(editingAssignment.window_end).toISOString();
+      }
+
       const { error } = await supabase
         .from('student_room_assignments')
-        .update({
-          effective_date: new Date(editingAssignment.effective_date).toISOString(),
-          due_date: editingAssignment.due_date ? new Date(editingAssignment.due_date).toISOString() : null,
-          updated_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', editingAssignment.id);
 
       if (error) throw error;
@@ -670,17 +691,25 @@ export default function AssignmentManager() {
                             <button
                               onClick={() => {
                                 // Format dates for the datetime-local input
-                                const effectiveDate = assignment.effective_date 
+                                const effectiveDate = assignment.effective_date
                                   ? new Date(assignment.effective_date).toISOString().slice(0, 16)
                                   : '';
                                 const dueDate = assignment.due_date
                                   ? new Date(assignment.due_date).toISOString().slice(0, 16)
                                   : null;
-                                
+                                const windowStart = 'window_start' in assignment && assignment.window_start
+                                  ? new Date(assignment.window_start).toISOString().slice(0, 16)
+                                  : null;
+                                const windowEnd = 'window_end' in assignment && assignment.window_end
+                                  ? new Date(assignment.window_end).toISOString().slice(0, 16)
+                                  : null;
+
                                 setEditingAssignment({
                                   id: assignment.id,
                                   effective_date: effectiveDate,
-                                  due_date: dueDate
+                                  due_date: dueDate,
+                                  window_start: windowStart,
+                                  window_end: windowEnd
                                 });
                               }}
                               className="inline-flex items-center px-3 py-2 border border-blue-300 shadow-sm text-sm leading-4 font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -947,6 +976,34 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                   </div>
+
+                  {/* Window Start */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Window Start (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={windowStart}
+                      onChange={(e) => setWindowStart(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      Absolute start of the time window for this assignment.
+                    </p>
+                  </div>
+
+                  {/* Window End */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Window End (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={windowEnd}
+                      onChange={(e) => setWindowEnd(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      Absolute end of the time window for this assignment.
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="mt-5 sm:mt-6 sm:grid sm:grid-cols-2 sm:gap-3 sm:grid-flow-row-dense">
@@ -966,6 +1023,8 @@ export default function AssignmentManager() {
                     setSelectedRoom('');
                     setDueDate('');
                     setEffectiveDate('');
+                    setWindowStart('');
+                    setWindowEnd('');
                     setTargetingMode('individual');
                     setBulkTargetSchoolId('');
                     setBulkTargetSpecialty('');
@@ -1014,6 +1073,36 @@ export default function AssignmentManager() {
                       })}
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Window Start (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={editingAssignment.window_start || ''}
+                      onChange={(e) => setEditingAssignment({
+                        ...editingAssignment,
+                        window_start: e.target.value || null
+                      })}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      Absolute start of the time window for this assignment.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Window End (Optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={editingAssignment.window_end || ''}
+                      onChange={(e) => setEditingAssignment({
+                        ...editingAssignment,
+                        window_end: e.target.value || null
+                      })}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      Absolute end of the time window for this assignment.
+                    </p>
                   </div>
                 </div>
               </div>
