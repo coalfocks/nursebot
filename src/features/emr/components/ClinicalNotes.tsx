@@ -4,12 +4,13 @@ import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { ScrollArea } from './ui/ScrollArea';
-import { FileText, Plus, User, CheckCircle, Clock, Trash2 } from 'lucide-react';
+import { FileText, Plus, User, CheckCircle, Clock, Trash2, PenTool } from 'lucide-react';
 import { AINotesGenerator } from './AINoteGenerator';
 import type { Patient, ClinicalNote } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
+import { generateFeedback } from '../../../lib/feedbackService';
 
 interface ClinicalNotesProps {
   patient: Patient;
@@ -115,6 +116,24 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     await emrApi.deleteClinicalNote(noteId);
   };
 
+  const handleSignNote = async (note: ClinicalNote) => {
+    if (!note.assignmentId) return;
+
+    // Update the note to signed
+    const updated = await emrApi.updateClinicalNote(note.id, { signed: true });
+    if (updated) {
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, signed: true } : n)));
+
+      // Trigger feedback generation for the assignment
+      try {
+        await generateFeedback(note.assignmentId);
+      } catch (error) {
+        console.error('Error generating feedback:', error);
+        // Note is still signed even if feedback generation fails
+      }
+    }
+  };
+
   const notesByType = notes.reduce(
     (acc, note) => {
       if (!acc[note.type]) acc[note.type] = [];
@@ -167,6 +186,12 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
                   </div>
                 ) : (
                   <div className="flex gap-2">
+                    {!note.signed && note.assignmentId && (
+                      <Button size="sm" onClick={() => void handleSignNote(note)} className="flex items-center gap-1">
+                        <PenTool className="h-3 w-3" />
+                        Sign
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => startEditing(note)}>
                       Edit
                     </Button>
