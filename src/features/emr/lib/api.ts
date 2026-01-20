@@ -410,10 +410,42 @@ export const emrApi = {
         console.error('Error fetching baseline labs', existingError);
       }
 
+      // Always use a single consolidated timestamp for all baseline labs
+      // If any existing baseline labs exist, use their timestamp; otherwise use the baseline epoch
       const baselineTimestamp =
         existingLabs && existingLabs.length > 0
           ? existingLabs[0].collection_time ?? existingLabs[0].result_time ?? '2000-01-01T00:00:00.000Z'
           : '2000-01-01T00:00:00.000Z';
+
+      // Normalize all existing baseline labs to the consolidated timestamp
+      const labsNeedingTimestampNormalization = (existingLabs ?? [])
+        .filter((lab) => {
+          const labTime = lab.collection_time ?? lab.result_time;
+          return labTime && labTime !== baselineTimestamp;
+        })
+        .map((lab) => ({
+          id: lab.id,
+          payload: {
+            collection_time: baselineTimestamp,
+            result_time: baselineTimestamp,
+          },
+        }));
+
+      if (labsNeedingTimestampNormalization.length > 0) {
+        const normalizeResults = await Promise.all(
+          labsNeedingTimestampNormalization.map((update) =>
+            supabase
+              .from('lab_results')
+              .update(update.payload)
+              .eq('id', update.id),
+          ),
+        );
+        normalizeResults.forEach(({ error }) => {
+          if (error) {
+            console.error('Error normalizing baseline lab timestamp', error);
+          }
+        });
+      }
 
       const existingByTest = new Map(
         (existingLabs ?? []).map((lab) => [lab.test_name, lab]),

@@ -150,16 +150,17 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   })();
   const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
   const pdfUrl = room?.pdf_url ?? null;
-  const buildInitialLabResults = (patientId: string, schoolId?: string | null, roomId?: number | null) => {
-    const now = new Date().toISOString();
+  const buildInitialLabResults = (patientId: string, schoolId?: string | null) => {
+    // Use consolidated baseline timestamp for all initial labs
+    const baselineTimestamp = '2000-01-01T00:00:00.000Z';
     const baseFields = {
       patient_id: patientId,
-      room_id: roomId ?? null,
+      room_id: null, // Always null for consolidated baseline labs
       assignment_id: null,
-      override_scope: roomId ? 'room' : 'baseline' as const,
+      override_scope: 'baseline' as const, // Always baseline for consolidation
       school_id: schoolId ?? null,
-      collection_time: now,
-      result_time: now,
+      collection_time: baselineTimestamp,
+      result_time: baselineTimestamp,
       ordered_by: 'EMR Auto',
     };
     return [
@@ -415,7 +416,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               const initialLabs = buildInitialLabResults(
                 patientRecord.id,
                 patientRecord.school_id ?? finalSchoolId,
-                inserted.id,
               );
               const { error: labError } = await supabase.from('lab_results').insert(initialLabs);
               if (labError) {
