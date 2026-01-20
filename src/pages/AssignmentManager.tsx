@@ -268,15 +268,18 @@ export default function AssignmentManager() {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
 
+        // Track cumulative offset for this student to ensure sequential ordering
+        let cumulativeOffset = 0;
+
         for (const roomId of selectedRooms) {
-          // Calculate staggered effective date
-          // For bulk assignments with multiple students/rooms, add random 5-10 minute offset per assignment
-          // For single student/room assignments, use the base effective date
+          // Calculate staggered effective date with progressive offset
+          // Each subsequent assignment gets a random 5-10 minute offset from the previous one
           let studentEffectiveDate = effectiveDateTime;
-          if ((targetingMode === 'bulk' && studentsToAssign.length > 1) || selectedRooms.length > 1) {
+          if (selectedRooms.length > 1) {
             // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
             const randomOffset = Math.floor(Math.random() * 300000) + 300000;
-            studentEffectiveDate = new Date(effectiveDateTime.getTime() + randomOffset);
+            cumulativeOffset += randomOffset;
+            studentEffectiveDate = new Date(effectiveDateTime.getTime() + cumulativeOffset);
           }
           const effectiveDateUTC = studentEffectiveDate.toISOString();
 
