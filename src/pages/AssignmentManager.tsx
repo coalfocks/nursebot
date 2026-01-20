@@ -193,6 +193,59 @@ export default function AssignmentManager() {
     setSchools(data || []);
   };
 
+  const validateAssignmentDates = (
+    effectiveDate: string,
+    dueDate: string | null,
+    windowStart: string | null,
+    windowEnd: string | null
+  ): { valid: boolean; error?: string } => {
+    const effective = new Date(effectiveDate);
+    const due = dueDate ? new Date(dueDate) : null;
+    const windowStartDt = windowStart ? new Date(windowStart) : null;
+    const windowEndDt = windowEnd ? new Date(windowEnd) : null;
+
+    // Check that effective date is not in the past
+    const now = new Date();
+    if (effective < now) {
+      return { valid: false, error: 'Effective date cannot be in the past.' };
+    }
+
+    // Check that effective date is within window (if window_start is specified)
+    if (windowStartDt && effective < windowStartDt) {
+      return { valid: false, error: 'Effective date must be on or after the window start date.' };
+    }
+
+    // Check that effective date is within window (if window_end is specified)
+    if (windowEndDt && effective > windowEndDt) {
+      return { valid: false, error: 'Effective date must be on or before the window end date.' };
+    }
+
+    // Check due date relationships
+    if (due) {
+      // Due date must be after effective date
+      if (due <= effective) {
+        return { valid: false, error: 'Due date must be after the effective date.' };
+      }
+
+      // Due date must be within window (if window_start is specified)
+      if (windowStartDt && due < windowStartDt) {
+        return { valid: false, error: 'Due date must be on or after the window start date.' };
+      }
+
+      // Due date must be within window (if window_end is specified)
+      if (windowEndDt && due > windowEndDt) {
+        return { valid: false, error: 'Due date must be on or before the window end date.' };
+      }
+    }
+
+    // Check that window start is before window end (if both specified)
+    if (windowStartDt && windowEndDt && windowStartDt > windowEndDt) {
+      return { valid: false, error: 'Window start date must be before the window end date.' };
+    }
+
+    return { valid: true };
+  };
+
   const handleAssign = async () => {
     if (selectedRooms.length === 0 || !user || !effectiveDate) {
       alert('Please select at least one room and an effective date');
@@ -209,6 +262,13 @@ export default function AssignmentManager() {
     const invalidRooms = selectedRoomsData.filter(room => !validateRoomOrdersConfig(room));
     if (invalidRooms.length > 0) {
       alert(`The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Please configure orders for these rooms before creating assignments.`);
+      return;
+    }
+
+    // Validate date constraints
+    const dateValidation = validateAssignmentDates(effectiveDate, dueDate || null, windowStart || null, windowEnd || null);
+    if (!dateValidation.valid) {
+      alert(dateValidation.error);
       return;
     }
 
@@ -343,6 +403,18 @@ export default function AssignmentManager() {
 
   const handleEdit = async () => {
     if (!editingAssignment) return;
+
+    // Validate date constraints
+    const dateValidation = validateAssignmentDates(
+      editingAssignment.effective_date,
+      editingAssignment.due_date,
+      editingAssignment.window_start,
+      editingAssignment.window_end
+    );
+    if (!dateValidation.valid) {
+      alert(dateValidation.error);
+      return;
+    }
 
     try {
       const updateData: Record<string, string | null> = {
