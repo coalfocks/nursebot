@@ -3,26 +3,49 @@ import { supabase } from '../lib/supabase';
 import { Pencil, Trash2, Plus, Loader2 } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
+import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import type { Database } from '../lib/database.types';
+import { useAuthStore } from '../stores/authStore';
+import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { useNavigate } from 'react-router-dom';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 
 export default function AdminPage() {
+  const { user, profile, activeSchoolId } = useAuthStore();
+  const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const hasAdmin = hasAdminAccess(profile);
+  const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
+    if (!user || !hasAdmin) {
+      navigate('/dashboard');
+      return;
+    }
+
     fetchRooms();
-  }, []);
+  }, [user, hasAdmin, navigate, scopedSchoolId]);
 
   const fetchRooms = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('rooms')
         .select('*')
         .order('room_number');
+
+      if (scopedSchoolId) {
+        // Filter to show rooms where:
+        // 1. school_id matches scoped school, OR
+        // 2. available_school_ids contains scoped school, OR
+        // 3. available_school_ids is empty array (all schools)
+        query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setRooms(data || []);
@@ -62,6 +85,16 @@ export default function AdminPage() {
     await fetchRooms();
   };
 
+  if (!hasAdmin) {
+    return (
+      <AdminLayout>
+        <div className="flex h-full items-center justify-center py-24">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
   if (loading) {
     return (
       <AdminLayout>
@@ -77,13 +110,16 @@ export default function AdminPage() {
       <div className="container mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold">Room Management</h1>
-          <button
-            onClick={() => setIsAdding(true)}
-            className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center"
-          >
-            <Plus className="w-5 h-5 mr-1" />
-            Add Room
-          </button>
+          <div className="flex items-center gap-4">
+            <SchoolScopeSelector className="w-56" label="School scope" />
+            <button
+              onClick={() => setIsAdding(true)}
+              className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center"
+            >
+              <Plus className="w-5 h-5 mr-1" />
+              Add Room
+            </button>
+          </div>
         </div>
 
         {isAdding && (
