@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2, Trash2 } from 'lucide-react';
+import { Plus, Loader2, Edit, ChevronDown, ChevronUp, Link2, Trash2, AlertTriangle } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import RoomEditor from '../components/RoomEditor';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { getRoomDisplayName } from '../lib/roomHelpers';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialty: {
@@ -325,8 +326,16 @@ export default function RoomManagement() {
                           {expandedRooms.has(room.id) && (
                             <div className="mt-4 pl-7 space-y-4">
                               <div>
-                                <h4 className="text-xs font-medium text-gray-500 uppercase">Role</h4>
-                                <p className="mt-1 text-sm text-gray-900">{room.role}</p>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="text-xs font-medium text-gray-500 uppercase">Role</h4>
+                                  {(!room.role || room.role.trim() === '') && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
+                                      <AlertTriangle className="h-3 w-3" />
+                                      No name set
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-sm text-gray-900">{getRoomDisplayName(room)}</p>
                               </div>
                               <div>
                                 <h4 className="text-xs font-medium text-gray-500 uppercase">Objective</h4>
