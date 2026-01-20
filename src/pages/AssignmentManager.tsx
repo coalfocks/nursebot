@@ -27,6 +27,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+type Specialty = Database['public']['Tables']['specialties']['Row'];
 
 export default function AssignmentManager() {
   const { user, profile, activeSchoolId } = useAuthStore();
@@ -36,10 +37,12 @@ export default function AssignmentManager() {
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState<Profile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [specialties, setSpecialties] = useState<Specialty[]>([]);
   const [filters, setFilters] = useState({
     status: '',
     studentId: '',
     roomId: '',
+    specialtyId: '',
     search: ''
   });
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -69,7 +72,8 @@ export default function AssignmentManager() {
       await Promise.all([
         fetchAssignments(),
         fetchStudents(),
-        fetchRooms()
+        fetchRooms(),
+        fetchSpecialties()
       ]);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -142,6 +146,22 @@ export default function AssignmentManager() {
 
     if (error) throw error;
     setRooms(data || []);
+  };
+
+  const fetchSpecialties = async () => {
+    let query = supabase
+      .from('specialties')
+      .select('*')
+      .order('name');
+
+    if (scopedSchoolId) {
+      query = query.eq('school_id', scopedSchoolId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+    setSpecialties(data || []);
   };
 
   const handleAssign = async () => {
@@ -319,6 +339,11 @@ export default function AssignmentManager() {
     if (filters.status && assignment.status !== filters.status) return false;
     if (filters.studentId && assignment.student_id !== filters.studentId) return false;
     if (filters.roomId && assignment.room_id.toString() !== filters.roomId) return false;
+    if (filters.specialtyId) {
+      // Check if the room's specialty_id or specialty_ids matches the filter
+      const roomSpecialtyIds = [assignment.room.specialty_id, ...(assignment.room.specialty_ids || [])].filter(Boolean);
+      if (!roomSpecialtyIds.includes(filters.specialtyId)) return false;
+    }
     if (filters.search) {
       const searchTerm = filters.search.toLowerCase();
       return (
@@ -398,7 +423,7 @@ export default function AssignmentManager() {
         {/* Filters */}
         <div className="bg-white shadow rounded-lg mb-6">
           <div className="p-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Status</label>
                 <select
@@ -440,6 +465,21 @@ export default function AssignmentManager() {
                   {rooms.map(room => (
                     <option key={room.id} value={room.id}>
                       Room {room.room_number}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Specialty</label>
+                <select
+                  value={filters.specialtyId}
+                  onChange={(e) => setFilters({ ...filters, specialtyId: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                  <option value="">All Specialties</option>
+                  {specialties.map(specialty => (
+                    <option key={specialty.id} value={specialty.id}>
+                      {specialty.name}
                     </option>
                   ))}
                 </select>
