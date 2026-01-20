@@ -32,7 +32,9 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
   // Check if a note is editable by the current user
   const canEditNote = (note: ClinicalNote): boolean => {
-    // Super admins can edit all notes
+    // Signed notes cannot be edited
+    if (note.signed) return false;
+    // Super admins can edit all unsigned notes
     if (isSuperAdmin(profile)) return true;
     // Students can edit notes that are assignment-scoped (their own notes)
     if (user && note.assignmentId) return true;
