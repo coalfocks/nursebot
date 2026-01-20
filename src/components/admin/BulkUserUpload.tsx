@@ -275,6 +275,29 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                       {results.message}
                     </p>
 
+                    {/* Summary Report */}
+                    <div className="mt-3 rounded-md border border-gray-200 bg-white p-3">
+                      <p className="text-xs font-semibold text-gray-900 mb-2">Summary Report:</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-green-500" />
+                          <span className="text-gray-700">Created: <strong>{results.summary.success}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-blue-500" />
+                          <span className="text-gray-700">Skipped: <strong>{results.summary.skipped}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-red-500" />
+                          <span className="text-gray-700">Failed: <strong>{results.summary.failed}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-2 rounded-full bg-gray-400" />
+                          <span className="text-gray-700">Total: <strong>{results.summary.total}</strong></span>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Skipped entries */}
                     {results.summary.skipped > 0 && (
                       <div className="mt-3 max-h-40 overflow-y-auto">
