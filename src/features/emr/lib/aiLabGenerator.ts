@@ -380,6 +380,8 @@ export async function generateLabResults(
     return {
       id: `generated-lab-${Date.now()}-${index}`,
       patientId,
+      assignmentId: context?.assignmentId ?? undefined,
+      roomId: context?.roomId ?? undefined,
       testName: template.testName,
       value: biasedValue,
       unit: template.unit,
