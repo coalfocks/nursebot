@@ -19,7 +19,7 @@ interface ClinicalNotesProps {
 
 export function ClinicalNotes({ patient, assignmentId, forceBaseline }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
-  const { profile } = useAuthStore();
+  const { profile, user } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [nurseNoteDraft, setNurseNoteDraft] = useState('');
@@ -28,6 +28,15 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     type: 'Progress',
     content: '',
   });
+
+  // Check if a note is editable by the current user
+  const canEditNote = (note: ClinicalNote): boolean => {
+    // Super admins can edit all notes
+    if (isSuperAdmin(profile)) return true;
+    // Students can edit notes that are assignment-scoped (their own notes)
+    if (user && note.assignmentId) return true;
+    return false;
+  };
 
   useEffect(() => {
     void (async () => {
@@ -99,6 +108,8 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
   const handleDeleteNote = async (noteId: string) => {
     if (!canEdit) return;
+    const note = notes.find((n) => n.id === noteId);
+    if (!note || !canEditNote(note)) return;
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
     setNotes((prev) => prev.filter((note) => note.id !== noteId));
     await emrApi.deleteClinicalNote(noteId);
@@ -144,7 +155,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
                   Pending
                 </Badge>
               )}
-              {canEdit &&
+              {canEditNote(note) &&
                 (isEditing ? (
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setEditingNoteId(null)}>
@@ -159,9 +170,11 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
                     <Button size="sm" variant="outline" onClick={() => startEditing(note)}>
                       Edit
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => void handleDeleteNote(note.id)}>
-                      <Trash2 className="h-4 w-4 text-red-600" />
-                    </Button>
+                    {canEdit && (
+                      <Button size="sm" variant="ghost" onClick={() => void handleDeleteNote(note.id)}>
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                      </Button>
+                    )}
                   </div>
                 ))}
             </div>
