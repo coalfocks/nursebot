@@ -39,6 +39,7 @@ const specialtyOptions = [
   'Pediatrics',
   'Psychiatry',
   'EM',
+  'Family Medicine',
 ];
 
 const difficultyLabels: Record<CaseBlueprint['difficulty'], string> = {
