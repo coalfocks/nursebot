@@ -18,6 +18,7 @@ interface CreateResult {
   email: string;
   error?: string;
   userId?: string;
+  skipped?: boolean;
 }
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -79,6 +80,32 @@ Deno.serve(async (req) => {
       }
 
       try {
+        // Check if user already exists by email
+        const { data: existingUser, error: checkError } = await supabaseAdmin
+          .from('profiles')
+          .select('id, email')
+          .ilike('email', email.trim())
+          .maybeSingle();
+
+        if (checkError) {
+          results.push({
+            success: false,
+            email,
+            error: `Error checking for existing user: ${checkError.message}`,
+          });
+          continue;
+        }
+
+        if (existingUser) {
+          results.push({
+            success: true,
+            email,
+            skipped: true,
+            userId: existingUser.id,
+          });
+          continue;
+        }
+
         // Look up school by name
         const { data: schoolData, error: schoolError } = await supabaseAdmin
           .from('schools')
@@ -162,16 +189,18 @@ Deno.serve(async (req) => {
       }
     }
 
-    const successCount = results.filter((r) => r.success).length;
+    const successCount = results.filter((r) => r.success && !r.skipped).length;
+    const skippedCount = results.filter((r) => r.skipped).length;
     const failureCount = results.filter((r) => !r.success).length;
 
     return new Response(
       JSON.stringify({
-        message: `Created ${successCount} user(s) successfully. ${failureCount} failed.`,
+        message: `Created ${successCount} user(s) successfully. ${skippedCount} skipped (already exist). ${failureCount} failed.`,
         results,
         summary: {
           total: results.length,
           success: successCount,
+          skipped: skippedCount,
           failed: failureCount,
         },
       }),

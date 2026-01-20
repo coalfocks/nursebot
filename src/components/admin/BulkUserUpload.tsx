@@ -19,6 +19,7 @@ interface UploadResult {
   email: string;
   error?: string;
   userId?: string;
+  skipped?: boolean;
 }
 
 interface BulkCreateResponse {
@@ -27,6 +28,7 @@ interface BulkCreateResponse {
   summary: {
     total: number;
     success: number;
+    skipped: number;
     failed: number;
   };
 }
@@ -272,12 +274,28 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                     >
                       {results.message}
                     </p>
+
+                    {/* Skipped entries */}
+                    {results.summary.skipped > 0 && (
+                      <div className="mt-3 max-h-40 overflow-y-auto">
+                        <p className="text-xs font-medium text-blue-900">Skipped (already exist):</p>
+                        <ul className="mt-1 text-xs text-blue-700 space-y-1">
+                          {results.results
+                            .filter((r) => r.skipped)
+                            .map((r, i) => (
+                              <li key={i}>{r.email}</li>
+                            ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Failed entries */}
                     {results.summary.failed > 0 && (
                       <div className="mt-3 max-h-40 overflow-y-auto">
                         <p className="text-xs font-medium text-amber-900">Failed uploads:</p>
                         <ul className="mt-1 text-xs text-amber-700 space-y-1">
                           {results.results
-                            .filter((r) => !r.success)
+                            .filter((r) => !r.success && !r.skipped)
                             .map((r, i) => (
                               <li key={i}>
                                 {r.email}: {r.error}
