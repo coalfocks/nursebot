@@ -118,17 +118,17 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
     </div>
   );
 
-  const FeedbackSection = ({ 
-    title, 
-    icon: Icon, 
-    score, 
-    comments, 
-    strengths, 
+  const FeedbackSection = ({
+    title,
+    icon: Icon,
+    score,
+    comments,
+    strengths,
     areasForImprovement,
     sectionKey,
-  }: { 
+  }: {
     title: string;
-    icon: any;
+    icon: React.ComponentType<{ className?: string }>;
     score: number;
     comments: string;
     strengths: string[];

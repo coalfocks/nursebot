@@ -27,12 +27,12 @@ interface FeedbackResponse {
 }
 
 async function updateAssignmentStatus(
-  supabaseClient: any,
+  supabaseClient: ReturnType<typeof createClient>,
   assignmentId: string,
   status: 'processing' | 'completed' | 'failed',
   error?: string
 ) {
-  const updateData: any = { feedback_status: status };
+  const updateData: Record<string, string | null> = { feedback_status: status };
   if (error) updateData.feedback_error = error;
   if (status === 'completed') updateData.feedback_generated_at = new Date().toISOString();
 
@@ -332,7 +332,7 @@ in their upcoming clinical roles.`
       }
 
       // Validate each section has required fields
-      const validateSection = (section: any, name: string) => {
+      const validateSection = (section: FeedbackResponse['clinical_reasoning'], name: string) => {
         if (!section.score || !section.comments || !section.strengths || !section.areas_for_improvement) {
           console.error(`Missing required fields in ${name} section:`, section);
           throw new Error(`Missing required fields in ${name} section`);

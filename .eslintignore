@@ -1,0 +1,3 @@
+public/pdf-worker
+dist
+*.min.js

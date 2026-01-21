@@ -166,7 +166,7 @@ export default function FeedbackManagement() {
               <div className="mt-4 sm:mt-0 sm:ml-4">
                 <select
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as any)}
+                  onChange={(e) => setStatusFilter(e.target.value as 'all' | 'pending' | 'processing' | 'completed' | 'failed')}
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                 >
                   <option value="all">All Status</option>

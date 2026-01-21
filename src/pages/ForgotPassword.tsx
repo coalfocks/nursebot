@@ -18,8 +18,8 @@ export default function ForgotPassword() {
     try {
       await resetPassword(email);
       setSuccess(true);
-    } catch (err: any) {
-      setError(err.message || 'Failed to send reset password email');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send reset password email');
     } finally {
       setLoading(false);
     }

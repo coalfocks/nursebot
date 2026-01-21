@@ -161,7 +161,6 @@ export default function TestRooms() {
       return;
     }
 
-    const now = new Date().toISOString();
     setResettingRoomIds((prev) => new Set(prev).add(roomId));
     setError(null);
 

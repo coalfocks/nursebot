@@ -82,11 +82,11 @@ export default function Register() {
     try {
       // Format phone number for storage
       const formattedPhoneNumber = phoneNumber ? formatPhoneNumber(phoneNumber) : null;
-      
+
       await signUp(email, password, fullName, studyYear, caseDesignation, formattedPhoneNumber, smsConsent, schoolId);
       navigate('/dashboard');
-    } catch (err: any) {
-      setError(err.message || 'Failed to create account');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create account');
     } finally {
       setLoading(false);
     }

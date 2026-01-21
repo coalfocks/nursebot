@@ -26,14 +26,12 @@ const buildFallbackLabResult = ({
   patientId,
   labName,
   orderedBy,
-  priority,
   valueOverride,
   assignmentId,
 }: {
   patientId: string;
   labName: string;
   orderedBy?: string;
-  priority: LabPriority;
   valueOverride?: string | null;
   assignmentId?: string | null;
 }): LabResult => {

@@ -122,9 +122,9 @@ export default function ProfileSettings() {
 
       await loadUser();
       setMessage({ type: 'success', text: 'Profile updated successfully!' });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating profile:', error);
-      setMessage({ type: 'error', text: error.message || 'Failed to update profile' });
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to update profile' });
     } finally {
       setSaving(false);
     }

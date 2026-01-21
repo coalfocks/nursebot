@@ -40,14 +40,14 @@ export default function ResetPassword() {
       });
 
       if (error) throw error;
-      
+
       setSuccess(true);
       // Redirect to login after 3 seconds
       setTimeout(() => {
         navigate('/login');
       }, 3000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to reset password');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset password');
     } finally {
       setLoading(false);
     }

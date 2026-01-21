@@ -4,7 +4,7 @@ import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TestTube, TrendingUp, Sparkles, Trash2, Edit } from 'lucide-react';
+import { TestTube, TrendingUp, Sparkles, Trash2 } from 'lucide-react';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';

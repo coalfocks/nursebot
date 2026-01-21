@@ -1,0 +1,30 @@
+# Ralphy Progress Log
+
+- [✓] 2026-01-20 05:19 - Show room name in the EHR patient list (not room number).
+- [✓] 2026-01-20 05:21 - If a room has no name, fall back to room number (or show “Unnamed Room”) and log a warning in admin UI.
+- [✓] 2026-01-20 05:22 - Allow superadmins to delete any clinical note (all types: H&P, Progress, Consult, Discharge, Nurse).
+- [✓] 2026-01-20 05:27 - Consolidate all superadmin baseline/room-creation labs into a single run column.
+- [✓] 2026-01-20 05:33 - Ensure labs generated during case assignments show as new runs.
+- [✓] 2026-01-20 05:37 - Allow students to open/edit progress notes from the EHR after completion.
+- [✓] 2026-01-20 05:40 - Disable chat input once a case is completed while keeping EHR accessible.
+- [✓] 2026-01-20 05:43 - Sign/submit progress note to trigger feedback generation.
+- [✓] 2026-01-20 05:45 - Lock signed notes as read-only.
+- [✓] 2026-01-20 05:48 - Fix specialties list loading in room create/edit.
+- [✓] 2026-01-20 05:55 - Allow multi-select specialties per room.
+- [✓] 2026-01-20 05:58 - Add Family Medicine to specialties.
+- [✓] 2026-01-20 06:03 - Add room school access multi-select (independent of ownership).
+- [✓] 2026-01-20 06:05 - Add “All Schools” option for room access.
+- [✓] 2026-01-20 06:10 - Ensure admin room lists respect multi-school access rules.
+- [✓] 2026-01-20 06:18 - Add Admin UI CSV upload for bulk user creation (one school at a time).
+- [✓] 2026-01-20 06:24 - Require CSV columns: school, name, email, password, specialty.
+- [✓] 2026-01-20 06:27 - Skip duplicate users by email and report skipped entries.
+- [✓] 2026-01-20 06:28 - Provide a summary report of created vs skipped users.
+- [✓] 2026-01-20 06:38 - Allow selection by rooms or specialties.
+- [✓] 2026-01-20 06:40 - If selecting specialties, allow multi-select rooms under those specialties.
+- [✓] 2026-01-20 06:46 - Allow assignment targeting by school, specialty, or specific students.
+- [✓] 2026-01-20 06:54 - Support absolute start/end time window for assignments.
+- [✓] 2026-01-20 06:56 - Stagger assignment delivery with 5–10 minute padding (no simultaneous starts).
+- [✓] 2026-01-20 06:59 - Require specified room order for assignments (unless an existing order model is used).
+- [✓] 2026-01-20 07:06 - Generate N x M assignments when selecting schools/students and rooms.
+- [✓] 2026-01-20 07:11 - Assign cases to each student in specified order with randomized offsets.
+- [✓] 2026-01-20 07:16 - Ensure effective/due dates fall within the window.

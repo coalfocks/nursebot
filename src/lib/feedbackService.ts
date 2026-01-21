@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import type { Database } from './database.types';
 
 export interface FeedbackResponse {
   overallScore: number;

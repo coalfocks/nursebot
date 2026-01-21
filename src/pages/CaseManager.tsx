@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import AdminLayout from '../components/admin/AdminLayout';
-import { Loader2, User, Calendar, List, MessageSquare, FileText, CheckSquare, XCircle, ArrowLeft } from 'lucide-react';
+import { Loader2, User, Calendar, MessageSquare, FileText, CheckSquare, XCircle, ArrowLeft } from 'lucide-react';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 
 interface CaseWithDetails {
@@ -11,7 +11,7 @@ interface CaseWithDetails {
   title: string;
   description: string;
   patient_history: string;
-  initial_vitals: any;
+  initial_vitals: Record<string, unknown>;
   difficulty_level: string;
   expected_diagnosis: string;
   expected_treatment: string[];
@@ -312,9 +312,9 @@ export default function CaseManager() {
       }
       
       setShowFeedbackForm(false);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error submitting feedback:', error);
-      setFeedbackError(error.message || 'Failed to submit feedback');
+      setFeedbackError(error instanceof Error ? error.message : 'Failed to submit feedback');
     } finally {
       setIsSubmittingFeedback(false);
     }
