@@ -141,7 +141,7 @@ export const emrApi = {
   async getPatient(patientId: string): Promise<Patient | null> {
     const { data, error } = await supabase
       .from('patients')
-      .select('*')
+      .select('*, room:room_id(id, room_number)')
       .eq('id', patientId)
       .is('deleted_at', null)
       .maybeSingle();
@@ -153,18 +153,27 @@ export const emrApi = {
       return null;
     }
 
-    return mapPatient(data);
+    const patient = mapPatient(data as Database['public']['Tables']['patients']['Row']);
+    const roomData = (data as { room?: { room_number?: string | null } | null }).room;
+    if (roomData?.room_number) {
+      patient.room = roomData.room_number;
+    }
+    return patient;
   },
 
   async getPatientByRoomId(roomId: number): Promise<Patient | null> {
     const { data, error } = await supabase
       .from('rooms')
-      .select('patient_id, patient:patient_id(*)')
+      .select('id, room_number, patient_id, patient:patient_id(*)')
       .eq('id', roomId)
       .maybeSingle();
 
     if (data?.patient) {
-      return mapPatient(data.patient as Database['public']['Tables']['patients']['Row'], roomId);
+      const patient = mapPatient(data.patient as Database['public']['Tables']['patients']['Row'], roomId);
+      if (data.room_number) {
+        patient.room = data.room_number;
+      }
+      return patient;
     }
 
     const { data: legacyData, error: legacyError } = await supabase
@@ -329,11 +338,19 @@ export const emrApi = {
     return mapClinicalNote(data, data.patient_id ?? '');
   },
 
-  async deleteClinicalNote(noteId: string): Promise<void> {
-    const { error } = await supabase
+  async deleteClinicalNote(noteId: string, patientId?: string): Promise<void> {
+    if (!noteId) {
+      console.error('Missing clinical note id for delete.');
+      return;
+    }
+    let query = supabase
       .from('clinical_notes')
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', noteId);
+    if (patientId) {
+      query = query.eq('patient_id', patientId);
+    }
+    const { error } = await query;
 
     if (error) {
       console.error('Error deleting clinical note', error);

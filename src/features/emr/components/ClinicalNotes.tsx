@@ -112,10 +112,10 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
   const handleDeleteNote = async (noteId: string) => {
     if (!canEdit) return;
     const note = notes.find((n) => n.id === noteId);
-    if (!note || !canEditNote(note)) return;
+    if (!note || !canEditNote(note) || !noteId) return;
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
-    setNotes((prev) => prev.filter((note) => note.id !== noteId));
-    await emrApi.deleteClinicalNote(noteId);
+    setNotes((prev) => prev.filter((note) => note.id && note.id !== noteId));
+    await emrApi.deleteClinicalNote(noteId, note.patientId);
   };
 
   const handleSignNote = async (note: ClinicalNote) => {
