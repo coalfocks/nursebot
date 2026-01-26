@@ -545,6 +545,30 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           </div>
         )}
         <div>
+          <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
+            Specialties
+          </label>
+          <select
+            id="specialty"
+            multiple
+            value={specialtyIds}
+            onChange={(e) =>
+              setSpecialtyIds(Array.from(e.target.selectedOptions).map((option) => option.value).filter(Boolean))
+            }
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+          >
+            {specialties.map((specialty) => (
+              <option key={specialty.id} value={specialty.id}>
+                {specialty.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            {schoolId ? 'Select one or more specialties (Ctrl/Cmd+click to select multiple)' : 'Select a school first to load specialties'}
+          </p>
+        </div>
+
+        <div>
           <label htmlFor="roomNumber" className="block text-sm font-medium text-gray-700">
             Room Number
           </label>
@@ -767,28 +791,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
         {showAdvanced && (
           <div className="space-y-4">
-            <div>
-              <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
-                Specialties
-              </label>
-              <select
-                id="specialty"
-                multiple
-                value={specialtyIds}
-                onChange={(e) =>
-                  setSpecialtyIds(Array.from(e.target.selectedOptions).map((option) => option.value).filter(Boolean))
-                }
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              >
-                {specialties.map((specialty) => (
-                  <option key={specialty.id} value={specialty.id}>
-                    {specialty.name}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">Select one or more specialties.</p>
-            </div>
-
             <div>
               <label htmlFor="difficulty" className="block text-sm font-medium text-gray-700">
                 Difficulty Level
