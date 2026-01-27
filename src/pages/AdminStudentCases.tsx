@@ -181,8 +181,7 @@ export default function AdminStudentCases() {
                 <tr>
                   <th className="px-4 py-3">Case</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Effective</th>
-                  <th className="px-4 py-3">Due</th>
+                  <th className="px-4 py-3">Window</th>
                   <th className="px-4 py-3">Completed</th>
                 </tr>
               </thead>
@@ -203,10 +202,9 @@ export default function AdminStudentCases() {
                       </td>
                       <td className="px-4 py-3">{getStatusBadge(assignment.status)}</td>
                       <td className="px-4 py-3 text-slate-600">
-                        {assignment.effective_date ? new Date(assignment.effective_date).toLocaleString() : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        {assignment.due_date ? new Date(assignment.due_date).toLocaleString() : '—'}
+                        {assignment.window_start
+                          ? `${new Date(assignment.window_start).toLocaleDateString()} - ${new Date(assignment.window_end).toLocaleDateString()}`
+                          : '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-600">
                         {assignment.completed_at ? new Date(assignment.completed_at).toLocaleString() : '—'}

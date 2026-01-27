@@ -198,16 +198,9 @@ export default function MyCases() {
                           : 'General Practice'}
                       </p>
 
-                      {assignment.due_date && (
+                      {assignment.window_start && (
                         <p className="mt-2 text-sm text-gray-600">
-                          <span className="font-medium">Due:</span> {formatDate(assignment.due_date)}
-                        </p>
-                      )}
-
-                      {assignment.effective_date && (
-                        <p className="mt-2 text-sm text-gray-600">
-                          <span className="font-medium">Effective:</span> {formatDate(assignment.effective_date)}
-                          <span className="ml-2 text-xs text-gray-500">(Auto-completes after 1 hour)</span>
+                          <span className="font-medium">Window:</span> {formatDate(assignment.window_start)} to {formatDate(assignment.window_end)}
                         </p>
                       )}
 
@@ -299,17 +292,10 @@ export default function MyCases() {
                         <p className="mt-2 text-sm text-gray-500">
                           {assignment.room.specialty?.name || 'General Practice'}
                         </p>
-                        
-                        {assignment.due_date && (
+
+                        {assignment.window_start && (
                           <p className="mt-2 text-sm text-gray-600">
-                            <span className="font-medium">Due:</span> {formatDate(assignment.due_date)}
-                          </p>
-                        )}
-                        
-                        {assignment.effective_date && (
-                          <p className="mt-2 text-sm text-gray-600">
-                            <span className="font-medium">Effective:</span> {formatDate(assignment.effective_date)}
-                            <span className="ml-2 text-xs text-gray-500">(Auto-completes after 1 hour)</span>
+                            <span className="font-medium">Window:</span> {formatDate(assignment.window_start)} to {formatDate(assignment.window_end)}
                           </p>
                         )}
 

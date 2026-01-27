@@ -276,13 +276,13 @@ export default function AssignmentView() {
                     </div>
                   </div>
                 )}
-                {assignment.due_date && (
+                {assignment.window_start && (
                   <div className="flex items-center gap-3">
                     <Clock className="w-4 h-4 text-gray-500" />
                     <div>
-                      <p className="text-xs text-gray-500">Due Date</p>
+                      <p className="text-xs text-gray-500">Window</p>
                       <p className="text-sm font-medium text-gray-900">
-                        {new Date(assignment.due_date).toLocaleDateString()}
+                        {new Date(assignment.window_start).toLocaleDateString()} - {new Date(assignment.window_end).toLocaleDateString()}
                       </p>
                     </div>
                   </div>

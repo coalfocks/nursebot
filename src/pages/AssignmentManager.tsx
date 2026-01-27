@@ -53,8 +53,6 @@ export default function AssignmentManager() {
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState('');
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
-  const [dueDate, setDueDate] = useState<string>('');
-  const [effectiveDate, setEffectiveDate] = useState<string>('');
   const [windowStart, setWindowStart] = useState<string>('');
   const [windowEnd, setWindowEnd] = useState<string>('');
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
@@ -62,10 +60,8 @@ export default function AssignmentManager() {
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
   const [editingAssignment, setEditingAssignment] = useState<{
     id: string;
-    effective_date: string;
-    due_date: string | null;
-    window_start: string | null;
-    window_end: string | null;
+    window_start: string;
+    window_end: string;
   } | null>(null);
   const [showChatModal, setShowChatModal] = useState(false);
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
@@ -194,61 +190,35 @@ export default function AssignmentManager() {
   };
 
   const validateAssignmentDates = (
-    effectiveDate: string,
-    dueDate: string | null,
-    windowStart: string | null,
-    windowEnd: string | null
+    windowStart: string,
+    windowEnd: string
   ): { valid: boolean; error?: string } => {
-    const effective = new Date(effectiveDate);
-    const due = dueDate ? new Date(dueDate) : null;
-    const windowStartDt = windowStart ? new Date(windowStart) : null;
-    const windowEndDt = windowEnd ? new Date(windowEnd) : null;
+    const windowStartDt = new Date(windowStart);
+    const windowEndDt = new Date(windowEnd);
 
-    // Check that effective date is not in the past
+    // Check that window start is not in the past
     const now = new Date();
-    if (effective < now) {
-      return { valid: false, error: 'Effective date cannot be in the past.' };
+    if (windowStartDt < now) {
+      return { valid: false, error: 'Window start cannot be in the past.' };
     }
 
-    // Check that effective date is within window (if window_start is specified)
-    if (windowStartDt && effective < windowStartDt) {
-      return { valid: false, error: 'Effective date must be on or after the window start date.' };
+    // Check that window end is after window start
+    if (windowEndDt <= windowStartDt) {
+      return { valid: false, error: 'Window end must be after the window start.' };
     }
 
-    // Check that effective date is within window (if window_end is specified)
-    if (windowEndDt && effective > windowEndDt) {
-      return { valid: false, error: 'Effective date must be on or before the window end date.' };
-    }
-
-    // Check due date relationships
-    if (due) {
-      // Due date must be after effective date
-      if (due <= effective) {
-        return { valid: false, error: 'Due date must be after the effective date.' };
-      }
-
-      // Due date must be within window (if window_start is specified)
-      if (windowStartDt && due < windowStartDt) {
-        return { valid: false, error: 'Due date must be on or after the window start date.' };
-      }
-
-      // Due date must be within window (if window_end is specified)
-      if (windowEndDt && due > windowEndDt) {
-        return { valid: false, error: 'Due date must be on or before the window end date.' };
-      }
-    }
-
-    // Check that window start is before window end (if both specified)
-    if (windowStartDt && windowEndDt && windowStartDt > windowEndDt) {
-      return { valid: false, error: 'Window start date must be before the window end date.' };
+    // Ensure there's enough time for the window (at least 30 minutes for multiple cases)
+    const minWindowDuration = 30 * 60 * 1000; // 30 minutes in ms
+    if (windowEndDt.getTime() - windowStartDt.getTime() < minWindowDuration) {
+      return { valid: false, error: 'Window must be at least 30 minutes long to allow for random scheduling.' };
     }
 
     return { valid: true };
   };
 
   const handleAssign = async () => {
-    if (selectedRooms.length === 0 || !user || !effectiveDate) {
-      alert('Please select at least one room and an effective date');
+    if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
+      alert('Please select at least one room and set the window start and end times');
       return;
     }
 
@@ -266,7 +236,7 @@ export default function AssignmentManager() {
     }
 
     // Validate date constraints
-    const dateValidation = validateAssignmentDates(effectiveDate, dueDate || null, windowStart || null, windowEnd || null);
+    const dateValidation = validateAssignmentDates(windowStart, windowEnd);
     if (!dateValidation.valid) {
       alert(dateValidation.error);
       return;
@@ -291,21 +261,14 @@ export default function AssignmentManager() {
     }
 
     try {
-      // Convert effective date to UTC
-      const effectiveDateTime = new Date(effectiveDate);
+      // Convert window dates to UTC
+      const windowStartUTC = new Date(windowStart).toISOString();
+      const windowEndUTC = new Date(windowEnd).toISOString();
 
-      // Calculate default due date if not specified and convert to UTC
-      let calculatedDueDate = dueDate;
-      if (!calculatedDueDate) {
-        const defaultDueDate = new Date(effectiveDateTime.getTime() + 60 * 60 * 1000);
-        calculatedDueDate = defaultDueDate.toISOString();
-      } else {
-        calculatedDueDate = new Date(calculatedDueDate).toISOString();
-      }
-
-      // Convert window dates to UTC if provided
-      const windowStartUTC = windowStart ? new Date(windowStart).toISOString() : null;
-      const windowEndUTC = windowEnd ? new Date(windowEnd).toISOString() : null;
+      // Calculate window duration in milliseconds
+      const windowStartMs = new Date(windowStart).getTime();
+      const windowEndMs = new Date(windowEnd).getTime();
+      const windowDuration = windowEndMs - windowStartMs;
 
       // Create N x M assignments (each student gets each room)
       const assignments: Array<{
@@ -313,7 +276,6 @@ export default function AssignmentManager() {
         room_id: number;
         assigned_by: string;
         status: 'assigned';
-        due_date: string | null;
         effective_date: string | null;
         window_start: string | null;
         window_end: string | null;
@@ -328,18 +290,22 @@ export default function AssignmentManager() {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
 
+        // Calculate a random start time within the window for this student's first case
+        const randomOffset = Math.floor(Math.random() * windowDuration);
+        const firstCaseEffectiveDate = new Date(windowStartMs + randomOffset);
+
         // Track cumulative offset for this student to ensure sequential ordering
         let cumulativeOffset = 0;
 
         for (const roomId of selectedRooms) {
           // Calculate staggered effective date with progressive offset
           // Each subsequent assignment gets a random 5-10 minute offset from the previous one
-          let studentEffectiveDate = effectiveDateTime;
+          let studentEffectiveDate = firstCaseEffectiveDate;
           if (selectedRooms.length > 1) {
             // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
             const randomOffset = Math.floor(Math.random() * 300000) + 300000;
             cumulativeOffset += randomOffset;
-            studentEffectiveDate = new Date(effectiveDateTime.getTime() + cumulativeOffset);
+            studentEffectiveDate = new Date(firstCaseEffectiveDate.getTime() + cumulativeOffset);
           }
           const effectiveDateUTC = studentEffectiveDate.toISOString();
 
@@ -348,7 +314,6 @@ export default function AssignmentManager() {
             room_id: parseInt(roomId),
             assigned_by: user.id,
             status: 'assigned' as const,
-            due_date: calculatedDueDate || null,
             effective_date: effectiveDateUTC || null,
             window_start: windowStartUTC,
             window_end: windowEndUTC,
@@ -367,8 +332,6 @@ export default function AssignmentManager() {
       setSelectedStudent('');
       setStudentSearch('');
       setSelectedRooms([]);
-      setDueDate('');
-      setEffectiveDate('');
       setWindowStart('');
       setWindowEnd('');
       setTargetingMode('individual');
@@ -406,8 +369,6 @@ export default function AssignmentManager() {
 
     // Validate date constraints
     const dateValidation = validateAssignmentDates(
-      editingAssignment.effective_date,
-      editingAssignment.due_date,
       editingAssignment.window_start,
       editingAssignment.window_end
     );
@@ -417,18 +378,19 @@ export default function AssignmentManager() {
     }
 
     try {
+      // Re-calculate the effective_date based on the new window
+      const windowStartMs = new Date(editingAssignment.window_start).getTime();
+      const windowEndMs = new Date(editingAssignment.window_end).getTime();
+      const windowDuration = windowEndMs - windowStartMs;
+      const randomOffset = Math.floor(Math.random() * windowDuration);
+      const newEffectiveDate = new Date(windowStartMs + randomOffset).toISOString();
+
       const updateData: Record<string, string | null> = {
-        effective_date: new Date(editingAssignment.effective_date).toISOString(),
-        due_date: editingAssignment.due_date ? new Date(editingAssignment.due_date).toISOString() : null,
+        window_start: new Date(editingAssignment.window_start).toISOString(),
+        window_end: new Date(editingAssignment.window_end).toISOString(),
+        effective_date: newEffectiveDate,
         updated_at: new Date().toISOString()
       };
-
-      if (editingAssignment.window_start) {
-        updateData.window_start = new Date(editingAssignment.window_start).toISOString();
-      }
-      if (editingAssignment.window_end) {
-        updateData.window_end = new Date(editingAssignment.window_end).toISOString();
-      }
 
       const { error } = await supabase
         .from('student_room_assignments')
@@ -747,7 +709,7 @@ export default function AssignmentManager() {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Due Date
+                    Window
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Progress
@@ -784,7 +746,8 @@ export default function AssignmentManager() {
                       {getStatusBadge(assignment.status)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDate(assignment.due_date)}
+                      <div>{formatDate(assignment.window_start)}</div>
+                      <div className="text-xs">to {formatDate(assignment.window_end)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {assignment.nurse_feedback ? (
@@ -809,23 +772,15 @@ export default function AssignmentManager() {
                             <button
                               onClick={() => {
                                 // Format dates for the datetime-local input
-                                const effectiveDate = assignment.effective_date
-                                  ? new Date(assignment.effective_date).toISOString().slice(0, 16)
-                                  : '';
-                                const dueDate = assignment.due_date
-                                  ? new Date(assignment.due_date).toISOString().slice(0, 16)
-                                  : null;
-                                const windowStart = 'window_start' in assignment && assignment.window_start
+                                const windowStart = assignment.window_start
                                   ? new Date(assignment.window_start).toISOString().slice(0, 16)
-                                  : null;
-                                const windowEnd = 'window_end' in assignment && assignment.window_end
+                                  : '';
+                                const windowEnd = assignment.window_end
                                   ? new Date(assignment.window_end).toISOString().slice(0, 16)
-                                  : null;
+                                  : '';
 
                                 setEditingAssignment({
                                   id: assignment.id,
-                                  effective_date: effectiveDate,
-                                  due_date: dueDate,
                                   window_start: windowStart,
                                   window_end: windowEnd
                                 });
@@ -1097,57 +1052,33 @@ export default function AssignmentManager() {
                     </div>
                   )}
 
-                  {/* Effective Date */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Effective Date <span className="text-red-500">*</span></label>
-                    <input
-                      type="datetime-local"
-                      value={effectiveDate}
-                      onChange={(e) => setEffectiveDate(e.target.value)}
-                      required
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    />
-                    <p className="mt-1 text-sm text-gray-500">
-                      When should this assignment become active? This is required.
-                    </p>
-                  </div>
-
-                  {/* Due Date */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
-                    <input
-                      type="datetime-local"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    />
-                  </div>
-
                   {/* Window Start */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Window Start (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700">Window Start <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
                       value={windowStart}
                       onChange={(e) => setWindowStart(e.target.value)}
+                      required
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      Absolute start of the time window for this assignment.
+                      The earliest time cases can become active. Each student will be randomly assigned a time within the window.
                     </p>
                   </div>
 
                   {/* Window End */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Window End (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700">Window End <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
                       value={windowEnd}
                       onChange={(e) => setWindowEnd(e.target.value)}
+                      required
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      Absolute end of the time window for this assignment.
+                      The latest time cases can become active. Must be at least 30 minutes after window start.
                     </p>
                   </div>
                 </div>
@@ -1173,8 +1104,6 @@ export default function AssignmentManager() {
                     setSelectedStudent('');
                     setStudentSearch('');
                     setSelectedRooms([]);
-                    setDueDate('');
-                    setEffectiveDate('');
                     setWindowStart('');
                     setWindowEnd('');
                     setTargetingMode('individual');
@@ -1202,58 +1131,35 @@ export default function AssignmentManager() {
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Assignment</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Effective Date <span className="text-red-500">*</span></label>
+                    <label className="block text-sm font-medium text-gray-700">Window Start <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
-                      value={editingAssignment.effective_date}
+                      value={editingAssignment.window_start}
                       onChange={(e) => setEditingAssignment({
                         ...editingAssignment,
-                        effective_date: e.target.value
+                        window_start: e.target.value
                       })}
                       required
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
-                    <input
-                      type="datetime-local"
-                      value={editingAssignment.due_date || ''}
-                      onChange={(e) => setEditingAssignment({
-                        ...editingAssignment,
-                        due_date: e.target.value || null
-                      })}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Window Start (Optional)</label>
-                    <input
-                      type="datetime-local"
-                      value={editingAssignment.window_start || ''}
-                      onChange={(e) => setEditingAssignment({
-                        ...editingAssignment,
-                        window_start: e.target.value || null
-                      })}
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    />
                     <p className="mt-1 text-sm text-gray-500">
-                      Absolute start of the time window for this assignment.
+                      The earliest time cases can become active. A new activation time will be randomly selected within the window.
                     </p>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Window End (Optional)</label>
+                    <label className="block text-sm font-medium text-gray-700">Window End <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
-                      value={editingAssignment.window_end || ''}
+                      value={editingAssignment.window_end}
                       onChange={(e) => setEditingAssignment({
                         ...editingAssignment,
-                        window_end: e.target.value || null
+                        window_end: e.target.value
                       })}
+                      required
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      Absolute end of the time window for this assignment.
+                      The latest time cases can become active. Must be at least 30 minutes after window start.
                     </p>
                   </div>
                 </div>

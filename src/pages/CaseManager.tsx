@@ -25,9 +25,11 @@ interface CaseWithDetails {
 interface CaseAssignment {
   id: string;
   status: 'assigned' | 'in_progress' | 'bedside' | 'completed';
-  due_date: string | null;
   created_at: string;
   updated_at: string;
+  window_start: string | null;
+  window_end: string | null;
+  effective_date?: string | null;
   user: {
     id: string;
     full_name: string;
@@ -49,7 +51,6 @@ interface CaseAssignment {
     areas_for_improvement: string[];
     created_at: string;
   };
-  effective_date?: string | null;
 }
 
 export default function CaseManager() {
@@ -645,16 +646,10 @@ export default function CaseManager() {
                                   <Calendar className="w-4 h-4 mr-1" />
                                   <span>Assigned: {formatDate(assignment.created_at)}</span>
                                 </div>
-                                {assignment.due_date && (
+                                {assignment.window_start && (
                                   <div className="flex items-center">
                                     <Calendar className="w-4 h-4 mr-1" />
-                                    <span>Due: {formatDate(assignment.due_date)}</span>
-                                  </div>
-                                )}
-                                {assignment.effective_date && (
-                                  <div className="flex items-center">
-                                    <Calendar className="w-4 h-4 mr-1" />
-                                    <span>Effective: {formatDate(assignment.effective_date)}</span>
+                                    <span>Window: {formatDate(assignment.window_start)}</span>
                                   </div>
                                 )}
                               </div>
