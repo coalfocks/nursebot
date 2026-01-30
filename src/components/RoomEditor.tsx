@@ -238,14 +238,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (!schoolId) return;
 
       try {
-        let query = supabase
+        const { data, error } = await supabase
           .from('specialties')
           .select('*')
+          .or('school_id.is.null,school_id.eq.' + schoolId)
           .order('name');
-
-        query = query.eq('school_id', schoolId);
-
-        const { data, error } = await query;
 
         if (error) {
           console.error('Error fetching specialties:', error);
