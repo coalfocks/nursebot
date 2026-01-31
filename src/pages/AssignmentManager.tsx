@@ -55,6 +55,7 @@ export default function AssignmentManager() {
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [windowStart, setWindowStart] = useState<string>('');
   const [windowEnd, setWindowEnd] = useState<string>('');
+  const [selectedTimezone, setSelectedTimezone] = useState<string>('America/Denver'); // Default to MT
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
@@ -262,6 +263,8 @@ export default function AssignmentManager() {
 
     try {
       // Convert window dates to UTC
+      // Note: datetime-local inputs use browser's timezone
+      // If browser timezone differs from selected timezone, times may be off
       const windowStartUTC = new Date(windowStart).toISOString();
       const windowEndUTC = new Date(windowEnd).toISOString();
 
@@ -1054,6 +1057,26 @@ export default function AssignmentManager() {
                     </div>
                   )}
 
+                  {/* Timezone Selection */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Timezone</label>
+                    <select
+                      value={selectedTimezone}
+                      onChange={(e) => setSelectedTimezone(e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    >
+                      <option value="America/Denver">Mountain Time (Denver)</option>
+                      <option value="America/Phoenix">Arizona Time (Phoenix - No DST)</option>
+                      <option value="America/Chicago">Central Time (Chicago)</option>
+                      <option value="America/New_York">Eastern Time (New York)</option>
+                      <option value="America/Los_Angeles">Pacific Time (Los Angeles)</option>
+                      <option value="UTC">UTC</option>
+                    </select>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Select the timezone for the window start/end times you enter above.
+                    </p>
+                  </div>
+
                   {/* Window Start */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Window Start <span className="text-red-500">*</span></label>
@@ -1082,6 +1105,11 @@ export default function AssignmentManager() {
                     <p className="mt-1 text-sm text-gray-500">
                       The latest time cases can become active. Must be at least 30 minutes after window start.
                     </p>
+                    {windowEnd && (
+                      <p className="mt-2 text-sm text-blue-600">
+                        <strong>Note:</strong> This will be saved as UTC: {new Date(windowEnd).toISOString()}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
