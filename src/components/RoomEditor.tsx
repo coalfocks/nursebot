@@ -344,9 +344,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
-      // If "All Schools" is selected, save empty array; otherwise include primary + selected schools
+      // If "All Schools" is selected, preserve existing available_school_ids
+      // Otherwise, merge the primary school ID with selected schools
       const normalizedSchoolIds = allSchoolsSelected
-        ? []
+        ? (room?.available_school_ids ?? [])  // Preserve existing value when all schools selected
         : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId].filter(Boolean)));
 
       const roomData = {
