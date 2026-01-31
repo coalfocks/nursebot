@@ -311,11 +311,11 @@ export default function AssignmentManager() {
 
         for (const roomId of selectedRooms) {
           // Calculate staggered effective date with progressive offset
-          // Each subsequent assignment gets a random 5-10 minute offset from the previous one
+          // Each subsequent assignment gets a random 15-30 minute offset from the previous one
           let studentEffectiveDate = firstCaseEffectiveDate;
           if (selectedRooms.length > 1) {
-            // Generate random offset between 5-10 minutes (300,000 to 600,000 ms)
-            const randomOffset = Math.floor(Math.random() * 300000) + 300000;
+            // Generate random offset between 15-30 minutes (900,000 to 1,800,000 ms)
+            const randomOffset = Math.floor(Math.random() * 900000) + 900000;
             cumulativeOffset += randomOffset;
             studentEffectiveDate = new Date(firstCaseEffectiveDate.getTime() + cumulativeOffset);
           }
