@@ -224,6 +224,9 @@ export default function AssignmentManager() {
     return { valid: true };
   };
 
+  // Slot padding: ensures minimum time between any two assignments
+  const SLOT_PADDING_MINUTES = 5;
+
   const handleAssign = async () => {
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
       alert('Please select at least one room and set the window start and end times');
@@ -271,11 +274,20 @@ export default function AssignmentManager() {
     try {
       // Convert window dates from selected timezone to UTC
       // datetime-local inputs use browser timezone, so we convert using selected timezone
+      // Check if window duration is sufficient for selected rooms with slot padding
+      const totalSlotsNeeded = (selectedRooms.length * SLOT_PADDING_MINUTES) - SLOT_PADDING_MINUTES;
+      const windowDurationMinutes = windowDuration / (60 * 1000);
+      
+      if (windowDurationMinutes < totalSlotsNeeded) {
+        alert(`Warning: With ${selectedRooms.length} room(s),  minimum time needed between assignments is ${totalSlotsNeeded} minutes due to 5-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing to window duration or reducing to number of rooms.`);
+        return;
+      }
+
       const windowStartUTC = convertToUTC(windowStart, selectedTimezone)?.toISOString();
       const windowEndUTC = convertToUTC(windowEnd, selectedTimezone)?.toISOString();
 
-      if (!windowStartUTC || !windowEndUTC) {
-        alert('Please provide both valid window start and end times.');
+      if (windowDurationMinutes < totalSlotsNeeded) {
+        alert(`Warning: With ${selectedRooms.length} room(s),  minimum time needed between assignments is ${totalSlotsNeeded} minutes due to ${SLOT_PADDING_MINUTES}-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing the window duration or reducing the number of rooms.`);
         return;
       }
       const windowStartMs = new Date(windowStart).getTime();
