@@ -55,7 +55,7 @@ export default function AssignmentManager() {
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [windowStart, setWindowStart] = useState<string>('');
   const [windowEnd, setWindowEnd] = useState<string>('');
-  const [selectedTimezone, setSelectedTimezone] = useState<string>('America/Denver'); // Default to MT
+  const [selectedTimezone, setSelectedTimezone] = useState<string>(Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Denver');
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
@@ -194,23 +194,30 @@ export default function AssignmentManager() {
     windowStart: string,
     windowEnd: string
   ): { valid: boolean; error?: string } => {
-    const windowStartDt = new Date(windowStart);
-    const windowEndDt = new Date(windowEnd);
+    const windowStartUTC = convertToUTC(windowStart, selectedTimezone);
+    const windowEndUTC = convertToUTC(windowEnd, selectedTimezone);
+
+    if (!windowStartUTC || !windowEndUTC) {
+      return { valid: false, error: 'Please provide valid window start and end times.' };
+    }
+
+    const windowStartMs = windowStartUTC.getTime();
+    const windowEndMs = windowEndUTC.getTime();
 
     // Check that window start is not in the past
     const now = new Date();
-    if (windowStartDt < now) {
+    if (windowStartMs < now.getTime()) {
       return { valid: false, error: 'Window start cannot be in the past.' };
     }
 
     // Check that window end is after window start
-    if (windowEndDt <= windowStartDt) {
+    if (windowEndMs <= windowStartMs) {
       return { valid: false, error: 'Window end must be after the window start.' };
     }
 
     // Ensure there's enough time for the window (at least 30 minutes for multiple cases)
     const minWindowDuration = 30 * 60 * 1000; // 30 minutes in ms
-    if (windowEndDt.getTime() - windowStartDt.getTime() < minWindowDuration) {
+    if (windowEndMs - windowStartMs < minWindowDuration) {
       return { valid: false, error: 'Window must be at least 30 minutes long to allow for random scheduling.' };
     }
 
@@ -262,13 +269,15 @@ export default function AssignmentManager() {
     }
 
     try {
-      // Convert window dates to UTC
-      // Note: datetime-local inputs use browser's timezone
-      // If browser timezone differs from selected timezone, times may be off
-      const windowStartUTC = new Date(windowStart).toISOString();
-      const windowEndUTC = new Date(windowEnd).toISOString();
+      // Convert window dates from selected timezone to UTC
+      // datetime-local inputs use browser timezone, so we convert using selected timezone
+      const windowStartUTC = convertToUTC(windowStart, selectedTimezone)?.toISOString();
+      const windowEndUTC = convertToUTC(windowEnd, selectedTimezone)?.toISOString();
 
-      // Calculate window duration in milliseconds
+      if (!windowStartUTC || !windowEndUTC) {
+        alert('Please provide both valid window start and end times.');
+        return;
+      }
       const windowStartMs = new Date(windowStart).getTime();
       const windowEndMs = new Date(windowEnd).getTime();
       const windowDuration = windowEndMs - windowStartMs;
@@ -382,6 +391,10 @@ export default function AssignmentManager() {
 
     try {
       // Re-calculate the effective_date based on the new window
+      // Convert UTC dates back to local time using selected timezone for editing
+      const windowStartLocal = formatForDateTimeLocal(new Date(editingAssignment.window_start), selectedTimezone);
+      const windowEndLocal = formatForDateTimeLocal(new Date(editingAssignment.window_end), selectedTimezone);
+      
       const windowStartMs = new Date(editingAssignment.window_start).getTime();
       const windowEndMs = new Date(editingAssignment.window_end).getTime();
       const windowDuration = windowEndMs - windowStartMs;
@@ -532,6 +545,42 @@ export default function AssignmentManager() {
       </span>
     );
   };
+
+  // Convert datetime-local input string to UTC Date using selected timezone
+  function convertToUTC(localDateTime: string, timezone: string): Date | null {
+    if (!localDateTime) return null;
+    const [year, month, day, hour, minute] = localDateTime.split(/[-T:]/);
+    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(minute));
+    const isoString = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(date) + ' ' + timezone;
+    return new Date(isoString);
+  }
+
+  // Convert UTC Date back to datetime-local string for selected timezone
+  function formatForDateTimeLocal(utcDate: Date, timezone: string): string {
+    const localString = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(utcDate);
+    const [datePart, timePart] = localString.split(', ');
+    const [year, month, day] = datePart.trim().split('/');
+    const [hour, minute] = timePart.trim().split(':');
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+  }
 
   const formatDate = (date: string | null) => {
     if (!date) return 'Not set';
@@ -1090,6 +1139,11 @@ export default function AssignmentManager() {
                     <p className="mt-1 text-sm text-gray-500">
                       The earliest time cases can become active. Each student will be randomly assigned a time within the window.
                     </p>
+                    {windowStartUTCPreview && (
+                      <p className="mt-2 text-sm text-blue-600">
+                        <strong>Note:</strong> This will be saved as UTC: {windowStartUTCPreview}
+                      </p>
+                    )}
                   </div>
 
                   {/* Window End */}
@@ -1105,9 +1159,9 @@ export default function AssignmentManager() {
                     <p className="mt-1 text-sm text-gray-500">
                       The latest time cases can become active. Must be at least 30 minutes after window start.
                     </p>
-                    {windowEnd && (
+                    {windowEndUTCPreview && (
                       <p className="mt-2 text-sm text-blue-600">
-                        <strong>Note:</strong> This will be saved as UTC: {new Date(windowEnd).toISOString()}
+                        <strong>Note:</strong> This will be saved as UTC: {windowEndUTCPreview}
                       </p>
                     )}
                   </div>
@@ -1180,7 +1234,7 @@ export default function AssignmentManager() {
                     <label className="block text-sm font-medium text-gray-700">Window End <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
-                      value={editingAssignment.window_end}
+                      value={windowEndLocal || ''}
                       onChange={(e) => setEditingAssignment({
                         ...editingAssignment,
                         window_end: e.target.value
@@ -1191,6 +1245,11 @@ export default function AssignmentManager() {
                     <p className="mt-1 text-sm text-gray-500">
                       The latest time cases can become active. Must be at least 30 minutes after window start.
                     </p>
+                    {windowEndUTCPreview && (
+                      <p className="mt-2 text-sm text-blue-600">
+                        <strong>Note:</strong> This will be saved as UTC: {windowEndUTCPreview}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
