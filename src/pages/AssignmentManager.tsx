@@ -310,23 +310,21 @@ export default function AssignmentManager() {
         let cumulativeOffset = 0;
 
         for (const roomId of selectedRooms) {
-          // Calculate staggered effective date with progressive offset
-          // Each subsequent assignment gets a random 15-30 minute offset from the previous one
-          let studentEffectiveDate = firstCaseEffectiveDate;
-          if (selectedRooms.length > 1) {
-            // Generate random offset between 15-30 minutes (900,000 to 1,800,000 ms)
-            const randomOffset = Math.floor(Math.random() * 900000) + 900000;
-            cumulativeOffset += randomOffset;
-            studentEffectiveDate = new Date(firstCaseEffectiveDate.getTime() + cumulativeOffset);
-          }
-          const effectiveDateUTC = studentEffectiveDate.toISOString();
+          // Assign each room to a time slot to ensure even distribution
+          const slotIndex = roomId === selectedRooms[0] ? roomId : roomId - 1;
+          const slotSize = Math.floor(windowDuration / selectedRooms.length);
+          
+          // Randomize time within the slot
+          const randomOffset = Math.floor(Math.random() * slotSize);
+          const slotStartMs = windowStartMs + (slotIndex * slotSize) + randomOffset;
+          studentEffectiveDate = new Date(slotStartMs);
 
           assignments.push({
             student_id: studentId,
             room_id: parseInt(roomId),
             assigned_by: user.id,
             status: 'assigned' as const,
-            effective_date: effectiveDateUTC || null,
+            effective_date: studentEffectiveDate.toISOString(),
             window_start: windowStartUTC,
             window_end: windowEndUTC,
             school_id: assignmentSchoolId,
