@@ -215,10 +215,10 @@ export default function AssignmentManager() {
       return { valid: false, error: 'Window end must be after the window start.' };
     }
 
-    // Ensure there's enough time for the window (at least 30 minutes for multiple cases)
-    const minWindowDuration = 30 * 60 * 1000; // 30 minutes in ms
+    // Ensure there's enough time for the window (at least 20 minutes for multiple cases)
+    const minWindowDuration = 20 * 60 * 1000; // 20 minutes in ms
     if (windowEndMs - windowStartMs < minWindowDuration) {
-      return { valid: false, error: 'Window must be at least 30 minutes long to allow for random scheduling.' };
+      return { valid: false, error: 'Window must be at least 20 minutes long to allow for random scheduling.' };
     }
 
     return { valid: true };
@@ -1157,7 +1157,7 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      The latest time cases can become active. Must be at least 30 minutes after window start.
+                      The latest time cases can become active. Must be at least 20 minutes after window start.
                     </p>
                     {windowEndUTCPreview && (
                       <p className="mt-2 text-sm text-blue-600">
