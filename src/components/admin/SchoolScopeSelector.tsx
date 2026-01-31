@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useAuthStore } from '../../stores/authStore';
-import { hasAdminAccess, isSchoolAdmin, isSuperAdmin } from '../../lib/roles';
+import { hasAdminAccess, isSchoolAdmin, isSuperAdmin, isTestUser } from '../../lib/roles';
 import { useSchools } from '../../hooks/useSchools';
 
 interface SchoolScopeSelectorProps {
@@ -12,14 +12,15 @@ export default function SchoolScopeSelector({ className = '', label = 'School' }
   const { profile, activeSchoolId, setActiveSchoolId } = useAuthStore();
   const { schools, loading } = useSchools();
   const adminAccess = hasAdminAccess(profile);
-  const currentSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
+  const isTest = isTestUser(profile);
+  const currentSchoolId = (isSuperAdmin(profile) || isTest) ? activeSchoolId : profile?.school_id ?? null;
 
   const selectedSchoolName = useMemo(() => {
     if (!currentSchoolId) return null;
     return schools.find((school) => school.id === currentSchoolId)?.name ?? null;
   }, [schools, currentSchoolId]);
 
-  if (!adminAccess) {
+  if (!adminAccess && !isTest) {
     return null;
   }
 
@@ -32,6 +33,7 @@ export default function SchoolScopeSelector({ className = '', label = 'School' }
     );
   }
 
+  // Super admins and test users get a dropdown to switch schools
   return (
     <div className={className}>
       <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">

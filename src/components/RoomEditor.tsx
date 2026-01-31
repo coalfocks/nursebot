@@ -344,10 +344,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
-      // If "All Schools" is selected, save empty array; otherwise include primary + selected schools
+      // Normalize school IDs for saving
+      // - "All Schools" selected: save empty array []
+      // - "All Schools" NOT selected: save array with primary + selected schools
       const normalizedSchoolIds = allSchoolsSelected
         ? []
-        : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId].filter(Boolean)));
+        : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId])).filter(Boolean);
 
       const roomData = {
         room_number: roomNumber,
@@ -370,7 +372,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         is_active: isActive,
         pdf_url: finalPdfUrl,
         school_id: finalSchoolId,
-        available_school_ids: normalizedSchoolIds.length > 0 ? normalizedSchoolIds : null,
+        // Preserve empty array for "all schools" - only set to null if truly undefined
+        available_school_ids: normalizedSchoolIds ?? null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
       };
 
