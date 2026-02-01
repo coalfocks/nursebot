@@ -218,14 +218,24 @@ export default function AssignmentManager() {
     // Ensure there's enough time for the window (at least 20 minutes for multiple cases)
     const minWindowDuration = 20 * 60 * 1000; // 20 minutes in ms
     if (windowEndMs - windowStartMs < minWindowDuration) {
-      return { valid: false, error: 'Window must be at least 20 minutes long to allow for random scheduling.' };
+      return { valid: false, error: 'Window must be at least 20 minutes long (first case within 20 minutes of start).' };
     }
 
     return { valid: true };
   };
 
   // Slot padding: ensures minimum time between any two assignments
-  const SLOT_PADDING_MINUTES = 5;
+  const SLOT_PADDING_MINUTES = 20;
+  const FIRST_CASE_WINDOW_MINUTES = 20;
+
+  const shuffleRoomIds = (roomIds: string[]): string[] => {
+    const shuffled = [...roomIds];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const swapIndex = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[i]];
+    }
+    return shuffled;
+  };
 
   const handleAssign = async () => {
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
@@ -317,22 +327,24 @@ export default function AssignmentManager() {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
 
-        // Calculate a random start time within the window for this student's first case
-        const randomOffset = Math.floor(Math.random() * windowDuration);
-        const firstCaseEffectiveDate = new Date(windowStartMs + randomOffset);
+        const earliestFirstCaseMs = windowStartMs;
+        const latestFirstCaseMs = Math.min(
+          windowStartMs + (FIRST_CASE_WINDOW_MINUTES * 60 * 1000),
+          windowEndMs - ((selectedRooms.length - 1) * SLOT_PADDING_MINUTES * 60 * 1000)
+        );
 
-        // Track cumulative offset for this student to ensure sequential ordering
-        let cumulativeOffset = 0;
+        if (latestFirstCaseMs < earliestFirstCaseMs) {
+          throw new Error('Window is too short to schedule all cases with required spacing.');
+        }
 
-        for (const roomId of selectedRooms) {
-          // Assign each room to a time slot to ensure even distribution
-          const slotIndex = selectedRooms.indexOf(roomId);
-          const slotSize = Math.floor(windowDuration / selectedRooms.length);
-          
-          // Randomize time within the slot
-          const randomOffset = Math.floor(Math.random() * slotSize);
-          const slotStartMs = windowStartMs + (slotIndex * slotSize) + randomOffset;
-          const studentEffectiveDate = new Date(slotStartMs);
+        const firstCaseOffset = Math.floor(Math.random() * (latestFirstCaseMs - earliestFirstCaseMs + 1));
+        const firstCaseMs = earliestFirstCaseMs + firstCaseOffset;
+        const scheduledRooms = shuffleRoomIds(selectedRooms);
+
+        for (const [roomIndex, roomId] of scheduledRooms.entries()) {
+          const studentEffectiveDate = new Date(
+            firstCaseMs + (roomIndex * SLOT_PADDING_MINUTES * 60 * 1000)
+          );
 
           assignments.push({
             student_id: studentId,
@@ -1208,7 +1220,7 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      The latest time cases can become active. Must be at least 20 minutes after window start.
+                      The latest time cases can become active. Minimum window length is {selectedRooms.length * 20} minutes for {selectedRooms.length} room{selectedRooms.length !== 1 ? 's' : ''} (first case within 20 min + 20 min spacing).
                     </p>
                     {windowEndUTCPreview && (
                       <p className="mt-2 text-sm text-blue-600">
@@ -1294,7 +1306,7 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      The latest time cases can become active. Must be at least 20 minutes after window start.
+                      The latest time cases can become active. Minimum window is 20 minutes (first case within 20 min of window start).
                     </p>
                     {editWindowEndUTCPreview && (
                       <p className="mt-2 text-sm text-blue-600">
