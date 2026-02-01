@@ -273,26 +273,29 @@ export default function AssignmentManager() {
 
     try {
       // Convert window dates from selected timezone to UTC
-      // datetime-local inputs use browser timezone, so we convert using selected timezone
+      // TODO: Consider date-fns-tz for more robust timezone handling.
+      const windowStartUTCDate = convertToUTC(windowStart, selectedTimezone);
+      const windowEndUTCDate = convertToUTC(windowEnd, selectedTimezone);
+
+      if (!windowStartUTCDate || !windowEndUTCDate) {
+        alert('Please provide valid window start and end times.');
+        return;
+      }
+
+      const windowStartMs = windowStartUTCDate.getTime();
+      const windowEndMs = windowEndUTCDate.getTime();
+      const windowDuration = windowEndMs - windowStartMs;
+      const windowDurationMinutes = windowDuration / (60 * 1000);
+
       // Check if window duration is sufficient for selected rooms with slot padding
       const totalSlotsNeeded = (selectedRooms.length * SLOT_PADDING_MINUTES) - SLOT_PADDING_MINUTES;
-      const windowDurationMinutes = windowDuration / (60 * 1000);
-      
       if (windowDurationMinutes < totalSlotsNeeded) {
-        alert(`Warning: With ${selectedRooms.length} room(s),  minimum time needed between assignments is ${totalSlotsNeeded} minutes due to 5-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing to window duration or reducing to number of rooms.`);
+        alert(`Warning: With ${selectedRooms.length} room(s), minimum time needed between assignments is ${totalSlotsNeeded} minutes due to ${SLOT_PADDING_MINUTES}-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing the window duration or reducing the number of rooms.`);
         return;
       }
 
-      const windowStartUTC = convertToUTC(windowStart, selectedTimezone)?.toISOString();
-      const windowEndUTC = convertToUTC(windowEnd, selectedTimezone)?.toISOString();
-
-      if (windowDurationMinutes < totalSlotsNeeded) {
-        alert(`Warning: With ${selectedRooms.length} room(s),  minimum time needed between assignments is ${totalSlotsNeeded} minutes due to ${SLOT_PADDING_MINUTES}-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing the window duration or reducing the number of rooms.`);
-        return;
-      }
-      const windowStartMs = new Date(windowStart).getTime();
-      const windowEndMs = new Date(windowEnd).getTime();
-      const windowDuration = windowEndMs - windowStartMs;
+      const windowStartUTC = windowStartUTCDate.toISOString();
+      const windowEndUTC = windowEndUTCDate.toISOString();
 
       // Create N x M assignments (each student gets each room)
       const assignments: Array<{
@@ -323,13 +326,13 @@ export default function AssignmentManager() {
 
         for (const roomId of selectedRooms) {
           // Assign each room to a time slot to ensure even distribution
-          const slotIndex = roomId === selectedRooms[0] ? roomId : roomId - 1;
+          const slotIndex = selectedRooms.indexOf(roomId);
           const slotSize = Math.floor(windowDuration / selectedRooms.length);
           
           // Randomize time within the slot
           const randomOffset = Math.floor(Math.random() * slotSize);
           const slotStartMs = windowStartMs + (slotIndex * slotSize) + randomOffset;
-          studentEffectiveDate = new Date(slotStartMs);
+          const studentEffectiveDate = new Date(slotStartMs);
 
           assignments.push({
             student_id: studentId,
@@ -400,20 +403,24 @@ export default function AssignmentManager() {
     }
 
     try {
+      const windowStartUTCDate = convertToUTC(editingAssignment.window_start, selectedTimezone);
+      const windowEndUTCDate = convertToUTC(editingAssignment.window_end, selectedTimezone);
+
+      if (!windowStartUTCDate || !windowEndUTCDate) {
+        alert('Please provide valid window start and end times.');
+        return;
+      }
+
       // Re-calculate the effective_date based on the new window
-      // Convert UTC dates back to local time using selected timezone for editing
-      const windowStartLocal = formatForDateTimeLocal(new Date(editingAssignment.window_start), selectedTimezone);
-      const windowEndLocal = formatForDateTimeLocal(new Date(editingAssignment.window_end), selectedTimezone);
-      
-      const windowStartMs = new Date(editingAssignment.window_start).getTime();
-      const windowEndMs = new Date(editingAssignment.window_end).getTime();
+      const windowStartMs = windowStartUTCDate.getTime();
+      const windowEndMs = windowEndUTCDate.getTime();
       const windowDuration = windowEndMs - windowStartMs;
       const randomOffset = Math.floor(Math.random() * windowDuration);
       const newEffectiveDate = new Date(windowStartMs + randomOffset).toISOString();
 
       const updateData: Record<string, string | null> = {
-        window_start: new Date(editingAssignment.window_start).toISOString(),
-        window_end: new Date(editingAssignment.window_end).toISOString(),
+        window_start: windowStartUTCDate.toISOString(),
+        window_end: windowEndUTCDate.toISOString(),
         effective_date: newEffectiveDate,
         updated_at: new Date().toISOString()
       };
@@ -559,19 +566,12 @@ export default function AssignmentManager() {
   // Convert datetime-local input string to UTC Date using selected timezone
   function convertToUTC(localDateTime: string, timezone: string): Date | null {
     if (!localDateTime) return null;
-    const [year, month, day, hour, minute] = localDateTime.split(/[-T:]/);
-    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(minute));
-    const isoString = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).format(date) + ' ' + timezone;
-    return new Date(isoString);
+    const [year, month, day, hour, minute] = localDateTime.split(/[-T:]/).map(Number);
+    if ([year, month, day, hour, minute].some(Number.isNaN)) return null;
+
+    const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+    const offsetMs = getTimeZoneOffsetMs(utcGuess, timezone);
+    return new Date(utcGuess.getTime() - offsetMs);
   }
 
   // Convert UTC Date back to datetime-local string for selected timezone
@@ -587,9 +587,40 @@ export default function AssignmentManager() {
       hour12: false
     }).format(utcDate);
     const [datePart, timePart] = localString.split(', ');
-    const [year, month, day] = datePart.trim().split('/');
+    const [month, day, year] = datePart.trim().split('/');
     const [hour, minute] = timePart.trim().split(':');
     return `${year}-${month}-${day}T${hour}:${minute}`;
+  }
+
+  function getTimeZoneOffsetMs(date: Date, timezone: string): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).formatToParts(date);
+
+    const lookup = parts.reduce<Record<string, string>>((acc, part) => {
+      if (part.type !== 'literal') {
+        acc[part.type] = part.value;
+      }
+      return acc;
+    }, {});
+
+    const zonedTime = Date.UTC(
+      Number(lookup.year),
+      Number(lookup.month) - 1,
+      Number(lookup.day),
+      Number(lookup.hour),
+      Number(lookup.minute),
+      Number(lookup.second)
+    );
+
+    return zonedTime - date.getTime();
   }
 
   const formatDate = (date: string | null) => {
@@ -604,6 +635,16 @@ export default function AssignmentManager() {
       timeZoneName: 'short'
     })} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
   };
+
+  const windowStartUTCPreview = windowStart
+    ? convertToUTC(windowStart, selectedTimezone)?.toISOString() ?? ''
+    : '';
+  const windowEndUTCPreview = windowEnd
+    ? convertToUTC(windowEnd, selectedTimezone)?.toISOString() ?? ''
+    : '';
+  const editWindowEndUTCPreview = editingAssignment?.window_end
+    ? convertToUTC(editingAssignment.window_end, selectedTimezone)?.toISOString() ?? ''
+    : '';
 
   if (!hasAdmin) {
     return <AdminLayout><div className="flex h-full items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div></AdminLayout>;
@@ -837,10 +878,10 @@ export default function AssignmentManager() {
                               onClick={() => {
                                 // Format dates for the datetime-local input
                                 const windowStart = assignment.window_start
-                                  ? new Date(assignment.window_start).toISOString().slice(0, 16)
+                                  ? formatForDateTimeLocal(new Date(assignment.window_start), selectedTimezone)
                                   : '';
                                 const windowEnd = assignment.window_end
-                                  ? new Date(assignment.window_end).toISOString().slice(0, 16)
+                                  ? formatForDateTimeLocal(new Date(assignment.window_end), selectedTimezone)
                                   : '';
 
                                 setEditingAssignment({
@@ -1244,7 +1285,7 @@ export default function AssignmentManager() {
                     <label className="block text-sm font-medium text-gray-700">Window End <span className="text-red-500">*</span></label>
                     <input
                       type="datetime-local"
-                      value={windowEndLocal || ''}
+                      value={editingAssignment.window_end}
                       onChange={(e) => setEditingAssignment({
                         ...editingAssignment,
                         window_end: e.target.value
@@ -1253,11 +1294,11 @@ export default function AssignmentManager() {
                       className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     />
                     <p className="mt-1 text-sm text-gray-500">
-                      The latest time cases can become active. Must be at least 30 minutes after window start.
+                      The latest time cases can become active. Must be at least 20 minutes after window start.
                     </p>
-                    {windowEndUTCPreview && (
+                    {editWindowEndUTCPreview && (
                       <p className="mt-2 text-sm text-blue-600">
-                        <strong>Note:</strong> This will be saved as UTC: {windowEndUTCPreview}
+                        <strong>Note:</strong> This will be saved as UTC: {editWindowEndUTCPreview}
                       </p>
                     )}
                   </div>
