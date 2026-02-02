@@ -1,15 +1,13 @@
 import { useState, useRef } from 'react';
-import { Upload, X, Check, AlertCircle, Loader2, Download, Search } from 'lucide-react';
+import { Upload, X, Check, AlertCircle, Loader2, Download, Search, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSchools } from '../../hooks/useSchools';
-import type { Database } from '../../lib/database.types';
 
 interface BulkUserUploadProps {
   onSuccess?: (count: number) => void;
 }
 
 interface CsvRow {
-  school: string;
   name: string;
   email: string;
   password: string;
@@ -37,11 +35,14 @@ interface BulkCreateResponse {
 
 export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [schoolWarning, setSchoolWarning] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<BulkCreateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [schoolWarning, setSchoolWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSchoolSearchFocused, setIsSchoolSearchFocused] = useState(false);
 
   // School selection state
   const [selectedSchool, setSelectedSchool] = useState<Database['public']['Tables']['schools']['Row'] | null>(null);
@@ -73,41 +74,57 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     }
   };
 
-  const parseCSV = (text: string): CsvRow[] => {
+  const parseCSV = (text: string): { users: CsvRow[]; warning?: string } => {
     const lines = text.split('\n').filter((line) => line.trim());
     if (lines.length < 2) {
       throw new Error('CSV must have at least a header row and one data row');
     }
 
-    const headers = lines[0].split(',').map((h) => h.trim().replace(/"/g, ''));
-    const data: CsvRow[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map((v) => v.trim().replace(/"/g, ''));
+    const rows = lines.map((line) => {
+      const values = line.split(',').map((v) => v.trim().replace(/^"|"$/g, '').trim());
       const row: Record<string, string> = {};
-
-      headers.forEach((header, index) => {
-        row[header] = values[index] || '';
+      values.forEach((value, index) => {
+        row[headers[index]] = value;
       });
+      return row;
+    });
 
+    const headers = lines[0].split(',').map((h) => h.trim().replace(/"/g, ''));
+    const requiredHeaders = ['name', 'email', 'password', 'specialty'];
+    const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
+    if (missingHeaders.length > 0) {
+      throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
+    }
+
+    const users: CsvRow[] = [];
+    const mismatchedSchools = new Set<string>();
+
+    for (const row of rows) {
       // Validate required fields
-      if (!row.school || !row.name || !row.email || !row.password || !row.specialty) {
+      if (!row.name || !row.email || !row.password || !row.specialty) {
         throw new Error(
-          `Row ${i + 1}: Missing required fields (school, name, email, password, specialty)`,
+          `Row ${rows.indexOf(row) + 1}: Missing required fields (name, email, password, specialty)`,
         );
       }
 
       // Validate specialty
       if (!SPECIALTIES.includes(row.specialty)) {
         throw new Error(
-          `Row ${i + 1}: Invalid specialty "${row.specialty}". Must be one of: ${SPECIALTIES.join(', ')}`,
+          `Row ${rows.indexOf(row) + 1}: Invalid specialty "${row.specialty}". Must be one of: ${SPECIALTIES.join(', ')}`,
         );
       }
 
-      data.push(row as CsvRow);
+      users.push(row);
     }
 
-    return data;
+    const warning =
+      mismatchedSchools.size > 0
+        ? `CSV includes school names that do not match the selected school: ${[...mismatchedSchools]
+            .slice(0, 3)
+            .join(', ')}${mismatchedSchools.size > 3 ? '…' : ''}`
+        : null;
+
+    return { users, warning };
   };
 
   const handleUpload = async () => {
@@ -120,10 +137,12 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     setProcessing(true);
     setError(null);
     setResults(null);
+    setSchoolWarning(null);
 
     try {
       const text = await file.text();
-      const users = parseCSV(text);
+      const { users, warning } = parseCSV(text);
+      setSchoolWarning(warning);
 
       const { data, error } = await supabase.functions.invoke<BulkCreateResponse>('bulk-create-users', {
         body: {
@@ -157,12 +176,11 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   };
 
   const downloadTemplate = () => {
-    const headers = ['school', 'name', 'email', 'password', 'specialty'];
-    const schoolName = selectedSchool?.name || 'Your School Name';
+    const headers = ['name', 'email', 'password', 'specialty'];
     const sampleData = [
-      `${schoolName},John Doe,john.doe@example.com,Password123,Internal Medicine`,
-      `${schoolName},Jane Smith,jane.smith@example.com,Password123,Pediatrics`,
-      `${schoolName},Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine`,
+      'John Doe,john.doe@example.com,Password123,Internal Medicine',
+      'Jane Smith,jane.smith@example.com,Password123,Pediatrics',
+      'Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine',
     ];
     const csvContent = [headers.join(','), ...sampleData].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -208,6 +226,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                 setFile(null);
                 setResults(null);
                 setError(null);
+                setSchoolWarning(null);
               }}
               className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-500"
             >
@@ -289,8 +308,8 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                 <div className="flex-1">
                   <h3 className="text-sm font-medium text-blue-900">CSV Template</h3>
                   <p className="mt-1 text-xs text-blue-700">
-                    Download a template file to see the required format. Required fields: school, name,
-                    email, password, specialty
+                    Download a template file to see the required format. Required fields: name, email,
+                    password, specialty. Users will be created under the selected school.
                   </p>
                   <button
                     type="button"
