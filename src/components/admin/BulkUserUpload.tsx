@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react';
-import { Upload, X, Check, AlertCircle, Loader2, Download } from 'lucide-react';
+import { Upload, X, Check, AlertCircle, Loader2, Download, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { useSchools } from '../../hooks/useSchools';
+import type { Database } from '../../lib/database.types';
 
 interface BulkUserUploadProps {
   onSuccess?: (count: number) => void;
@@ -40,6 +42,13 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   const [results, setResults] = useState<BulkCreateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // School selection state
+  const [selectedSchool, setSelectedSchool] = useState<Database['public']['Tables']['schools']['Row'] | null>(null);
+  const [schoolSearch, setSchoolSearch] = useState('');
+
+  // Fetch available schools
+  const { schools, loading: schoolsLoading } = useSchools();
 
   const SPECIALTIES = [
     'Internal Medicine',
@@ -103,6 +112,10 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
   const handleUpload = async () => {
     if (!file) return;
+    if (!selectedSchool) {
+      setError('Please select a school before uploading users');
+      return;
+    }
 
     setProcessing(true);
     setError(null);
@@ -145,10 +158,11 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
   const downloadTemplate = () => {
     const headers = ['school', 'name', 'email', 'password', 'specialty'];
+    const schoolName = selectedSchool?.name || 'Your School Name';
     const sampleData = [
-      'Harvard Medical School,John Doe,john.doe@example.com,Password123,Internal Medicine',
-      'Stanford Medicine,Jane Smith,jane.smith@example.com,Password123,Pediatrics',
-      'Johns Hopkins,Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine',
+      `${schoolName},John Doe,john.doe@example.com,Password123,Internal Medicine`,
+      `${schoolName},Jane Smith,jane.smith@example.com,Password123,Pediatrics`,
+      `${schoolName},Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine`,
     ];
     const csvContent = [headers.join(','), ...sampleData].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -159,6 +173,11 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Filter schools based on search
+  const filteredSchools = schools.filter(school =>
+    school.name.toLowerCase().includes(schoolSearch.toLowerCase())
+  );
 
   if (!isOpen) {
     return (
@@ -198,6 +217,69 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
           {/* Content */}
           <div className="px-6 py-4 space-y-4">
+            {/* School Selection */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700">School <span className="text-red-500">*</span></label>
+              <div className="mt-1 relative">
+                {schoolsLoading ? (
+                  <Loader2 className="absolute left-3 top-1/2 h-4 w-4 text-gray-400 animate-spin" />
+                ) : (
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                )}
+                <input
+                  type="text"
+                  placeholder="Search schools..."
+                  value={schoolSearch}
+                  onChange={(e) => setSchoolSearch(e.target.value)}
+                  disabled={schoolsLoading}
+                  className="block w-full rounded-md border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search schools..."
+                  value={schoolSearch}
+                  onChange={(e) => setSchoolSearch(e.target.value)}
+                  className="block w-full rounded-md border border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              {filteredSchools.length > 0 && (
+                <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
+                  {filteredSchools.map(school => (
+                    <button
+                      key={school.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSchool(school);
+                        setSchoolSearch('');
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${
+                        selectedSchool?.id === school.id ? 'bg-blue-50 text-blue-900' : 'text-gray-900'
+                      }`}
+                    >
+                      <div className="font-medium">{school.name}</div>
+                      {school.timezone && (
+                        <div className="text-xs text-gray-500">{school.timezone}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {selectedSchool && (
+                <div className="mt-2 flex items-center gap-2 text-sm text-green-700">
+                  <Check className="h-4 w-4" />
+                  <span>Selected: {selectedSchool.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSchool(null)}
+                    className="ml-2 text-red-600 hover:text-red-800 text-xs"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Template Download */}
             <div className="rounded-md bg-blue-50 p-4">
               <div className="flex items-start gap-3">
