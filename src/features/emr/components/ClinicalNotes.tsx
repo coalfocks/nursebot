@@ -22,6 +22,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
   const { profile, user } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
+  const [showQualtrics, setShowQualtrics] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [nurseNoteDraft, setNurseNoteDraft] = useState('');
   const [noteDraft, setNoteDraft] = useState<{ title: string; type: ClinicalNote['type']; content: string }>({
@@ -29,6 +30,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     type: 'Progress',
     content: '',
   });
+  const qualtricsUrl = 'https://blueq.co1.qualtrics.com/jfe/form/SV_7VZqjp5mYkwvJm6';
 
   // Check if a note is editable by the current user
   const canEditNote = (note: ClinicalNote): boolean => {
@@ -59,6 +61,9 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     };
     setNotes((prev) => [adjustedNote, ...prev]);
     setShowGenerator(false);
+    if (adjustedNote.type === 'Progress' && adjustedNote.assignmentId) {
+      setShowQualtrics(true);
+    }
     void emrApi.addClinicalNote(adjustedNote);
   };
 
@@ -105,6 +110,9 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     });
     if (updated) {
       setNotes((prev) => prev.map((note) => (note.id === editingNoteId ? { ...note, ...updated } : note)));
+      if ((updated.type ?? noteDraft.type) === 'Progress' && current?.assignmentId) {
+        setShowQualtrics(true);
+      }
     }
     setEditingNoteId(null);
   };
@@ -260,10 +268,17 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Clinical Notes</h2>
-        <Button onClick={() => setShowGenerator(!showGenerator)} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
-          Generate AI Note
-        </Button>
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <Button variant="outline" onClick={() => setShowQualtrics(true)}>
+              Test Qualtrics
+            </Button>
+          )}
+          <Button onClick={() => setShowGenerator(!showGenerator)} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            Generate AI Note
+          </Button>
+        </div>
       </div>
 
       {canEdit && (
@@ -314,6 +329,33 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
           </TabsContent>
         ))}
       </Tabs>
+
+      {showQualtrics && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowQualtrics(false)}
+        >
+          <div
+            className="relative w-full max-w-4xl rounded-lg bg-background shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h3 className="text-base font-semibold">Case Reflection</h3>
+              <Button variant="ghost" onClick={() => setShowQualtrics(false)}>
+                Close
+              </Button>
+            </div>
+            <div className="h-[75vh] w-full">
+              <iframe
+                title="Case Reflection Survey"
+                src={qualtricsUrl}
+                className="h-full w-full rounded-b-lg"
+                allow="fullscreen"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
