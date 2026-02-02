@@ -1,13 +1,15 @@
 import { useState, useRef } from 'react';
-import { Upload, X, Check, AlertCircle, Loader2, Download, Search, AlertTriangle } from 'lucide-react';
+import { Upload, X, Check, AlertCircle, Loader2, Download, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSchools } from '../../hooks/useSchools';
+import type { Database } from '../../lib/database.types';
 
 interface BulkUserUploadProps {
   onSuccess?: (count: number) => void;
 }
 
 interface CsvRow {
+  school?: string;
   name: string;
   email: string;
   password: string;
@@ -35,15 +37,12 @@ interface BulkCreateResponse {
 
 export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [schoolWarning, setSchoolWarning] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<BulkCreateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [schoolWarning, setSchoolWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isSchoolSearchFocused, setIsSchoolSearchFocused] = useState(false);
-
   // School selection state
   const [selectedSchool, setSelectedSchool] = useState<Database['public']['Tables']['schools']['Row'] | null>(null);
   const [schoolSearch, setSchoolSearch] = useState('');
@@ -74,20 +73,11 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     }
   };
 
-  const parseCSV = (text: string): { users: CsvRow[]; warning?: string } => {
+  const parseCSV = (text: string, schoolName?: string): { users: CsvRow[]; warning?: string } => {
     const lines = text.split('\n').filter((line) => line.trim());
     if (lines.length < 2) {
       throw new Error('CSV must have at least a header row and one data row');
     }
-
-    const rows = lines.map((line) => {
-      const values = line.split(',').map((v) => v.trim().replace(/^"|"$/g, '').trim());
-      const row: Record<string, string> = {};
-      values.forEach((value, index) => {
-        row[headers[index]] = value;
-      });
-      return row;
-    });
 
     const headers = lines[0].split(',').map((h) => h.trim().replace(/"/g, ''));
     const requiredHeaders = ['name', 'email', 'password', 'specialty'];
@@ -96,25 +86,45 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
       throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
     }
 
+    const rows = lines.slice(1).map((line) => {
+      const values = line.split(',').map((v) => v.trim().replace(/^"|"$/g, '').trim());
+      const row: Record<string, string> = {};
+      values.forEach((value, index) => {
+        row[headers[index]] = value;
+      });
+      return row;
+    });
+
     const users: CsvRow[] = [];
     const mismatchedSchools = new Set<string>();
 
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       // Validate required fields
       if (!row.name || !row.email || !row.password || !row.specialty) {
         throw new Error(
-          `Row ${rows.indexOf(row) + 1}: Missing required fields (name, email, password, specialty)`,
+          `Row ${index + 2}: Missing required fields (name, email, password, specialty)`,
         );
       }
 
       // Validate specialty
       if (!SPECIALTIES.includes(row.specialty)) {
         throw new Error(
-          `Row ${rows.indexOf(row) + 1}: Invalid specialty "${row.specialty}". Must be one of: ${SPECIALTIES.join(', ')}`,
+          `Row ${index + 2}: Invalid specialty "${row.specialty}". Must be one of: ${SPECIALTIES.join(', ')}`,
         );
       }
 
-      users.push(row);
+      const resolvedSchool = row.school?.trim() || schoolName;
+      if (row.school && schoolName && row.school.trim() !== schoolName.trim()) {
+        mismatchedSchools.add(row.school.trim());
+      }
+
+      users.push({
+        school: resolvedSchool,
+        name: row.name,
+        email: row.email,
+        password: row.password,
+        specialty: row.specialty,
+      });
     }
 
     const warning =
@@ -141,7 +151,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
     try {
       const text = await file.text();
-      const { users, warning } = parseCSV(text);
+      const { users, warning } = parseCSV(text, selectedSchool.name);
       setSchoolWarning(warning);
 
       const { data, error } = await supabase.functions.invoke<BulkCreateResponse>('bulk-create-users', {
@@ -176,11 +186,16 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   };
 
   const downloadTemplate = () => {
-    const headers = ['name', 'email', 'password', 'specialty'];
+    if (!selectedSchool) {
+      setError('Please select a school before downloading the template');
+      return;
+    }
+
+    const headers = ['school', 'name', 'email', 'password', 'specialty'];
     const sampleData = [
-      'John Doe,john.doe@example.com,Password123,Internal Medicine',
-      'Jane Smith,jane.smith@example.com,Password123,Pediatrics',
-      'Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine',
+      `${selectedSchool.name},John Doe,john.doe@example.com,Password123,Internal Medicine`,
+      `${selectedSchool.name},Jane Smith,jane.smith@example.com,Password123,Pediatrics`,
+      `${selectedSchool.name},Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine`,
     ];
     const csvContent = [headers.join(','), ...sampleData].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -251,15 +266,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                   value={schoolSearch}
                   onChange={(e) => setSchoolSearch(e.target.value)}
                   disabled={schoolsLoading}
-                  className="block w-full rounded-md border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
-                />
-                <Search className="absolute left-3 top-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Search schools..."
-                  value={schoolSearch}
-                  onChange={(e) => setSchoolSearch(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="block w-full rounded-md border border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                 />
               </div>
               {filteredSchools.length > 0 && (
@@ -348,6 +355,15 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                 <div className="flex items-start gap-2">
                   <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0" />
                   <div className="text-sm text-red-700">{error}</div>
+                </div>
+              </div>
+            )}
+
+            {schoolWarning && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0" />
+                  <div className="text-sm text-amber-800">{schoolWarning}</div>
                 </div>
               </div>
             )}
