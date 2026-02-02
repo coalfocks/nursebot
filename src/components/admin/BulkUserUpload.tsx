@@ -1,7 +1,9 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload, X, Check, AlertCircle, Loader2, Download, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useSchools } from '../../hooks/useSchools';
+import { useAuthStore } from '../../stores/authStore';
+import { isSuperAdmin, isTestUser } from '../../lib/roles';
 import type { Database } from '../../lib/database.types';
 
 interface BulkUserUploadProps {
@@ -49,6 +51,10 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
   // Fetch available schools
   const { schools, loading: schoolsLoading } = useSchools();
+  const { profile, activeSchoolId } = useAuthStore();
+  const scopedSchoolId = (isSuperAdmin(profile) || isTestUser(profile))
+    ? activeSchoolId
+    : profile?.school_id ?? null;
 
   const SPECIALTIES = [
     'Internal Medicine',
@@ -59,6 +65,13 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     'Emergency Medicine',
     'Family Medicine',
   ];
+
+  useEffect(() => {
+    if (!scopedSchoolId) return;
+    const scopedSchool = schools.find((school) => school.id === scopedSchoolId) ?? null;
+    setSelectedSchool(scopedSchool);
+    setSchoolSearch('');
+  }, [scopedSchoolId, schools]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -265,11 +278,16 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                   placeholder="Search schools..."
                   value={schoolSearch}
                   onChange={(e) => setSchoolSearch(e.target.value)}
-                  disabled={schoolsLoading}
+                  disabled={schoolsLoading || Boolean(scopedSchoolId)}
                   className="block w-full rounded-md border border-gray-300 pl-10 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                 />
               </div>
-              {filteredSchools.length > 0 && (
+              {scopedSchoolId && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Using the current school scope for this template and upload.
+                </p>
+              )}
+              {!scopedSchoolId && filteredSchools.length > 0 && (
                 <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
                   {filteredSchools.map(school => (
                     <button
