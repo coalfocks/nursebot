@@ -240,6 +240,20 @@ export default function AssignmentManager() {
     });
   };
 
+  const buildRandomGaps = (count: number, minGapMs: number, extraMs: number): number[] => {
+    if (count <= 0) return [];
+    if (extraMs <= 0) return Array.from({ length: count }, () => minGapMs);
+    const weights = Array.from({ length: count }, () => Math.random());
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const extras = weights.map((weight) => Math.floor((weight / totalWeight) * extraMs));
+    let remainder = extraMs - extras.reduce((sum, value) => sum + value, 0);
+    for (let i = 0; i < extras.length && remainder > 0; i += 1) {
+      extras[i] += 1;
+      remainder -= 1;
+    }
+    return extras.map((extra) => minGapMs + extra);
+  };
+
   const handleAssign = async () => {
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
       alert('Please select at least one room and set the window start and end times');
@@ -330,10 +344,11 @@ export default function AssignmentManager() {
           throw new Error(`Unable to determine school for student ${studentProfile?.full_name}`);
         }
 
+        const minTotalGapMs = (selectedRooms.length - 1) * SLOT_PADDING_MINUTES * 60 * 1000;
         const earliestFirstCaseMs = windowStartMs;
         const latestFirstCaseMs = Math.min(
           windowStartMs + (FIRST_CASE_WINDOW_MINUTES * 60 * 1000),
-          windowEndMs - ((selectedRooms.length - 1) * SLOT_PADDING_MINUTES * 60 * 1000)
+          windowEndMs - minTotalGapMs
         );
 
         if (latestFirstCaseMs < earliestFirstCaseMs) {
@@ -342,12 +357,22 @@ export default function AssignmentManager() {
 
         const firstCaseOffset = Math.floor(Math.random() * (latestFirstCaseMs - earliestFirstCaseMs + 1));
         const firstCaseMs = earliestFirstCaseMs + firstCaseOffset;
+        const availableSpanMs = windowEndMs - firstCaseMs;
+        const extraSpacingMs = Math.max(0, availableSpanMs - minTotalGapMs);
+        const extraSpacingUsedMs = Math.floor(Math.random() * (extraSpacingMs + 1));
+        const gapMs = buildRandomGaps(
+          selectedRooms.length - 1,
+          SLOT_PADDING_MINUTES * 60 * 1000,
+          extraSpacingUsedMs,
+        );
         const scheduledRooms = [...selectedRooms];
 
+        let currentCaseMs = firstCaseMs;
         for (const [roomIndex, roomId] of scheduledRooms.entries()) {
-          const studentEffectiveDate = new Date(
-            firstCaseMs + (roomIndex * SLOT_PADDING_MINUTES * 60 * 1000)
-          );
+          if (roomIndex > 0) {
+            currentCaseMs += gapMs[roomIndex - 1];
+          }
+          const studentEffectiveDate = new Date(currentCaseMs);
 
           assignments.push({
             student_id: studentId,
