@@ -20,8 +20,9 @@ interface ClinicalNotesProps {
 
 export function ClinicalNotes({ patient, assignmentId, forceBaseline }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
-  const { profile, user } = useAuthStore();
+  const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
+  const canWriteNotes = isSuperAdmin(profile);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [nurseNoteDraft, setNurseNoteDraft] = useState('');
@@ -34,13 +35,8 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
   // Check if a note is editable by the current user
   const canEditNote = (note: ClinicalNote): boolean => {
-    // Signed notes cannot be edited
     if (note.signed) return false;
-    // Super admins can edit all unsigned notes
-    if (isSuperAdmin(profile)) return true;
-    // Students can edit notes that are assignment-scoped (their own notes)
-    if (user && note.assignmentId) return true;
-    return false;
+    return isSuperAdmin(profile);
   };
 
   useEffect(() => {
@@ -53,6 +49,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
   const [showGenerator, setShowGenerator] = useState(false);
 
   const handleNoteGenerated = (newNote: ClinicalNote) => {
+    if (!canWriteNotes) return;
     const adjustedNote: ClinicalNote = {
       ...newNote,
       assignmentId: forceBaseline ? null : assignmentId ?? newNote.assignmentId ?? null,
@@ -274,10 +271,12 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
               Test Qualtrics
             </Button>
           )}
-          <Button onClick={() => setShowGenerator(!showGenerator)} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Generate AI Note
-          </Button>
+          {canWriteNotes && (
+            <Button onClick={() => setShowGenerator(!showGenerator)} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Generate AI Note
+            </Button>
+          )}
         </div>
       </div>
 
