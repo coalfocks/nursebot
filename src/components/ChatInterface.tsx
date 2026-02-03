@@ -47,6 +47,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [completionHint, setCompletionHint] = useState<string | null>(null);
   const [showBedsideHint, setShowBedsideHint] = useState(false);
   const [showProgressNote, setShowProgressNote] = useState(false);
+  const [showQualtrics, setShowQualtrics] = useState(false);
+  const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
   const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
   const { profile } = useAuthStore();
@@ -493,8 +495,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       await emrApi.addClinicalNote(note);
       setShowProgressNote(false);
       setProgressNoteDraft('');
-      alert('Progress note saved.');
-      navigate(0);
+      setRefreshAfterQualtrics(true);
+      setShowQualtrics(true);
     } catch (error) {
       console.error('Error saving progress note', error);
       alert('Error saving progress note. Please try again.');
@@ -730,6 +732,36 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
                 {isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Save Progress Note
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQualtrics && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h3 className="text-base font-semibold">Case Reflection</h3>
+              <button
+                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => {
+                  setShowQualtrics(false);
+                  if (refreshAfterQualtrics) {
+                    setRefreshAfterQualtrics(false);
+                    navigate(0);
+                  }
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="h-[75vh] w-full">
+              <iframe
+                title="Case Reflection Survey"
+                src="https://blueq.co1.qualtrics.com/jfe/form/SV_7VZqjp5mYkwvJm6"
+                className="h-full w-full"
+                allow="fullscreen"
+              />
             </div>
           </div>
         </div>
