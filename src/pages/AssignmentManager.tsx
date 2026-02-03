@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw, X } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -228,13 +228,16 @@ export default function AssignmentManager() {
   const SLOT_PADDING_MINUTES = 20;
   const FIRST_CASE_WINDOW_MINUTES = 20;
 
-  const shuffleRoomIds = (roomIds: string[]): string[] => {
-    const shuffled = [...roomIds];
-    for (let i = shuffled.length - 1; i > 0; i -= 1) {
-      const swapIndex = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[i]];
-    }
-    return shuffled;
+  const moveSelectedRoom = (roomId: string, direction: 'up' | 'down') => {
+    setSelectedRooms((prev) => {
+      const currentIndex = prev.indexOf(roomId);
+      if (currentIndex === -1) return prev;
+      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      [next[currentIndex], next[nextIndex]] = [next[nextIndex], next[currentIndex]];
+      return next;
+    });
   };
 
   const handleAssign = async () => {
@@ -339,7 +342,7 @@ export default function AssignmentManager() {
 
         const firstCaseOffset = Math.floor(Math.random() * (latestFirstCaseMs - earliestFirstCaseMs + 1));
         const firstCaseMs = earliestFirstCaseMs + firstCaseOffset;
-        const scheduledRooms = shuffleRoomIds(selectedRooms);
+        const scheduledRooms = [...selectedRooms];
 
         for (const [roomIndex, roomId] of scheduledRooms.entries()) {
           const studentEffectiveDate = new Date(
@@ -992,44 +995,83 @@ export default function AssignmentManager() {
                   {/* Room Selection */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Select Rooms ({selectedRooms.length} selected)</label>
-                    <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
-                      {rooms.map(room => {
-                        const hasOrdersConfig = validateRoomOrdersConfig(room);
-                        const isSelected = selectedRooms.includes(room.id.toString());
-                        return (
-                          <label
-                            key={room.id}
-                            className={`flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer ${
-                              isSelected ? 'bg-blue-50' : ''
-                            } ${!hasOrdersConfig ? 'opacity-50' : ''}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              disabled={!hasOrdersConfig}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedRooms([...selectedRooms, room.id.toString()]);
-                                } else {
-                                  setSelectedRooms(selectedRooms.filter(id => id !== room.id.toString()));
-                                }
-                              }}
-                              className="form-checkbox h-4 w-4 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div className="ml-3 flex-1">
-                              <div className="font-medium text-gray-900">Room {room.room_number}</div>
-                              <div className="text-sm text-gray-500">
-                                {room.difficulty_level || 'No difficulty set'}
-                                {!hasOrdersConfig && ' • No orders configured'}
-                              </div>
-                            </div>
-                          </label>
-                        );
-                      })}
+                    <div className="mt-2 grid gap-4 md:grid-cols-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Available Rooms</p>
+                        <div className="mt-2 max-h-56 overflow-y-auto border border-gray-200 rounded-md">
+                          {rooms.map(room => {
+                            const roomId = room.id.toString();
+                            const hasOrdersConfig = validateRoomOrdersConfig(room);
+                            const isSelected = selectedRooms.includes(roomId);
+                            return (
+                              <button
+                                key={room.id}
+                                type="button"
+                                disabled={!hasOrdersConfig || isSelected}
+                                onClick={() => setSelectedRooms([...selectedRooms, roomId])}
+                                className={`w-full text-left px-4 py-2 hover:bg-gray-50 focus:outline-none ${
+                                  isSelected ? 'bg-blue-50 text-blue-900' : 'text-gray-900'
+                                } ${!hasOrdersConfig ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                <div className="font-medium">Room {room.room_number}</div>
+                                <div className="text-sm text-gray-500">
+                                  {room.difficulty_level || 'No difficulty set'}
+                                  {!hasOrdersConfig && ' • No orders configured'}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Scheduled Order</p>
+                        <div className="mt-2 min-h-[6rem] max-h-56 overflow-y-auto border border-gray-200 rounded-md">
+                          {selectedRooms.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-gray-500">Select rooms to build the schedule order.</div>
+                          ) : (
+                            selectedRooms.map((roomId, index) => {
+                              const room = rooms.find((r) => r.id.toString() === roomId);
+                              return (
+                                <div key={roomId} className="flex items-center justify-between px-4 py-2 border-b last:border-b-0">
+                                  <div>
+                                    <div className="font-medium text-gray-900">#{index + 1} • Room {room?.room_number ?? roomId}</div>
+                                    <div className="text-xs text-gray-500">{room?.difficulty_level || 'No difficulty set'}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => moveSelectedRoom(roomId, 'up')}
+                                      disabled={index === 0}
+                                      className="inline-flex items-center rounded-md border border-gray-200 p-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                    >
+                                      <ArrowUp className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => moveSelectedRoom(roomId, 'down')}
+                                      disabled={index === selectedRooms.length - 1}
+                                      className="inline-flex items-center rounded-md border border-gray-200 p-1 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                    >
+                                      <ArrowDown className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedRooms(selectedRooms.filter(id => id !== roomId))}
+                                      className="inline-flex items-center rounded-md border border-gray-200 p-1 text-red-600 hover:bg-red-50"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
                     </div>
                     {selectedRooms.length > 0 && (
                       <p className="mt-2 text-sm text-gray-600">
-                        {selectedRooms.length} room{selectedRooms.length !== 1 ? 's' : ''} selected. Each student will be assigned to all selected rooms.
+                        {selectedRooms.length} room{selectedRooms.length !== 1 ? 's' : ''} selected. Each student will be assigned in the order shown.
                       </p>
                     )}
                   </div>
