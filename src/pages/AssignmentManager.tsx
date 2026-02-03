@@ -171,7 +171,7 @@ export default function AssignmentManager() {
       .order('name');
 
     if (scopedSchoolId) {
-      query = query.eq('school_id', scopedSchoolId);
+      query = query.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
     }
 
     const { data, error } = await query;
