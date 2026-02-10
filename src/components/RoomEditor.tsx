@@ -77,7 +77,29 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [caseGoals, setCaseGoals] = useState(room?.case_goals || '');
   const [progressNote, setProgressNote] = useState(room?.progress_note || '');
   const [deliveryNote, setDeliveryNote] = useState(room?.delivery_note || '');
-  const [completionHint, setCompletionHint] = useState(room?.completion_hint || '');
+  const parsedCompletionHints = (() => {
+    const raw = room?.completion_hint || '';
+    if (!raw.trim()) {
+      return { attendingHint: '', differentialHint: '', planHint: '' };
+    }
+    try {
+      const parsed = JSON.parse(raw) as {
+        attendingHint?: string;
+        differentialHint?: string;
+        planHint?: string;
+      };
+      return {
+        attendingHint: parsed.attendingHint || '',
+        differentialHint: parsed.differentialHint || '',
+        planHint: parsed.planHint || '',
+      };
+    } catch {
+      return { attendingHint: raw, differentialHint: '', planHint: '' };
+    }
+  })();
+  const [attendingHint, setAttendingHint] = useState(parsedCompletionHints.attendingHint);
+  const [differentialHint, setDifferentialHint] = useState(parsedCompletionHints.differentialHint);
+  const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
   const normalVitals = {
     temperature: 98.6,
@@ -344,6 +366,14 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
+      const completionHintPayload =
+        attendingHint.trim() || differentialHint.trim() || planHint.trim()
+          ? JSON.stringify({
+              attendingHint: attendingHint.trim(),
+              differentialHint: differentialHint.trim(),
+              planHint: planHint.trim(),
+            })
+          : null;
 
       // Normalize school IDs for saving
       // - "All Schools" selected: save empty array []
@@ -368,7 +398,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         case_goals: caseGoals || null,
         progress_note: progressNote || null,
         delivery_note: deliveryNote || null,
-        completion_hint: completionHint || null,
+        completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
         orders_config: ordersConfig,
         is_active: isActive,
@@ -732,22 +762,48 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               placeholder="Labor and delivery summary for continuation cases"
             />
           </div>
-          <div className="space-y-2">
-            <div>
-              <label htmlFor="completionHint" className="block text-sm font-medium text-gray-700">
-                Completion Button Hint
-              </label>
-              <input
-                type="text"
-                id="completionHint"
-                value={completionHint}
-                onChange={(e) => setCompletionHint(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                placeholder="Guidance shown when completing"
-              />
-            </div>
-            <div>
-              <label htmlFor="bedsideHint" className="block text-sm font-medium text-gray-700">
+            <div className="space-y-2">
+              <div>
+                <label htmlFor="completionHint" className="block text-sm font-medium text-gray-700">
+                Attending Handoff Hint
+                </label>
+                <input
+                  type="text"
+                  id="completionHint"
+                  value={attendingHint}
+                  onChange={(e) => setAttendingHint(e.target.value)}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  placeholder="Guidance shown during completion handoff"
+                />
+              </div>
+              <div>
+                <label htmlFor="differentialHint" className="block text-sm font-medium text-gray-700">
+                  Differential Diagnosis Hint
+                </label>
+                <input
+                  type="text"
+                  id="differentialHint"
+                  value={differentialHint}
+                  onChange={(e) => setDifferentialHint(e.target.value)}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  placeholder="Guidance shown for differential diagnosis"
+                />
+              </div>
+              <div>
+                <label htmlFor="planHint" className="block text-sm font-medium text-gray-700">
+                  Plan Hint
+                </label>
+                <input
+                  type="text"
+                  id="planHint"
+                  value={planHint}
+                  onChange={(e) => setPlanHint(e.target.value)}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                  placeholder="Guidance shown for management plan"
+                />
+              </div>
+              <div>
+                <label htmlFor="bedsideHint" className="block text-sm font-medium text-gray-700">
                 Go To Bedside Hint
               </label>
               <input

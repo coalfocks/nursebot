@@ -31,6 +31,12 @@ interface ChatInterfaceProps {
   assignmentStatus?: string;
 }
 
+type CompletionHintGroups = {
+  attendingHint: string;
+  differentialHint: string;
+  planHint: string;
+};
+
 export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStatus }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -43,7 +49,11 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [bedsideHint, setBedsideHint] = useState<string | null>(null);
-  const [completionHint, setCompletionHint] = useState<string | null>(null);
+  const [completionHints, setCompletionHints] = useState<CompletionHintGroups>({
+    attendingHint: '',
+    differentialHint: '',
+    planHint: '',
+  });
   const [showBedsideHint, setShowBedsideHint] = useState(false);
   const [showProgressNote, setShowProgressNote] = useState(false);
   const [showQualtrics, setShowQualtrics] = useState(false);
@@ -203,7 +213,21 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       }
       if (isActive) {
         setBedsideHint(roomData?.bedside_hint ?? null);
-        setCompletionHint(roomData?.completion_hint ?? null);
+        const rawCompletionHint = roomData?.completion_hint ?? '';
+        if (!rawCompletionHint.trim()) {
+          setCompletionHints({ attendingHint: '', differentialHint: '', planHint: '' });
+        } else {
+          try {
+            const parsed = JSON.parse(rawCompletionHint) as Partial<CompletionHintGroups>;
+            setCompletionHints({
+              attendingHint: parsed.attendingHint ?? '',
+              differentialHint: parsed.differentialHint ?? '',
+              planHint: parsed.planHint ?? '',
+            });
+          } catch {
+            setCompletionHints({ attendingHint: rawCompletionHint, differentialHint: '', planHint: '' });
+          }
+        }
       }
 
       const patient = await emrApi.getPatientByRoomId(roomId);
@@ -678,9 +702,21 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
             <h3 className="text-lg font-semibold">Finish this case?</h3>
-            <p className="text-sm text-gray-600">
-              {completionHint || 'Review the completion steps before finishing the case.'}
-            </p>
+            <div className="space-y-2 text-sm text-gray-600">
+              <p>{completionHints.attendingHint || 'Review the completion steps before finishing the case.'}</p>
+              {completionHints.differentialHint ? (
+                <p>
+                  <span className="font-medium text-gray-700">Differential Hint: </span>
+                  {completionHints.differentialHint}
+                </p>
+              ) : null}
+              {completionHints.planHint ? (
+                <p>
+                  <span className="font-medium text-gray-700">Plan Hint: </span>
+                  {completionHints.planHint}
+                </p>
+              ) : null}
+            </div>
             <div className="space-y-2">
               <button
                 className="w-full inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
