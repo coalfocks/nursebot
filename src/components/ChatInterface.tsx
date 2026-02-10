@@ -50,7 +50,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
   const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
-  const { profile } = useAuthStore();
+  const { profile, user } = useAuthStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
@@ -126,7 +126,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   );
 
   const fetchMessages = useCallback(async () => {
-    if (!assignmentId) return;
+    if (!assignmentId || !user) return;
 
     try {
       console.log('Fetching messages');
@@ -507,7 +507,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       const { error: updateError } = await supabase
         .from('student_room_assignments')
         .update({ nurse_feedback: updatedFeedback })
-        .eq('id', assignmentId);
+        .eq('id', assignmentId)
+        .eq('student_id', user?.id ?? '');
 
       if (updateError) {
         throw updateError;
