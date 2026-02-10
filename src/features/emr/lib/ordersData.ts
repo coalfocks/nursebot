@@ -15,20 +15,9 @@ export interface OrderItem {
   instructions?: string;
 }
 
-const expandFrequencyRange = (frequency: string): string[] => {
-  const trimmed = frequency.trim();
-  const match = trimmed.match(/^q\s*(\d+)\s*-\s*(\d+)\s*h(\s*PRN)?$/i);
-  if (!match) return [trimmed];
-  const suffix = match[3] ? ' PRN' : '';
-  const start = match[1];
-  const end = match[2];
-  return [`q${start}h${suffix}`, `q${end}h${suffix}`];
-};
-
 const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
   if (!frequencies?.length) return frequencies;
   const normalized = frequencies
-    .flatMap(expandFrequencyRange)
     .map((value) => value.trim())
     .filter(Boolean);
   return Array.from(new Set(normalized));
