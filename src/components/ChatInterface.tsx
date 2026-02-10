@@ -4,7 +4,6 @@ import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
-import { emrApi } from '../features/emr/lib/api';
 import { useAuthStore } from '../stores/authStore';
 
 const ASSISTANT_RESPONSE_DELAY = {
@@ -474,25 +473,45 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   };
 
   const handleSaveProgressNote = async () => {
-    if (!patientLink?.patientId || !roomId || !assignmentId) return;
+    if (!assignmentId) return;
     const content = progressNoteDraft.trim();
     if (!content) return;
     setIsSavingProgressNote(true);
     try {
       const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Student';
-      const note = {
-        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-        patientId: patientLink.patientId,
-        assignmentId,
-        roomId,
-        overrideScope: 'assignment' as const,
-        type: 'Progress' as const,
-        title: 'Progress Note',
-        content,
-        author,
-        signed: false,
+      const { data: assignmentData, error: assignmentError } = await supabase
+        .from('student_room_assignments')
+        .select('nurse_feedback')
+        .eq('id', assignmentId)
+        .maybeSingle();
+      if (assignmentError) {
+        throw assignmentError;
+      }
+
+      const existingFeedback =
+        assignmentData?.nurse_feedback && typeof assignmentData.nurse_feedback === 'object'
+          ? (assignmentData.nurse_feedback as Record<string, unknown>)
+          : {};
+
+      const updatedFeedback = {
+        ...existingFeedback,
+        student_progress_note: {
+          content,
+          author,
+          created_at: new Date().toISOString(),
+          room_id: roomId ?? null,
+          patient_id: patientLink?.patientId ?? null,
+        },
       };
-      await emrApi.addClinicalNote(note);
+
+      const { error: updateError } = await supabase
+        .from('student_room_assignments')
+        .update({ nurse_feedback: updatedFeedback })
+        .eq('id', assignmentId);
+
+      if (updateError) {
+        throw updateError;
+      }
       setShowProgressNote(false);
       setProgressNoteDraft('');
       setRefreshAfterQualtrics(true);
@@ -708,7 +727,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
             <h3 className="text-lg font-semibold">Progress Note</h3>
             <p className="text-sm text-gray-600">
-              Add a brief progress note to finalize this case.
+              Add a brief student progress note to finalize this case. This note is saved with your assignment and does not appear in the EMR chart.
             </p>
             <textarea
               className="w-full min-h-[200px] rounded-md border border-gray-300 px-3 py-2 text-sm"
@@ -727,7 +746,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
               <button
                 className="inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                 onClick={() => void handleSaveProgressNote()}
-                disabled={isSavingProgressNote || !progressNoteDraft.trim() || !patientLink?.patientId}
+                disabled={isSavingProgressNote || !progressNoteDraft.trim()}
               >
                 {isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Save Progress Note
