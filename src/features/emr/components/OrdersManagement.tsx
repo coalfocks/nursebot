@@ -427,8 +427,12 @@ export function OrdersManagement({
     await handleOrderPlaced(ivOrder);
   };
 
-  const handleOrderStatusChange = (orderId: string, newStatus: MedicalOrder['status']) => {
+  const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
     setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order)));
+    const updated = await emrApi.updateOrder(orderId, { status: newStatus });
+    if (updated) {
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, ...updated } : order)));
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -683,14 +687,14 @@ export function OrdersManagement({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleOrderStatusChange(order.id, 'Completed')}
+                            onClick={() => void handleOrderStatusChange(order.id, 'Completed')}
                           >
                             Complete
                           </Button>
                           <Button
                             size="sm"
                             variant="destructive"
-                            onClick={() => handleOrderStatusChange(order.id, 'Discontinued')}
+                            onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}
                           >
                             D/C
                           </Button>
