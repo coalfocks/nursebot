@@ -45,6 +45,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     difficulty_level?: string | null;
     objective?: string | null;
     progress_note?: string | null;
+    delivery_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
   const [customRanges, setCustomRanges] = useState<
@@ -80,7 +81,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
       const { data, error } = await supabase
         .from('rooms')
         .select(
-          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint',
+          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, delivery_note, completion_hint',
         )
         .eq('id', patient.roomId)
         .maybeSingle();
@@ -143,6 +144,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
             difficultyLevel: roomMeta?.difficulty_level ?? null,
             objective: roomMeta?.objective ?? null,
             progressNote: roomMeta?.progress_note ?? null,
+            deliveryNote: roomMeta?.delivery_note ?? null,
             completionHint: roomMeta?.completion_hint ?? null,
             clinicalNotes,
             previousVitals: contextVitals,

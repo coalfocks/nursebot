@@ -76,6 +76,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const admissionLabs = parsedEmrContext.admissionLabs;
   const [caseGoals, setCaseGoals] = useState(room?.case_goals || '');
   const [progressNote, setProgressNote] = useState(room?.progress_note || '');
+  const [deliveryNote, setDeliveryNote] = useState(room?.delivery_note || '');
   const [completionHint, setCompletionHint] = useState(room?.completion_hint || '');
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
   const normalVitals = {
@@ -366,6 +367,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
         case_goals: caseGoals || null,
         progress_note: progressNote || null,
+        delivery_note: deliveryNote || null,
         completion_hint: completionHint || null,
         bedside_hint: bedsideHint || null,
         orders_config: ordersConfig,
@@ -715,6 +717,19 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               rows={2}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               placeholder="Preloaded progress note content"
+            />
+          </div>
+          <div>
+            <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
+              Delivery Note (OBGYN continuation)
+            </label>
+            <textarea
+              id="deliveryNote"
+              value={deliveryNote}
+              onChange={(e) => setDeliveryNote(e.target.value)}
+              rows={2}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="Labor and delivery summary for continuation cases"
             />
           </div>
           <div className="space-y-2">

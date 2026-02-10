@@ -85,7 +85,9 @@ export default function EmrDashboard() {
     mrn: '',
     roomNumber: '',
   });
-  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string } | null>(null);
+  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string; delivery_note?: string | null } | null>(
+    null,
+  );
   const calculateAge = (dateOfBirth: string) => {
     const dob = new Date(dateOfBirth);
     const now = new Date();
@@ -174,7 +176,7 @@ export default function EmrDashboard() {
       if (selectedPatient.roomId) {
         const { data } = await supabase
           .from('rooms')
-          .select('id, room_number')
+          .select('id, room_number, delivery_note')
           .eq('id', selectedPatient.roomId)
           .maybeSingle();
         if (data) {
@@ -697,6 +699,19 @@ export default function EmrDashboard() {
                     )}
                   </CardContent>
                 </Card>
+                {roomMeta?.delivery_note ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <FileText className="h-5 w-5" />
+                        Delivery Note
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{roomMeta.delivery_note}</p>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
               {activeTab === 'overview' &&
                 selectedPatient.customOverviewSections?.map((section) => (

@@ -728,6 +728,7 @@ export type Database = {
           continues_from: number | null
           created_at: string
           created_by: string | null
+          delivery_note: string | null
           difficulty_level: string | null
           emr_context: string | null
           expected_diagnosis: string | null
@@ -758,6 +759,7 @@ export type Database = {
           continues_from?: number | null
           created_at?: string
           created_by?: string | null
+          delivery_note?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
           expected_diagnosis?: string | null
@@ -788,6 +790,7 @@ export type Database = {
           continues_from?: number | null
           created_at?: string
           created_by?: string | null
+          delivery_note?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
           expected_diagnosis?: string | null
