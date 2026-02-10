@@ -143,6 +143,15 @@ const labOrdersMap = new Map<string, OrderItem>();
   }
 });
 
+for (const [key, order] of labOrdersMap.entries()) {
+  if (key.includes('blood culture')) {
+    labOrdersMap.set(key, {
+      ...order,
+      priorities: Array.from(new Set(['STAT', 'Routine', 'Timed'])),
+    });
+  }
+}
+
 export const labOrders: OrderItem[] = Array.from(labOrdersMap.values());
 
 const baseMedicationOrders: OrderItem[] = [
