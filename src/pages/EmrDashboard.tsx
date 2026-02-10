@@ -86,6 +86,16 @@ export default function EmrDashboard() {
     roomNumber: '',
   });
   const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string } | null>(null);
+  const calculateAge = (dateOfBirth: string) => {
+    const dob = new Date(dateOfBirth);
+    const now = new Date();
+    let age = now.getFullYear() - dob.getFullYear();
+    const monthDelta = now.getMonth() - dob.getMonth();
+    if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < dob.getDate())) {
+      age -= 1;
+    }
+    return age;
+  };
 
   useEffect(() => {
     void (async () => {
@@ -455,6 +465,7 @@ export default function EmrDashboard() {
               </h1>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                 <span>MRN: {selectedPatient.mrn}</span>
+                <span className="font-semibold text-foreground">Age: {calculateAge(selectedPatient.dateOfBirth)}</span>
                 <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
                 <span>{selectedPatient.gender}</span>
                 <span>Room {selectedPatient.room}</span>
