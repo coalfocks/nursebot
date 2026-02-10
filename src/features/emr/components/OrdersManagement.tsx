@@ -65,9 +65,7 @@ export function OrdersManagement({
   useEffect(() => {
     void (async () => {
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
-      if (data.length) {
-        setOrders(data);
-      }
+      setOrders(data);
     })();
   }, [patient.id, patient.roomId, assignmentId]);
 
