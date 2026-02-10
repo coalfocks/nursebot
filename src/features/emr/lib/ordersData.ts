@@ -448,7 +448,14 @@ export const allOrders: OrderItem[] = [
   ...consultOrders,
   ...nursingOrders,
   ...generalOrders,
-];
+].map((order) => ({
+  ...order,
+  priorities: Array.from(new Set(['STAT', ...(order.priorities ?? ['Routine'])])) as (
+    | 'Routine'
+    | 'STAT'
+    | 'Timed'
+  )[],
+}));
 
 export const frequencies = [
   { code: 'Once', description: 'One time only', category: 'Single' },
