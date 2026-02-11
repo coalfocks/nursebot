@@ -15,20 +15,10 @@ export interface OrderItem {
   instructions?: string;
 }
 
-const expandFrequencyRange = (frequency: string): string[] => {
-  const trimmed = frequency.trim();
-  const match = trimmed.match(/^q\s*(\d+)\s*-\s*(\d+)\s*h(\s*PRN)?$/i);
-  if (!match) return [trimmed];
-  const suffix = match[3] ? ' PRN' : '';
-  const start = match[1];
-  const end = match[2];
-  return [`q${start}h${suffix}`, `q${end}h${suffix}`];
-};
-
 const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
   if (!frequencies?.length) return frequencies;
   const normalized = frequencies
-    .flatMap(expandFrequencyRange)
+    .map((value) => value)
     .map((value) => value.trim())
     .filter(Boolean);
   return Array.from(new Set(normalized));
@@ -132,7 +122,7 @@ const pendingLabOrders: OrderItem[] = pendingLabs.map((name, index) => ({
   category: 'Lab',
   subcategory: 'Pending Lab',
   frequencies: ['Once'],
-  priorities: ['Routine'],
+  priorities: ['Routine', 'STAT'],
 }));
 
 const labOrdersMap = new Map<string, OrderItem>();
@@ -267,6 +257,50 @@ const baseMedicationOrders: OrderItem[] = [
     defaultDose: '50',
     units: ['mEq'],
   },
+  {
+    id: 'med-12',
+    name: 'Penicillin',
+    category: 'Medication',
+    subcategory: 'Antibiotic',
+    frequencies: ['q6h', 'q8h'],
+    routes: ['PO', 'IV'],
+    priorities: ['Routine', 'STAT'],
+    defaultDose: '500',
+    units: ['mg'],
+  },
+  {
+    id: 'med-13',
+    name: 'Sulfamethoxazole/Trimethoprim (Bactrim)',
+    category: 'Medication',
+    subcategory: 'Antibiotic',
+    frequencies: ['q12h'],
+    routes: ['PO', 'IV'],
+    priorities: ['Routine', 'STAT'],
+    defaultDose: '1',
+    units: ['tab'],
+  },
+  {
+    id: 'med-14',
+    name: 'Gentamycin',
+    category: 'Medication',
+    subcategory: 'Antibiotic',
+    frequencies: ['q24h'],
+    routes: ['IV', 'IM'],
+    priorities: ['Routine', 'STAT'],
+    defaultDose: '5',
+    units: ['mg/kg'],
+  },
+  {
+    id: 'med-15',
+    name: 'Ibuprofen',
+    category: 'Medication',
+    subcategory: 'Analgesic',
+    frequencies: ['q6h PRN', 'q8h PRN'],
+    routes: ['PO'],
+    priorities: ['Routine', 'STAT'],
+    defaultDose: '400',
+    units: ['mg'],
+  },
 ];
 
 const medicationOrdersMap = new Map<string, OrderItem>();
@@ -388,6 +422,14 @@ const generalOrders: OrderItem[] = [
   },
 ];
 
+const withStatPriority = (order: OrderItem): OrderItem => {
+  if (order.priorities.includes('STAT')) return order;
+  return {
+    ...order,
+    priorities: [...order.priorities, 'STAT'],
+  };
+};
+
 export const allOrders: OrderItem[] = [
   ...labOrders,
   ...medicationOrders,
@@ -395,7 +437,7 @@ export const allOrders: OrderItem[] = [
   ...consultOrders,
   ...nursingOrders,
   ...generalOrders,
-];
+].map(withStatPriority);
 
 export const frequencies = [
   { code: 'Once', description: 'One time only', category: 'Single' },
