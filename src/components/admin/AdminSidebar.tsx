@@ -33,7 +33,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
 
   const navItems = [
     { label: 'Overview', to: '/dashboard', icon: LayoutDashboard },
-    { label: 'EHR', to: '/ehr', icon: Activity },
+    { label: 'EMR', to: '/ehr', icon: Activity },
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
     { label: 'Students', to: '/cases', icon: GraduationCap },

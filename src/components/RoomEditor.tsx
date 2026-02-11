@@ -709,7 +709,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
         <div>
           <label htmlFor="emrContext" className="block text-sm font-medium text-gray-700">
-            EHR Context
+            EMR Context
           </label>
           <textarea
             id="emrContext"

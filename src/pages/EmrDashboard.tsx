@@ -251,6 +251,19 @@ export default function EmrDashboard() {
           setTestAssignmentError('Requested assignment does not match the selected patient room.');
           return;
         }
+        if (
+          requestedAssignment.room_id &&
+          (!selectedPatient || selectedPatient.roomId !== requestedAssignment.room_id)
+        ) {
+          const patient = await emrApi.getPatientByRoomId(requestedAssignment.room_id);
+          if (patient) {
+            setPatients((prev) => {
+              if (prev.some((p) => p.id === patient.id)) return prev;
+              return [...prev, patient];
+            });
+            setSelectedPatient(patient);
+          }
+        }
         setDerivedAssignmentId(requestedAssignment.id);
         setIsEnsuringAssignment(false);
         return;
@@ -324,7 +337,7 @@ export default function EmrDashboard() {
       }
 
       if (!assignmentRecord) {
-        setTestAssignmentError('Open this case from My Cases to load assignment context before editing the EHR.');
+        setTestAssignmentError('Open this case from My Cases to load assignment context before editing the EMR.');
       }
       setDerivedAssignmentId(assignmentRecord?.id ?? undefined);
       setIsEnsuringAssignment(false);
@@ -512,8 +525,8 @@ export default function EmrDashboard() {
                 {isEnsuringAssignment
                   ? 'Hold tight while we attach this room to your assignment context.'
                   : isTestUserProfile
-                    ? 'Open this room from Test Rooms to create a test session before editing the EHR.'
-                    : 'Open this case from My Cases (or use the assignment EHR link) before editing the EHR.'}
+                    ? 'Open this room from Test Rooms to create a test session before editing the EMR.'
+                    : 'Open this case from My Cases (or use the assignment EMR link) before editing the EMR.'}
               </p>
               {testAssignmentError && (
                 <p className="mt-2 text-red-700">{testAssignmentError}</p>

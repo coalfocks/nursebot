@@ -247,10 +247,10 @@ export default function AssignmentView() {
                     type="button"
                     onClick={() => navigate(`/emr?assignmentId=${assignment.id}&roomId=${assignment.room.id}`)}
                     className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
-                    title="Open EHR"
+                    title="Open EMR"
                   >
                     <ExternalLink className="h-4 w-4 mr-1" />
-                    Open EHR
+                    Open EMR
                   </button>
                 </div>
                 <ChatInterface
@@ -289,7 +289,7 @@ export default function AssignmentView() {
                 )}
                 <div>
                   <p className="text-sm text-gray-600 mb-2">
-                    Use the EHR to find your patient and place orders; the chat is for nurse interactions only.
+                    Use the EMR to find your patient and place orders; the chat is for nurse interactions only.
                   </p>
                   <button
                     type="button"
@@ -297,7 +297,7 @@ export default function AssignmentView() {
                     className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
                   >
                     <ExternalLink className="h-4 w-4 mr-2" />
-                    Go to EHR
+                    Go to EMR
                   </button>
                 </div>
                 {pdfUrl ? (

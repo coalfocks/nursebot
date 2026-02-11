@@ -46,7 +46,7 @@ export default function Navbar() {
                 } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
               >
                 <Activity className="h-4 w-4 mr-1" />
-                EHR
+                EMR
               </Link>
               {showTestRooms ? (
                 <Link
@@ -155,7 +155,7 @@ export default function Navbar() {
               } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
             >
               <Activity className="h-4 w-4 mr-2" />
-              EHR
+              EMR
             </Link>
             {showTestRooms ? (
               <Link
