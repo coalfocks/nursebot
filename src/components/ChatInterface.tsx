@@ -18,6 +18,50 @@ interface ChatFunctionResponse {
   chatMessage: ChatMessage;
 }
 
+type CompletionHints = {
+  assessmentHint: string;
+  diagnosisDifferentiatorHint: string;
+  planHint: string;
+};
+
+const parseCompletionHints = (raw: string | null | undefined): CompletionHints => {
+  const empty: CompletionHints = {
+    assessmentHint: '',
+    diagnosisDifferentiatorHint: '',
+    planHint: '',
+  };
+  if (!raw?.trim()) return empty;
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<CompletionHints>;
+    if (parsed && typeof parsed === 'object') {
+      return {
+        assessmentHint: String(parsed.assessmentHint ?? ''),
+        diagnosisDifferentiatorHint: String(parsed.diagnosisDifferentiatorHint ?? ''),
+        planHint: String(parsed.planHint ?? ''),
+      };
+    }
+  } catch {
+    // Fallback to line parsing.
+  }
+  const next = { ...empty };
+  trimmed.split('\n').forEach((line) => {
+    const [label, ...rest] = line.split(':');
+    if (!label || rest.length === 0) return;
+    const value = rest.join(':').trim();
+    const normalizedLabel = label.trim().toLowerCase();
+    if (normalizedLabel.includes('assessment') || normalizedLabel.includes('attending')) {
+      next.assessmentHint = value;
+    } else if (normalizedLabel.includes('diagnosis')) {
+      next.diagnosisDifferentiatorHint = value;
+    } else if (normalizedLabel.includes('plan')) {
+      next.planHint = value;
+    }
+  });
+  if (next.assessmentHint || next.diagnosisDifferentiatorHint || next.planHint) return next;
+  return { ...empty, assessmentHint: trimmed };
+};
+
 const getMessageKey = (message: ChatMessage) => {
   if (message.id !== null && message.id !== undefined) {
     return String(message.id);
@@ -44,14 +88,20 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [bedsideHint, setBedsideHint] = useState<string | null>(null);
-  const [completionHint, setCompletionHint] = useState<string | null>(null);
+  const [completionHints, setCompletionHints] = useState<CompletionHints>({
+    assessmentHint: '',
+    diagnosisDifferentiatorHint: '',
+    planHint: '',
+  });
+  const [differentialDiagnoses, setDifferentialDiagnoses] = useState<string[]>(['', '', '']);
+  const [diagnosisDifferentiator, setDiagnosisDifferentiator] = useState('');
+  const [planItems, setPlanItems] = useState<string[]>(['']);
   const [showBedsideHint, setShowBedsideHint] = useState(false);
   const [showProgressNote, setShowProgressNote] = useState(false);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
   const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
-  const { profile } = useAuthStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
@@ -204,7 +254,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       }
       if (isActive) {
         setBedsideHint(roomData?.bedside_hint ?? null);
-        setCompletionHint(roomData?.completion_hint ?? null);
+        setCompletionHints(parseCompletionHints(roomData?.completion_hint ?? null));
       }
 
       const patient = await emrApi.getPatientByRoomId(roomId);
@@ -428,6 +478,13 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
           status: 'completed',
           feedback_status: 'pending',
           completed_at: new Date().toISOString(),
+          diagnosis: differentialDiagnoses.map((item) => item.trim()).filter(Boolean)[0] ?? null,
+          treatment_plan: planItems.map((item) => item.trim()).filter(Boolean),
+          nurse_feedback: {
+            differential_diagnoses: differentialDiagnoses.map((item) => item.trim()).filter(Boolean),
+            diagnosis_differentiator: diagnosisDifferentiator.trim() || null,
+            plan: planItems.map((item) => item.trim()).filter(Boolean),
+          },
         })
         .eq('id', assignmentId);
 
@@ -474,25 +531,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   };
 
   const handleSaveProgressNote = async () => {
-    if (!patientLink?.patientId || !roomId || !assignmentId) return;
+    if (!assignmentId) return;
     const content = progressNoteDraft.trim();
     if (!content) return;
     setIsSavingProgressNote(true);
     try {
-      const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Student';
-      const note = {
-        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-        patientId: patientLink.patientId,
-        assignmentId,
-        roomId,
-        overrideScope: 'assignment' as const,
-        type: 'Progress' as const,
-        title: 'Progress Note',
-        content,
-        author,
-        signed: false,
-      };
-      await emrApi.addClinicalNote(note);
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .update({ student_progress_note: content })
+        .eq('id', assignmentId);
+      if (error) {
+        throw error;
+      }
       setShowProgressNote(false);
       setProgressNoteDraft('');
       setRefreshAfterQualtrics(true);
@@ -658,9 +708,65 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
             <h3 className="text-lg font-semibold">Finish this case?</h3>
-            <p className="text-sm text-gray-600">
-              {completionHint || 'Review the completion steps before finishing the case.'}
-            </p>
+            <div className="space-y-2 text-sm text-gray-600">
+              <p>{completionHints.assessmentHint || 'Review the completion steps before finishing the case.'}</p>
+              {completionHints.diagnosisDifferentiatorHint && (
+                <p>
+                  <span className="font-medium text-gray-800">Diagnosis differentiator hint: </span>
+                  {completionHints.diagnosisDifferentiatorHint}
+                </p>
+              )}
+              {completionHints.planHint && (
+                <p>
+                  <span className="font-medium text-gray-800">Plan hint: </span>
+                  {completionHints.planHint}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-800">Differential Diagnosis</p>
+              {differentialDiagnoses.map((diagnosis, index) => (
+                <input
+                  key={`dx-${index}`}
+                  type="text"
+                  value={diagnosis}
+                  onChange={(e) =>
+                    setDifferentialDiagnoses((prev) => prev.map((item, i) => (i === index ? e.target.value : item)))
+                  }
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  placeholder={`Differential diagnosis ${index + 1}`}
+                />
+              ))}
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-800">Diagnosis Differentiator</p>
+              <textarea
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm min-h-[80px]"
+                value={diagnosisDifferentiator}
+                onChange={(e) => setDiagnosisDifferentiator(e.target.value)}
+                placeholder="What finding most strongly differentiates your leading diagnosis?"
+              />
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-800">Plan</p>
+              {planItems.map((plan, index) => (
+                <input
+                  key={`plan-${index}`}
+                  type="text"
+                  value={plan}
+                  onChange={(e) => setPlanItems((prev) => prev.map((item, i) => (i === index ? e.target.value : item)))}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  placeholder={`Plan item ${index + 1}`}
+                />
+              ))}
+              <button
+                type="button"
+                className="text-sm text-blue-700 hover:text-blue-800"
+                onClick={() => setPlanItems((prev) => [...prev, ''])}
+              >
+                + Add plan item
+              </button>
+            </div>
             <div className="space-y-2">
               <button
                 className="w-full inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
@@ -668,7 +774,12 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
                   setShowCompletionConfirm(false);
                   void completeAssignment();
                 }}
-                disabled={isCompleting}
+                disabled={
+                  isCompleting ||
+                  differentialDiagnoses.every((item) => !item.trim()) ||
+                  !diagnosisDifferentiator.trim() ||
+                  planItems.every((item) => !item.trim())
+                }
               >
                 {isCompleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Complete case
@@ -727,7 +838,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
               <button
                 className="inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                 onClick={() => void handleSaveProgressNote()}
-                disabled={isSavingProgressNote || !progressNoteDraft.trim() || !patientLink?.patientId}
+                disabled={isSavingProgressNote || !progressNoteDraft.trim()}
               >
                 {isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Save Progress Note

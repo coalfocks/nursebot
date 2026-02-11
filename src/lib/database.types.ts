@@ -922,6 +922,7 @@ export type Database = {
           room_id: number
           school_id: string
           status: string | null
+          student_progress_note: string | null
           student_id: string
           treatment_plan: string[] | null
           updated_at: string | null
@@ -949,6 +950,7 @@ export type Database = {
           room_id: number
           school_id?: string
           status?: string | null
+          student_progress_note?: string | null
           student_id: string
           treatment_plan?: string[] | null
           updated_at?: string | null
@@ -976,6 +978,7 @@ export type Database = {
           room_id?: number
           school_id?: string
           status?: string | null
+          student_progress_note?: string | null
           student_id?: string
           treatment_plan?: string[] | null
           updated_at?: string | null

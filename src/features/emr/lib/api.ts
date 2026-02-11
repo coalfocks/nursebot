@@ -275,6 +275,15 @@ export const emrApi = {
 
     return (data ?? [])
       .map((row) => mapClinicalNote(row, patientId))
+      .filter(
+        (note) =>
+          !(
+            note.assignmentId &&
+            note.type === 'Progress' &&
+            /^progress note$/i.test(note.title.trim()) &&
+            /student/i.test(note.author)
+          ),
+      )
       .filter((note) =>
         scopeMatchesContext(
           note.overrideScope ?? 'baseline',
