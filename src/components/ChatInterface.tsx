@@ -203,37 +203,47 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
 
     setIsLoadingPatient(true);
     void (async () => {
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select('bedside_hint, completion_hint')
-        .eq('id', roomId)
-        .maybeSingle();
-      if (roomError) {
-        console.error('Error loading room hints', roomError);
-      }
-      if (isActive) {
-        setBedsideHint(roomData?.bedside_hint ?? null);
-        const rawCompletionHint = roomData?.completion_hint ?? '';
-        if (!rawCompletionHint.trim()) {
-          setCompletionHints({ attendingHint: '', differentialHint: '', planHint: '' });
-        } else {
-          try {
-            const parsed = JSON.parse(rawCompletionHint) as Partial<CompletionHintGroups>;
-            setCompletionHints({
-              attendingHint: parsed.attendingHint ?? '',
-              differentialHint: parsed.differentialHint ?? '',
-              planHint: parsed.planHint ?? '',
-            });
-          } catch {
-            setCompletionHints({ attendingHint: rawCompletionHint, differentialHint: '', planHint: '' });
+      try {
+        const { data: roomData, error: roomError } = await supabase
+          .from('rooms')
+          .select('bedside_hint, completion_hint')
+          .eq('id', roomId)
+          .maybeSingle();
+        if (roomError) {
+          console.error('Error loading room hints', roomError);
+        }
+        if (isActive) {
+          setBedsideHint(roomData?.bedside_hint ?? null);
+          const rawCompletionHint = roomData?.completion_hint ?? '';
+          if (!rawCompletionHint.trim()) {
+            setCompletionHints({ attendingHint: '', differentialHint: '', planHint: '' });
+          } else {
+            try {
+              const parsed = JSON.parse(rawCompletionHint) as Partial<CompletionHintGroups>;
+              setCompletionHints({
+                attendingHint: parsed.attendingHint ?? '',
+                differentialHint: parsed.differentialHint ?? '',
+                planHint: parsed.planHint ?? '',
+              });
+            } catch {
+              setCompletionHints({ attendingHint: rawCompletionHint, differentialHint: '', planHint: '' });
+            }
           }
         }
-      }
 
-      const patient = await emrApi.getPatientByRoomId(roomId);
-      if (!isActive) return;
-      setPatientLink(patient ? { patientId: patient.id, roomId } : null);
-      setIsLoadingPatient(false);
+        const patient = await emrApi.getPatientByRoomId(roomId);
+        if (!isActive) return;
+        setPatientLink(patient ? { patientId: patient.id, roomId } : null);
+      } catch (error) {
+        console.error('Error loading EMR patient', error);
+        if (isActive) {
+          setPatientLink(null);
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingPatient(false);
+        }
+      }
     })();
 
     return () => {
