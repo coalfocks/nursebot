@@ -19,6 +19,73 @@ type AdmissionLabEntry = {
   status?: string;
 };
 
+type CompletionHints = {
+  assessmentHint: string;
+  diagnosisDifferentiatorHint: string;
+  planHint: string;
+};
+
+const parseCompletionHints = (raw: string | null | undefined): CompletionHints => {
+  const empty = {
+    assessmentHint: '',
+    diagnosisDifferentiatorHint: '',
+    planHint: '',
+  };
+  if (!raw?.trim()) return empty;
+
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<CompletionHints>;
+    if (parsed && typeof parsed === 'object') {
+      return {
+        assessmentHint: String(parsed.assessmentHint ?? ''),
+        diagnosisDifferentiatorHint: String(parsed.diagnosisDifferentiatorHint ?? ''),
+        planHint: String(parsed.planHint ?? ''),
+      };
+    }
+  } catch {
+    // Continue to plain-text parsing.
+  }
+
+  const lines = trimmed.split('\n');
+  const next = { ...empty };
+  lines.forEach((line) => {
+    const [label, ...rest] = line.split(':');
+    if (!label || rest.length === 0) return;
+    const value = rest.join(':').trim();
+    const normalizedLabel = label.trim().toLowerCase();
+    if (normalizedLabel.includes('assessment') || normalizedLabel.includes('attending')) {
+      next.assessmentHint = value;
+    } else if (normalizedLabel.includes('diagnosis')) {
+      next.diagnosisDifferentiatorHint = value;
+    } else if (normalizedLabel.includes('plan')) {
+      next.planHint = value;
+    }
+  });
+
+  if (next.assessmentHint || next.diagnosisDifferentiatorHint || next.planHint) {
+    return next;
+  }
+
+  return {
+    ...empty,
+    assessmentHint: trimmed,
+  };
+};
+
+const buildCompletionHintPayload = (hints: CompletionHints): string | null => {
+  const parts = [
+    hints.assessmentHint.trim() ? `Assessment Hint: ${hints.assessmentHint.trim()}` : '',
+    hints.diagnosisDifferentiatorHint.trim()
+      ? `Diagnosis Differentiator Hint: ${hints.diagnosisDifferentiatorHint.trim()}`
+      : '',
+    hints.planHint.trim() ? `Plan Hint: ${hints.planHint.trim()}` : '',
+  ].filter(Boolean);
+
+  if (!parts.length) return null;
+  return parts.join('\n');
+};
+
 interface RoomEditorProps {
   room?: Room;
   onSave: () => void;
@@ -44,6 +111,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     const raw = room?.emr_context;
     let contextText = raw || '';
     let admissionLabs: AdmissionLabEntry[] = [];
+    let deliveryNote = '';
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
@@ -64,19 +132,28 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 status: entry.status ?? '',
               }));
           }
+          if (typeof (parsed as { delivery_note?: unknown }).delivery_note === 'string') {
+            deliveryNote = (parsed as { delivery_note: string }).delivery_note;
+          }
         }
       } catch {
         // If not JSON, treat as plain text context
         contextText = raw;
       }
     }
-    return { contextText, admissionLabs };
+    return { contextText, admissionLabs, deliveryNote };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
+  const [deliveryNote, setDeliveryNote] = useState(parsedEmrContext.deliveryNote);
   const admissionLabs = parsedEmrContext.admissionLabs;
   const [caseGoals, setCaseGoals] = useState(room?.case_goals || '');
   const [progressNote, setProgressNote] = useState(room?.progress_note || '');
-  const [completionHint, setCompletionHint] = useState(room?.completion_hint || '');
+  const parsedCompletionHints = parseCompletionHints(room?.completion_hint ?? '');
+  const [assessmentHint, setAssessmentHint] = useState(parsedCompletionHints.assessmentHint);
+  const [diagnosisDifferentiatorHint, setDiagnosisDifferentiatorHint] = useState(
+    parsedCompletionHints.diagnosisDifferentiatorHint,
+  );
+  const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
   const normalVitals = {
     temperature: 98.6,
@@ -337,6 +414,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (emrContext.trim()) {
         emrContextPayloadObject.context = emrContext.trim();
       }
+      if (deliveryNote.trim()) {
+        emrContextPayloadObject.delivery_note = deliveryNote.trim();
+      }
       if (initialVitals) {
         emrContextPayloadObject.initial_vitals = initialVitals;
       }
@@ -350,6 +430,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const normalizedSchoolIds = allSchoolsSelected
         ? []
         : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId])).filter(Boolean);
+
+      const completionHintPayload = buildCompletionHintPayload({
+        assessmentHint,
+        diagnosisDifferentiatorHint,
+        planHint,
+      });
 
       const roomData = {
         room_number: roomNumber,
@@ -366,7 +452,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         expected_treatment: expectedTreatment.length > 0 ? expectedTreatment : null,
         case_goals: caseGoals || null,
         progress_note: progressNote || null,
-        completion_hint: completionHint || null,
+        completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
         orders_config: ordersConfig,
         is_active: isActive,
@@ -688,6 +774,19 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             placeholder="Ongoing EMR rules or responses (e.g., “if WBC ordered, increase each run”)."
           />
         </div>
+        <div>
+          <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
+            Delivery Note (OBGYN continuation)
+          </label>
+          <textarea
+            id="deliveryNote"
+            value={deliveryNote}
+            onChange={(e) => setDeliveryNote(e.target.value)}
+            rows={3}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            placeholder="Add prior delivery details for continuation cases."
+          />
+        </div>
 
         <div>
           <label htmlFor="caseGoals" className="block text-sm font-medium text-gray-700">
@@ -719,16 +818,42 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           </div>
           <div className="space-y-2">
             <div>
-              <label htmlFor="completionHint" className="block text-sm font-medium text-gray-700">
-                Completion Button Hint
+              <label htmlFor="assessmentHint" className="block text-sm font-medium text-gray-700">
+                Assessment Hint
               </label>
-              <input
-                type="text"
-                id="completionHint"
-                value={completionHint}
-                onChange={(e) => setCompletionHint(e.target.value)}
+              <textarea
+                id="assessmentHint"
+                value={assessmentHint}
+                onChange={(e) => setAssessmentHint(e.target.value)}
+                rows={2}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                placeholder="Guidance shown when completing"
+                placeholder="Guidance shown when completing assessment (renamed from attending hint)."
+              />
+            </div>
+            <div>
+              <label htmlFor="diagnosisDifferentiatorHint" className="block text-sm font-medium text-gray-700">
+                Diagnosis Differentiator Hint
+              </label>
+              <textarea
+                id="diagnosisDifferentiatorHint"
+                value={diagnosisDifferentiatorHint}
+                onChange={(e) => setDiagnosisDifferentiatorHint(e.target.value)}
+                rows={2}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                placeholder="Guidance for distinguishing top diagnoses."
+              />
+            </div>
+            <div>
+              <label htmlFor="planHint" className="block text-sm font-medium text-gray-700">
+                Plan Hint
+              </label>
+              <textarea
+                id="planHint"
+                value={planHint}
+                onChange={(e) => setPlanHint(e.target.value)}
+                rows={2}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                placeholder="Guidance for final management plan."
               />
             </div>
             <div>

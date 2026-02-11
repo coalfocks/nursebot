@@ -85,7 +85,7 @@ export default function EmrDashboard() {
     mrn: '',
     roomNumber: '',
   });
-  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string } | null>(null);
+  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string; delivery_note?: string } | null>(null);
   const patientAge = useMemo(() => {
     if (!selectedPatient?.dateOfBirth) return null;
     const dob = new Date(selectedPatient.dateOfBirth);
@@ -178,11 +178,22 @@ export default function EmrDashboard() {
       if (selectedPatient.roomId) {
         const { data } = await supabase
           .from('rooms')
-          .select('id, room_number')
+          .select('id, room_number, emr_context')
           .eq('id', selectedPatient.roomId)
           .maybeSingle();
         if (data) {
-          setRoomMeta({ id: data.id, room_number: data.room_number });
+          let deliveryNote = '';
+          if (typeof data.emr_context === 'string') {
+            try {
+              const parsed = JSON.parse(data.emr_context) as { delivery_note?: unknown };
+              if (typeof parsed.delivery_note === 'string') {
+                deliveryNote = parsed.delivery_note;
+              }
+            } catch {
+              // ignore non-JSON context
+            }
+          }
+          setRoomMeta({ id: data.id, room_number: data.room_number, delivery_note: deliveryNote });
           setBaselineEditForm((prev) => ({ ...prev, roomNumber: data.room_number }));
         }
       }
@@ -663,6 +674,22 @@ export default function EmrDashboard() {
                       }}>
                         Edit intake/output
                       </Button>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="h-5 w-5" />
+                      Delivery Note
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {roomMeta?.delivery_note ? (
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{roomMeta.delivery_note}</p>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No delivery note documented.</p>
                     )}
                   </CardContent>
                 </Card>
