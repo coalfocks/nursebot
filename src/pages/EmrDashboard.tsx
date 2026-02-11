@@ -30,7 +30,7 @@ export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
   const [searchParams] = useSearchParams();
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
-  const assignmentId = searchParams.get('assignmentId') || undefined;
+  const assignmentIdParam = searchParams.get('assignmentId') || undefined;
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
@@ -52,7 +52,7 @@ export default function EmrDashboard() {
   const [testAssignmentError, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
   const isTestUserProfile = isTestUser(profile);
-  const effectiveAssignmentId = forceBaseline ? undefined : assignmentId ?? derivedAssignmentId;
+  const effectiveAssignmentId = forceBaseline ? undefined : derivedAssignmentId;
   const [showMedModal, setShowMedModal] = useState(false);
   const [medForm, setMedForm] = useState({
     name: '',
@@ -102,7 +102,7 @@ export default function EmrDashboard() {
   useEffect(() => {
     void (async () => {
       if (!user) return;
-      if (hasAdminAccess(profile)) {
+      if (showAdminLayout) {
         const data = await emrApi.listPatients();
         if (data.length) {
           setPatients(data);
@@ -119,7 +119,7 @@ export default function EmrDashboard() {
         setSelectedPatient(null);
       }
     })();
-  }, [profile, user]);
+  }, [showAdminLayout, user]);
 
   useEffect(() => {
     const patientIdParam = searchParams.get('patientId');
@@ -136,6 +136,11 @@ export default function EmrDashboard() {
         setSelectedPatient(matchingPatient);
         return;
       }
+    }
+
+    // Prevent students/test users from loading arbitrary patients via URL params.
+    if (!showAdminLayout) {
+      return;
     }
 
     if (roomIdParam) {
@@ -167,7 +172,7 @@ export default function EmrDashboard() {
         }
       })();
     }
-  }, [patients, searchParams]);
+  }, [patients, searchParams, showAdminLayout]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -214,10 +219,40 @@ export default function EmrDashboard() {
       return;
     }
     const fetchAssignmentForPatient = async () => {
-      if (assignmentId) {
-        setDerivedAssignmentId(undefined);
-        setIsEnsuringAssignment(false);
+      if (assignmentIdParam) {
+        setIsEnsuringAssignment(true);
         setTestAssignmentError(null);
+        const { data: requestedAssignment, error: requestedAssignmentError } = await supabase
+          .from('student_room_assignments')
+          .select('id, room_id')
+          .eq('id', assignmentIdParam)
+          .eq('student_id', user.id)
+          .maybeSingle();
+        if (requestedAssignmentError) {
+          console.error('Failed to validate requested assignment', requestedAssignmentError);
+          setDerivedAssignmentId(undefined);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('Unable to load assignment context.');
+          return;
+        }
+        if (!requestedAssignment) {
+          setDerivedAssignmentId(undefined);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('Requested assignment is unavailable for this user.');
+          return;
+        }
+        if (
+          selectedPatient.roomId &&
+          requestedAssignment.room_id &&
+          requestedAssignment.room_id !== selectedPatient.roomId
+        ) {
+          setDerivedAssignmentId(undefined);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('Requested assignment does not match the selected patient room.');
+          return;
+        }
+        setDerivedAssignmentId(requestedAssignment.id);
+        setIsEnsuringAssignment(false);
         return;
       }
       if (!selectedPatient.roomId) {
@@ -226,24 +261,46 @@ export default function EmrDashboard() {
         setTestAssignmentError(null);
         return;
       }
-      if (isTestUserProfile) {
-        setIsEnsuringAssignment(true);
-      }
+      setIsEnsuringAssignment(true);
       setTestAssignmentError(null);
-      const { data, error } = await supabase
+      const { data: activeAssignment, error: activeAssignmentError } = await supabase
         .from('student_room_assignments')
         .select('id')
         .eq('student_id', user.id)
         .eq('room_id', selectedPatient.roomId)
-        .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
-      if (error) {
-        console.error('Failed to fetch assignment for patient', error);
+        .in('status', ['in_progress', 'assigned', 'bedside'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (activeAssignmentError) {
+        console.error('Failed to fetch active assignment for patient', activeAssignmentError);
         setDerivedAssignmentId(undefined);
         setIsEnsuringAssignment(false);
-        setTestAssignmentError('Unable to load the test session.');
+        setTestAssignmentError('Unable to load assignment context.');
         return;
       }
-      let assignmentRecord = data?.[0] ?? null;
+
+      let assignmentRecord = activeAssignment ?? null;
+      if (!assignmentRecord) {
+        const { data: latestCompletedAssignment, error: latestCompletedAssignmentError } = await supabase
+          .from('student_room_assignments')
+          .select('id')
+          .eq('student_id', user.id)
+          .eq('room_id', selectedPatient.roomId)
+          .eq('status', 'completed')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestCompletedAssignmentError) {
+          console.error('Failed to fetch completed assignment for patient', latestCompletedAssignmentError);
+          setDerivedAssignmentId(undefined);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('Unable to load assignment context.');
+          return;
+        }
+        assignmentRecord = latestCompletedAssignment ?? null;
+      }
+
       if (!assignmentRecord && isTestUserProfile) {
         const { data: insertedAssignment, error: insertError } = await supabase
           .from('student_room_assignments')
@@ -265,14 +322,18 @@ export default function EmrDashboard() {
         }
         assignmentRecord = insertedAssignment ?? null;
       }
+
+      if (!assignmentRecord) {
+        setTestAssignmentError('Open this case from My Cases to load assignment context before editing the EHR.');
+      }
       setDerivedAssignmentId(assignmentRecord?.id ?? undefined);
       setIsEnsuringAssignment(false);
     };
     void fetchAssignmentForPatient();
-  }, [selectedPatient, user, forceBaseline, assignmentId, isTestUserProfile, profile?.school_id]);
+  }, [selectedPatient, user, forceBaseline, assignmentIdParam, isTestUserProfile, profile?.school_id]);
 
-  const testAssignmentPending = Boolean(
-    isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,
+  const assignmentContextMissing = Boolean(
+    !forceBaseline && selectedPatient?.roomId && !effectiveAssignmentId,
   );
 
   const startEditCustomSections = () => {
@@ -403,7 +464,7 @@ export default function EmrDashboard() {
     const basePayload: VitalSigns = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: selectedPatient.id,
-      assignmentId: forceBaseline ? null : assignmentId ?? null,
+      assignmentId: forceBaseline ? null : effectiveAssignmentId ?? null,
       roomId: forceBaseline ? null : roomIdForScope,
       overrideScope: forceBaseline ? 'baseline' : undefined,
       timestamp: new Date().toISOString(),
@@ -441,16 +502,18 @@ export default function EmrDashboard() {
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
 
       <div className="main-content relative">
-        {testAssignmentPending && (
+        {assignmentContextMissing && (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/80 backdrop-blur-sm px-6">
             <div className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
               <p className="font-semibold">
-                {isEnsuringAssignment ? 'Preparing test session...' : 'Test session unavailable'}
+                {isEnsuringAssignment ? 'Preparing assignment context...' : 'Assignment context unavailable'}
               </p>
               <p className="mt-1">
                 {isEnsuringAssignment
-                  ? 'Hold tight while we attach this room to your test session.'
-                  : 'Open this room from Test Rooms to create a test session before editing the EHR.'}
+                  ? 'Hold tight while we attach this room to your assignment context.'
+                  : isTestUserProfile
+                    ? 'Open this room from Test Rooms to create a test session before editing the EHR.'
+                    : 'Open this case from My Cases (or use the assignment EHR link) before editing the EHR.'}
               </p>
               {testAssignmentError && (
                 <p className="mt-2 text-red-700">{testAssignmentError}</p>

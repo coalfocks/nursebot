@@ -47,6 +47,7 @@
 - Baseline (super admin) orders/labs/vitals save without assignmentId; roomId as applicable.
 - Room-config orders/labs scoped to that room.
 - Student assignment orders/labs/vitals scoped to that assignmentId + roomId; do not leak to other rooms/assignments.
+- Student completion progress notes are stored in `clinical_notes` with `override_scope = 'assignment'` and the current `assignment_id`; they must not be saved as baseline/room-scoped notes.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
 - Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.

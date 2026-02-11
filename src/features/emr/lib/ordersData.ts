@@ -428,6 +428,15 @@ const generalOrders: OrderItem[] = [
     category: 'General',
     priorities: ['Routine', 'STAT'],
   },
+  {
+    id: 'general-2',
+    name: 'Place IV Access',
+    category: 'General',
+    frequencies: ['Once'],
+    routes: ['IV'],
+    priorities: ['Routine', 'STAT'],
+    instructions: 'Initiate peripheral IV access.',
+  },
 ];
 
 export const allOrders: OrderItem[] = [

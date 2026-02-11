@@ -497,45 +497,72 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   };
 
   const handleSaveProgressNote = async () => {
-    if (!assignmentId) return;
+    if (!assignmentId || !user?.id) return;
     const content = progressNoteDraft.trim();
     if (!content) return;
     setIsSavingProgressNote(true);
     try {
+      const nowIso = new Date().toISOString();
       const author = profile?.full_name?.trim() || profile?.email?.trim() || 'Student';
-      const { data: assignmentData, error: assignmentError } = await supabase
+      const { data: assignmentRow, error: assignmentError } = await supabase
         .from('student_room_assignments')
-        .select('nurse_feedback')
+        .select('id, room_id, school_id')
         .eq('id', assignmentId)
+        .eq('student_id', user.id)
         .maybeSingle();
+
       if (assignmentError) {
         throw assignmentError;
       }
+      if (!assignmentRow) {
+        throw new Error('Unable to save progress note for this assignment.');
+      }
 
-      const existingFeedback =
-        assignmentData?.nurse_feedback && typeof assignmentData.nurse_feedback === 'object'
-          ? (assignmentData.nurse_feedback as Record<string, unknown>)
-          : {};
-
-      const updatedFeedback = {
-        ...existingFeedback,
-        student_progress_note: {
-          content,
-          author,
-          created_at: new Date().toISOString(),
-          room_id: roomId ?? null,
-          patient_id: patientLink?.patientId ?? null,
-        },
+      const notePayload = {
+        patient_id: patientLink?.patientId ?? null,
+        school_id: assignmentRow.school_id ?? profile?.school_id ?? null,
+        note_type: 'Progress',
+        title: 'Student Progress Note',
+        content,
+        author,
+        timestamp: nowIso,
+        signed: false,
+        assignment_id: assignmentRow.id,
+        room_id: assignmentRow.room_id ?? roomId ?? null,
+        override_scope: 'assignment',
+        deleted_at: null,
       };
 
-      const { error: updateError } = await supabase
-        .from('student_room_assignments')
-        .update({ nurse_feedback: updatedFeedback })
-        .eq('id', assignmentId)
-        .eq('student_id', user?.id ?? '');
+      const { data: existingNote, error: existingNoteError } = await supabase
+        .from('clinical_notes')
+        .select('id')
+        .eq('assignment_id', assignmentRow.id)
+        .eq('note_type', 'Progress')
+        .eq('title', 'Student Progress Note')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (updateError) {
-        throw updateError;
+      if (existingNoteError) {
+        throw existingNoteError;
+      }
+
+      if (existingNote?.id) {
+        const { error: updateNoteError } = await supabase
+          .from('clinical_notes')
+          .update(notePayload)
+          .eq('id', existingNote.id);
+        if (updateNoteError) {
+          throw updateNoteError;
+        }
+      } else {
+        const { error: insertNoteError } = await supabase
+          .from('clinical_notes')
+          .insert(notePayload);
+        if (insertNoteError) {
+          throw insertNoteError;
+        }
       }
       setShowProgressNote(false);
       setProgressNoteDraft('');
@@ -764,7 +791,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
             <h3 className="text-lg font-semibold">Progress Note</h3>
             <p className="text-sm text-gray-600">
-              Add a brief student progress note to finalize this case. This note is saved with your assignment and does not appear in the EMR chart.
+              Add a brief student progress note to finalize this case. This note is saved with assignment scope and is only visible in your assignment context.
             </p>
             <textarea
               className="w-full min-h-[200px] rounded-md border border-gray-300 px-3 py-2 text-sm"

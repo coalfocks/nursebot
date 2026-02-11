@@ -411,25 +411,6 @@ export function OrdersManagement({
     onOrderAdded?.(orderForState);
   };
 
-  const handlePlaceIvOrder = async () => {
-    const ivOrder: MedicalOrder = {
-      id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-      patientId: patient.id,
-      assignmentId: forceBaseline ? null : assignmentId ?? null,
-      roomId: forceBaseline ? null : patient.roomId ?? null,
-      overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
-      category: 'Nursing',
-      orderName: 'Place IV Access',
-      route: 'IV',
-      priority: 'Routine',
-      status: 'Active',
-      orderedBy: patient.attendingPhysician ?? 'Attending',
-      orderTime: new Date().toISOString(),
-      instructions: 'Initiate peripheral IV access.',
-    };
-    await handleOrderPlaced(ivOrder);
-  };
-
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
     setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order)));
     const updated = await emrApi.updateOrder(orderId, { status: newStatus });
@@ -586,9 +567,6 @@ export function OrdersManagement({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => void handlePlaceIvOrder()} variant="outline">
-            Place IV Order
-          </Button>
           <Button onClick={() => setShowOrderEntry(!showOrderEntry)} className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
             New Order
