@@ -86,6 +86,20 @@ export default function EmrDashboard() {
     roomNumber: '',
   });
   const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string } | null>(null);
+  const patientAge = useMemo(() => {
+    if (!selectedPatient?.dateOfBirth) return null;
+    const dob = new Date(selectedPatient.dateOfBirth);
+    if (Number.isNaN(dob.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const hasHadBirthdayThisYear =
+      today.getMonth() > dob.getMonth() ||
+      (today.getMonth() === dob.getMonth() && today.getDate() >= dob.getDate());
+    if (!hasHadBirthdayThisYear) {
+      age -= 1;
+    }
+    return Math.max(age, 0);
+  }, [selectedPatient?.dateOfBirth]);
 
   useEffect(() => {
     void (async () => {
@@ -456,6 +470,7 @@ export default function EmrDashboard() {
               <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                 <span>MRN: {selectedPatient.mrn}</span>
                 <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
+                <span className="font-semibold text-foreground">Age: {patientAge ?? '—'}</span>
                 <span>{selectedPatient.gender}</span>
                 <span>Room {selectedPatient.room}</span>
               </div>
