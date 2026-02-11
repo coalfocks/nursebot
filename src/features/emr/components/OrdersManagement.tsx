@@ -65,9 +65,7 @@ export function OrdersManagement({
   useEffect(() => {
     void (async () => {
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
-      if (data.length) {
-        setOrders(data);
-      }
+      setOrders(data);
     })();
   }, [patient.id, patient.roomId, assignmentId]);
 
@@ -410,8 +408,34 @@ export function OrdersManagement({
     onOrderAdded?.(orderForState);
   };
 
-  const handleOrderStatusChange = (orderId: string, newStatus: MedicalOrder['status']) => {
+  const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
+    const existing = orders.find((order) => order.id === orderId);
+    if (!existing) return;
     setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order)));
+    const updated = await emrApi.updateOrder(orderId, { status: newStatus });
+    if (!updated) {
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: existing.status } : order)));
+      return;
+    }
+    setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, ...updated } : order)));
+  };
+
+  const handlePlaceIvOrder = async () => {
+    const quickIvOrder: MedicalOrder = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+      patientId: patient.id,
+      assignmentId: forceBaseline ? null : assignmentId ?? null,
+      roomId: forceBaseline ? null : patient.roomId ?? null,
+      overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
+      category: 'Nursing',
+      orderName: 'Place IV',
+      priority: 'Routine',
+      status: 'Active',
+      orderedBy: patient.attendingPhysician ?? 'Attending',
+      orderTime: new Date().toISOString(),
+      instructions: 'Establish peripheral IV access.',
+    };
+    await handleOrderPlaced(quickIvOrder);
   };
 
   const getStatusIcon = (status: string) => {
@@ -561,10 +585,15 @@ export function OrdersManagement({
             {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
           </p>
         </div>
-        <Button onClick={() => setShowOrderEntry(!showOrderEntry)} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
-          New Order
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => void handlePlaceIvOrder()}>
+            Place IV order
+          </Button>
+          <Button onClick={() => setShowOrderEntry(!showOrderEntry)} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            New Order
+          </Button>
+        </div>
       </div>
 
       <Tabs value={selectedCategory} onValueChange={(value) => setSelectedCategory(value as typeof selectedCategory)}>
@@ -661,14 +690,14 @@ export function OrdersManagement({
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleOrderStatusChange(order.id, 'Completed')}
+                            onClick={() => void handleOrderStatusChange(order.id, 'Completed')}
                           >
                             Complete
                           </Button>
                           <Button
                             size="sm"
                             variant="destructive"
-                            onClick={() => handleOrderStatusChange(order.id, 'Discontinued')}
+                            onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}
                           >
                             D/C
                           </Button>
