@@ -241,28 +241,19 @@ export default function EmrDashboard() {
           setTestAssignmentError('Requested assignment is unavailable for this user.');
           return;
         }
-        if (
-          selectedPatient.roomId &&
-          requestedAssignment.room_id &&
-          requestedAssignment.room_id !== selectedPatient.roomId
-        ) {
-          setDerivedAssignmentId(undefined);
-          setIsEnsuringAssignment(false);
-          setTestAssignmentError('Requested assignment does not match the selected patient room.');
-          return;
-        }
-        if (
-          requestedAssignment.room_id &&
-          (!selectedPatient || selectedPatient.roomId !== requestedAssignment.room_id)
-        ) {
+        if (requestedAssignment.room_id) {
           const patient = await emrApi.getPatientByRoomId(requestedAssignment.room_id);
-          if (patient) {
-            setPatients((prev) => {
-              if (prev.some((p) => p.id === patient.id)) return prev;
-              return [...prev, patient];
-            });
-            setSelectedPatient(patient);
+          if (!patient) {
+            setDerivedAssignmentId(undefined);
+            setIsEnsuringAssignment(false);
+            setTestAssignmentError('Requested assignment does not match an available patient room.');
+            return;
           }
+          setPatients((prev) => {
+            if (prev.some((p) => p.id === patient.id)) return prev;
+            return [...prev, patient];
+          });
+          setSelectedPatient(patient);
         }
         setDerivedAssignmentId(requestedAssignment.id);
         setIsEnsuringAssignment(false);
