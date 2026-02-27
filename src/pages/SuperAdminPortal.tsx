@@ -46,6 +46,53 @@ type SuperAdminReport = {
   summary: ReportSummary;
   schools: SchoolSummary[];
   recentAssignments: RecentAssignment[];
+  assignmentEvaluationRows: AssignmentEvaluationRow[];
+};
+
+type AssignmentEvaluationRow = {
+  id: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  effectiveDate: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  completedAt: string | null;
+  status: string | null;
+  feedbackStatus: string | null;
+  feedbackGeneratedAt: string | null;
+  feedbackError: string | null;
+  grade: number | null;
+  diagnosis: string | null;
+  treatmentPlan: string[] | null;
+  school: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  room: {
+    id: number;
+    roomNumber: string;
+    role: string | null;
+    specialty: string | null;
+  } | null;
+  student: {
+    id: string;
+    fullName: string | null;
+    email: string | null;
+    role: string | null;
+    schoolId: string | null;
+  } | null;
+  assignedBy: {
+    id: string;
+    fullName: string | null;
+    email: string | null;
+    role: string | null;
+  } | null;
+};
+
+const formatTimestamp = (value: string | null) => {
+  if (!value) return '—';
+  return new Date(value).toLocaleString();
 };
 
 const statusLabel = (status: string) => {
@@ -222,6 +269,75 @@ export default function SuperAdminPortal() {
                         <td className="px-3 py-2 text-sm text-slate-700">
                           {typeof assignment.grade === 'number' ? assignment.grade : '—'}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-900">Assignment Evaluation Dataset</h2>
+                <p className="text-xs text-slate-500">
+                  Joined with student and assigned-by user profiles ({report.assignmentEvaluationRows.length} rows)
+                </p>
+              </div>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Created</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Student</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned By</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">School</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Room</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Feedback</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Grade</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Diagnosis</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Treatment Plan</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Window</th>
+                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Completed</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {report.assignmentEvaluationRows.map((row) => (
+                      <tr key={row.id}>
+                        <td className="px-3 py-2 text-sm text-slate-700">{formatTimestamp(row.createdAt)}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          <p>{row.student?.fullName ?? '—'}</p>
+                          <p className="text-xs text-slate-500">{row.student?.email ?? '—'}</p>
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          <p>{row.assignedBy?.fullName ?? '—'}</p>
+                          <p className="text-xs text-slate-500">{row.assignedBy?.email ?? '—'}</p>
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{row.school?.name ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{row.room?.roomNumber ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{row.status ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          <p>{row.feedbackStatus ?? '—'}</p>
+                          <p className="text-xs text-slate-500">
+                            {row.feedbackGeneratedAt ? `Generated ${formatTimestamp(row.feedbackGeneratedAt)}` : '—'}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          {typeof row.grade === 'number' ? row.grade : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700 max-w-[12rem] truncate" title={row.diagnosis ?? ''}>
+                          {row.diagnosis ?? '—'}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          {row.treatmentPlan?.length ? `${row.treatmentPlan.length} item(s)` : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          <p>{row.windowStart ? new Date(row.windowStart).toLocaleDateString() : '—'}</p>
+                          <p className="text-xs text-slate-500">
+                            {row.windowEnd ? new Date(row.windowEnd).toLocaleDateString() : ''}
+                          </p>
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{formatTimestamp(row.completedAt)}</td>
                       </tr>
                     ))}
                   </tbody>

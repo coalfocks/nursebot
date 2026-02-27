@@ -35,7 +35,7 @@
 - **lab-results** (`supabase/functions/lab-results`): OpenAI-backed lab generation; supports batch tests with context; returns JSON labs. Used by STAT labs and manual AI labs.
 - **vitals-generator** (`supabase/functions/vitals-generator`): OpenAI-backed vitals generation; returns JSON array of vitals.
 - **chat** (`supabase/functions/chat`): Nurse chatbot backend used by `ChatInterface`.
-- **superadmin-report** (`supabase/functions/superadmin-report`): Curated operations wrapper that verifies `profiles.role = 'super_admin'` before returning cross-school summary/report data.
+- **superadmin-report** (`supabase/functions/superadmin-report`): Curated operations wrapper that verifies `profiles.role = 'super_admin'` before returning cross-school summary/report data plus assignment evaluation rows joined with student/assigned-by profiles.
 - Local generators (`aiLabGenerator.ts`) remain as fallbacks only.
 
 ## Chatbot

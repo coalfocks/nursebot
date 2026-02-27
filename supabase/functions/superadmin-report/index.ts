@@ -26,6 +26,47 @@ type RecentAssignment = {
   roomNumber: string | null;
 };
 
+type AssignmentEvaluationRow = {
+  id: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  effectiveDate: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  completedAt: string | null;
+  status: string | null;
+  feedbackStatus: string | null;
+  feedbackGeneratedAt: string | null;
+  feedbackError: string | null;
+  grade: number | null;
+  diagnosis: string | null;
+  treatmentPlan: string[] | null;
+  school: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  room: {
+    id: number;
+    roomNumber: string;
+    role: string | null;
+    specialty: string | null;
+  } | null;
+  student: {
+    id: string;
+    fullName: string | null;
+    email: string | null;
+    role: string | null;
+    schoolId: string | null;
+  } | null;
+  assignedBy: {
+    id: string;
+    fullName: string | null;
+    email: string | null;
+    role: string | null;
+  } | null;
+};
+
 const asRole = (value: string | null): Role | null => {
   if (
     value === 'student' ||
@@ -102,7 +143,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const [schoolsRes, profilesRes, roomsRes, assignmentsRes, recentAssignmentsRes] = await Promise.all([
+    const [schoolsRes, profilesRes, roomsRes, assignmentsRes, recentAssignmentsRes, evaluationAssignmentsRes] = await Promise.all([
       serviceClient.from('schools').select('id, name, slug'),
       serviceClient.from('profiles').select('id, school_id, role'),
       serviceClient.from('rooms').select('id, school_id, is_active'),
@@ -123,6 +164,32 @@ Deno.serve(async (req) => {
         )
         .order('created_at', { ascending: false })
         .limit(20),
+      serviceClient
+        .from('student_room_assignments')
+        .select(
+          `
+            id,
+            created_at,
+            updated_at,
+            effective_date,
+            window_start,
+            window_end,
+            completed_at,
+            status,
+            feedback_status,
+            feedback_generated_at,
+            feedback_error,
+            grade,
+            diagnosis,
+            treatment_plan,
+            school:school_id ( id, name, slug ),
+            room:room_id ( id, room_number, role, specialty:specialty_id ( name ) ),
+            student:student_id ( id, full_name, email, role, school_id ),
+            assigned_by_profile:assigned_by ( id, full_name, email, role )
+          `,
+        )
+        .order('created_at', { ascending: false })
+        .limit(150),
     ]);
 
     if (schoolsRes.error) throw schoolsRes.error;
@@ -130,6 +197,7 @@ Deno.serve(async (req) => {
     if (roomsRes.error) throw roomsRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (recentAssignmentsRes.error) throw recentAssignmentsRes.error;
+    if (evaluationAssignmentsRes.error) throw evaluationAssignmentsRes.error;
 
     const schools = schoolsRes.data ?? [];
     const profiles = profilesRes.data ?? [];
@@ -193,6 +261,55 @@ Deno.serve(async (req) => {
       roomNumber: row.room?.room_number ?? null,
     }));
 
+    const assignmentEvaluationRows: AssignmentEvaluationRow[] = (evaluationAssignmentsRes.data ?? []).map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      effectiveDate: row.effective_date,
+      windowStart: row.window_start,
+      windowEnd: row.window_end,
+      completedAt: row.completed_at,
+      status: row.status,
+      feedbackStatus: row.feedback_status,
+      feedbackGeneratedAt: row.feedback_generated_at,
+      feedbackError: row.feedback_error,
+      grade: row.grade,
+      diagnosis: row.diagnosis,
+      treatmentPlan: row.treatment_plan,
+      school: row.school
+        ? {
+            id: row.school.id,
+            name: row.school.name,
+            slug: row.school.slug,
+          }
+        : null,
+      room: row.room
+        ? {
+            id: row.room.id,
+            roomNumber: row.room.room_number,
+            role: row.room.role,
+            specialty: row.room.specialty?.name ?? null,
+          }
+        : null,
+      student: row.student
+        ? {
+            id: row.student.id,
+            fullName: row.student.full_name,
+            email: row.student.email,
+            role: row.student.role,
+            schoolId: row.student.school_id,
+          }
+        : null,
+      assignedBy: row.assigned_by_profile
+        ? {
+            id: row.assigned_by_profile.id,
+            fullName: row.assigned_by_profile.full_name,
+            email: row.assigned_by_profile.email,
+            role: row.assigned_by_profile.role,
+          }
+        : null,
+    }));
+
     const response = {
       generatedAt: new Date().toISOString(),
       summary: {
@@ -211,6 +328,7 @@ Deno.serve(async (req) => {
       },
       schools: Array.from(schoolSummaries.values()).sort((a, b) => a.schoolName.localeCompare(b.schoolName)),
       recentAssignments,
+      assignmentEvaluationRows,
     };
 
     return new Response(JSON.stringify(response), {
