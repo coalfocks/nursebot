@@ -6,9 +6,48 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const TIMEOUT_MS = 60000; // Increase timeout to 60 seconds
+const TIMEOUT_MS = 90000; // Increase timeout to 90 seconds for more complex scoring
 
-interface FeedbackResponse {
+// New Likert-scale scoring response structure
+interface EvaluationScoringResponse {
+  learning_objectives: string;
+  communication_score: number;
+  mdm_score: number;
+  communication_breakdown: {
+    information_sharing: {
+      score: number;
+      feedback: string;
+    };
+    responsive_communication: {
+      score: number;
+      feedback: string;
+    };
+    efficiency_deduction: {
+      score: number;
+      feedback: string;
+      cau_count: number;
+      case_difficulty: string;
+    };
+  };
+  mdm_breakdown: {
+    labs_orders_quality: {
+      score: number;
+      feedback: string;
+    };
+    note_thought_process: {
+      score: number;
+      feedback: string;
+    };
+    safety_deduction: {
+      score: number;
+      feedback: string;
+    };
+  };
+  recommendations: string[];
+}
+
+// Legacy feedback response for backward compatibility
+interface LegacyFeedbackResponse {
   summary: string;
   overall_score: number;
   clinical_reasoning: {
@@ -48,7 +87,6 @@ async function updateAssignmentStatus(
 }
 
 Deno.serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -59,81 +97,38 @@ Deno.serve(async (req) => {
     if (!assignmentId) {
       return new Response(
         JSON.stringify({ error: 'Assignment ID is required' }),
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        { status: 400, headers: { ...corsHeaders, 'Content': 'application/json' } }
       );
     }
 
-    console.log(`Starting feedback generation for assignment ${assignmentId}`);
+    console.log(`Starting evaluation scoring for assignment ${assignmentId}`);
 
-    // Initialize OpenAI client
-    const openai = new OpenAI({
-      apiKey: Deno.env.get('OPENAI_API_KEY'),
-    });
-
-    // Initialize Supabase client
+    const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Set up timeout
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Feedback generation timed out')), TIMEOUT_MS);
+      setTimeout(() => reject(new Error('Evaluation scoring timed out')), TIMEOUT_MS);
     });
 
-    // Main function promise
     const mainPromise = (async () => {
-      // Fetch assignment details
+      // Fetch assignment with room and student details
       const { data: assignment, error: assignmentError } = await supabaseClient
         .from('student_room_assignments')
         .select(`
           *,
-          student:student_id (
-            specialization_interest
-          ),
-          room:room_id (
-            *,
-            specialty_id,
-            specialty_ids
-          )
+          student:student_id (specialization_interest),
+          room:room_id (*, specialty_id, specialty_ids)
         `)
         .eq('id', assignmentId)
         .single();
 
-      if (assignmentError) {
-        console.error('Error fetching assignment:', assignmentError);
-        throw assignmentError;
-      }
+      if (assignmentError) throw assignmentError;
 
-      // Verify assignment is completed before generating feedback
       if (!['completed', 'bedside'].includes(assignment.status)) {
-        console.error('Cannot generate feedback for incomplete assignment:', {
-          assignmentId,
-          status: assignment.status
-        });
         throw new Error('Cannot generate feedback for incomplete assignment');
-      }
-
-      console.log('Fetched assignment details');
-
-      // Fetch specialty names if specialty_ids exist
-      let specialtyNames: string[] = [];
-      if (assignment.room.specialty_ids && assignment.room.specialty_ids.length > 0) {
-        const { data: specialties } = await supabaseClient
-          .from('specialties')
-          .select('name')
-          .in('id', assignment.room.specialty_ids);
-        specialtyNames = specialties?.map(s => s.name) || [];
-      } else if (assignment.room.specialty_id) {
-        const { data: specialty } = await supabaseClient
-          .from('specialties')
-          .select('name')
-          .eq('id', assignment.room.specialty_id)
-          .single();
-        if (specialty) specialtyNames = [specialty.name];
       }
 
       // Fetch chat messages
@@ -143,279 +138,239 @@ Deno.serve(async (req) => {
         .eq('assignment_id', assignmentId)
         .order('created_at', { ascending: true });
 
-      if (messagesError) {
-        console.error('Error fetching messages:', messagesError);
-        throw messagesError;
+      if (messagesError) throw messagesError;
+
+      // Fetch orders placed by student (via patient linked to room)
+      let orders: any[] = [];
+      if (assignment.room.patient_id) {
+        const { data: ordersData } = await supabaseClient
+          .from('medical_orders')
+          .select('*')
+          .eq('patient_id', assignment.room.patient_id)
+          .is('deleted_at', null)
+          .order('order_time', { ascending: true });
+        orders = ordersData || [];
       }
 
-      console.log(`Fetched ${messages.length} messages`);
+      // Determine case difficulty
+      const difficultyLevel = assignment.room.difficulty_level || 'intermediate';
+      const caseDifficulty = difficultyLevel === 'beginner' ? 'easy' : 
+                            difficultyLevel === 'advanced' ? 'advanced' : 'intermediate';
 
-      // Prepare conversation context
-      const conversation = messages.map(msg => `${msg.role}: ${msg.content}`).join('\n\n');
-      const caseDesignationLine = assignment.student?.specialization_interest
-        ? `Case Designation: ${assignment.student.specialization_interest}`
-        : '';
+      // Count student messages (Clinical Action Units)
+      const studentMessages = messages.filter(m => m.role === 'user' || m.role === 'student');
+      
+      // Prepare context for evaluation
+      const conversation = messages.map(msg => 
+        `${msg.role === 'user' || msg.role === 'student' ? 'STUDENT' : 'NURSE'}: ${msg.content}`
+      ).join('\n\n');
 
-      const context = `
-Room Information:
-Specialty: ${specialtyNames.length > 0 ? specialtyNames.join(', ') : 'General'}
-Difficulty Level: ${assignment.room.difficulty_level || 'Not specified'}
+      const ordersList = orders.length > 0 
+        ? orders.map(o => `- ${o.order_name} (${o.category})${o.status ? ` [${o.status}]` : ''}`).join('\n')
+        : 'No orders placed';
+
+      // Build the evaluation prompt with Connor's scoring system
+      const evaluationPrompt = `You are a physician educator grading a physician on their communication and medical decision making. Your goal is to grade the student as fairly as possible so that they may receive proper feedback.
+
+**SCORING RULES:**
+- All scoring is based on the score that represents ≥50% of messages/orders, or the highest percentage
+- No intermediate halfway scores - use only the defined score anchors
+- If no meaningful messages or data, score should automatically be 0
+
+**COMMUNICATION SCORE (0-5):**
+Raw = Information Sharing (0-2) + Responsive Communication (0-3) + Efficiency Deduction (-2 to 0)
+Final = clamp(raw, 0, 5)
+
+**A) Information Sharing (0-2):**
+- 0: No meaningful questions (just "OK", "thanks", or jumps to orders without context)
+- 1: Questions poorly formed (verbose, low-yield, too complex, redundant)
+- 2: Targeted, concise questions that close key information gaps
+
+**B) Responsive Communication (0-3):**
+- 0: Not goal-directed, no follow-through
+- 1: Some progress but weak execution
+- 2: Closed-loop but limited explanation
+- 3: Team-based, closed-loop, transparent reasoning
+
+**C) Efficiency Deduction (-2 to 0):**
+Count Clinical Action Units (CAUs) = messages with clinical questions, instructions, or orders
+- Case difficulty: ${caseDifficulty}
+- 0: Efficient (5-10 CAUs for easy, 1-3 CAUs before first order for intermediate, immediate action for advanced)
+- -1: Mild inefficiency (13-15 CAUs for easy, 4-5 CAUs before order for intermediate, delayed urgency for advanced)
+- -2: Major inefficiency (≥16 CAUs for easy, ≥6 CAUs before order for intermediate, unsafe delay for advanced)
+
+**MDM SCORE (0-5):**
+Raw = Labs/Orders Quality (0-3) + Note Thought Process (0-2) + Safety Deduction (-2 to 0)
+Final = clamp(raw, 0, 5)
+
+**D) Labs/Orders Quality (0-3):**
+Using Must/Should/Could/Shouldn't/Mustn't framework:
+- 3: High-quality (all Must do, most Should do)
+- 2: Mixed (good core but gaps or inappropriate extras)
+- 1: Partial (some correct but insufficient priorities)
+- 0: Inadequate (fails Must/Should do)
+
+**E) Progress Note Thought Process (0-2):**
+Compare to reference note:
+- 2: Correct framing and reasoning
+- 1: Some reasoning but incomplete grasp
+- 0: No coherent understanding
+
+**F) Safety Deduction (-2 to 0):**
+- 0: No unsafe actions
+- -1: Shouldn't occur (low-yield, wasteful, mild contraindication)
+- -2: Mustn't occur (unsafe/harmful)
+
+---
+
+**CASE INFORMATION:**
 Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
 Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
+Case Difficulty: ${caseDifficulty}
 
-${caseDesignationLine ? `Student Profile:\n${caseDesignationLine}\n` : ''}
+**STUDENT'S WORK:**
+Diagnosis: ${assignment.diagnosis || 'Not provided'}
+Treatment Plan: ${assignment.treatment_plan || 'Not provided'}
+Progress Note: ${assignment.student_progress_note || 'Not provided'}
 
-Student's Diagnosis: ${assignment.diagnosis || 'Not provided'}
-Student's Treatment Plan: ${assignment.treatment_plan || 'Not provided'}
-
-Conversation:
+**CONVERSATION (${studentMessages.length} student messages):**
 ${conversation}
-`;
 
-      console.log('Prepared context, generating feedback with OpenAI');
-      console.log('Context length:', context.length);
+**ORDERS PLACED:**
+${ordersList}
 
-      // Generate feedback using OpenAI
+---
+
+Provide your evaluation in this JSON format:
+{
+  "learning_objectives": "1-2 lines on what they missed and what they got right",
+  "communication_score": <0-5>,
+  "mdm_score": <0-5>,
+  "communication_breakdown": {
+    "information_sharing": {
+      "score": <0-2>,
+      "feedback": "<specific feedback from scoring rubric>"
+    },
+    "responsive_communication": {
+      "score": <0-3>,
+      "feedback": "<specific feedback from scoring rubric>"
+    },
+    "efficiency_deduction": {
+      "score": <-2 to 0>,
+      "feedback": "<specific feedback from scoring rubric>",
+      "cau_count": <number>,
+      "case_difficulty": "${caseDifficulty}"
+    }
+  },
+  "mdm_breakdown": {
+    "labs_orders_quality": {
+      "score": <0-3>,
+      "feedback": "<specific feedback from scoring rubric>"
+    },
+    "note_thought_process": {
+      "score": <0-2>,
+      "feedback": "<specific feedback from scoring rubric>"
+    },
+    "safety_deduction": {
+      "score": <-2 to 0>,
+      "feedback": "<specific feedback from scoring rubric>"
+    }
+  },
+  "recommendations": ["<specific actionable recommendations>"]
+}`;
+
+      console.log('Generating evaluation with new Likert scoring...');
+
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
-          {
-            role: "system",
-            content: "You are an experienced nurse educator providing detailed feedback on student performance. You must evaluate BOTH areas: Clinical Reasoning and Communication Skills with equal attention and detail. Each section must have a score, comments, strengths, and areas for improvement."
-          },
-          {
-            role: "user",
-            content: `
-**Prompt for Evaluation of Medical Student Responses to Text-Based Pages**
-When evaluating medical student performance in responding to clinical pages or text messages,
-please use the following detailed scale (1 to 5). This evaluation is specifically designed
-considering the student's preparation level as a fourth-year medical student transitioning toward
-internship. As active listening responses are limited due to the text-based format, they emphasize
-concise yet complete clinical decision-making, focused questioning, clarity of medical
-explanations, diagnostic reasoning, patient care planning, appropriate demonstration of medical
-knowledge, professional tone, timeliness of follow-up, and overall practical communication
-suitable for short interactions via paging systems.
----
-**Scoring Criteria**
-Each student response should be evaluated in detail across three key domains:
-### 1. Clinical Reasoning
-Assess the student's ability to think critically through clinical scenarios, use relevant medical
-knowledge, demonstrate sound diagnostic approaches, and propose appropriate next steps in
-patient management.
-- **Score 1 (Poor):**
-- Limited clinical judgment, inappropriate or incomplete assessments.
-- Neglects key patient information or significant clinical details.
-- No clear diagnostic strategy, or incorrect/inappropriate proposed management.
-- **Score 2 (Below Average):**
-- Minimal clinical reasoning skills shown with partial relevance.
-- Makes superficial assessments, overlooks critical aspects of patient's clinical presentation or
-data.
-- Inadequate clinical reasoning leads to very limited or vague management plans.
-- **Score 3 (Average):**
-- Demonstrates reasonable, standard clinical reasoning for their level.
-- Appropriately identifies main clinical concerns but misses some subtleties.
-- Provides acceptable but generic management plans, missing nuance or depth.
-- **Score 4 (Very Good):**
-- Consistently shows sound clinical reasoning aligned with level of intern.
-- Clearly identifies key clinical issues, effectively prioritizes them, and proposes thoughtful next
-steps in diagnosis or management.
-- Demonstrates evidence-based thinking and appropriate use of medical knowledge.
-- **Score 5 (Excellent):**
-- Outstanding clinical reasoning reflective of early intern-level competence and decision making.
-- Quickly identifies critical clinical issues, relevant differential diagnoses, and articulates concise
-and effective management proposals along with well-considered follow-up steps.
-- Demonstrates advanced reasoning beyond typical student expectations, utilizing comprehensive
-medical knowledge actively in responses.
-### 2. Communication Skills
-Assess the students' clarity, conciseness, ability to explain clinical reasoning and medical
-concepts without confusion or ambiguity, and their capability in asking targeted and relevant
-follow-up questions through short messaging.
-- **Score 1 (Poor):**
-- Unclear, confusing responses with frequent inaccuracies.
-- Ineffective questioning or follow-up communication; no relevant clarification or details
-provided.
-- Communication completely unsuitable for paging or messaging format.
-- **Score 2 (Below Average):**
-- Responses show limited clarity; occasional confusion for the recipient.
-- Questions are minimal or inappropriate, lacking direction or relevance.
-- Responses not well-adapted to short, concise paging interactions.
-- **Score 3 (Average):**
-- Generally clear communication, but may include unnecessary information or lacks proper
-conciseness.
-- Adequately relevant follow-up questions, but occasionally missing important points.
-- Adequate for pages, but room remains for improved efficiency and clarity.
-- **Score 4 (Very Good):**
-- Clear and appropriate communication, generally concise and efficient.
-- Effectively asks meaningful questions specific to clinical context, facilitating diagnostic and
-management clarity.
-- Responses typically clear, medically accurate, and adapted well for short messaging
-interactions.
-- **Score 5 (Excellent):**
-- Superior communication quality: consistently clear, succinct, and precise.
-- Exceptional skill in formulating questions and follow-up communications, directly relevant to
-clinical scenario.
-- Ideals for paging: responses are highly effective, precise, and demonstrate a mature
-understanding of clinical and practical information exchange.
-### Overall Performance Scoring (1–5)
-Assign an overall numerical score based on collective evaluation from above criteria, reflecting
-an integrated assessment of the student's readiness approaching internship level.
----
-### Feedback Guidelines
-Provide detailed evaluation structured in JSON format clearly, including each of these required
-components for each area (Clinical Reasoning, Communication Skills):
-- Numeric Score
-- Detailed Comments (at least 2–3 sentences)
-- At least 2–3 Key Strengths
-- At least 2–3 Areas for Improvement
-
-Additionally, include:
-- **Short summary** explicitly stating student's overall performance.
-- **Specific Recommendations** for areas requiring further improvement targeted toward intern
-preparedness.
----
-
-Context of the interaction (the first message is from the nurse to the doctor):
-${context}
-
-Provide your evaluation in a structured JSON format matching this TypeScript interface:
-
-interface FeedbackResponse {
-  summary: string;
-  overall_score: number;
-  clinical_reasoning: {
-    score: number;
-    comments: string;
-    strengths: string[];
-    areas_for_improvement: string[];
-  };
-  communication_skills: {
-    score: number;
-    comments: string;
-    strengths: string[];
-    areas_for_improvement: string[];
-  };
-  recommendations: string[];
-}
-
-IMPORTANT: You MUST provide detailed feedback for BOTH areas (Clinical Reasoning and Communication Skills). Do not focus on just one area.
-
-**Final Note:**
-Keep in mind the audience and context – these are fourth-year medical students at the cusp of
-becoming residents/interns. Feedback should be constructive, simple, specific, actionable, direct,
-and aimed at identifying priority areas for focused growth to ensure readiness and effectiveness
-in their upcoming clinical roles.`
-          }
+          { role: "system", content: "You are a physician educator providing detailed Likert-scale evaluation. Always use the exact feedback templates from the scoring rubric. Be precise with scoring - no intermediate values." },
+          { role: "user", content: evaluationPrompt }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.7,
-        max_tokens: 2000
+        temperature: 0.3, // Lower temperature for more consistent scoring
+        max_tokens: 2500
       });
-
-      console.log('Received response from OpenAI');
-      console.log('Response length:', completion.choices[0].message.content?.length);
 
       const content = completion.choices[0].message.content;
-      if (!content) {
-        throw new Error('No response content received from OpenAI');
-      }
+      if (!content) throw new Error('No response from OpenAI');
 
-      console.log('Parsing OpenAI response');
-      const feedback = JSON.parse(content) as FeedbackResponse;
+      const evaluation = JSON.parse(content) as EvaluationScoringResponse;
       
-      // Validate feedback structure
-      if (!feedback.clinical_reasoning || !feedback.communication_skills) {
-        console.error('Feedback response missing required sections:', {
-          hasClinicalReasoning: !!feedback.clinical_reasoning,
-          hasCommunication: !!feedback.communication_skills
-        });
-        throw new Error('Feedback response missing required sections');
-      }
+      // Clamp scores to valid ranges
+      evaluation.communication_score = Math.max(0, Math.min(5, evaluation.communication_score));
+      evaluation.mdm_score = Math.max(0, Math.min(5, evaluation.mdm_score));
 
-      // Validate each section has required fields
-      const validateSection = (section: FeedbackResponse['clinical_reasoning'], name: string) => {
-        if (!section.score || !section.comments || !section.strengths || !section.areas_for_improvement) {
-          console.error(`Missing required fields in ${name} section:`, section);
-          throw new Error(`Missing required fields in ${name} section`);
-        }
-      };
-
-      validateSection(feedback.clinical_reasoning, 'clinical_reasoning');
-      validateSection(feedback.communication_skills, 'communication_skills');
-
-      // Validate overall feedback
-      if (!feedback.overall_score || !feedback.summary || !feedback.recommendations) {
-        console.error('Missing required fields in overall feedback:', feedback);
-        throw new Error('Missing required fields in overall feedback');
-      }
-
-      console.log('Successfully validated feedback structure');
-      console.log('Feedback sections:', {
-        clinicalReasoning: {
-          score: feedback.clinical_reasoning.score,
-          strengthsCount: feedback.clinical_reasoning.strengths.length,
-          areasCount: feedback.clinical_reasoning.areas_for_improvement.length
-        },
-        communication: {
-          score: feedback.communication_skills.score,
-          strengthsCount: feedback.communication_skills.strengths.length,
-          areasCount: feedback.communication_skills.areas_for_improvement.length
-        },
-        overallScore: feedback.overall_score,
-        recommendationsCount: feedback.recommendations.length
+      console.log('Evaluation scores:', {
+        communication: evaluation.communication_score,
+        mdm: evaluation.mdm_score,
+        infoSharing: evaluation.communication_breakdown?.information_sharing?.score,
+        responsive: evaluation.communication_breakdown?.responsive_communication?.score,
+        efficiency: evaluation.communication_breakdown?.efficiency_deduction?.score,
+        labsOrders: evaluation.mdm_breakdown?.labs_orders_quality?.score,
+        noteThought: evaluation.mdm_breakdown?.note_thought_process?.score,
+        safety: evaluation.mdm_breakdown?.safety_deduction?.score
       });
 
-      // Update assignment with feedback
+      // Also generate legacy feedback for backward compatibility
+      const legacyFeedback: LegacyFeedbackResponse = {
+        summary: evaluation.learning_objectives,
+        overall_score: Math.round((evaluation.communication_score + evaluation.mdm_score) / 2 * 10) / 10,
+        clinical_reasoning: {
+          score: evaluation.mdm_score,
+          comments: `${evaluation.mdm_breakdown.labs_orders_quality.feedback} ${evaluation.mdm_breakdown.note_thought_process.feedback}`,
+          strengths: evaluation.recommendations.filter((_, i) => i % 2 === 0),
+          areas_for_improvement: evaluation.recommendations.filter((_, i) => i % 2 === 1)
+        },
+        communication_skills: {
+          score: evaluation.communication_score,
+          comments: `${evaluation.communication_breakdown.information_sharing.feedback} ${evaluation.communication_breakdown.responsive_communication.feedback}`,
+          strengths: [evaluation.communication_breakdown.information_sharing.feedback],
+          areas_for_improvement: [evaluation.communication_breakdown.efficiency_deduction.feedback]
+        },
+        recommendations: evaluation.recommendations
+      };
+
+      // Update assignment with both new scoring and legacy feedback
       const { error: updateError } = await supabaseClient
         .from('student_room_assignments')
         .update({
-          nurse_feedback: feedback,
+          // New scoring columns
+          communication_score: evaluation.communication_score,
+          mdm_score: evaluation.mdm_score,
+          communication_breakdown: evaluation.communication_breakdown,
+          mdm_breakdown: evaluation.mdm_breakdown,
+          learning_objectives: evaluation.learning_objectives,
+          case_difficulty: caseDifficulty,
+          // Legacy feedback for backward compatibility
+          nurse_feedback: legacyFeedback,
           feedback_status: 'completed',
           feedback_generated_at: new Date().toISOString()
         })
         .eq('id', assignmentId);
 
-      if (updateError) {
-        console.error('Error updating assignment with feedback:', updateError);
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
-      console.log('Successfully updated assignment with feedback');
+      console.log('Successfully saved evaluation scoring');
     })();
 
-    // Race between timeout and main function
-    try {
-      await Promise.race([mainPromise, timeoutPromise]);
-    } catch (error) {
-      console.error('Error in feedback generation:', error);
-      throw error;
-    }
+    await Promise.race([mainPromise, timeoutPromise]);
 
     return new Response(
       JSON.stringify({ success: true }),
-      { 
-        status: 200, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
+      { status: 200, headers: { ...corsHeaders, 'Content': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('Error in generate-feedback function:', error);
-    console.error('Error details:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      cause: error.cause
-    });
+    console.error('Error in evaluation scoring:', error);
     
-    // If we have an assignmentId, update the status
     try {
-      const { assignmentId } = await req.json();
+      const { assignmentId } = await req.json().catch(() => ({}));
       if (assignmentId) {
         const supabaseClient = createClient(
           Deno.env.get('SUPABASE_URL') ?? '',
           Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
         );
-        
         await updateAssignmentStatus(
           supabaseClient,
           assignmentId,
@@ -424,15 +379,12 @@ in their upcoming clinical roles.`
         );
       }
     } catch (e) {
-      console.error('Error updating assignment status:', e);
+      console.error('Error updating status:', e);
     }
 
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
+      { status: 500, headers: { ...corsHeaders, 'Content': 'application/json' } }
     );
   }
-}); 
+});
