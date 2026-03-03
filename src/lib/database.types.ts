@@ -928,6 +928,13 @@ export type Database = {
           updated_at: string | null
           window_end: string | null
           window_start: string | null
+          // New evaluation scoring columns
+          communication_score: number | null
+          mdm_score: number | null
+          communication_breakdown: Json | null
+          mdm_breakdown: Json | null
+          learning_objectives: string | null
+          case_difficulty: string | null
         }
         Insert: {
           assigned_by: string
@@ -956,6 +963,13 @@ export type Database = {
           updated_at?: string | null
           window_end?: string | null
           window_start?: string | null
+          // New evaluation scoring columns
+          communication_score?: number | null
+          mdm_score?: number | null
+          communication_breakdown?: Json | null
+          mdm_breakdown?: Json | null
+          learning_objectives?: string | null
+          case_difficulty?: string | null
         }
         Update: {
           assigned_by?: string
@@ -982,6 +996,16 @@ export type Database = {
           student_id?: string
           treatment_plan?: string[] | null
           updated_at?: string | null
+          window_end?: string | null
+          window_start?: string | null
+          // New evaluation scoring columns
+          communication_score?: number | null
+          mdm_score?: number | null
+          communication_breakdown?: Json | null
+          mdm_breakdown?: Json | null
+          learning_objectives?: string | null
+          case_difficulty?: string | null
+        }
           window_end?: string | null
           window_start?: string | null
         }
