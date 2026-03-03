@@ -454,23 +454,6 @@ export default function EmrDashboard() {
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
 
       <div className="main-content relative">
-        {testAssignmentPending && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/80 backdrop-blur-sm px-6">
-            <div className="max-w-md rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 shadow-sm">
-              <p className="font-semibold">
-                {isEnsuringAssignment ? 'Preparing test session...' : 'Test session unavailable'}
-              </p>
-              <p className="mt-1">
-                {isEnsuringAssignment
-                  ? 'Hold tight while we attach this room to your test session.'
-                  : 'Open this room from Test Rooms to create a test session before editing the EHR.'}
-              </p>
-              {testAssignmentError && (
-                <p className="mt-2 text-red-700">{testAssignmentError}</p>
-              )}
-            </div>
-          </div>
-        )}
         {/* Patient Header */}
         <div className="bg-card border-b border-border p-6">
           <div className="flex items-center justify-between">
@@ -503,6 +486,13 @@ export default function EmrDashboard() {
 
         {/* Main Content Tabs */}
         <div className="p-6">
+          {testAssignmentPending ? (
+            <div className="flex items-center justify-center p-8">
+              <div className="text-center">
+                <p className="text-muted-foreground">Loading your test session...</p>
+              </div>
+            </div>
+          ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="overview" className="flex items-center gap-2">
@@ -1189,6 +1179,7 @@ export default function EmrDashboard() {
               </div>
             )}
           </Tabs>
+          )}
         </div>
       </div>
     </div>
