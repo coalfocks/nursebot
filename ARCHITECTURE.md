@@ -35,6 +35,7 @@
 - **lab-results** (`supabase/functions/lab-results`): OpenAI-backed lab generation; supports batch tests with context; returns JSON labs. Used by STAT labs and manual AI labs.
 - **vitals-generator** (`supabase/functions/vitals-generator`): OpenAI-backed vitals generation; returns JSON array of vitals.
 - **chat** (`supabase/functions/chat`): Nurse chatbot backend used by `ChatInterface`.
+- **superadmin-report** (`supabase/functions/superadmin-report`): Curated operations wrapper that verifies `profiles.role = 'super_admin'` before returning cross-school summary/report data plus assignment evaluation rows joined with student/assigned-by profiles.
 - Local generators (`aiLabGenerator.ts`) remain as fallbacks only.
 
 ## Chatbot
@@ -47,6 +48,7 @@
 - Baseline (super admin) orders/labs/vitals save without assignmentId; roomId as applicable.
 - Room-config orders/labs scoped to that room.
 - Student assignment orders/labs/vitals scoped to that assignmentId + roomId; do not leak to other rooms/assignments.
+- Student completion progress notes are stored in `clinical_notes` with `override_scope = 'assignment'` and the current `assignment_id`; they must not be saved as baseline/room-scoped notes.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
 - Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.
@@ -61,6 +63,7 @@
 
 ## Front-End Structure
 - `src/pages/` routes (EmrDashboard, AssignmentView, StudentDashboard, admin screens).
+- `src/pages/SuperAdminPortal.tsx` is a non-advertised route (`/superadmin/portal`) that consumes `superadmin-report`; route and backend both enforce superadmin-only access.
 - `src/features/emr/components/` EMR UI (Orders, Labs, Vitals, Notes, PatientSidebar, UI primitives).
 - `src/features/emr/lib/` API wrapper, types, local generators, orders data.
 - Global styles: `src/index.css` (medical-grid layout, scroll behavior).

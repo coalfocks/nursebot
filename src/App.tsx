@@ -22,12 +22,14 @@ import EmrDashboard from './pages/EmrDashboard';
 import CaseBuilder from './pages/CaseBuilder';
 import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
-import { hasAdminAccess, isTestUser } from './lib/roles';
+import SuperAdminPortal from './pages/SuperAdminPortal';
+import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
   const hasAdmin = hasAdminAccess(profile);
   const isTester = isTestUser(profile);
+  const superAdmin = isSuperAdmin(profile);
 
   useEffect(() => {
     loadUser();
@@ -195,6 +197,16 @@ function App() {
           element={
             user?.id && isTester ? (
               <TestRooms />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          }
+        />
+        <Route
+          path="/superadmin/portal"
+          element={
+            user?.id && superAdmin ? (
+              <SuperAdminPortal />
             ) : (
               <Navigate to="/dashboard" replace />
             )
