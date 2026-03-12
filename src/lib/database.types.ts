@@ -906,6 +906,7 @@ export type Database = {
         Row: {
           assigned_by: string
           completed_at: string | null
+          completion_hint_views: Json
           completion_token_matched: boolean | null
           created_at: string | null
           diagnosis: string | null
@@ -939,6 +940,7 @@ export type Database = {
         Insert: {
           assigned_by: string
           completed_at?: string | null
+          completion_hint_views?: Json
           completion_token_matched?: boolean | null
           created_at?: string | null
           diagnosis?: string | null
@@ -974,6 +976,7 @@ export type Database = {
         Update: {
           assigned_by?: string
           completed_at?: string | null
+          completion_hint_views?: Json
           completion_token_matched?: boolean | null
           created_at?: string | null
           diagnosis?: string | null
@@ -1005,9 +1008,6 @@ export type Database = {
           mdm_breakdown?: Json | null
           learning_objectives?: string | null
           case_difficulty?: string | null
-        }
-          window_end?: string | null
-          window_start?: string | null
         }
         Relationships: [
           {

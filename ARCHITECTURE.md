@@ -12,9 +12,10 @@
   - `src/features/emr/lib/api.ts` wraps Supabase CRUD and scope filtering (baseline/room/assignment) for patients, notes, labs, vitals, orders.
   - `PatientSidebar` + `EmrDashboard` render patient list and tabs (overview, vitals, notes, labs, orders).
 - **Assignments (students)**
-  - `student_room_assignments` drive student views.
-  - `AssignmentView.tsx` embeds EHR tabs (non-admin) alongside nurse chatbot; scopes labs/orders to assignment + room; refresh tokens keep Labs in sync.
-  - `StudentDashboard.tsx` lists assignments/rooms; PDF viewers for case docs.
+- `student_room_assignments` drive student views.
+- `AssignmentView.tsx` embeds EHR tabs (non-admin) alongside nurse chatbot; scopes labs/orders to assignment + room; refresh tokens keep Labs in sync.
+- `StudentDashboard.tsx` lists assignments/rooms; PDF viewers for case docs.
+- Assignment rows also store `completion_hint_views`, which records when a student explicitly reveals an optional completion hint before submitting the final progress note.
 - **Orders & Labs**
   - UI: `OrderEntry` to place orders; `OrdersManagement` lists active/all orders.
   - STAT labs and manual “Generate AI Labs” call Supabase Edge Function `lab-results` with rich context (patient, room, assignment, clinical notes, vitals, prior labs, current orders, room EMR/nurse context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint). Results are saved to `lab_results`; Labs tab refreshes. Fallback to local generator only on error.
@@ -49,6 +50,7 @@
 - Room-config orders/labs scoped to that room.
 - Student assignment orders/labs/vitals scoped to that assignmentId + roomId; do not leak to other rooms/assignments.
 - Student completion progress notes are stored in `clinical_notes` with `override_scope = 'assignment'` and the current `assignment_id`; they must not be saved as baseline/room-scoped notes.
+- Completion hints in the finish-case modal are hidden by default; revealing one records a timestamp in `student_room_assignments.completion_hint_views`, and evaluation includes the viewed hints as part of grading context.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
 - Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.

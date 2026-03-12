@@ -5,7 +5,7 @@ export type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 
 export type AssignmentTimelineRow = Pick<
   Database['public']['Tables']['student_room_assignments']['Row'],
-  'status' | 'student_progress_note' | 'completed_at'
+  'status' | 'student_progress_note' | 'completed_at' | 'completion_hint_views'
 >;
 
 export type TimelineEntry =

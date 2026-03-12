@@ -19,6 +19,11 @@ import {
   normalizeLeniencyMultiplier,
   type EvaluationScoringResponse,
 } from '../_shared/evaluation-scoring.ts';
+import {
+  getViewedCompletionHints,
+  parseCompletionHints,
+  parseCompletionHintViews,
+} from '../../../src/lib/completionHints.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -284,6 +289,18 @@ Deno.serve(async (req) => {
         imaging,
       });
       const timelineSummary = renderTimelineEntriesForEvaluation(timelineEntries);
+      const viewedCompletionHints = getViewedCompletionHints(
+        parseCompletionHints(assignment.room.completion_hint),
+        parseCompletionHintViews(assignment.completion_hint_views),
+      );
+      const viewedCompletionHintSummary = viewedCompletionHints.length
+        ? viewedCompletionHints
+            .map(
+              (hint) =>
+                `- ${hint.label} viewed at ${hint.viewedAt}\n  Content: ${hint.content}`,
+            )
+            .join('\n')
+        : 'No completion hints were viewed.';
 
       // Build the evaluation prompt with the full rubric and exact feedback language.
       const evaluationPrompt = `${rubricReferenceText}
@@ -366,6 +383,8 @@ If you need to infer their clinical reasoning, infer it from the progress note a
 Progress Note: ${assignment.student_progress_note || 'Not provided'}
 Legacy Diagnosis Field: ${assignment.diagnosis || 'Not provided'}
 Legacy Treatment Plan Field: ${assignment.treatment_plan || 'Not provided'}
+Completion Hints Viewed:
+${viewedCompletionHintSummary}
 
 **FULL ASSIGNMENT TIMELINE (${timelineEntries.length} events, ${studentMessages.length} student messages):**
 This timeline is chronological and includes nurse/student chat, orders, labs, vitals, imaging, completion, and the final progress note when present.
@@ -417,6 +436,7 @@ Provide your evaluation in this JSON format:
         leniencyMultiplier: evaluationConfig.leniencyMultiplier,
         studentMessages: studentMessages.length,
         timelineEvents: timelineEntries.length,
+        viewedCompletionHints: viewedCompletionHints.length,
         orders: orders.length,
         labs: labs.length,
         vitals: vitals.length,

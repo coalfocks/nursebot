@@ -1,14 +1,23 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, User2, Wand2, ExternalLink, Stethoscope } from 'lucide-react';
+import { Send, Loader2, User2, Wand2, ExternalLink, Stethoscope, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
 import type { ImagingStudy, LabResult, MedicalOrder, VitalSigns } from '../features/emr/lib/types';
 import {
+  getCompletionHintLabel,
+  parseCompletionHints,
+  parseCompletionHintViews,
+  recordCompletionHintView,
+  type CompletionHintKey,
+  type CompletionHintViews,
+} from '../lib/completionHints';
+import {
   buildTimelineEntries,
   type AssignmentTimelineRow,
   type ChatMessage,
+  type TimelineEntry,
 } from './chatTimeline';
 
 const ASSISTANT_RESPONSE_DELAY = {
@@ -20,50 +29,6 @@ interface ChatFunctionResponse {
   message: string;
   chatMessage: ChatMessage;
 }
-
-type CompletionHints = {
-  assessmentHint: string;
-  diagnosisDifferentiatorHint: string;
-  planHint: string;
-};
-
-const parseCompletionHints = (raw: string | null | undefined): CompletionHints => {
-  const empty: CompletionHints = {
-    assessmentHint: '',
-    diagnosisDifferentiatorHint: '',
-    planHint: '',
-  };
-  if (!raw?.trim()) return empty;
-  const trimmed = raw.trim();
-  try {
-    const parsed = JSON.parse(trimmed) as Partial<CompletionHints>;
-    if (parsed && typeof parsed === 'object') {
-      return {
-        assessmentHint: String(parsed.assessmentHint ?? ''),
-        diagnosisDifferentiatorHint: String(parsed.diagnosisDifferentiatorHint ?? ''),
-        planHint: String(parsed.planHint ?? ''),
-      };
-    }
-  } catch {
-    // Fallback to line parsing.
-  }
-  const next = { ...empty };
-  trimmed.split('\n').forEach((line) => {
-    const [label, ...rest] = line.split(':');
-    if (!label || rest.length === 0) return;
-    const value = rest.join(':').trim();
-    const normalizedLabel = label.trim().toLowerCase();
-    if (normalizedLabel.includes('assessment') || normalizedLabel.includes('attending')) {
-      next.assessmentHint = value;
-    } else if (normalizedLabel.includes('diagnosis')) {
-      next.diagnosisDifferentiatorHint = value;
-    } else if (normalizedLabel.includes('plan')) {
-      next.planHint = value;
-    }
-  });
-  if (next.assessmentHint || next.diagnosisDifferentiatorHint || next.planHint) return next;
-  return { ...empty, assessmentHint: trimmed };
-};
 
 const getMessageKey = (message: ChatMessage) => {
   if (message.id !== null && message.id !== undefined) {
@@ -185,6 +150,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
   const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
+  const [completionHintViews, setCompletionHintViews] = useState<CompletionHintViews>({});
+  const [expandedCompletionHints, setExpandedCompletionHints] = useState<Partial<Record<CompletionHintKey, boolean>>>({});
   const [assignmentTimeline, setAssignmentTimeline] = useState<AssignmentTimelineRow | null>(null);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [labs, setLabs] = useState<LabResult[]>([]);
@@ -315,7 +282,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       try {
         const assignmentPromise = supabase
           .from('student_room_assignments')
-          .select('status, student_progress_note, completed_at')
+          .select('status, student_progress_note, completed_at, completion_hint_views')
           .eq('id', assignmentId)
           .maybeSingle();
 
@@ -332,6 +299,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         }
 
         setAssignmentTimeline((assignmentResult.data ?? null) as AssignmentTimelineRow | null);
+        setCompletionHintViews(parseCompletionHintViews(assignmentResult.data?.completion_hint_views ?? {}));
         setStatus(assignmentResult.data?.status ?? assignmentStatus);
         setOrders(nextOrders);
         setLabs(nextLabs);
@@ -681,6 +649,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         status: 'completed',
         student_progress_note: progressNote,
         completed_at: completedAt,
+        completion_hint_views: completionHintViews,
       });
       
       // Trigger feedback generation
@@ -700,6 +669,44 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     } finally {
       setIsCompleting(false);
       setIsSavingProgressNote(false);
+    }
+  };
+
+  const closeCompletionConfirm = () => {
+    setExpandedCompletionHints({});
+    setShowCompletionConfirm(false);
+  };
+
+  const toggleCompletionHint = async (key: CompletionHintKey) => {
+    const nextExpanded = !expandedCompletionHints[key];
+    setExpandedCompletionHints((prev) => ({
+      ...prev,
+      [key]: nextExpanded,
+    }));
+
+    if (!assignmentId || completionHintViews[key]?.viewedAt) return;
+
+    const viewedAt = new Date().toISOString();
+    const nextViews = recordCompletionHintView(completionHintViews, key, viewedAt);
+    setCompletionHintViews(nextViews);
+    setAssignmentTimeline((prev) =>
+      prev
+        ? {
+            ...prev,
+            completion_hint_views: nextViews,
+          }
+        : prev,
+    );
+
+    const { error } = await supabase
+      .from('student_room_assignments')
+      .update({
+        completion_hint_views: nextViews,
+      })
+      .eq('id', assignmentId);
+
+    if (error) {
+      console.error('Error recording completion hint view:', error);
     }
   };
 
@@ -775,7 +782,10 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
             Open EMR
           </button>
           <button
-            onClick={() => setShowCompletionConfirm(true)}
+            onClick={() => {
+              setExpandedCompletionHints({});
+              setShowCompletionConfirm(true);
+            }}
             disabled={isCompleting || status === 'completed'}
             className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
             title="Complete assignment"
@@ -982,20 +992,54 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
             <h3 className="text-lg font-semibold">Finish this case?</h3>
             <div className="space-y-2 text-sm text-gray-600">
-              <p>{completionHints.assessmentHint || 'Write a concise progress note before finishing the case.'}</p>
-              {completionHints.diagnosisDifferentiatorHint && (
-                <p>
-                  <span className="font-medium text-gray-800">Clinical reasoning hint: </span>
-                  {completionHints.diagnosisDifferentiatorHint}
-                </p>
-              )}
-              {completionHints.planHint && (
-                <p>
-                  <span className="font-medium text-gray-800">Plan hint: </span>
-                  {completionHints.planHint}
-                </p>
-              )}
+              <p>Write a concise progress note before finishing the case.</p>
+              <p>Hints are available if you need them, but they stay hidden until you choose to reveal one.</p>
             </div>
+            {(['assessmentHint', 'diagnosisDifferentiatorHint', 'planHint'] as const).some(
+              (key) => completionHints[key].trim(),
+            ) && (
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-900">
+                  <Lightbulb className="h-4 w-4" />
+                  Optional completion hints
+                </div>
+                <div className="space-y-2">
+                  {(['assessmentHint', 'diagnosisDifferentiatorHint', 'planHint'] as const)
+                    .filter((key) => completionHints[key].trim())
+                    .map((key) => (
+                      <div key={key} className="rounded-md border border-amber-200 bg-white">
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium text-amber-900"
+                          onClick={() => {
+                            void toggleCompletionHint(key);
+                          }}
+                        >
+                          <span>
+                            {expandedCompletionHints[key] ? 'Hide' : 'Show'} {getCompletionHintLabel(key).toLowerCase()}
+                            {completionHintViews[key]?.viewedAt ? ' • viewed' : ''}
+                          </span>
+                          {expandedCompletionHints[key] ? (
+                            <ChevronUp className="h-4 w-4" />
+                          ) : (
+                            <ChevronDown className="h-4 w-4" />
+                          )}
+                        </button>
+                        {expandedCompletionHints[key] && (
+                          <div className="border-t border-amber-100 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+                            {completionHints[key]}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+            {Object.values(completionHintViews).some((view) => Boolean(view?.viewedAt)) && (
+              <p className="text-xs text-amber-700">
+                Revealed hints are recorded and included in the case evaluation.
+              </p>
+            )}
             <div className="space-y-2">
               <p className="text-sm font-medium text-gray-800">Progress Note</p>
               <p className="text-sm text-gray-600">
@@ -1025,7 +1069,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
               </button>
               <button
                 className="w-full inline-flex items-center justify-center rounded-md border border-transparent bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
-                onClick={() => setShowCompletionConfirm(false)}
+                onClick={closeCompletionConfirm}
               >
                 Back to case
               </button>
