@@ -102,6 +102,28 @@ type LegacyFeedback = {
   recommendations?: string[];
 };
 
+type SectionBreakdown = {
+  score?: number | null;
+  feedback?: string | null;
+};
+
+type EfficiencyBreakdown = SectionBreakdown & {
+  cau_count?: number | null;
+  case_difficulty?: string | null;
+};
+
+type CommunicationBreakdown = {
+  information_sharing?: SectionBreakdown | null;
+  responsive_communication?: SectionBreakdown | null;
+  efficiency_deduction?: EfficiencyBreakdown | null;
+};
+
+type MdmBreakdown = {
+  labs_orders_quality?: SectionBreakdown | null;
+  note_thought_process?: SectionBreakdown | null;
+  safety_deduction?: SectionBreakdown | null;
+};
+
 type TimelineExportResponse = {
   assignmentId: string;
   fileName: string;
@@ -111,6 +133,16 @@ type TimelineExportResponse = {
 const asLegacyFeedback = (value: unknown): LegacyFeedback => {
   if (!value || typeof value !== 'object') return {};
   return value as LegacyFeedback;
+};
+
+const asCommunicationBreakdown = (value: unknown): CommunicationBreakdown => {
+  if (!value || typeof value !== 'object') return {};
+  return value as CommunicationBreakdown;
+};
+
+const asMdmBreakdown = (value: unknown): MdmBreakdown => {
+  if (!value || typeof value !== 'object') return {};
+  return value as MdmBreakdown;
 };
 
 const formatTimestamp = (value: string | null) => {
@@ -179,6 +211,13 @@ export default function SuperAdminPortal() {
     if (!report?.summary.totalAssignments) return 0;
     return Math.round((report.summary.completedAssignments / report.summary.totalAssignments) * 100);
   }, [report]);
+
+  const selectedCommunicationBreakdown = selectedAssignment
+    ? asCommunicationBreakdown(selectedAssignment.communicationBreakdown)
+    : {};
+  const selectedMdmBreakdown = selectedAssignment
+    ? asMdmBreakdown(selectedAssignment.mdmBreakdown)
+    : {};
 
   const handleExportTimeline = async (assignment: AssignmentEvaluationRow) => {
     setExportError(null);
@@ -480,6 +519,92 @@ export default function SuperAdminPortal() {
                 </p>
               </article>
               <article className="rounded-lg border border-slate-200 p-3">
+                <h4 className="text-sm font-semibold text-slate-900">Communication Breakdown</h4>
+                <div className="mt-2 space-y-3 text-sm text-slate-700">
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      Information Sharing
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedCommunicationBreakdown.information_sharing?.score === 'number'
+                          ? selectedCommunicationBreakdown.information_sharing.score
+                          : '—'}
+                        /2)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedCommunicationBreakdown.information_sharing?.feedback || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      Responsive Communication
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedCommunicationBreakdown.responsive_communication?.score === 'number'
+                          ? selectedCommunicationBreakdown.responsive_communication.score
+                          : '—'}
+                        /3)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedCommunicationBreakdown.responsive_communication?.feedback || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      Efficiency Deduction
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedCommunicationBreakdown.efficiency_deduction?.score === 'number'
+                          ? selectedCommunicationBreakdown.efficiency_deduction.score
+                          : '—'}
+                        ; range -2 to 0)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedCommunicationBreakdown.efficiency_deduction?.feedback || '—'}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      CAUs: {selectedCommunicationBreakdown.efficiency_deduction?.cau_count ?? '—'} • Difficulty:{' '}
+                      {selectedCommunicationBreakdown.efficiency_deduction?.case_difficulty ?? '—'}
+                    </p>
+                  </div>
+                </div>
+              </article>
+              <article className="rounded-lg border border-slate-200 p-3 md:col-span-2">
+                <h4 className="text-sm font-semibold text-slate-900">Medical Decision Making Breakdown</h4>
+                <div className="mt-2 grid gap-3 md:grid-cols-3 text-sm text-slate-700">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="font-medium text-slate-900">
+                      Labs/Orders Quality
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedMdmBreakdown.labs_orders_quality?.score === 'number'
+                          ? selectedMdmBreakdown.labs_orders_quality.score
+                          : '—'}
+                        /3)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedMdmBreakdown.labs_orders_quality?.feedback || '—'}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="font-medium text-slate-900">
+                      Progress Note Thought Process
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedMdmBreakdown.note_thought_process?.score === 'number'
+                          ? selectedMdmBreakdown.note_thought_process.score
+                          : '—'}
+                        /2)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedMdmBreakdown.note_thought_process?.feedback || '—'}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="font-medium text-slate-900">
+                      Safety Deduction
+                      <span className="ml-2 text-slate-500">
+                        ({typeof selectedMdmBreakdown.safety_deduction?.score === 'number'
+                          ? selectedMdmBreakdown.safety_deduction.score
+                          : '—'}
+                        ; range -2 to 0)
+                      </span>
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{selectedMdmBreakdown.safety_deduction?.feedback || '—'}</p>
+                  </div>
+                </div>
+              </article>
+              <article className="rounded-lg border border-slate-200 p-3">
                 <h4 className="text-sm font-semibold text-slate-900">Learning Objectives</h4>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
                   {selectedAssignment.learningObjectives || '—'}
@@ -502,18 +627,6 @@ export default function SuperAdminPortal() {
                 ) : (
                   <p className="mt-2 text-sm text-slate-700">—</p>
                 )}
-              </article>
-              <article className="rounded-lg border border-slate-200 p-3">
-                <h4 className="text-sm font-semibold text-slate-900">Communication Breakdown (raw)</h4>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap bg-slate-50 p-2 text-xs text-slate-700">
-                  {JSON.stringify(selectedAssignment.communicationBreakdown, null, 2) || 'null'}
-                </pre>
-              </article>
-              <article className="rounded-lg border border-slate-200 p-3">
-                <h4 className="text-sm font-semibold text-slate-900">MDM Breakdown (raw)</h4>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap bg-slate-50 p-2 text-xs text-slate-700">
-                  {JSON.stringify(selectedAssignment.mdmBreakdown, null, 2) || 'null'}
-                </pre>
               </article>
               <article className="rounded-lg border border-slate-200 p-3 md:col-span-2">
                 <h4 className="text-sm font-semibold text-slate-900">Student Progress Note</h4>
