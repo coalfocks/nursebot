@@ -41,6 +41,13 @@ type AssignmentEvaluationRow = {
   grade: number | null;
   diagnosis: string | null;
   treatmentPlan: string[] | null;
+  studentProgressNote: string | null;
+  learningObjectives: string | null;
+  communicationScore: number | null;
+  mdmScore: number | null;
+  communicationBreakdown: unknown;
+  mdmBreakdown: unknown;
+  nurseFeedback: unknown;
   school: {
     id: string;
     name: string;
@@ -182,6 +189,13 @@ Deno.serve(async (req) => {
             grade,
             diagnosis,
             treatment_plan,
+            student_progress_note,
+            learning_objectives,
+            communication_score,
+            mdm_score,
+            communication_breakdown,
+            mdm_breakdown,
+            nurse_feedback,
             school:school_id ( id, name, slug ),
             room:room_id ( id, room_number, role, specialty:specialty_id ( name ) ),
             student:student_id ( id, full_name, email, role, school_id ),
@@ -276,6 +290,13 @@ Deno.serve(async (req) => {
       grade: row.grade,
       diagnosis: row.diagnosis,
       treatmentPlan: row.treatment_plan,
+      studentProgressNote: row.student_progress_note,
+      learningObjectives: row.learning_objectives,
+      communicationScore: row.communication_score,
+      mdmScore: row.mdm_score,
+      communicationBreakdown: row.communication_breakdown,
+      mdmBreakdown: row.mdm_breakdown,
+      nurseFeedback: row.nurse_feedback,
       school: row.school
         ? {
             id: row.school.id,

@@ -331,6 +331,11 @@ Provide your evaluation in this JSON format:
         recommendations: evaluation.recommendations
       };
 
+      const derivedGrade = Math.max(
+        0,
+        Math.min(100, Math.round(legacyFeedback.overall_score * 20))
+      );
+
       // Update assignment with both new scoring and legacy feedback
       const { error: updateError } = await supabaseClient
         .from('student_room_assignments')
@@ -342,9 +347,11 @@ Provide your evaluation in this JSON format:
           mdm_breakdown: evaluation.mdm_breakdown,
           learning_objectives: evaluation.learning_objectives,
           case_difficulty: caseDifficulty,
+          grade: derivedGrade,
           // Legacy feedback for backward compatibility
           nurse_feedback: legacyFeedback,
           feedback_status: 'completed',
+          feedback_error: null,
           feedback_generated_at: new Date().toISOString()
         })
         .eq('id', assignmentId);
