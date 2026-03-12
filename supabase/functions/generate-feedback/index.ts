@@ -23,7 +23,7 @@ import {
   getViewedCompletionHints,
   parseCompletionHints,
   parseCompletionHintViews,
-} from '../../../src/lib/completionHints.ts';
+} from '../_shared/completion-hints.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
