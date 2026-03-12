@@ -6,6 +6,11 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import {
+  ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
+  getAssignableStudentCutoffDate,
+  isAssignableStudentProfile,
+} from '../lib/studentVisibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -68,28 +73,93 @@ export default function AssignmentManager() {
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
+  const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
+  const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
   useEffect(() => {
     if (!hasAdmin) return;
-    fetchData();
-  }, [hasAdmin, scopedSchoolId]);
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        let assignmentsQuery = supabase
+          .from('student_room_assignments')
+          .select(`
+            *,
+            student:student_id (
+              id,
+              full_name,
+              study_year,
+              email,
+              school_id,
+              specialization_interest
+            ),
+            room:room_id (
+              id,
+              room_number,
+              specialty_id,
+              difficulty_level,
+              school_id
+            )
+          `)
+          .order('created_at', { ascending: false });
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([
-        fetchAssignments(),
-        fetchStudents(),
-        fetchRooms(),
-        fetchSpecialties(),
-        fetchSchools()
-      ]);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+        let studentsQuery = supabase
+          .from('profiles')
+          .select('id, full_name, study_year, email, role, school_id, specialization_interest, created_at')
+          .eq('role', 'student')
+          .order('full_name');
+
+        let roomsQuery = supabase
+          .from('rooms')
+          .select('*')
+          .order('room_number');
+
+        let specialtiesQuery = supabase
+          .from('specialties')
+          .select('*')
+          .order('name');
+
+        if (scopedSchoolId) {
+          assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
+          studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
+          roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
+          specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
+        }
+
+        const [
+          assignmentsResult,
+          studentsResult,
+          roomsResult,
+          specialtiesResult,
+          schoolsResult,
+        ] = await Promise.all([
+          assignmentsQuery,
+          studentsQuery,
+          roomsQuery,
+          specialtiesQuery,
+          supabase.from('schools').select('*').order('name'),
+        ]);
+
+        if (assignmentsResult.error) throw assignmentsResult.error;
+        if (studentsResult.error) throw studentsResult.error;
+        if (roomsResult.error) throw roomsResult.error;
+        if (specialtiesResult.error) throw specialtiesResult.error;
+        if (schoolsResult.error) throw schoolsResult.error;
+
+        setAssignments((assignmentsResult.data ?? []) as Assignment[]);
+        setStudents(studentsResult.data || []);
+        setRooms(roomsResult.data || []);
+        setSpecialties(specialtiesResult.data || []);
+        setSchools(schoolsResult.data || []);
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadData();
+  }, [hasAdmin, scopedSchoolId]);
 
   const fetchAssignments = async () => {
     let query = supabase
@@ -124,71 +194,12 @@ export default function AssignmentManager() {
     setAssignments((data ?? []) as Assignment[]);
   };
 
-  const fetchStudents = async () => {
-    let query = supabase
-      .from('profiles')
-      .select('id, full_name, study_year, email, role, school_id, specialization_interest')
-      .eq('role', 'student')
-      .order('full_name');
-
-    if (scopedSchoolId) {
-      query = query.eq('school_id', scopedSchoolId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    setStudents(data || []);
-  };
-
-  const fetchRooms = async () => {
-    let query = supabase
-      .from('rooms')
-      .select('*')
-      .order('room_number');
-
-    if (scopedSchoolId) {
-      // Include rooms available to all schools (empty array)
-      query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    setRooms(data || []);
-  };
-
   const validateRoomOrdersConfig = (room: Room): boolean => {
     if (!room.orders_config) return false;
     const config = room.orders_config as { labs?: Array<{ name: string; type: string }> };
     return config.labs && config.labs.length > 0;
   };
 
-  const fetchSpecialties = async () => {
-    let query = supabase
-      .from('specialties')
-      .select('*')
-      .order('name');
-
-    if (scopedSchoolId) {
-      query = query.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    setSpecialties(data || []);
-  };
-
-  const fetchSchools = async () => {
-    const { data, error } = await supabase
-      .from('schools')
-      .select('*')
-      .order('name');
-
-    if (error) throw error;
-    setSchools(data || []);
-  };
 
   const validateAssignmentDates = (
     windowStart: string,
@@ -546,7 +557,7 @@ export default function AssignmentManager() {
     }
   };
 
-  const filteredStudents = students.filter((student) => {
+  const filteredStudents = assignableStudents.filter((student) => {
     const term = studentSearch.toLowerCase();
     return (
       student.full_name.toLowerCase().includes(term) ||
@@ -1105,6 +1116,10 @@ export default function AssignmentManager() {
                   {targetingMode === 'individual' ? (
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Search Students</label>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
+                        (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                      </p>
                       <div className="mt-1">
                         <input
                           type="text"
@@ -1115,7 +1130,7 @@ export default function AssignmentManager() {
                         />
                       </div>
                       <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
-                        {filteredStudents.map(student => (
+                          {filteredStudents.map(student => (
                           <button
                             key={student.id}
                             type="button"
@@ -1186,8 +1201,12 @@ export default function AssignmentManager() {
                         <label className="block text-sm font-medium text-gray-700">
                           Select Students ({selectedBulkStudents.length} selected)
                         </label>
+                        <p className="mt-1 text-xs text-gray-500">
+                          Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
+                          (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                        </p>
                         <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
-                          {students
+                          {assignableStudents
                             .filter(student => {
                               if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
                               if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
@@ -1222,7 +1241,7 @@ export default function AssignmentManager() {
                                 </div>
                               </label>
                             ))}
-                          {students.filter(student => {
+                          {assignableStudents.filter(student => {
                             if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
                             if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
                             return true;
