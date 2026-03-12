@@ -1,5 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
+import {
+  COMMUNICATION_SCORING,
+  EVALUATION_SYSTEM_PROMPT,
+  FEEDBACK_TEMPLATE,
+  MDM_SCORING,
+} from '../_shared/evaluation-prompts.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,6 +70,141 @@ interface LegacyFeedbackResponse {
   };
   recommendations: string[];
 }
+
+type CommunicationScoreKey = 0 | 1 | 2 | 3 | -1 | -2;
+type MdmScoreKey = 0 | 1 | 2 | 3 | -1 | -2;
+
+const getCommunicationFeedback = (
+  section: 'informationSharing' | 'responsiveCommunication' | 'efficiencyDeduction',
+  score: CommunicationScoreKey,
+) => {
+  const scoreKey = String(score) as keyof typeof COMMUNICATION_SCORING.informationSharing.scores;
+  if (section === 'informationSharing') {
+    return COMMUNICATION_SCORING.informationSharing.scores[score as 0 | 1 | 2].feedback;
+  }
+  if (section === 'responsiveCommunication') {
+    return COMMUNICATION_SCORING.responsiveCommunication.scores[score as 0 | 1 | 2 | 3].feedback;
+  }
+  return COMMUNICATION_SCORING.efficiencyDeduction.scores[scoreKey as '-2' | '-1' | 0].feedback;
+};
+
+const getMdmFeedback = (
+  section: 'labsOrdersQuality' | 'noteThoughtProcess' | 'safetyDeduction',
+  score: MdmScoreKey,
+) => {
+  const scoreKey = String(score) as keyof typeof MDM_SCORING.labsOrdersQuality.scores;
+  if (section === 'labsOrdersQuality') {
+    return MDM_SCORING.labsOrdersQuality.scores[score as 0 | 1 | 2 | 3].feedback;
+  }
+  if (section === 'noteThoughtProcess') {
+    return MDM_SCORING.noteThoughtProcess.scores[score as 0 | 1 | 2].feedback;
+  }
+  return MDM_SCORING.safetyDeduction.scores[scoreKey as '-2' | '-1' | 0].feedback;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const canonicalizeEvaluation = (
+  evaluation: EvaluationScoringResponse,
+  caseDifficulty: string,
+): EvaluationScoringResponse => {
+  const informationScore = clamp(Math.round(evaluation.communication_breakdown?.information_sharing?.score ?? 0), 0, 2) as 0 | 1 | 2;
+  const responsiveScore = clamp(Math.round(evaluation.communication_breakdown?.responsive_communication?.score ?? 0), 0, 3) as 0 | 1 | 2 | 3;
+  const efficiencyScore = clamp(Math.round(evaluation.communication_breakdown?.efficiency_deduction?.score ?? 0), -2, 0) as -2 | -1 | 0;
+  const labsOrdersScore = clamp(Math.round(evaluation.mdm_breakdown?.labs_orders_quality?.score ?? 0), 0, 3) as 0 | 1 | 2 | 3;
+  const noteThoughtScore = clamp(Math.round(evaluation.mdm_breakdown?.note_thought_process?.score ?? 0), 0, 2) as 0 | 1 | 2;
+  const safetyScore = clamp(Math.round(evaluation.mdm_breakdown?.safety_deduction?.score ?? 0), -2, 0) as -2 | -1 | 0;
+
+  const communicationScore = clamp(informationScore + responsiveScore + efficiencyScore, 0, 5);
+  const mdmScore = clamp(labsOrdersScore + noteThoughtScore + safetyScore, 0, 5);
+
+  return {
+    ...evaluation,
+    communication_score: communicationScore,
+    mdm_score: mdmScore,
+    communication_breakdown: {
+      information_sharing: {
+        score: informationScore,
+        feedback: getCommunicationFeedback('informationSharing', informationScore),
+      },
+      responsive_communication: {
+        score: responsiveScore,
+        feedback: getCommunicationFeedback('responsiveCommunication', responsiveScore),
+      },
+      efficiency_deduction: {
+        score: efficiencyScore,
+        feedback: getCommunicationFeedback('efficiencyDeduction', efficiencyScore),
+        cau_count: Math.max(0, Math.round(evaluation.communication_breakdown?.efficiency_deduction?.cau_count ?? 0)),
+        case_difficulty: caseDifficulty,
+      },
+    },
+    mdm_breakdown: {
+      labs_orders_quality: {
+        score: labsOrdersScore,
+        feedback: getMdmFeedback('labsOrdersQuality', labsOrdersScore),
+      },
+      note_thought_process: {
+        score: noteThoughtScore,
+        feedback: getMdmFeedback('noteThoughtProcess', noteThoughtScore),
+      },
+      safety_deduction: {
+        score: safetyScore,
+        feedback: getMdmFeedback('safetyDeduction', safetyScore),
+      },
+    },
+    recommendations: [
+      getCommunicationFeedback('informationSharing', informationScore),
+      getCommunicationFeedback('responsiveCommunication', responsiveScore),
+      getCommunicationFeedback('efficiencyDeduction', efficiencyScore),
+      getMdmFeedback('labsOrdersQuality', labsOrdersScore),
+      getMdmFeedback('noteThoughtProcess', noteThoughtScore),
+      getMdmFeedback('safetyDeduction', safetyScore),
+    ],
+  };
+};
+
+const rubricReferenceText = `Example feedback template:
+${FEEDBACK_TEMPLATE}
+
+Student Feedback Outline
+
+Communication
+${COMMUNICATION_SCORING.overview}
+
+${COMMUNICATION_SCORING.informationSharing.label}
+0: "${COMMUNICATION_SCORING.informationSharing.scores[0].feedback}"
+1: "${COMMUNICATION_SCORING.informationSharing.scores[1].feedback}"
+2: "${COMMUNICATION_SCORING.informationSharing.scores[2].feedback}"
+
+${COMMUNICATION_SCORING.responsiveCommunication.label}
+0: "${COMMUNICATION_SCORING.responsiveCommunication.scores[0].feedback}"
+1: "${COMMUNICATION_SCORING.responsiveCommunication.scores[1].feedback}"
+2: "${COMMUNICATION_SCORING.responsiveCommunication.scores[2].feedback}"
+3: "${COMMUNICATION_SCORING.responsiveCommunication.scores[3].feedback}"
+
+${COMMUNICATION_SCORING.efficiencyDeduction.label}
+0: "${COMMUNICATION_SCORING.efficiencyDeduction.scores[0].feedback}"
+-1: "${COMMUNICATION_SCORING.efficiencyDeduction.scores['-1'].feedback}"
+-2: "${COMMUNICATION_SCORING.efficiencyDeduction.scores['-2'].feedback}"
+
+Medical Decision Making
+${MDM_SCORING.overview}
+
+${MDM_SCORING.labsOrdersQuality.label}
+0: "${MDM_SCORING.labsOrdersQuality.scores[0].feedback}"
+1: "${MDM_SCORING.labsOrdersQuality.scores[1].feedback}"
+2: "${MDM_SCORING.labsOrdersQuality.scores[2].feedback}"
+3: "${MDM_SCORING.labsOrdersQuality.scores[3].feedback}"
+
+${MDM_SCORING.noteThoughtProcess.label}
+0: "${MDM_SCORING.noteThoughtProcess.scores[0].feedback}"
+1: "${MDM_SCORING.noteThoughtProcess.scores[1].feedback}"
+2: "${MDM_SCORING.noteThoughtProcess.scores[2].feedback}"
+
+${MDM_SCORING.safetyDeduction.label}
+0: "${MDM_SCORING.safetyDeduction.scores[0].feedback}"
+-1: "${MDM_SCORING.safetyDeduction.scores['-1'].feedback}"
+-2: "${MDM_SCORING.safetyDeduction.scores['-2'].feedback}"`;
 
 async function updateAssignmentStatus(
   supabaseClient: ReturnType<typeof createClient>,
@@ -169,8 +310,12 @@ Deno.serve(async (req) => {
         ? orders.map(o => `- ${o.order_name} (${o.category})${o.status ? ` [${o.status}]` : ''}`).join('\n')
         : 'No orders placed';
 
-      // Build the evaluation prompt with Connor's scoring system
-      const evaluationPrompt = `You are a physician educator grading a physician on their communication and medical decision making. Your goal is to grade the student as fairly as possible so that they may receive proper feedback.
+      // Build the evaluation prompt with the full rubric and exact feedback language.
+      const evaluationPrompt = `${rubricReferenceText}
+
+You are grading a physician on nurse Sophia, the simulation that covers overnight nurse pages and medical decision making.
+Your goal is to grade the student fairly and return subsection scores plus feedback that stays as close as possible to the exact rubric language above.
+When you write subsection feedback, keep it equivalent to the provided line for that score with no material deviation.
 
 **SCORING RULES:**
 - All scoring is based on the score that represents ≥50% of messages/orders, or the highest percentage
@@ -182,22 +327,31 @@ Raw = Information Sharing (0-2) + Responsive Communication (0-3) + Efficiency De
 Final = clamp(raw, 0, 5)
 
 **A) Information Sharing (0-2):**
-- 0: No meaningful questions (just "OK", "thanks", or jumps to orders without context)
-- 1: Questions poorly formed (verbose, low-yield, too complex, redundant)
-- 2: Targeted, concise questions that close key information gaps
+- 0 criteria: ${COMMUNICATION_SCORING.informationSharing.scores[0].criteria}
+- 1 criteria: ${COMMUNICATION_SCORING.informationSharing.scores[1].criteria}
+- 2 criteria: ${COMMUNICATION_SCORING.informationSharing.scores[2].criteria}
 
 **B) Responsive Communication (0-3):**
-- 0: Not goal-directed, no follow-through
-- 1: Some progress but weak execution
-- 2: Closed-loop but limited explanation
-- 3: Team-based, closed-loop, transparent reasoning
+- 0 criteria: ${COMMUNICATION_SCORING.responsiveCommunication.scores[0].criteria}
+- 1 criteria: ${COMMUNICATION_SCORING.responsiveCommunication.scores[1].criteria}
+- 2 criteria: ${COMMUNICATION_SCORING.responsiveCommunication.scores[2].criteria}
+- 3 criteria: ${COMMUNICATION_SCORING.responsiveCommunication.scores[3].criteria}
 
 **C) Efficiency Deduction (-2 to 0):**
 Count Clinical Action Units (CAUs) = messages with clinical questions, instructions, or orders
 - Case difficulty: ${caseDifficulty}
-- 0: Efficient (5-10 CAUs for easy, 1-3 CAUs before first order for intermediate, immediate action for advanced)
-- -1: Mild inefficiency (13-15 CAUs for easy, 4-5 CAUs before order for intermediate, delayed urgency for advanced)
-- -2: Major inefficiency (≥16 CAUs for easy, ≥6 CAUs before order for intermediate, unsafe delay for advanced)
+- 0 criteria:
+  easy: ${COMMUNICATION_SCORING.efficiencyDeduction.scores[0].easyCases}
+  intermediate: ${COMMUNICATION_SCORING.efficiencyDeduction.scores[0].intermediateCases}
+  advanced: ${COMMUNICATION_SCORING.efficiencyDeduction.scores[0].advancedCases}
+- -1 criteria:
+  easy: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-1'].easyCases}
+  intermediate: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-1'].intermediateCases}
+  advanced: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-1'].advancedCases}
+- -2 criteria:
+  easy: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-2'].easyCases}
+  intermediate: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-2'].intermediateCases}
+  advanced: ${COMMUNICATION_SCORING.efficiencyDeduction.scores['-2'].advancedCases}
 
 **MDM SCORE (0-5):**
 Raw = Labs/Orders Quality (0-3) + Note Thought Process (0-2) + Safety Deduction (-2 to 0)
@@ -205,21 +359,21 @@ Final = clamp(raw, 0, 5)
 
 **D) Labs/Orders Quality (0-3):**
 Using Must/Should/Could/Shouldn't/Mustn't framework:
-- 3: High-quality (all Must do, most Should do)
-- 2: Mixed (good core but gaps or inappropriate extras)
-- 1: Partial (some correct but insufficient priorities)
-- 0: Inadequate (fails Must/Should do)
+- 0 criteria: ${MDM_SCORING.labsOrdersQuality.scores[0].criteria}
+- 1 criteria: ${MDM_SCORING.labsOrdersQuality.scores[1].criteria}
+- 2 criteria: ${MDM_SCORING.labsOrdersQuality.scores[2].criteria}
+- 3 criteria: ${MDM_SCORING.labsOrdersQuality.scores[3].criteria}
 
 **E) Progress Note Thought Process (0-2):**
 Compare to reference note:
-- 2: Correct framing and reasoning
-- 1: Some reasoning but incomplete grasp
-- 0: No coherent understanding
+- 0 criteria: ${MDM_SCORING.noteThoughtProcess.scores[0].criteria}
+- 1 criteria: ${MDM_SCORING.noteThoughtProcess.scores[1].criteria}
+- 2 criteria: ${MDM_SCORING.noteThoughtProcess.scores[2].criteria}
 
 **F) Safety Deduction (-2 to 0):**
-- 0: No unsafe actions
-- -1: Shouldn't occur (low-yield, wasteful, mild contraindication)
-- -2: Mustn't occur (unsafe/harmful)
+- 0 criteria: ${MDM_SCORING.safetyDeduction.scores[0].criteria}
+- -1 criteria: ${MDM_SCORING.safetyDeduction.scores['-1'].criteria}
+- -2 criteria: ${MDM_SCORING.safetyDeduction.scores['-2'].criteria}
 
 ---
 
@@ -287,7 +441,7 @@ Provide your evaluation in this JSON format:
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
-          { role: "system", content: "You are a physician educator providing detailed Likert-scale evaluation. Always use the exact feedback templates from the scoring rubric. Be precise with scoring - no intermediate values." },
+          { role: "system", content: `${EVALUATION_SYSTEM_PROMPT}\nYou must use the rubric language provided by the user prompt. Be precise with scoring, do not invent new score anchors, and keep each subsection feedback equivalent to the exact template line for the selected score.` },
           { role: "user", content: evaluationPrompt }
         ],
         response_format: { type: "json_object" },
@@ -298,11 +452,10 @@ Provide your evaluation in this JSON format:
       const content = completion.choices[0].message.content;
       if (!content) throw new Error('No response from OpenAI');
 
-      const evaluation = JSON.parse(content) as EvaluationScoringResponse;
-      
-      // Clamp scores to valid ranges
-      evaluation.communication_score = Math.max(0, Math.min(5, evaluation.communication_score));
-      evaluation.mdm_score = Math.max(0, Math.min(5, evaluation.mdm_score));
+      const evaluation = canonicalizeEvaluation(
+        JSON.parse(content) as EvaluationScoringResponse,
+        caseDifficulty,
+      );
 
       console.log('Evaluation scores:', {
         communication: evaluation.communication_score,
@@ -321,14 +474,20 @@ Provide your evaluation in this JSON format:
         overall_score: Math.round((evaluation.communication_score + evaluation.mdm_score) / 2 * 10) / 10,
         clinical_reasoning: {
           score: evaluation.mdm_score,
-          comments: `${evaluation.mdm_breakdown.labs_orders_quality.feedback} ${evaluation.mdm_breakdown.note_thought_process.feedback}`,
-          strengths: evaluation.recommendations.filter((_, i) => i % 2 === 0),
-          areas_for_improvement: evaluation.recommendations.filter((_, i) => i % 2 === 1)
+          comments: `${evaluation.mdm_breakdown.labs_orders_quality.feedback} ${evaluation.mdm_breakdown.note_thought_process.feedback} ${evaluation.mdm_breakdown.safety_deduction.feedback}`.trim(),
+          strengths: [
+            evaluation.mdm_breakdown.labs_orders_quality.feedback,
+            evaluation.mdm_breakdown.note_thought_process.feedback,
+          ],
+          areas_for_improvement: [evaluation.mdm_breakdown.safety_deduction.feedback]
         },
         communication_skills: {
           score: evaluation.communication_score,
-          comments: `${evaluation.communication_breakdown.information_sharing.feedback} ${evaluation.communication_breakdown.responsive_communication.feedback}`,
-          strengths: [evaluation.communication_breakdown.information_sharing.feedback],
+          comments: `${evaluation.communication_breakdown.information_sharing.feedback} ${evaluation.communication_breakdown.responsive_communication.feedback} ${evaluation.communication_breakdown.efficiency_deduction.feedback}`.trim(),
+          strengths: [
+            evaluation.communication_breakdown.information_sharing.feedback,
+            evaluation.communication_breakdown.responsive_communication.feedback,
+          ],
           areas_for_improvement: [evaluation.communication_breakdown.efficiency_deduction.feedback]
         },
         recommendations: evaluation.recommendations
