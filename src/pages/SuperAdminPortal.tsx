@@ -102,6 +102,12 @@ type LegacyFeedback = {
   recommendations?: string[];
 };
 
+type TimelineExportResponse = {
+  assignmentId: string;
+  fileName: string;
+  html: string;
+};
+
 const asLegacyFeedback = (value: unknown): LegacyFeedback => {
   if (!value || typeof value !== 'object') return {};
   return value as LegacyFeedback;
@@ -133,6 +139,8 @@ export default function SuperAdminPortal() {
   const [selectedAssignment, setSelectedAssignment] = useState<AssignmentEvaluationRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exportingAssignmentId, setExportingAssignmentId] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !isSuperAdmin(profile)) {
@@ -171,6 +179,45 @@ export default function SuperAdminPortal() {
     if (!report?.summary.totalAssignments) return 0;
     return Math.round((report.summary.completedAssignments / report.summary.totalAssignments) * 100);
   }, [report]);
+
+  const handleExportTimeline = async (assignment: AssignmentEvaluationRow) => {
+    setExportError(null);
+    setExportingAssignmentId(assignment.id);
+
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke('superadmin-report', {
+        body: {
+          action: 'export_assignment_timeline',
+          assignmentId: assignment.id,
+        },
+      });
+
+      if (invokeError) {
+        throw invokeError;
+      }
+
+      const exportPayload = data as TimelineExportResponse | null;
+      if (!exportPayload?.html || !exportPayload.fileName) {
+        throw new Error('Timeline export returned an invalid payload.');
+      }
+
+      const blob = new Blob([exportPayload.html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = exportPayload.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (exportErr) {
+      const message =
+        exportErr instanceof Error ? exportErr.message : 'Failed to export assignment timeline.';
+      setExportError(message);
+    } finally {
+      setExportingAssignmentId(null);
+    }
+  };
 
   if (!user) {
     return <Navigate to="/login" replace />;
@@ -360,7 +407,10 @@ export default function SuperAdminPortal() {
                         <td className="px-3 py-2 text-sm text-slate-700">
                           <button
                             type="button"
-                            onClick={() => setSelectedAssignment(row)}
+                            onClick={() => {
+                              setExportError(null);
+                              setSelectedAssignment(row);
+                            }}
                             className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                           >
                             View Feedback
@@ -387,14 +437,35 @@ export default function SuperAdminPortal() {
               <h3 className="text-lg font-semibold text-slate-900">
                 Feedback Detail: {selectedAssignment.student?.fullName ?? 'Unknown Student'} ({selectedAssignment.id})
               </h3>
-              <button
-                type="button"
-                onClick={() => setSelectedAssignment(null)}
-                className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleExportTimeline(selectedAssignment)}
+                  disabled={exportingAssignmentId === selectedAssignment.id}
+                  className="inline-flex items-center rounded border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {exportingAssignmentId === selectedAssignment.id ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Export Timeline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedAssignment(null);
+                    setExportError(null);
+                  }}
+                  className="rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
             </div>
+            {exportError ? (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {exportError}
+              </div>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2">
               <article className="rounded-lg border border-slate-200 p-3">
                 <h4 className="text-sm font-semibold text-slate-900">Scoring</h4>
