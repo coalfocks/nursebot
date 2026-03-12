@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
       if (messagesError) throw messagesError;
 
       // Fetch orders placed by student (via patient linked to room)
-      let orders: any[] = [];
+      let orders: Database['public']['Tables']['medical_orders']['Row'][] = [];
       if (assignment.room.patient_id) {
         const { data: ordersData } = await supabaseClient
           .from('medical_orders')
@@ -229,9 +229,12 @@ Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
 Case Difficulty: ${caseDifficulty}
 
 **STUDENT'S WORK:**
-Diagnosis: ${assignment.diagnosis || 'Not provided'}
-Treatment Plan: ${assignment.treatment_plan || 'Not provided'}
+Use the student's progress note as the primary source for their assessment, working diagnosis, supporting evidence, and plan.
+Do not penalize the student just because separate diagnosis or treatment-plan fields are blank.
+If you need to infer their clinical reasoning, infer it from the progress note, conversation, and orders.
 Progress Note: ${assignment.student_progress_note || 'Not provided'}
+Legacy Diagnosis Field: ${assignment.diagnosis || 'Not provided'}
+Legacy Treatment Plan Field: ${assignment.treatment_plan || 'Not provided'}
 
 **CONVERSATION (${studentMessages.length} student messages):**
 ${conversation}

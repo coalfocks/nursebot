@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, User2, CheckCircle, Wand2, ExternalLink, Stethoscope } from 'lucide-react';
+import { Send, Loader2, User2, Wand2, ExternalLink, Stethoscope } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import type { Database } from '../lib/database.types';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
-import { useAuthStore } from '../stores/authStore';
+import type { ImagingStudy, LabResult, MedicalOrder, VitalSigns } from '../features/emr/lib/types';
 
 const ASSISTANT_RESPONSE_DELAY = {
   min: 600,
@@ -13,10 +13,58 @@ const ASSISTANT_RESPONSE_DELAY = {
 };
 
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+type AssignmentTimelineRow = Pick<
+  Database['public']['Tables']['student_room_assignments']['Row'],
+  'status' | 'student_progress_note' | 'completed_at'
+>;
+
 interface ChatFunctionResponse {
   message: string;
   chatMessage: ChatMessage;
 }
+
+type TimelineEntry =
+  | {
+      id: string;
+      kind: 'message';
+      timestamp: string;
+      message: ChatMessage;
+    }
+  | {
+      id: string;
+      kind: 'completion';
+      timestamp: string;
+    }
+  | {
+      id: string;
+      kind: 'order';
+      timestamp: string;
+      order: MedicalOrder;
+    }
+  | {
+      id: string;
+      kind: 'labs';
+      timestamp: string;
+      labs: LabResult[];
+    }
+  | {
+      id: string;
+      kind: 'vital';
+      timestamp: string;
+      vital: VitalSigns;
+    }
+  | {
+      id: string;
+      kind: 'imaging';
+      timestamp: string;
+      study: ImagingStudy;
+    }
+  | {
+      id: string;
+      kind: 'progress-note';
+      timestamp: string;
+      content: string;
+    };
 
 type CompletionHints = {
   assessmentHint: string;
@@ -69,6 +117,239 @@ const getMessageKey = (message: ChatMessage) => {
   return `${message.assignment_id}-${message.created_at}`;
 };
 
+const BASELINE_SENTINEL_PREFIX = '2000-01-01';
+
+const normalizeTimestamp = (timestamp?: string | null) => {
+  if (!timestamp) return null;
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+};
+
+const getLabTimelineTimestamp = (lab: LabResult) => {
+  const primary = normalizeTimestamp(lab.resultTime ?? lab.collectionTime ?? lab.createdAt);
+  if (primary?.startsWith(BASELINE_SENTINEL_PREFIX)) {
+    return normalizeTimestamp(lab.createdAt) ?? primary;
+  }
+  return primary;
+};
+
+const getImagingTimelineTimestamp = (study: ImagingStudy) =>
+  normalizeTimestamp(study.reportGeneratedAt ?? study.orderTime);
+
+const getTimelineSortValue = (timestamp: string) => {
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
+const getTimelineKindRank = (kind: TimelineEntry['kind']) => {
+  switch (kind) {
+    case 'message':
+      return 1;
+    case 'order':
+      return 2;
+    case 'labs':
+      return 3;
+    case 'vital':
+      return 4;
+    case 'imaging':
+      return 5;
+    case 'completion':
+      return 6;
+    case 'progress-note':
+      return 7;
+    default:
+      return 99;
+  }
+};
+
+const getTimelineTimestampLabel = (timestamp: string) => {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
+
+const getTimelineMarkerLabel = (kind: TimelineEntry['kind']) => {
+  switch (kind) {
+    case 'message':
+      return 'Msg';
+    case 'order':
+      return 'Ord';
+    case 'labs':
+      return 'Lab';
+    case 'vital':
+      return 'Vit';
+    case 'imaging':
+      return 'Img';
+    case 'completion':
+      return 'End';
+    case 'progress-note':
+      return 'Note';
+    default:
+      return 'Evt';
+  }
+};
+
+const getTimelineMarkerClassName = (kind: TimelineEntry['kind']) => {
+  switch (kind) {
+    case 'message':
+      return 'border-slate-300 bg-white text-slate-600';
+    case 'order':
+      return 'border-blue-200 bg-blue-50 text-blue-700';
+    case 'labs':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    case 'vital':
+      return 'border-rose-200 bg-rose-50 text-rose-700';
+    case 'imaging':
+      return 'border-violet-200 bg-violet-50 text-violet-700';
+    case 'completion':
+      return 'border-green-200 bg-green-50 text-green-700';
+    case 'progress-note':
+      return 'border-amber-200 bg-amber-100 text-amber-800';
+    default:
+      return 'border-slate-300 bg-white text-slate-600';
+  }
+};
+
+const formatMetric = (label: string, value?: string | number | null) => {
+  if (value === undefined || value === null || value === '') return null;
+  return `${label} ${value}`;
+};
+
+const getOrderSummary = (order: MedicalOrder) => {
+  const details = [order.dose, order.route, order.frequency].filter(Boolean).join(' • ');
+  return details || order.instructions || 'No additional order details';
+};
+
+const getLabSummary = (lab: LabResult) => {
+  if (lab.status === 'Pending') {
+    return `${lab.testName}: pending`;
+  }
+  const unit = lab.unit ? ` ${lab.unit}` : '';
+  const value = lab.value === '' || lab.value === null || lab.value === undefined ? 'resulted' : `${lab.value}${unit}`;
+  return `${lab.testName}: ${value}`;
+};
+
+const getVitalSummary = (vital: VitalSigns) =>
+  [
+    formatMetric('T', vital.temperature),
+    vital.bloodPressureSystolic && vital.bloodPressureDiastolic
+      ? `BP ${vital.bloodPressureSystolic}/${vital.bloodPressureDiastolic}`
+      : null,
+    formatMetric('HR', vital.heartRate),
+    formatMetric('RR', vital.respiratoryRate),
+    vital.oxygenSaturation !== undefined && vital.oxygenSaturation !== null ? `SpO2 ${vital.oxygenSaturation}%` : null,
+    vital.pain !== undefined && vital.pain !== null ? `Pain ${vital.pain}/10` : null,
+  ].filter(Boolean) as string[];
+
+const buildTimelineEntries = (
+  messages: ChatMessage[],
+  orders: MedicalOrder[],
+  labs: LabResult[],
+  vitals: VitalSigns[],
+  imagingStudies: ImagingStudy[],
+  assignmentTimeline: AssignmentTimelineRow | null,
+): TimelineEntry[] => {
+  const entries: TimelineEntry[] = [];
+
+  messages.forEach((message) => {
+    const timestamp = normalizeTimestamp(message.created_at);
+    if (!timestamp) return;
+    if (message.content === '<completed>' && message.role === 'assistant') {
+      entries.push({
+        id: `completion-${message.id ?? timestamp}`,
+        kind: 'completion',
+        timestamp,
+      });
+      return;
+    }
+    entries.push({
+      id: `message-${message.id ?? `${message.assignment_id}-${timestamp}`}`,
+      kind: 'message',
+      timestamp,
+      message,
+    });
+  });
+
+  orders.forEach((order) => {
+    const timestamp = normalizeTimestamp(order.orderTime);
+    if (!timestamp) return;
+    entries.push({
+      id: `order-${order.id}`,
+      kind: 'order',
+      timestamp,
+      order,
+    });
+  });
+
+  const groupedLabs = new Map<string, LabResult[]>();
+  labs.forEach((lab) => {
+    const timestamp = getLabTimelineTimestamp(lab);
+    if (!timestamp) return;
+    const key = `${lab.overrideScope ?? 'baseline'}-${timestamp.slice(0, 16)}`;
+    const existing = groupedLabs.get(key) ?? [];
+    existing.push(lab);
+    groupedLabs.set(key, existing);
+  });
+
+  groupedLabs.forEach((group, key) => {
+    const timestamp = getLabTimelineTimestamp(group[0]);
+    if (!timestamp) return;
+    group.sort((a, b) => a.testName.localeCompare(b.testName));
+    entries.push({
+      id: `labs-${key}`,
+      kind: 'labs',
+      timestamp,
+      labs: group,
+    });
+  });
+
+  vitals.forEach((vital) => {
+    const timestamp = normalizeTimestamp(vital.timestamp);
+    if (!timestamp) return;
+    entries.push({
+      id: `vital-${vital.id}`,
+      kind: 'vital',
+      timestamp,
+      vital,
+    });
+  });
+
+  imagingStudies.forEach((study) => {
+    const timestamp = getImagingTimelineTimestamp(study);
+    if (!timestamp) return;
+    entries.push({
+      id: `imaging-${study.id}`,
+      kind: 'imaging',
+      timestamp,
+      study,
+    });
+  });
+
+  if (assignmentTimeline?.student_progress_note?.trim()) {
+    const timestamp = normalizeTimestamp(assignmentTimeline.completed_at) ?? new Date().toISOString();
+    entries.push({
+      id: `progress-note-${timestamp}`,
+      kind: 'progress-note',
+      timestamp,
+      content: assignmentTimeline.student_progress_note.trim(),
+    });
+  }
+
+  return entries.sort((a, b) => {
+    if (a.kind === 'progress-note' && b.kind !== 'progress-note') return 1;
+    if (b.kind === 'progress-note' && a.kind !== 'progress-note') return -1;
+    const timestampDiff = getTimelineSortValue(a.timestamp) - getTimelineSortValue(b.timestamp);
+    if (timestampDiff !== 0) return timestampDiff;
+    return getTimelineKindRank(a.kind) - getTimelineKindRank(b.kind);
+  });
+};
+
 interface ChatInterfaceProps {
   assignmentId: string;
   roomNumber: string;
@@ -93,23 +374,33 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     diagnosisDifferentiatorHint: '',
     planHint: '',
   });
-  const [differentialDiagnoses, setDifferentialDiagnoses] = useState<string[]>(['', '', '']);
-  const [diagnosisDifferentiator, setDiagnosisDifferentiator] = useState('');
-  const [planItems, setPlanItems] = useState<string[]>(['']);
   const [showBedsideHint, setShowBedsideHint] = useState(false);
-  const [showProgressNote, setShowProgressNote] = useState(false);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
   const [isSavingProgressNote, setIsSavingProgressNote] = useState(false);
+  const [assignmentTimeline, setAssignmentTimeline] = useState<AssignmentTimelineRow | null>(null);
+  const [orders, setOrders] = useState<MedicalOrder[]>([]);
+  const [labs, setLabs] = useState<LabResult[]>([]);
+  const [vitals, setVitals] = useState<VitalSigns[]>([]);
+  const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initializingRef = useRef(false);
   const initializedRef = useRef(false);
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
+  const timelineSubscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
   const messageIdsRef = useRef<Set<string>>(new Set());
   const pendingAssistantMessagesRef = useRef<Set<string>>(new Set());
   const messageTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const messagesRef = useRef<ChatMessage[]>([]);
+  const timelineEntries = buildTimelineEntries(
+    messages,
+    orders,
+    labs,
+    vitals,
+    imagingStudies,
+    assignmentTimeline,
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -211,9 +502,45 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
 
   
 
+  const loadTimelineData = useCallback(
+    async (patientId?: string | null) => {
+      if (!assignmentId) return;
+
+      try {
+        const assignmentPromise = supabase
+          .from('student_room_assignments')
+          .select('status, student_progress_note, completed_at')
+          .eq('id', assignmentId)
+          .maybeSingle();
+
+        const [assignmentResult, nextOrders, nextLabs, nextVitals, nextImaging] = await Promise.all([
+          assignmentPromise,
+          patientId ? emrApi.listOrders(patientId, assignmentId, roomId ?? null) : Promise.resolve([]),
+          patientId ? emrApi.listLabResults(patientId, assignmentId, roomId ?? null) : Promise.resolve([]),
+          patientId ? emrApi.listVitals(patientId, assignmentId, roomId ?? null) : Promise.resolve([]),
+          patientId ? emrApi.listImagingStudies(patientId, assignmentId, roomId ?? null) : Promise.resolve([]),
+        ]);
+
+        if (assignmentResult.error) {
+          throw assignmentResult.error;
+        }
+
+        setAssignmentTimeline((assignmentResult.data ?? null) as AssignmentTimelineRow | null);
+        setStatus(assignmentResult.data?.status ?? assignmentStatus);
+        setOrders(nextOrders);
+        setLabs(nextLabs);
+        setVitals(nextVitals);
+        setImagingStudies(nextImaging);
+      } catch (error) {
+        console.error('Error loading assignment timeline', error);
+      }
+    },
+    [assignmentId, assignmentStatus, roomId],
+  );
+
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [timelineEntries.length]);
 
   useEffect(() => {
     if (isAssistantTyping) {
@@ -267,6 +594,57 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       isActive = false;
     };
   }, [roomId]);
+
+  useEffect(() => {
+    void loadTimelineData(patientLink?.patientId ?? null);
+  }, [loadTimelineData, patientLink?.patientId]);
+
+  useEffect(() => {
+    if (!assignmentId) return;
+
+    const channel = supabase.channel(`assignment_timeline_${assignmentId}_${patientLink?.patientId ?? 'none'}`);
+
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'student_room_assignments',
+        filter: `id=eq.${assignmentId}`,
+      },
+      () => {
+        void loadTimelineData(patientLink?.patientId ?? null);
+      },
+    );
+
+    if (patientLink?.patientId) {
+      const patientFilter = `patient_id=eq.${patientLink.patientId}`;
+      (['medical_orders', 'lab_results', 'vital_signs', 'imaging_studies'] as const).forEach((table) => {
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table,
+            filter: patientFilter,
+          },
+          () => {
+            void loadTimelineData(patientLink.patientId);
+          },
+        );
+      });
+    }
+
+    channel.subscribe();
+    timelineSubscriptionRef.current = channel;
+
+    return () => {
+      if (timelineSubscriptionRef.current) {
+        timelineSubscriptionRef.current.unsubscribe();
+        timelineSubscriptionRef.current = null;
+      }
+    };
+  }, [assignmentId, loadTimelineData, patientLink?.patientId]);
 
   const initializeChat = useCallback(async () => {
     if (!assignmentId || initializingRef.current) return;
@@ -451,9 +829,14 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   };
 
   const completeAssignment = async () => {
-    if (!assignmentId || isCompleting) return;
-    
+    if (!assignmentId || isCompleting || isSavingProgressNote) return;
+
+    const progressNote = progressNoteDraft.trim();
+    if (!progressNote) return;
+    const completedAt = new Date().toISOString();
+
     setIsCompleting(true);
+    setIsSavingProgressNote(true);
     try {
       // First, add a completion message
       const { data: completionResponse, error: completionError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
@@ -477,20 +860,22 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         .update({
           status: 'completed',
           feedback_status: 'pending',
-          completed_at: new Date().toISOString(),
-          diagnosis: differentialDiagnoses.map((item) => item.trim()).filter(Boolean)[0] ?? null,
-          treatment_plan: planItems.map((item) => item.trim()).filter(Boolean),
-          nurse_feedback: {
-            differential_diagnoses: differentialDiagnoses.map((item) => item.trim()).filter(Boolean),
-            diagnosis_differentiator: diagnosisDifferentiator.trim() || null,
-            plan: planItems.map((item) => item.trim()).filter(Boolean),
-          },
+          completed_at: completedAt,
+          student_progress_note: progressNote,
+          diagnosis: null,
+          treatment_plan: null,
+          feedback_error: null,
         })
         .eq('id', assignmentId);
 
       if (updateError) throw updateError;
 
       setStatus('completed');
+      setAssignmentTimeline({
+        status: 'completed',
+        student_progress_note: progressNote,
+        completed_at: completedAt,
+      });
       
       // Trigger feedback generation
       const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
@@ -498,13 +883,17 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       });
       
       if (feedbackError) throw feedbackError;
-      
-      setShowProgressNote(true);
+
+      setShowCompletionConfirm(false);
+      setProgressNoteDraft('');
+      setRefreshAfterQualtrics(true);
+      setShowQualtrics(true);
     } catch (error) {
       console.error('Error completing assignment:', error);
       alert('Error completing assignment. Please try again.');
     } finally {
       setIsCompleting(false);
+      setIsSavingProgressNote(false);
     }
   };
 
@@ -521,38 +910,6 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       params.set('assignmentId', assignmentId);
     }
     navigate(`/emr${params.toString() ? `?${params.toString()}` : ''}`);
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString([], { 
-      hour: '2-digit', 
-      minute: '2-digit'
-    });
-  };
-
-  const handleSaveProgressNote = async () => {
-    if (!assignmentId) return;
-    const content = progressNoteDraft.trim();
-    if (!content) return;
-    setIsSavingProgressNote(true);
-    try {
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .update({ student_progress_note: content })
-        .eq('id', assignmentId);
-      if (error) {
-        throw error;
-      }
-      setShowProgressNote(false);
-      setProgressNoteDraft('');
-      setRefreshAfterQualtrics(true);
-      setShowQualtrics(true);
-    } catch (error) {
-      console.error('Error saving progress note', error);
-      alert('Error saving progress note. Please try again.');
-    } finally {
-      setIsSavingProgressNote(false);
-    }
   };
 
   const handleBedsideContinue = async () => {
@@ -613,7 +970,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
           </button>
           <button
             onClick={() => setShowCompletionConfirm(true)}
-            disabled={isCompleting}
+            disabled={isCompleting || status === 'completed'}
             className="flex items-center px-3 py-1 bg-green-500 hover:bg-green-600 rounded text-sm font-medium transition-colors disabled:opacity-50"
             title="Complete assignment"
           >
@@ -627,61 +984,171 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message) => {
-          if (message.content === '<completed>' && message.role === 'assistant') {
-            return (
-              <div key={message.id} className="w-full flex justify-center my-2">
-                <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs flex items-center">
-                  <CheckCircle className="w-3 h-3 mr-1" />
-                  Assignment completed
-                </div>
-              </div>
-            );
-          }
+      <div className="flex-1 overflow-y-auto bg-slate-50/70 px-5 py-6">
+        <div className="mx-auto max-w-4xl">
+          {timelineEntries.length === 0 && !isLoading && (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-8 text-center text-sm text-slate-500">
+              Timeline events will appear here as the case unfolds.
+            </div>
+          )}
 
-          return (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[80%] p-4 rounded-lg ${
-                  message.role === 'student'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 text-gray-900'
-                }`}
-              >
-                <div className="flex items-center mb-1">
-                  <User2 className="w-4 h-4 mr-2" />
-                  <span className="text-xs font-medium">
-                    {message.role === 'student' ? 'You' : 'Nurse'}
-                  </span>
-                  <span className="text-xs ml-2 opacity-75">
-                    {formatDate(message.created_at)}
-                  </span>
+          <div className="relative space-y-4 before:absolute before:bottom-0 before:left-[1.05rem] before:top-0 before:w-px before:bg-slate-200">
+            {timelineEntries.map((entry) => (
+              <div key={entry.id} className="relative pl-12">
+                <div
+                  className={`absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.18em] ${getTimelineMarkerClassName(entry.kind)}`}
+                >
+                  {getTimelineMarkerLabel(entry.kind)}
                 </div>
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+
+                {entry.kind === 'message' && (
+                  <div
+                    className={`rounded-2xl border px-4 py-3 shadow-sm ${
+                      entry.message.role === 'student'
+                        ? 'border-blue-200 bg-blue-50 text-slate-900'
+                        : 'border-slate-200 bg-white text-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
+                      <User2 className="h-3.5 w-3.5" />
+                      <span>{entry.message.role === 'student' ? 'You' : 'Nurse'}</span>
+                      <span className="normal-case tracking-normal text-slate-400">
+                        {getTimelineTimestampLabel(entry.timestamp)}
+                      </span>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{entry.message.content}</p>
+                  </div>
+                )}
+
+                {entry.kind === 'completion' && (
+                  <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Case completed</span>
+                      <span className="text-xs font-normal text-green-700">
+                        {getTimelineTimestampLabel(entry.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {entry.kind === 'order' && (
+                  <div className="rounded-2xl border border-blue-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <p className="text-sm font-semibold text-slate-900">Order placed</p>
+                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                        {entry.order.category}
+                      </span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                        {entry.order.priority}
+                      </span>
+                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-900">{entry.order.orderName}</p>
+                    <p className="mt-1 text-xs text-slate-500">{getOrderSummary(entry.order)}</p>
+                  </div>
+                )}
+
+                {entry.kind === 'labs' && (
+                  <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <p className="text-sm font-semibold text-slate-900">
+                        Lab results
+                        <span className="ml-2 text-xs font-normal text-slate-500">
+                          {entry.labs.length} item{entry.labs.length === 1 ? '' : 's'}
+                        </span>
+                      </p>
+                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {entry.labs.map((lab) => (
+                        <span
+                          key={lab.id}
+                          className={`rounded-full px-2.5 py-1 text-xs ${
+                            lab.status === 'Critical'
+                              ? 'bg-red-50 text-red-700'
+                              : lab.status === 'Abnormal'
+                                ? 'bg-amber-50 text-amber-700'
+                                : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          {getLabSummary(lab)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {entry.kind === 'vital' && (
+                  <div className="rounded-2xl border border-rose-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <p className="text-sm font-semibold text-slate-900">Vitals updated</p>
+                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {getVitalSummary(entry.vital).map((item) => (
+                        <span key={item} className="rounded-full bg-rose-50 px-2.5 py-1 text-xs text-rose-700">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {entry.kind === 'imaging' && (
+                  <div className="rounded-2xl border border-violet-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <p className="text-sm font-semibold text-slate-900">Imaging update</p>
+                      <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                        {entry.study.studyType}
+                      </span>
+                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-900">{entry.study.orderName || entry.study.studyType}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {entry.study.status || 'Result available'}
+                      {entry.study.report ? ` • ${entry.study.report.slice(0, 180)}${entry.study.report.length > 180 ? '…' : ''}` : ''}
+                    </p>
+                  </div>
+                )}
+
+                {entry.kind === 'progress-note' && (
+                  <div className="rotate-[-0.4deg] rounded-sm border border-amber-200 bg-amber-100 px-5 py-4 shadow-[0_12px_24px_rgba(120,87,19,0.14)]">
+                    <div className="flex items-center justify-between gap-3 border-b border-amber-300/70 pb-2">
+                      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-900">Progress Note</p>
+                      <span className="text-xs text-amber-800">{getTimelineTimestampLabel(entry.timestamp)}</span>
+                    </div>
+                    <p className="mt-3 whitespace-pre-wrap font-serif text-[15px] leading-6 text-amber-950">
+                      {entry.content}
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 p-4 rounded-lg">
-              <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
-            </div>
+            ))}
+
+            {isLoading && (
+              <div className="relative pl-12">
+                <div className="absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                  Loading the next step in the timeline...
+                </div>
+              </div>
+            )}
+
+            {isAssistantTyping && !isLoading && (
+              <div className="relative pl-12">
+                <div className="absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                  Nurse is typing...
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
-        )}
-        {isAssistantTyping && !isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-100 px-4 py-3 rounded-lg flex items-center space-x-2">
-              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
-              <span className="text-sm text-gray-600">Nurse is typing...</span>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="p-4 border-t">
@@ -706,13 +1173,13 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
 
       {showCompletionConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
             <h3 className="text-lg font-semibold">Finish this case?</h3>
             <div className="space-y-2 text-sm text-gray-600">
-              <p>{completionHints.assessmentHint || 'Review the completion steps before finishing the case.'}</p>
+              <p>{completionHints.assessmentHint || 'Write a concise progress note before finishing the case.'}</p>
               {completionHints.diagnosisDifferentiatorHint && (
                 <p>
-                  <span className="font-medium text-gray-800">Diagnosis differentiator hint: </span>
+                  <span className="font-medium text-gray-800">Clinical reasoning hint: </span>
                   {completionHints.diagnosisDifferentiatorHint}
                 </p>
               )}
@@ -724,64 +1191,30 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
               )}
             </div>
             <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-800">Differential Diagnosis</p>
-              {differentialDiagnoses.map((diagnosis, index) => (
-                <input
-                  key={`dx-${index}`}
-                  type="text"
-                  value={diagnosis}
-                  onChange={(e) =>
-                    setDifferentialDiagnoses((prev) => prev.map((item, i) => (i === index ? e.target.value : item)))
-                  }
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  placeholder={`Differential diagnosis ${index + 1}`}
-                />
-              ))}
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-800">Diagnosis Differentiator</p>
+              <p className="text-sm font-medium text-gray-800">Progress Note</p>
+              <p className="text-sm text-gray-600">
+                Include your assessment, working diagnosis, supporting findings, and plan in the note.
+              </p>
               <textarea
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm min-h-[80px]"
-                value={diagnosisDifferentiator}
-                onChange={(e) => setDiagnosisDifferentiator(e.target.value)}
-                placeholder="What finding most strongly differentiates your leading diagnosis?"
+                className="w-full min-h-[220px] rounded-md border border-gray-300 px-3 py-2 text-sm"
+                value={progressNoteDraft}
+                onChange={(e) => setProgressNoteDraft(e.target.value)}
+                placeholder="Write your progress note..."
               />
-            </div>
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-gray-800">Plan</p>
-              {planItems.map((plan, index) => (
-                <input
-                  key={`plan-${index}`}
-                  type="text"
-                  value={plan}
-                  onChange={(e) => setPlanItems((prev) => prev.map((item, i) => (i === index ? e.target.value : item)))}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                  placeholder={`Plan item ${index + 1}`}
-                />
-              ))}
-              <button
-                type="button"
-                className="text-sm text-blue-700 hover:text-blue-800"
-                onClick={() => setPlanItems((prev) => [...prev, ''])}
-              >
-                + Add plan item
-              </button>
             </div>
             <div className="space-y-2">
               <button
                 className="w-full inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
                 onClick={() => {
-                  setShowCompletionConfirm(false);
                   void completeAssignment();
                 }}
                 disabled={
                   isCompleting ||
-                  differentialDiagnoses.every((item) => !item.trim()) ||
-                  !diagnosisDifferentiator.trim() ||
-                  planItems.every((item) => !item.trim())
+                  isSavingProgressNote ||
+                  !progressNoteDraft.trim()
                 }
               >
-                {isCompleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                {isCompleting || isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Complete case
               </button>
               <button
@@ -808,40 +1241,6 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
                 onClick={() => setShowBedsideHint(false)}
               >
                 Back to case
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showProgressNote && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
-            <h3 className="text-lg font-semibold">Progress Note</h3>
-            <p className="text-sm text-gray-600">
-              Add a brief progress note to finalize this case.
-            </p>
-            <textarea
-              className="w-full min-h-[200px] rounded-md border border-gray-300 px-3 py-2 text-sm"
-              placeholder="Write your progress note..."
-              value={progressNoteDraft}
-              onChange={(e) => setProgressNoteDraft(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                onClick={() => setShowProgressNote(false)}
-                disabled={isSavingProgressNote}
-              >
-                Close
-              </button>
-              <button
-                className="inline-flex items-center justify-center rounded-md bg-green-600 text-white px-4 py-2 text-sm font-medium hover:bg-green-700 disabled:opacity-50"
-                onClick={() => void handleSaveProgressNote()}
-                disabled={isSavingProgressNote || !progressNoteDraft.trim()}
-              >
-                {isSavingProgressNote ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Save Progress Note
               </button>
             </div>
           </div>
