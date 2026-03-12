@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
-import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 
@@ -24,19 +23,6 @@ type CompletionHints = {
   assessmentHint: string;
   diagnosisDifferentiatorHint: string;
   planHint: string;
-};
-
-type BedsideRequirement = 'yes' | 'no' | 'situational';
-
-const bedsideRequirementOptions: Array<{ value: BedsideRequirement; label: string }> = [
-  { value: 'yes', label: 'Yes' },
-  { value: 'no', label: 'No' },
-  { value: 'situational', label: 'Situational' },
-];
-
-const normalizeBedsideRequirement = (value: unknown): BedsideRequirement => {
-  if (value === 'yes' || value === 'no' || value === 'situational') return value;
-  return 'situational';
 };
 
 const normalizeEvaluationLeniencyMultiplier = (value: number | null | undefined) => {
@@ -116,7 +102,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
-  const advancedSettingsVisible = false;
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
   // Form state
@@ -186,9 +172,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
-  const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
-    normalizeBedsideRequirement(room?.bedside_requirement),
-  );
   const normalVitals = {
     temperature: 98.6,
     blood_pressure_systolic: 120,
@@ -219,10 +202,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     return Array.from(ids);
   })();
   const [specialtyIds, setSpecialtyIds] = useState<string[]>(initialSpecialtyIds);
-  const isObgynRoom = specialtyIds.some((id) => {
-    const specialty = specialties.find((item) => item.id === id);
-    return isObgynSpecialtyName(specialty?.name);
-  });
   const [difficultyLevel, setDifficultyLevel] = useState<'beginner' | 'intermediate' | 'advanced' | null>(
     room?.difficulty_level || null
   );
@@ -452,7 +431,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (emrContext.trim()) {
         emrContextPayloadObject.context = emrContext.trim();
       }
-      if (isObgynRoom && deliveryNote.trim()) {
+      if (deliveryNote.trim()) {
         emrContextPayloadObject.delivery_note = deliveryNote.trim();
       }
       if (initialVitals) {
@@ -500,7 +479,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         progress_note: progressNote || null,
         completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
-        bedside_requirement: bedsideRequirement,
         orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
@@ -517,17 +495,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           .eq('id', room.id);
         
         if (error) throw error;
-
-        // Sync patient.room_id when editing an existing room
-        // Clear previous patient's room_id if patient changed
-        const oldPatientId = room.patient_id;
-        const newPatientId = roomData.patient_id ?? oldPatientId;
-        if (oldPatientId && oldPatientId !== newPatientId) {
-          await supabase.from('patients').update({ room_id: null }).eq('id', oldPatientId);
-        }
-        if (newPatientId) {
-          await supabase.from('patients').update({ room_id: room.id }).eq('id', newPatientId);
-        }
       } else {
         const { data: inserted, error } = await supabase
           .from('rooms')
@@ -832,21 +799,19 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             placeholder="Ongoing EMR rules or responses (e.g., “if WBC ordered, increase each run”)."
           />
         </div>
-        {isObgynRoom && (
-          <div>
-            <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
-              Delivery Note (OBGYN continuation)
-            </label>
-            <textarea
-              id="deliveryNote"
-              value={deliveryNote}
-              onChange={(e) => setDeliveryNote(e.target.value)}
-              rows={3}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Add prior delivery details for continuation cases."
-            />
-          </div>
-        )}
+        <div>
+          <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
+            Delivery Note (OBGYN continuation)
+          </label>
+          <textarea
+            id="deliveryNote"
+            value={deliveryNote}
+            onChange={(e) => setDeliveryNote(e.target.value)}
+            rows={3}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            placeholder="Add prior delivery details for continuation cases."
+          />
+        </div>
 
         <div>
           <label htmlFor="caseGoals" className="block text-sm font-medium text-gray-700">
@@ -929,30 +894,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 placeholder="Guidance shown when going bedside"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Bedside Verdict
-              </label>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {bedsideRequirementOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setBedsideRequirement(option.value)}
-                    className={`rounded-md border px-3 py-2 text-left text-sm transition ${
-                      bedsideRequirement === option.value
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-1 text-xs text-gray-500">
-                Shown in feedback so learners know whether bedside evaluation was warranted.
-              </p>
-            </div>
           </div>
         </div>
 
@@ -980,10 +921,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         </div>
       </div>
 
-      {/* Advanced settings remain in state and roomData for backwards-compatible persistence,
-          but are intentionally not exposed in the editor UI for now. */}
-      {advancedSettingsVisible && (
-          <div className="space-y-4 border-t border-gray-200 pt-6">
+      {/* Advanced Settings */}
+      <div className="space-y-4 border-t border-gray-200 pt-6">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-900">Advanced Settings</h3>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          >
+            {showAdvanced ? (
+              <ChevronUp className="h-4 w-4 mr-1" />
+            ) : (
+              <ChevronDown className="h-4 w-4 mr-1" />
+            )}
+            {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings'}
+          </button>
+        </div>
+
+        {showAdvanced && (
+          <div className="space-y-4">
             <div>
               <label htmlFor="difficulty" className="block text-sm font-medium text-gray-700">
                 Difficulty Level
@@ -1088,7 +1045,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               </p>
             </div>
           </div>
-      )}
+        )}
+      </div>
 
       {error && (
         <div className="text-sm text-red-600">
