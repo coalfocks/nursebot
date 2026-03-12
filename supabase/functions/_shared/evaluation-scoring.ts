@@ -42,6 +42,30 @@ type MdmScoreKey = 0 | 1 | 2 | 3 | -1 | -2;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
+export const normalizeLeniencyMultiplier = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 1;
+  return clamp(Number(value.toFixed(2)), 0.75, 1.5);
+};
+
+const adjustPositiveScore = (score: number, max: number, multiplier: number) =>
+  clamp(Math.round(score * multiplier), 0, max);
+
+const adjustDeductionScore = (score: number, multiplier: number) => {
+  if (multiplier === 1) {
+    const normalized = clamp(score, -2, 0);
+    return Object.is(normalized, -0) ? 0 : normalized;
+  }
+
+  let adjustedScore = score;
+  if (multiplier > 1) {
+    adjustedScore = Math.ceil(score / multiplier);
+  } else {
+    adjustedScore = Math.floor(score / multiplier);
+  }
+  const normalized = clamp(adjustedScore, -2, 0);
+  return Object.is(normalized, -0) ? 0 : normalized;
+};
+
 export const getCommunicationFeedback = (
   section: 'informationSharing' | 'responsiveCommunication' | 'efficiencyDeduction',
   score: CommunicationScoreKey,
@@ -127,4 +151,50 @@ export const canonicalizeEvaluation = (
       getMdmFeedback('safetyDeduction', safetyScore),
     ],
   };
+};
+
+export const applyLeniencyToEvaluation = (
+  evaluation: EvaluationScoringResponse,
+  caseDifficulty: string,
+  multiplier: number,
+) => {
+  const normalizedMultiplier = normalizeLeniencyMultiplier(multiplier);
+  if (normalizedMultiplier === 1) {
+    return canonicalizeEvaluation(evaluation, caseDifficulty);
+  }
+
+  return canonicalizeEvaluation(
+    {
+      ...evaluation,
+      communication_breakdown: {
+        information_sharing: {
+          ...evaluation.communication_breakdown.information_sharing,
+          score: adjustPositiveScore(evaluation.communication_breakdown.information_sharing.score, 2, normalizedMultiplier),
+        },
+        responsive_communication: {
+          ...evaluation.communication_breakdown.responsive_communication,
+          score: adjustPositiveScore(evaluation.communication_breakdown.responsive_communication.score, 3, normalizedMultiplier),
+        },
+        efficiency_deduction: {
+          ...evaluation.communication_breakdown.efficiency_deduction,
+          score: adjustDeductionScore(evaluation.communication_breakdown.efficiency_deduction.score, normalizedMultiplier),
+        },
+      },
+      mdm_breakdown: {
+        labs_orders_quality: {
+          ...evaluation.mdm_breakdown.labs_orders_quality,
+          score: adjustPositiveScore(evaluation.mdm_breakdown.labs_orders_quality.score, 3, normalizedMultiplier),
+        },
+        note_thought_process: {
+          ...evaluation.mdm_breakdown.note_thought_process,
+          score: adjustPositiveScore(evaluation.mdm_breakdown.note_thought_process.score, 2, normalizedMultiplier),
+        },
+        safety_deduction: {
+          ...evaluation.mdm_breakdown.safety_deduction,
+          score: adjustDeductionScore(evaluation.mdm_breakdown.safety_deduction.score, normalizedMultiplier),
+        },
+      },
+    },
+    caseDifficulty,
+  );
 };

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalizeEvaluation } from './evaluation-scoring';
+import {
+  applyLeniencyToEvaluation,
+  canonicalizeEvaluation,
+  normalizeLeniencyMultiplier,
+} from './evaluation-scoring';
 import { COMMUNICATION_SCORING, MDM_SCORING } from './evaluation-prompts';
 
 describe('canonicalizeEvaluation', () => {
@@ -126,5 +130,123 @@ describe('canonicalizeEvaluation', () => {
     expect(result.mdm_breakdown.safety_deduction.score).toBe(0);
     expect(result.mdm_score).toBe(3);
     expect(result.communication_breakdown.efficiency_deduction.cau_count).toBe(0);
+  });
+
+  it('applies leniency by lifting positive scores and softening deductions before canonical feedback is rebuilt', () => {
+    const result = applyLeniencyToEvaluation(
+      {
+        learning_objectives: 'text',
+        communication_score: 0,
+        mdm_score: 0,
+        communication_breakdown: {
+          information_sharing: {
+            score: 1,
+            feedback: '',
+          },
+          responsive_communication: {
+            score: 2,
+            feedback: '',
+          },
+          efficiency_deduction: {
+            score: -2,
+            feedback: '',
+            cau_count: 8,
+            case_difficulty: '',
+          },
+        },
+        mdm_breakdown: {
+          labs_orders_quality: {
+            score: 2,
+            feedback: '',
+          },
+          note_thought_process: {
+            score: 1,
+            feedback: '',
+          },
+          safety_deduction: {
+            score: -1,
+            feedback: '',
+          },
+        },
+        recommendations: [],
+      },
+      'intermediate',
+      1.5,
+    );
+
+    expect(result.communication_breakdown.information_sharing.score).toBe(2);
+    expect(result.communication_breakdown.responsive_communication.score).toBe(3);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBe(-1);
+    expect(result.communication_score).toBe(4);
+    expect(result.mdm_breakdown.labs_orders_quality.score).toBe(3);
+    expect(result.mdm_breakdown.note_thought_process.score).toBe(2);
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(0);
+    expect(result.mdm_score).toBe(5);
+    expect(result.communication_breakdown.information_sharing.feedback).toBe(
+      COMMUNICATION_SCORING.informationSharing.scores[2].feedback,
+    );
+    expect(result.mdm_breakdown.safety_deduction.feedback).toBe(
+      MDM_SCORING.safetyDeduction.scores[0].feedback,
+    );
+  });
+
+  it('applies stricter scoring when the multiplier is below neutral', () => {
+    const result = applyLeniencyToEvaluation(
+      {
+        learning_objectives: 'text',
+        communication_score: 0,
+        mdm_score: 0,
+        communication_breakdown: {
+          information_sharing: {
+            score: 2,
+            feedback: '',
+          },
+          responsive_communication: {
+            score: 3,
+            feedback: '',
+          },
+          efficiency_deduction: {
+            score: -1,
+            feedback: '',
+            cau_count: 3,
+            case_difficulty: '',
+          },
+        },
+        mdm_breakdown: {
+          labs_orders_quality: {
+            score: 3,
+            feedback: '',
+          },
+          note_thought_process: {
+            score: 2,
+            feedback: '',
+          },
+          safety_deduction: {
+            score: 0,
+            feedback: '',
+          },
+        },
+        recommendations: [],
+      },
+      'easy',
+      0.75,
+    );
+
+    expect(result.communication_breakdown.information_sharing.score).toBe(2);
+    expect(result.communication_breakdown.responsive_communication.score).toBe(2);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBe(-2);
+    expect(result.communication_score).toBe(2);
+    expect(result.mdm_breakdown.labs_orders_quality.score).toBe(2);
+    expect(result.mdm_breakdown.note_thought_process.score).toBe(2);
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(0);
+    expect(result.mdm_score).toBe(4);
+  });
+
+  it('normalizes invalid leniency values back into the supported range', () => {
+    expect(normalizeLeniencyMultiplier(undefined)).toBe(1);
+    expect(normalizeLeniencyMultiplier(Number.NaN)).toBe(1);
+    expect(normalizeLeniencyMultiplier(10)).toBe(1.5);
+    expect(normalizeLeniencyMultiplier(0.2)).toBe(0.75);
+    expect(normalizeLeniencyMultiplier(1.234)).toBe(1.23);
   });
 });

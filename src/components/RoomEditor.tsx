@@ -25,6 +25,11 @@ type CompletionHints = {
   planHint: string;
 };
 
+const normalizeEvaluationLeniencyMultiplier = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 1;
+  return Math.max(0.75, Math.min(1.5, Number(value.toFixed(2))));
+};
+
 const parseCompletionHints = (raw: string | null | undefined): CompletionHints => {
   const empty = {
     assessmentHint: '',
@@ -112,6 +117,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     let contextText = raw || '';
     let admissionLabs: AdmissionLabEntry[] = [];
     let deliveryNote = '';
+    let evaluationLeniencyMultiplier = 1;
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
@@ -135,16 +141,27 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           if (typeof (parsed as { delivery_note?: unknown }).delivery_note === 'string') {
             deliveryNote = (parsed as { delivery_note: string }).delivery_note;
           }
+          const rawLeniency = (parsed as {
+            evaluation?: { leniencyMultiplier?: unknown };
+          }).evaluation?.leniencyMultiplier;
+          if (typeof rawLeniency === 'number') {
+            evaluationLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(rawLeniency);
+          } else if (typeof rawLeniency === 'string') {
+            evaluationLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(Number(rawLeniency));
+          }
         }
       } catch {
         // If not JSON, treat as plain text context
         contextText = raw;
       }
     }
-    return { contextText, admissionLabs, deliveryNote };
+    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const [deliveryNote, setDeliveryNote] = useState(parsedEmrContext.deliveryNote);
+  const [evaluationLeniencyMultiplier, setEvaluationLeniencyMultiplier] = useState(
+    String(parsedEmrContext.evaluationLeniencyMultiplier),
+  );
   const admissionLabs = parsedEmrContext.admissionLabs;
   const [caseGoals, setCaseGoals] = useState(room?.case_goals || '');
   const [progressNote, setProgressNote] = useState(room?.progress_note || '');
@@ -419,6 +436,14 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
       if (initialVitals) {
         emrContextPayloadObject.initial_vitals = initialVitals;
+      }
+      const normalizedLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(
+        Number.parseFloat(evaluationLeniencyMultiplier),
+      );
+      if (normalizedLeniencyMultiplier !== 1) {
+        emrContextPayloadObject.evaluation = {
+          leniencyMultiplier: normalizedLeniencyMultiplier,
+        };
       }
 
       const emrContextPayload =
@@ -948,6 +973,25 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                 placeholder="Enter the expected diagnosis"
               />
+            </div>
+
+            <div>
+              <label htmlFor="evaluationLeniencyMultiplier" className="block text-sm font-medium text-gray-700">
+                Evaluation Leniency Multiplier
+              </label>
+              <input
+                id="evaluationLeniencyMultiplier"
+                type="number"
+                min={0.75}
+                max={1.5}
+                step={0.05}
+                value={evaluationLeniencyMultiplier}
+                onChange={(e) => setEvaluationLeniencyMultiplier(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                `1.00` is neutral. Values above `1.00` make grading more lenient on borderline cases; values below `1.00` make it stricter.
+              </p>
             </div>
 
             <div>

@@ -6,7 +6,19 @@ import {
   FEEDBACK_TEMPLATE,
   MDM_SCORING,
 } from '../_shared/evaluation-prompts.ts';
-import { canonicalizeEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import {
+  buildAssignmentTimelineEntries,
+  renderTimelineEntriesForEvaluation,
+  type TimelineImagingRow,
+  type TimelineLabRow,
+  type TimelineOrderRow,
+  type TimelineVitalRow,
+} from '../_shared/assignment-timeline.ts';
+import {
+  applyLeniencyToEvaluation,
+  normalizeLeniencyMultiplier,
+  type EvaluationScoringResponse,
+} from '../_shared/evaluation-scoring.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -33,6 +45,10 @@ interface LegacyFeedbackResponse {
   };
   recommendations: string[];
 }
+
+type RoomEvaluationConfig = {
+  leniencyMultiplier: number;
+};
 
 const rubricReferenceText = `Example feedback template:
 ${FEEDBACK_TEMPLATE}
@@ -98,6 +114,51 @@ async function updateAssignmentStatus(
   }
 }
 
+const getRoomLineage = async (
+  supabaseClient: ReturnType<typeof createClient>,
+  roomId?: number | null,
+) => {
+  if (!roomId) return null;
+  const visited = new Set<number>();
+  const lineage: number[] = [];
+  let current: number | null | undefined = roomId;
+
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    lineage.push(current);
+    const { data, error } = await supabaseClient
+      .from('rooms')
+      .select('continues_from')
+      .eq('id', current)
+      .maybeSingle();
+    if (error) throw error;
+    current = data?.continues_from ?? null;
+  }
+
+  return lineage;
+};
+
+const parseRoomEvaluationConfig = (raw: string | null | undefined): RoomEvaluationConfig => {
+  if (!raw?.trim()) {
+    return { leniencyMultiplier: 1 };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      evaluation?: { leniencyMultiplier?: unknown };
+    };
+    return {
+      leniencyMultiplier: normalizeLeniencyMultiplier(
+        typeof parsed?.evaluation?.leniencyMultiplier === 'number'
+          ? parsed.evaluation.leniencyMultiplier
+          : Number(parsed?.evaluation?.leniencyMultiplier),
+      ),
+    };
+  } catch {
+    return { leniencyMultiplier: 1 };
+  }
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -152,34 +213,77 @@ Deno.serve(async (req) => {
 
       if (messagesError) throw messagesError;
 
-      // Fetch orders placed by student (via patient linked to room)
-      let orders: Database['public']['Tables']['medical_orders']['Row'][] = [];
-      if (assignment.room.patient_id) {
-        const { data: ordersData } = await supabaseClient
-          .from('medical_orders')
-          .select('*')
-          .eq('patient_id', assignment.room.patient_id)
-          .is('deleted_at', null)
-          .order('order_time', { ascending: true });
-        orders = ordersData || [];
-      }
-
       // Determine case difficulty
       const difficultyLevel = assignment.room.difficulty_level || 'intermediate';
       const caseDifficulty = difficultyLevel === 'beginner' ? 'easy' : 
                             difficultyLevel === 'advanced' ? 'advanced' : 'intermediate';
+      const evaluationConfig = parseRoomEvaluationConfig(assignment.room.emr_context);
+      const patientId = assignment.room.patient_id ?? null;
+      const targetRoomIds = await getRoomLineage(supabaseClient, assignment.room_id);
+
+      let orders: TimelineOrderRow[] = [];
+      let labs: TimelineLabRow[] = [];
+      let vitals: TimelineVitalRow[] = [];
+      let imaging: TimelineImagingRow[] = [];
+
+      if (patientId) {
+        const [ordersRes, labsRes, vitalsRes, imagingRes] = await Promise.all([
+          supabaseClient
+            .from('medical_orders')
+            .select('id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at')
+            .eq('patient_id', patientId)
+            .is('deleted_at', null),
+          supabaseClient
+            .from('lab_results')
+            .select('id, assignment_id, room_id, override_scope, test_name, value, unit, status, collection_time, result_time, created_at, deleted_at')
+            .eq('patient_id', patientId)
+            .is('deleted_at', null),
+          supabaseClient
+            .from('vital_signs')
+            .select('id, assignment_id, room_id, override_scope, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain, deleted_at')
+            .eq('patient_id', patientId)
+            .is('deleted_at', null),
+          supabaseClient
+            .from('imaging_studies')
+            .select('id, assignment_id, room_id, override_scope, order_name, study_type, status, report, order_time, report_generated_at, created_at, deleted_at')
+            .eq('patient_id', patientId)
+            .is('deleted_at', null),
+        ]);
+
+        if (ordersRes.error) throw ordersRes.error;
+        if (labsRes.error) throw labsRes.error;
+        if (vitalsRes.error) throw vitalsRes.error;
+        if (imagingRes.error) throw imagingRes.error;
+
+        orders = (ordersRes.data ?? []) as TimelineOrderRow[];
+        labs = (labsRes.data ?? []) as TimelineLabRow[];
+        vitals = (vitalsRes.data ?? []) as TimelineVitalRow[];
+        imaging = (imagingRes.data ?? []) as TimelineImagingRow[];
+      }
 
       // Count student messages (Clinical Action Units)
-      const studentMessages = messages.filter(m => m.role === 'user' || m.role === 'student');
-      
-      // Prepare context for evaluation
-      const conversation = messages.map(msg => 
-        `${msg.role === 'user' || msg.role === 'student' ? 'STUDENT' : 'NURSE'}: ${msg.content}`
-      ).join('\n\n');
-
-      const ordersList = orders.length > 0 
-        ? orders.map(o => `- ${o.order_name} (${o.category})${o.status ? ` [${o.status}]` : ''}`).join('\n')
-        : 'No orders placed';
+      const studentMessages = (messages ?? []).filter((m) => m.role === 'user' || m.role === 'student');
+      const timelineEntries = buildAssignmentTimelineEntries({
+        assignment: {
+          id: assignment.id,
+          completed_at: assignment.completed_at,
+          student_progress_note: assignment.student_progress_note,
+        },
+        assignmentId,
+        targetRoomIds,
+        messages: (messages ?? []).map((message) => ({
+          id: message.id,
+          assignment_id: message.assignment_id,
+          role: message.role,
+          content: message.content,
+          created_at: message.created_at,
+        })),
+        orders,
+        labs,
+        vitals,
+        imaging,
+      });
+      const timelineSummary = renderTimelineEntriesForEvaluation(timelineEntries);
 
       // Build the evaluation prompt with the full rubric and exact feedback language.
       const evaluationPrompt = `${rubricReferenceText}
@@ -187,6 +291,7 @@ Deno.serve(async (req) => {
 You are grading a physician on nurse Sophia, the simulation that covers overnight nurse pages and medical decision making.
 Your goal is to grade the student fairly and return subsection scores plus feedback that stays as close as possible to the exact rubric language above.
 When you write subsection feedback, keep it equivalent to the provided line for that score with no material deviation.
+Case calibration uses leniency multiplier ${evaluationConfig.leniencyMultiplier}. A value above 1 should make borderline scoring modestly more generous; below 1 should make borderline scoring stricter. Do not override clearly unsafe behavior just because the multiplier is higher.
 
 **SCORING RULES:**
 - All scoring is based on the score that represents ≥50% of messages/orders, or the highest percentage
@@ -252,20 +357,19 @@ Compare to reference note:
 Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
 Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
 Case Difficulty: ${caseDifficulty}
+Evaluation Leniency Multiplier: ${evaluationConfig.leniencyMultiplier}
 
 **STUDENT'S WORK:**
 Use the student's progress note as the primary source for their assessment, working diagnosis, supporting evidence, and plan.
 Do not penalize the student just because separate diagnosis or treatment-plan fields are blank.
-If you need to infer their clinical reasoning, infer it from the progress note, conversation, and orders.
+If you need to infer their clinical reasoning, infer it from the progress note and the full chronological timeline below.
 Progress Note: ${assignment.student_progress_note || 'Not provided'}
 Legacy Diagnosis Field: ${assignment.diagnosis || 'Not provided'}
 Legacy Treatment Plan Field: ${assignment.treatment_plan || 'Not provided'}
 
-**CONVERSATION (${studentMessages.length} student messages):**
-${conversation}
-
-**ORDERS PLACED:**
-${ordersList}
+**FULL ASSIGNMENT TIMELINE (${timelineEntries.length} events, ${studentMessages.length} student messages):**
+This timeline is chronological and includes nurse/student chat, orders, labs, vitals, imaging, completion, and the final progress note when present.
+${timelineSummary}
 
 ---
 
@@ -308,6 +412,16 @@ Provide your evaluation in this JSON format:
 }`;
 
       console.log('Generating evaluation with new Likert scoring...');
+      console.log('Evaluation context summary:', {
+        assignmentId,
+        leniencyMultiplier: evaluationConfig.leniencyMultiplier,
+        studentMessages: studentMessages.length,
+        timelineEvents: timelineEntries.length,
+        orders: orders.length,
+        labs: labs.length,
+        vitals: vitals.length,
+        imaging: imaging.length,
+      });
 
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
@@ -323,9 +437,10 @@ Provide your evaluation in this JSON format:
       const content = completion.choices[0].message.content;
       if (!content) throw new Error('No response from OpenAI');
 
-      const evaluation = canonicalizeEvaluation(
+      const evaluation = applyLeniencyToEvaluation(
         JSON.parse(content) as EvaluationScoringResponse,
         caseDifficulty,
+        evaluationConfig.leniencyMultiplier,
       );
 
       console.log('Evaluation scores:', {
