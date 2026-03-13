@@ -802,21 +802,15 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
 
       <div className="flex-1 overflow-y-auto bg-slate-50/70 px-5 py-6">
         <div className="mx-auto max-w-4xl">
-          {timelineEntries.length === 0 && !isLoading && (
+          {timelineEntries.filter(e => e.kind === 'message').length === 0 && !isLoading && (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-8 text-center text-sm text-slate-500">
-              Timeline events will appear here as the case unfolds.
+              Chat messages will appear here.
             </div>
           )}
 
-          <div className="relative space-y-4 before:absolute before:bottom-0 before:left-[1.05rem] before:top-0 before:w-px before:bg-slate-200">
-            {timelineEntries.map((entry) => (
-              <div key={entry.id} className="relative pl-12">
-                <div
-                  className={`absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border text-[10px] font-semibold uppercase tracking-[0.18em] ${getTimelineMarkerClassName(entry.kind)}`}
-                >
-                  {getTimelineMarkerLabel(entry.kind)}
-                </div>
-
+          <div className="relative space-y-4">
+            {timelineEntries.filter(entry => entry.kind === 'message').map((entry) => (
+              <div key={entry.id} className="relative">
                 {entry.kind === 'message' && (
                   <div
                     className={`rounded-2xl border px-4 py-3 shadow-sm ${
@@ -835,131 +829,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{entry.message.content}</p>
                   </div>
                 )}
-
-                {entry.kind === 'completion' && (
-                  <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Case completed</span>
-                      <span className="text-xs font-normal text-green-700">
-                        {getTimelineTimestampLabel(entry.timestamp)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {entry.kind === 'order' && (
-                  <div className="rounded-2xl border border-blue-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p className="text-sm font-semibold text-slate-900">Order placed</p>
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                        {entry.order.category}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                        {entry.order.priority}
-                      </span>
-                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
-                    </div>
-                    <p className="mt-2 text-sm text-slate-900">{entry.order.orderName}</p>
-                    <p className="mt-1 text-xs text-slate-500">{getOrderSummary(entry.order)}</p>
-                  </div>
-                )}
-
-                {entry.kind === 'labs' && (
-                  <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p className="text-sm font-semibold text-slate-900">
-                        Lab results
-                        <span className="ml-2 text-xs font-normal text-slate-500">
-                          {entry.labs.length} item{entry.labs.length === 1 ? '' : 's'}
-                        </span>
-                      </p>
-                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {entry.labs.map((lab) => (
-                        <span
-                          key={lab.id}
-                          className={`rounded-full px-2.5 py-1 text-xs ${
-                            lab.status === 'Critical'
-                              ? 'bg-red-50 text-red-700'
-                              : lab.status === 'Abnormal'
-                                ? 'bg-amber-50 text-amber-700'
-                                : 'bg-emerald-50 text-emerald-700'
-                          }`}
-                        >
-                          {getLabSummary(lab)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {entry.kind === 'vital' && (
-                  <div className="rounded-2xl border border-rose-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p className="text-sm font-semibold text-slate-900">Vitals updated</p>
-                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {getVitalSummary(entry.vital).map((item) => (
-                        <span key={item} className="rounded-full bg-rose-50 px-2.5 py-1 text-xs text-rose-700">
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {entry.kind === 'imaging' && (
-                  <div className="rounded-2xl border border-violet-200 bg-white px-4 py-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <p className="text-sm font-semibold text-slate-900">Imaging update</p>
-                      <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
-                        {entry.study.studyType}
-                      </span>
-                      <span className="text-xs text-slate-400">{getTimelineTimestampLabel(entry.timestamp)}</span>
-                    </div>
-                    <p className="mt-2 text-sm text-slate-900">{entry.study.orderName || entry.study.studyType}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {entry.study.status || 'Result available'}
-                      {entry.study.report ? ` • ${entry.study.report.slice(0, 180)}${entry.study.report.length > 180 ? '…' : ''}` : ''}
-                    </p>
-                  </div>
-                )}
-
-                {entry.kind === 'progress-note' && (
-                  <div className="rotate-[-0.4deg] rounded-sm border border-amber-200 bg-amber-100 px-5 py-4 shadow-[0_12px_24px_rgba(120,87,19,0.14)]">
-                    <div className="flex items-center justify-between gap-3 border-b border-amber-300/70 pb-2">
-                      <p className="text-sm font-semibold uppercase tracking-[0.18em] text-amber-900">Progress Note</p>
-                      <span className="text-xs text-amber-800">{getTimelineTimestampLabel(entry.timestamp)}</span>
-                    </div>
-                    <p className="mt-3 whitespace-pre-wrap font-serif text-[15px] leading-6 text-amber-950">
-                      {entry.content}
-                    </p>
-                  </div>
-                )}
               </div>
             ))}
 
             {isLoading && (
-              <div className="relative pl-12">
-                <div className="absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
-                  Loading the next step in the timeline...
-                </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                Loading...
               </div>
             )}
 
             {isAssistantTyping && !isLoading && (
-              <div className="relative pl-12">
-                <div className="absolute left-0 top-2 flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
-                  Nurse is typing...
-                </div>
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                Nurse is typing...
               </div>
             )}
             <div ref={messagesEndRef} />
