@@ -1,13 +1,8 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Loader2 } from 'lucide-react';
+import { Loader2, Target, ClipboardList } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
-  room?: Database['public']['Tables']['rooms']['Row'] & {
-    specialty?: {
-      name: string;
-    };
-  };
+  room?: Database['public']['Tables']['rooms']['Row'] | null;
 };
 
 interface AssignmentFeedbackProps {
@@ -15,9 +10,11 @@ interface AssignmentFeedbackProps {
   onRetryFeedback?: () => void;
 }
 
-export default function AssignmentFeedback({ assignment, onRetryFeedback }: AssignmentFeedbackProps) {
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+type LegacyFeedback = {
+  summary?: string | null;
+};
 
+export default function AssignmentFeedback({ assignment, onRetryFeedback }: AssignmentFeedbackProps) {
   // Only show feedback when status is completed
   if (!['completed', 'bedside'].includes(assignment.status)) {
     return null;
@@ -29,7 +26,7 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
         <div className="flex items-center justify-center space-x-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           <p className="text-gray-600">
-            {assignment.feedback_status === 'pending' 
+            {assignment.feedback_status === 'pending'
               ? 'Waiting to generate feedback...'
               : 'Generating feedback...'}
           </p>
@@ -59,180 +56,32 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
     );
   }
 
-  if (!assignment.nurse_feedback) {
-    console.log('No nurse feedback available for assignment:', assignment.id);
-    return null;
-  }
-
-  const feedback = assignment.nurse_feedback;
-  console.log('Rendering feedback for assignment:', assignment.id, {
-    hasClinicalReasoning: !!feedback.clinical_reasoning,
-    hasCommunication: !!feedback.communication_skills,
-    overallScore: feedback.overall_score,
-    summary: feedback.summary?.substring(0, 50) + '...',
-    recommendationsCount: feedback.recommendations?.length
-  });
-
-  // Add null checks for each section
-  const clinicalReasoning = feedback.clinical_reasoning || {
-    score: 0,
-    comments: '',
-    strengths: [],
-    areas_for_improvement: []
-  };
-
-  const communication = feedback.communication_skills || {
-    score: 0,
-    comments: '',
-    strengths: [],
-    areas_for_improvement: []
-  };
-
-  console.log('Processed feedback sections:', {
-    clinicalReasoning: {
-      score: clinicalReasoning.score,
-      strengthsCount: clinicalReasoning.strengths.length,
-      areasCount: clinicalReasoning.areas_for_improvement.length
-    },
-    communication: {
-      score: communication.score,
-      strengthsCount: communication.strengths.length,
-      areasCount: communication.areas_for_improvement.length
-    }
-  });
-
-  const toggleSection = (section: string) => {
-    setExpandedSection(expandedSection === section ? null : section);
-  };
-
-  const ScoreIndicator = ({ score }: { score: number }) => (
-    <div className="flex items-center space-x-2">
-      <div className="w-16 h-16 rounded-full border-4 flex items-center justify-center font-bold text-xl"
-        style={{
-          borderColor: score >= 4.5 ? '#22c55e' : score >= 3.5 ? '#3b82f6' : score >= 2.5 ? '#f59e0b' : '#ef4444',
-          color: score >= 4.5 ? '#22c55e' : score >= 3.5 ? '#3b82f6' : score >= 2.5 ? '#f59e0b' : '#ef4444',
-        }}
-      >
-        {score.toFixed(1)}
-      </div>
-    </div>
-  );
-
-  const FeedbackSection = ({
-    title,
-    icon: Icon,
-    score,
-    comments,
-    strengths,
-    areasForImprovement,
-    sectionKey,
-  }: {
-    title: string;
-    icon: React.ComponentType<{ className?: string }>;
-    score: number;
-    comments: string;
-    strengths: string[];
-    areasForImprovement: string[];
-    sectionKey: string;
-  }) => {
-    // Ensure arrays are defined
-    const safeStrengths = strengths || [];
-    const safeAreasForImprovement = areasForImprovement || [];
-    
-    return (
-      <div className="border rounded-lg p-4">
-        <button
-          onClick={() => toggleSection(sectionKey)}
-          className="w-full flex items-center justify-between"
-        >
-          <div className="flex items-center space-x-3">
-            <Icon className="w-5 h-5 text-gray-600" />
-            <h3 className="text-lg font-medium">{title}</h3>
-          </div>
-          <div className="flex items-center space-x-4">
-            <ScoreIndicator score={score} />
-            {expandedSection === sectionKey ? (
-              <ChevronUp className="w-5 h-5 text-gray-400" />
-            ) : (
-              <ChevronDown className="w-5 h-5 text-gray-400" />
-            )}
-          </div>
-        </button>
-
-        {expandedSection === sectionKey && (
-          <div className="mt-4 space-y-4">
-            <p className="text-gray-700">{comments || ''}</p>
-            
-            {safeStrengths.length > 0 && (
-              <div>
-                <h4 className="font-medium text-green-700 mb-2">Strengths</h4>
-                <ul className="list-disc list-inside space-y-1">
-                  {safeStrengths.map((strength, index) => (
-                    <li key={index} className="text-gray-600">{strength}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {safeAreasForImprovement.length > 0 && (
-              <div>
-                <h4 className="font-medium text-amber-700 mb-2">Areas for Improvement</h4>
-                <ul className="list-disc list-inside space-y-1">
-                  {safeAreasForImprovement.map((area, index) => (
-                    <li key={index} className="text-gray-600">{area}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
+  const caseGoals = assignment.room?.case_goals?.trim() || 'No case goals were configured for this room.';
+  const feedback = (assignment.nurse_feedback as LegacyFeedback | null) ?? null;
+  const learningObjectives = ((assignment as Assignment & { learning_objectives?: string | null }).learning_objectives ?? '').trim();
+  const summary = learningObjectives || feedback?.summary?.trim() || 'No summary available yet.';
 
   return (
-    <div className="bg-white shadow rounded-lg p-6 space-y-6">
-      <div className="border-b pb-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold text-gray-900">Performance Feedback</h2>
-          <ScoreIndicator score={feedback.overall_score || 0} />
-        </div>
-        <p className="text-gray-700">{feedback.summary || ''}</p>
+    <div className="bg-white shadow rounded-lg p-6 space-y-5">
+      <div>
+        <h2 className="text-xl font-semibold text-gray-900">Evaluation Summary</h2>
+        <p className="mt-1 text-sm text-gray-500">Focused on room goals and student performance against those goals.</p>
       </div>
 
-      <div className="space-y-4">
-        <FeedbackSection
-          title="Clinical Reasoning"
-          icon={Brain}
-          score={clinicalReasoning.score}
-          comments={clinicalReasoning.comments}
-          strengths={clinicalReasoning.strengths}
-          areasForImprovement={clinicalReasoning.areas_for_improvement}
-          sectionKey="clinical"
-        />
-
-        <FeedbackSection
-          title="Communication Skills"
-          icon={MessageSquare}
-          score={communication.score}
-          comments={communication.comments}
-          strengths={communication.strengths}
-          areasForImprovement={communication.areas_for_improvement}
-          sectionKey="communication"
-        />
-
-      </div>
-
-      <div className="border-t pt-4">
-        <h3 className="text-lg font-medium mb-3 flex items-center">
-          <Award className="w-5 h-5 mr-2 text-amber-600" />
-          Recommendations
+      <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+        <h3 className="text-sm font-semibold text-blue-900 flex items-center gap-2">
+          <Target className="h-4 w-4" />
+          Case Goals
         </h3>
-        <ul className="list-disc list-inside space-y-2">
-          {(feedback.recommendations || []).map((recommendation, index) => (
-            <li key={index} className="text-gray-700">{recommendation}</li>
-          ))}
-        </ul>
+        <p className="mt-2 text-sm whitespace-pre-wrap text-blue-900">{caseGoals}</p>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+          <ClipboardList className="h-4 w-4" />
+          Student Performance Summary
+        </h3>
+        <p className="mt-2 text-sm whitespace-pre-wrap text-slate-700">{summary}</p>
       </div>
 
       {assignment.feedback_generated_at && (
@@ -242,4 +91,4 @@ export default function AssignmentFeedback({ assignment, onRetryFeedback }: Assi
       )}
     </div>
   );
-} 
+}

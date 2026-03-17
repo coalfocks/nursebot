@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, RefreshCw, AlertCircle, CheckCircle, Clock, Activity } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, CheckCircle, Clock, Activity, Download } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import AssignmentFeedback from '../components/AssignmentFeedback';
 import { generateFeedback } from '../lib/feedbackService';
@@ -27,6 +27,7 @@ export default function FeedbackManagement() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processing' | 'completed' | 'failed'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+  const [exportingStudentId, setExportingStudentId] = useState<string | null>(null);
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -54,7 +55,8 @@ export default function FeedbackManagement() {
           ),
           room:room_id (
             id,
-            room_number
+            room_number,
+            case_goals
           )
         `)
         .order('created_at', { ascending: false });
@@ -101,6 +103,192 @@ export default function FeedbackManagement() {
         next.delete(assignmentId);
         return next;
       });
+    }
+  };
+
+  const escapeCsv = (value: unknown): string => {
+    if (value === null || value === undefined) return '';
+    const text = String(value).replace(/"/g, '""');
+    return /[",\n]/.test(text) ? `"${text}"` : text;
+  };
+
+  const asLegacyFeedback = (value: unknown) => {
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    return value as {
+      summary?: string;
+      recommendations?: string[];
+      clinical_reasoning?: {
+        score?: number;
+        comments?: string;
+        strengths?: string[];
+        areas_for_improvement?: string[];
+      };
+      communication_skills?: {
+        score?: number;
+        comments?: string;
+        strengths?: string[];
+        areas_for_improvement?: string[];
+      };
+    };
+  };
+
+  const buildCsv = (headers: string[], rows: Record<string, unknown>[]) => {
+    const lines = [headers.map(escapeCsv).join(',')];
+    for (const row of rows) {
+      lines.push(headers.map((header) => escapeCsv(row[header])).join(','));
+    }
+    return lines.join('\n');
+  };
+
+  const handleExportStudentCases = async (
+    studentId: string,
+    studentName: string,
+  ) => {
+    setExportingStudentId(studentId);
+    try {
+      let query = supabase
+        .from('student_room_assignments')
+        .select(`
+          id,
+          student_id,
+          status,
+          created_at,
+          completed_at,
+          window_start,
+          window_end,
+          feedback_status,
+          feedback_error,
+          feedback_generated_at,
+          nurse_feedback,
+          communication_score,
+          mdm_score,
+          learning_objectives,
+          communication_breakdown,
+          mdm_breakdown,
+          case_difficulty,
+          student_progress_note,
+          room:room_id (
+            id,
+            room_number,
+            case_goals
+          ),
+          student:student_id (
+            full_name,
+            email
+          )
+        `)
+        .eq('student_id', studentId)
+        .order('created_at', { ascending: false });
+
+      if (scopedSchoolId) {
+        query = query.eq('school_id', scopedSchoolId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const headers = [
+        'student_name',
+        'student_email',
+        'assignment_id',
+        'room_number',
+        'status',
+        'created_at',
+        'completed_at',
+        'window_start',
+        'window_end',
+        'case_goals',
+        'performance_summary',
+        'learning_objectives',
+        'communication_score',
+        'mdm_score',
+        'case_difficulty',
+        'feedback_status',
+        'feedback_generated_at',
+        'feedback_error',
+        'recommendations',
+        'clinical_reasoning_score',
+        'clinical_reasoning_comments',
+        'clinical_reasoning_strengths',
+        'clinical_reasoning_areas_for_improvement',
+        'communication_skills_score',
+        'communication_skills_comments',
+        'communication_skills_strengths',
+        'communication_skills_areas_for_improvement',
+        'communication_breakdown_json',
+        'mdm_breakdown_json',
+        'student_progress_note',
+        'nurse_feedback_json',
+      ];
+
+      const rows = (data ?? []).map((assignment) => {
+        const legacy = asLegacyFeedback(assignment.nurse_feedback);
+        const performanceSummary =
+          assignment.learning_objectives?.trim() ||
+          legacy?.summary?.trim() ||
+          '';
+
+        return {
+          student_name: assignment.student?.full_name ?? studentName,
+          student_email: assignment.student?.email ?? '',
+          assignment_id: assignment.id,
+          room_number: assignment.room?.room_number ?? '',
+          status: assignment.status,
+          created_at: assignment.created_at,
+          completed_at: assignment.completed_at,
+          window_start: assignment.window_start,
+          window_end: assignment.window_end,
+          case_goals: assignment.room?.case_goals ?? '',
+          performance_summary: performanceSummary,
+          learning_objectives: assignment.learning_objectives ?? '',
+          communication_score: assignment.communication_score ?? '',
+          mdm_score: assignment.mdm_score ?? '',
+          case_difficulty: assignment.case_difficulty ?? '',
+          feedback_status: assignment.feedback_status ?? '',
+          feedback_generated_at: assignment.feedback_generated_at ?? '',
+          feedback_error: assignment.feedback_error ?? '',
+          recommendations: (legacy?.recommendations ?? []).join(' | '),
+          clinical_reasoning_score: legacy?.clinical_reasoning?.score ?? '',
+          clinical_reasoning_comments: legacy?.clinical_reasoning?.comments ?? '',
+          clinical_reasoning_strengths: (legacy?.clinical_reasoning?.strengths ?? []).join(' | '),
+          clinical_reasoning_areas_for_improvement:
+            (legacy?.clinical_reasoning?.areas_for_improvement ?? []).join(' | '),
+          communication_skills_score: legacy?.communication_skills?.score ?? '',
+          communication_skills_comments: legacy?.communication_skills?.comments ?? '',
+          communication_skills_strengths: (legacy?.communication_skills?.strengths ?? []).join(' | '),
+          communication_skills_areas_for_improvement:
+            (legacy?.communication_skills?.areas_for_improvement ?? []).join(' | '),
+          communication_breakdown_json: JSON.stringify(assignment.communication_breakdown ?? {}),
+          mdm_breakdown_json: JSON.stringify(assignment.mdm_breakdown ?? {}),
+          student_progress_note: assignment.student_progress_note ?? '',
+          nurse_feedback_json: JSON.stringify(assignment.nurse_feedback ?? {}),
+        };
+      });
+
+      const csvContent = buildCsv(headers, rows);
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const safeName = studentName
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'student';
+      anchor.href = url;
+      anchor.download = `${safeName}-all-cases-feedback.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      console.error('Error exporting student cases:', exportError);
+      window.alert(
+        exportError instanceof Error ? exportError.message : 'Failed to export student cases',
+      );
+    } finally {
+      setExportingStudentId(null);
     }
   };
 
@@ -216,6 +404,18 @@ export default function FeedbackManagement() {
                         className="text-sm text-blue-600 hover:text-blue-900"
                       >
                         {selectedAssignment?.id === assignment.id ? 'Hide' : 'View'}
+                      </button>
+                      <button
+                        onClick={() => handleExportStudentCases(assignment.student_id, assignment.student.full_name)}
+                        disabled={exportingStudentId === assignment.student_id}
+                        className="inline-flex items-center text-sm text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                      >
+                        {exportingStudentId === assignment.student_id ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4 mr-1" />
+                        )}
+                        Export All Cases CSV
                       </button>
                       {(assignment.feedback_status === 'failed' || assignment.feedback_status === 'pending') && (
                         <button
