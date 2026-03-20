@@ -192,6 +192,33 @@ type TimelineEvent = {
 };
 
 const BASELINE_SENTINEL_PREFIX = '2000-01-01';
+const TIMELINE_EXPORT_PAGE_SIZE = 1000;
+
+const fetchAllPages = async <T>(
+  fetchPage: (
+    from: number,
+    to: number,
+  ) => Promise<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> => {
+  const rows: T[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + TIMELINE_EXPORT_PAGE_SIZE - 1;
+    const { data, error } = await fetchPage(from, to);
+    if (error) {
+      throw new Error(error.message);
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < TIMELINE_EXPORT_PAGE_SIZE) {
+      break;
+    }
+    from += TIMELINE_EXPORT_PAGE_SIZE;
+  }
+
+  return rows;
+};
 
 const normalizeTimestamp = (value: string | null | undefined): string | null => {
   if (!value) return null;
@@ -544,13 +571,15 @@ const buildTimelineExport = async (
   const assignment = assignmentData as TimelineAssignmentRow;
   const targetRooms = await getRoomLineage(serviceClient, assignment.room_id);
 
-  const { data: messagesData, error: messagesError } = await serviceClient
-    .from('chat_messages')
-    .select('id, assignment_id, role, content, created_at')
-    .eq('assignment_id', assignmentId)
-    .order('created_at', { ascending: true });
-
-  if (messagesError) throw messagesError;
+  const messagesData = await fetchAllPages<TimelineChatMessageRow>((from, to) =>
+    serviceClient
+      .from('chat_messages')
+      .select('id, assignment_id, role, content, created_at')
+      .eq('assignment_id', assignmentId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
 
   const patientId = assignment.room?.patient_id ?? null;
   let ordersData: TimelineOrderRow[] = [];
@@ -559,43 +588,62 @@ const buildTimelineExport = async (
   let imagingData: TimelineImagingRow[] = [];
 
   if (patientId) {
-    const [ordersRes, labsRes, vitalsRes, imagingRes] = await Promise.all([
-      serviceClient
-        .from('medical_orders')
-        .select('id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at')
-        .eq('patient_id', patientId)
-        .is('deleted_at', null),
-      serviceClient
-        .from('lab_results')
-        .select('id, assignment_id, room_id, override_scope, test_name, value, unit, status, collection_time, result_time, created_at, deleted_at')
-        .eq('patient_id', patientId)
-        .is('deleted_at', null),
-      serviceClient
-        .from('vital_signs')
-        .select('id, assignment_id, room_id, override_scope, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain, deleted_at')
-        .eq('patient_id', patientId)
-        .is('deleted_at', null),
-      serviceClient
-        .from('imaging_studies')
-        .select('id, assignment_id, room_id, override_scope, order_name, study_type, status, report, order_time, report_generated_at, created_at, deleted_at')
-        .eq('patient_id', patientId)
-        .is('deleted_at', null),
+    const [ordersRows, labsRows, vitalsRows, imagingRows] = await Promise.all([
+      fetchAllPages<TimelineOrderRow>((from, to) =>
+        serviceClient
+          .from('medical_orders')
+          .select(
+            'id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at',
+          )
+          .eq('patient_id', patientId)
+          .is('deleted_at', null)
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<TimelineLabRow>((from, to) =>
+        serviceClient
+          .from('lab_results')
+          .select(
+            'id, assignment_id, room_id, override_scope, test_name, value, unit, status, collection_time, result_time, created_at, deleted_at',
+          )
+          .eq('patient_id', patientId)
+          .is('deleted_at', null)
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<TimelineVitalRow>((from, to) =>
+        serviceClient
+          .from('vital_signs')
+          .select(
+            'id, assignment_id, room_id, override_scope, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain, deleted_at',
+          )
+          .eq('patient_id', patientId)
+          .is('deleted_at', null)
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
+      fetchAllPages<TimelineImagingRow>((from, to) =>
+        serviceClient
+          .from('imaging_studies')
+          .select(
+            'id, assignment_id, room_id, override_scope, order_name, study_type, status, report, order_time, report_generated_at, created_at, deleted_at',
+          )
+          .eq('patient_id', patientId)
+          .is('deleted_at', null)
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
     ]);
 
-    if (ordersRes.error) throw ordersRes.error;
-    if (labsRes.error) throw labsRes.error;
-    if (vitalsRes.error) throw vitalsRes.error;
-    if (imagingRes.error) throw imagingRes.error;
-
-    ordersData = (ordersRes.data ?? []) as TimelineOrderRow[];
-    labsData = (labsRes.data ?? []) as TimelineLabRow[];
-    vitalsData = (vitalsRes.data ?? []) as TimelineVitalRow[];
-    imagingData = (imagingRes.data ?? []) as TimelineImagingRow[];
+    ordersData = ordersRows;
+    labsData = labsRows;
+    vitalsData = vitalsRows;
+    imagingData = imagingRows;
   }
 
   const events: TimelineEvent[] = [];
 
-  for (const message of (messagesData ?? []) as TimelineChatMessageRow[]) {
+  for (const message of messagesData) {
     const timestamp = normalizeTimestamp(message.created_at);
     if (!timestamp) continue;
     if (message.content === '<completed>' && message.role === 'assistant') {
