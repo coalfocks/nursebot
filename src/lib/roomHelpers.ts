@@ -4,6 +4,19 @@ import { supabase } from './supabase';
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 
+export const isObgynSpecialtyName = (name?: string | null): boolean => {
+  if (!name) return false;
+  const lowered = name.toLowerCase();
+  const compact = lowered.replace(/[^a-z0-9]/g, '');
+  return (
+    compact.includes('obgyn') ||
+    (lowered.includes('obstetric') && (lowered.includes('gyn') || lowered.includes('gynec')))
+  );
+};
+
+export const hasObgynSpecialty = (specialties?: Array<Pick<Specialty, 'name'>> | null): boolean =>
+  Boolean(specialties?.some((specialty) => isObgynSpecialtyName(specialty.name)));
+
 /**
  * Get the display name for a room, with fallback to room number if role is missing
  * Logs a warning to console if the room has no name (empty role field)

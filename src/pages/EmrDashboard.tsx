@@ -25,6 +25,7 @@ import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
+import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -85,7 +86,12 @@ export default function EmrDashboard() {
     mrn: '',
     roomNumber: '',
   });
-  const [roomMeta, setRoomMeta] = useState<{ id?: number; room_number?: string; delivery_note?: string } | null>(null);
+  const [roomMeta, setRoomMeta] = useState<{
+    id?: number;
+    room_number?: string;
+    delivery_note?: string;
+    isObgyn?: boolean;
+  } | null>(null);
   const patientAge = useMemo(() => {
     if (!selectedPatient?.dateOfBirth) return null;
     const dob = new Date(selectedPatient.dateOfBirth);
@@ -178,11 +184,16 @@ export default function EmrDashboard() {
       if (selectedPatient.roomId) {
         const { data } = await supabase
           .from('rooms')
-          .select('id, room_number, emr_context')
+          .select('id, room_number, emr_context, specialty_id, specialty_ids')
           .eq('id', selectedPatient.roomId)
           .maybeSingle();
         if (data) {
           let deliveryNote = '';
+          const specialties = await fetchSpecialtiesForRoom({
+            specialty_id: data.specialty_id,
+            specialty_ids: data.specialty_ids,
+          });
+          const isObgyn = hasObgynSpecialty(specialties);
           if (typeof data.emr_context === 'string') {
             try {
               const parsed = JSON.parse(data.emr_context) as { delivery_note?: unknown };
@@ -193,7 +204,7 @@ export default function EmrDashboard() {
               // ignore non-JSON context
             }
           }
-          setRoomMeta({ id: data.id, room_number: data.room_number, delivery_note: deliveryNote });
+          setRoomMeta({ id: data.id, room_number: data.room_number, delivery_note: deliveryNote, isObgyn });
           setBaselineEditForm((prev) => ({ ...prev, roomNumber: data.room_number }));
         }
       }
@@ -668,21 +679,23 @@ export default function EmrDashboard() {
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="h-5 w-5" />
-                      Delivery Note
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {roomMeta?.delivery_note ? (
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{roomMeta.delivery_note}</p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No delivery note documented.</p>
-                    )}
-                  </CardContent>
-                </Card>
+                {roomMeta?.isObgyn && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <FileText className="h-5 w-5" />
+                        Delivery Note
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {roomMeta?.delivery_note ? (
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{roomMeta.delivery_note}</p>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No delivery note documented.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card>
                   <CardHeader>
@@ -1009,7 +1022,12 @@ export default function EmrDashboard() {
             </TabsContent>
 
             <TabsContent value="notes">
-              <ClinicalNotes patient={selectedPatient} assignmentId={effectiveAssignmentId} forceBaseline={forceBaseline} />
+              <ClinicalNotes
+                patient={selectedPatient}
+                assignmentId={effectiveAssignmentId}
+                forceBaseline={forceBaseline}
+                isObgynRoom={roomMeta?.isObgyn ?? false}
+              />
             </TabsContent>
 
             <TabsContent value="labs">

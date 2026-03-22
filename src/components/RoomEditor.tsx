@@ -5,6 +5,7 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 
@@ -202,6 +203,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     return Array.from(ids);
   })();
   const [specialtyIds, setSpecialtyIds] = useState<string[]>(initialSpecialtyIds);
+  const isObgynRoom = specialtyIds.some((id) => {
+    const specialty = specialties.find((item) => item.id === id);
+    return isObgynSpecialtyName(specialty?.name);
+  });
   const [difficultyLevel, setDifficultyLevel] = useState<'beginner' | 'intermediate' | 'advanced' | null>(
     room?.difficulty_level || null
   );
@@ -431,7 +436,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (emrContext.trim()) {
         emrContextPayloadObject.context = emrContext.trim();
       }
-      if (deliveryNote.trim()) {
+      if (isObgynRoom && deliveryNote.trim()) {
         emrContextPayloadObject.delivery_note = deliveryNote.trim();
       }
       if (initialVitals) {
@@ -799,19 +804,21 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             placeholder="Ongoing EMR rules or responses (e.g., “if WBC ordered, increase each run”)."
           />
         </div>
-        <div>
-          <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
-            Delivery Note (OBGYN continuation)
-          </label>
-          <textarea
-            id="deliveryNote"
-            value={deliveryNote}
-            onChange={(e) => setDeliveryNote(e.target.value)}
-            rows={3}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-            placeholder="Add prior delivery details for continuation cases."
-          />
-        </div>
+        {isObgynRoom && (
+          <div>
+            <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">
+              Delivery Note (OBGYN continuation)
+            </label>
+            <textarea
+              id="deliveryNote"
+              value={deliveryNote}
+              onChange={(e) => setDeliveryNote(e.target.value)}
+              rows={3}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="Add prior delivery details for continuation cases."
+            />
+          </div>
+        )}
 
         <div>
           <label htmlFor="caseGoals" className="block text-sm font-medium text-gray-700">

@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import AdminLayout from '../components/admin/AdminLayout';
-import { Loader2, Clock, Book, CheckCircle, ArrowRight, AlertCircle } from 'lucide-react';
+import { Loader2, Clock, Book, CheckCircle, ArrowRight, AlertCircle, Download } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 import { hasAdminAccess } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
@@ -20,6 +20,7 @@ export default function MyCases() {
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeTab, setActiveTab] = useState<'assigned' | 'completed'>('assigned');
+  const [isExportingFeedback, setIsExportingFeedback] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -112,6 +113,41 @@ export default function MyCases() {
     return `${formattedDate} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`;
   };
 
+  const handleAggregateFeedbackExport = async () => {
+    setIsExportingFeedback(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('student-feedback-export');
+
+      if (error) throw error;
+
+      const html =
+        typeof data === 'string'
+          ? data
+          : data && typeof data === 'object' && 'html' in data && typeof data.html === 'string'
+            ? data.html
+            : null;
+
+      if (!html) {
+        throw new Error('Export returned an invalid response.');
+      }
+
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'aggregate-feedback.html';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export aggregate feedback.';
+      console.error('Error exporting aggregate feedback:', error);
+      alert(message);
+    } finally {
+      setIsExportingFeedback(false);
+    }
+  };
+
   // Filter assignments based on active tab
   const filteredAssignments = assignments.filter(assignment => {
     // For completed assignments, show all of them
@@ -128,6 +164,8 @@ export default function MyCases() {
     return ['assigned', 'in_progress', 'bedside'].includes(assignment.status) && 
            (!effectiveDate || effectiveDate <= now);
   });
+  const completedAssignmentsCount = assignments.filter((assignment) => assignment.status === 'completed').length;
+  const showAggregateExportButton = activeTab === 'completed' && completedAssignmentsCount > 0;
 
   const loaderContent = (
     <div className="flex h-full items-center justify-center py-24">
@@ -140,6 +178,21 @@ export default function MyCases() {
       <div className="px-4 py-6 sm:px-0">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">My Patients</h1>
+          {showAggregateExportButton ? (
+            <button
+              type="button"
+              onClick={() => void handleAggregateFeedbackExport()}
+              disabled={isExportingFeedback}
+              className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isExportingFeedback ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              {isExportingFeedback ? 'Downloading...' : 'Download Feedback'}
+            </button>
+          ) : null}
         </div>
 
         <div className="bg-white shadow overflow-hidden sm:rounded-lg">
@@ -237,6 +290,21 @@ export default function MyCases() {
         <div className="px-4 py-6 sm:px-0">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl font-bold text-gray-900">My Patients</h1>
+            {showAggregateExportButton ? (
+              <button
+                type="button"
+                onClick={() => void handleAggregateFeedbackExport()}
+                disabled={isExportingFeedback}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExportingFeedback ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                {isExportingFeedback ? 'Downloading...' : 'Download Feedback'}
+              </button>
+            ) : null}
           </div>
 
           <div className="bg-white shadow overflow-hidden sm:rounded-lg">

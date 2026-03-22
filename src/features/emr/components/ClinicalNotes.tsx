@@ -16,9 +16,10 @@ interface ClinicalNotesProps {
   patient: Patient;
   assignmentId?: string;
   forceBaseline?: boolean;
+  isObgynRoom?: boolean;
 }
 
-export function ClinicalNotes({ patient, assignmentId, forceBaseline }: ClinicalNotesProps) {
+export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoom = false }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
@@ -141,7 +142,12 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
     }
   };
 
-  const notesByType = notes.reduce(
+  const isDeliveryNote = (note: ClinicalNote) =>
+    /delivery/i.test(note.type) || /delivery/i.test(note.title);
+
+  const visibleNotes = isObgynRoom ? notes : notes.filter((note) => !isDeliveryNote(note));
+
+  const notesByType = visibleNotes.reduce(
     (acc, note) => {
       if (!acc[note.type]) acc[note.type] = [];
       acc[note.type].push(note);
@@ -306,7 +312,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
       <Tabs defaultValue="all" className="w-full">
         <TabsList>
-          <TabsTrigger value="all">All Notes ({notes.length})</TabsTrigger>
+          <TabsTrigger value="all">All Notes ({visibleNotes.length})</TabsTrigger>
           <TabsTrigger value="H&P">H&P ({notesByType['H&P']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Progress">Progress ({notesByType['Progress']?.length || 0})</TabsTrigger>
           <TabsTrigger value="Nurse">Nurse ({notesByType['Nurse']?.length || 0})</TabsTrigger>
@@ -316,7 +322,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline }: Clinical
 
         <TabsContent value="all" className="mt-6">
           <div className="space-y-4">
-            {notes.map(renderNoteCard)}
+            {visibleNotes.map(renderNoteCard)}
           </div>
         </TabsContent>
 
