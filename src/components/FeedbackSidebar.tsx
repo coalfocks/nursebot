@@ -1,5 +1,15 @@
-import { Award, MessageSquare, Brain, Target, Lightbulb, Loader2 } from 'lucide-react';
-import type { Database } from '../lib/database.types';
+import { useState } from 'react';
+import {
+  Award,
+  MessageSquare,
+  Brain,
+  Target,
+  Lightbulb,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import type { Database, Json } from '../lib/database.types';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room?: Database['public']['Tables']['rooms']['Row'];
@@ -9,7 +19,129 @@ interface FeedbackSidebarProps {
   assignment: Assignment;
 }
 
+type BreakdownItem = {
+  score: number | null;
+  feedback: string | null;
+};
+
+type EfficiencyBreakdownItem = BreakdownItem & {
+  cau_count?: number | null;
+  case_difficulty?: string | null;
+};
+
+type CommunicationBreakdown = {
+  information_sharing?: BreakdownItem;
+  responsive_communication?: BreakdownItem;
+  efficiency_deduction?: EfficiencyBreakdownItem;
+};
+
+type MdmBreakdown = {
+  labs_orders_quality?: BreakdownItem;
+  note_thought_process?: BreakdownItem;
+  safety_deduction?: BreakdownItem;
+};
+
+const isRecord = (value: Json | null): value is Record<string, Json> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const toBreakdownItem = (value: Json | undefined): BreakdownItem | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const scoreValue = value.score;
+  const feedbackValue = value.feedback;
+
+  return {
+    score: typeof scoreValue === 'number' ? scoreValue : null,
+    feedback: typeof feedbackValue === 'string' ? feedbackValue : null,
+  };
+};
+
+const toEfficiencyItem = (value: Json | undefined): EfficiencyBreakdownItem | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const base = toBreakdownItem(value);
+  const cauValue = value.cau_count;
+  const difficultyValue = value.case_difficulty;
+
+  return {
+    score: base?.score ?? null,
+    feedback: base?.feedback ?? null,
+    cau_count: typeof cauValue === 'number' ? cauValue : null,
+    case_difficulty: typeof difficultyValue === 'string' ? difficultyValue : null,
+  };
+};
+
+const parseCommunicationBreakdown = (value: Json | null): CommunicationBreakdown | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    information_sharing: toBreakdownItem(value.information_sharing),
+    responsive_communication: toBreakdownItem(value.responsive_communication),
+    efficiency_deduction: toEfficiencyItem(value.efficiency_deduction),
+  };
+};
+
+const parseMdmBreakdown = (value: Json | null): MdmBreakdown | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    labs_orders_quality: toBreakdownItem(value.labs_orders_quality),
+    note_thought_process: toBreakdownItem(value.note_thought_process),
+    safety_deduction: toBreakdownItem(value.safety_deduction),
+  };
+};
+
+const scoreDisplay = (score: number | null | undefined) => (score == null ? '--' : String(score));
+
+function BreakdownRow({
+  title,
+  range,
+  item,
+  extra,
+}: {
+  title: string;
+  range: string;
+  item?: BreakdownItem;
+  extra?: { label: string; value: string | number }[];
+}) {
+  if (!item) return null;
+
+  return (
+    <div className="rounded-md border border-gray-200 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-gray-700">{title}</p>
+        <span className="text-xs font-semibold text-gray-900">
+          {scoreDisplay(item.score)} <span className="text-gray-400">{range}</span>
+        </span>
+      </div>
+      {item.feedback && <p className="mt-2 text-xs leading-relaxed text-gray-600">{item.feedback}</p>}
+      {extra && extra.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {extra.map((entry) => (
+            <span
+              key={entry.label}
+              className="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-[11px] text-gray-600"
+            >
+              {entry.label}: {entry.value}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
+  const [expandedSection, setExpandedSection] = useState<'communication' | 'mdm' | null>(null);
+
   // Only show for completed/bedside status
   if (!['completed', 'bedside'].includes(assignment.status || '')) {
     return null;
@@ -55,6 +187,9 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
       ? Math.round((availableScores.reduce((sum, score) => sum + score, 0) / availableScores.length) * 20)
       : null;
   const grade = assignment.grade ?? computedGrade;
+
+  const communicationBreakdown = parseCommunicationBreakdown(assignment.communication_breakdown);
+  const mdmBreakdown = parseMdmBreakdown(assignment.mdm_breakdown);
 
   const getScoreColor = (score: number) => {
     if (score >= 4.5) return 'text-green-600 bg-green-50 border-green-200';
@@ -127,6 +262,101 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
           </div>
         </div>
       </div>
+
+      {/* Detailed Breakdown */}
+      {communicationBreakdown && (
+        <div className="border-t pt-4">
+          <button
+            type="button"
+            onClick={() =>
+              setExpandedSection(expandedSection === 'communication' ? null : 'communication')
+            }
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-blue-500" />
+              <h3 className="text-sm font-medium text-gray-700">Communication Breakdown</h3>
+            </div>
+            {expandedSection === 'communication' ? (
+              <ChevronUp className="w-4 h-4 text-gray-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-400" />
+            )}
+          </button>
+          {expandedSection === 'communication' && (
+            <div className="mt-3 space-y-2">
+              <BreakdownRow
+                title="Information Sharing"
+                range="(0-2)"
+                item={communicationBreakdown.information_sharing}
+              />
+              <BreakdownRow
+                title="Responsive Communication"
+                range="(0-3)"
+                item={communicationBreakdown.responsive_communication}
+              />
+              <BreakdownRow
+                title="Efficiency Deduction"
+                range="(-2 to 0)"
+                item={communicationBreakdown.efficiency_deduction}
+                extra={[
+                  communicationBreakdown.efficiency_deduction?.cau_count != null
+                    ? {
+                        label: 'CAU count',
+                        value: communicationBreakdown.efficiency_deduction.cau_count,
+                      }
+                    : null,
+                  communicationBreakdown.efficiency_deduction?.case_difficulty
+                    ? {
+                        label: 'Difficulty',
+                        value: communicationBreakdown.efficiency_deduction.case_difficulty,
+                      }
+                    : null,
+                ].filter((entry): entry is { label: string; value: string | number } => entry != null)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {mdmBreakdown && (
+        <div className="border-t pt-4">
+          <button
+            type="button"
+            onClick={() => setExpandedSection(expandedSection === 'mdm' ? null : 'mdm')}
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-indigo-500" />
+              <h3 className="text-sm font-medium text-gray-700">MDM Breakdown</h3>
+            </div>
+            {expandedSection === 'mdm' ? (
+              <ChevronUp className="w-4 h-4 text-gray-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-400" />
+            )}
+          </button>
+          {expandedSection === 'mdm' && (
+            <div className="mt-3 space-y-2">
+              <BreakdownRow
+                title="Labs/Orders Quality"
+                range="(0-3)"
+                item={mdmBreakdown.labs_orders_quality}
+              />
+              <BreakdownRow
+                title="Note Thought Process"
+                range="(0-2)"
+                item={mdmBreakdown.note_thought_process}
+              />
+              <BreakdownRow
+                title="Safety Deduction"
+                range="(-2 to 0)"
+                item={mdmBreakdown.safety_deduction}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Case Goals */}
       {assignment.room?.case_goals && (
