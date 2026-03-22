@@ -74,6 +74,54 @@ type AssignmentEvaluationRow = {
   } | null;
 };
 
+type AssignmentEvaluationSourceRow = {
+  id: string;
+  created_at: string | null;
+  updated_at: string | null;
+  effective_date: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  completed_at: string | null;
+  status: string | null;
+  feedback_status: string | null;
+  feedback_generated_at: string | null;
+  feedback_error: string | null;
+  grade: number | null;
+  diagnosis: string | null;
+  treatment_plan: string[] | null;
+  student_progress_note: string | null;
+  learning_objectives: string | null;
+  communication_score: number | null;
+  mdm_score: number | null;
+  communication_breakdown: unknown;
+  mdm_breakdown: unknown;
+  nurse_feedback: unknown;
+  school: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  room: {
+    id: number;
+    room_number: string;
+    role: string | null;
+    specialty: { name: string | null } | null;
+  } | null;
+  student: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    role: string | null;
+    school_id: string | null;
+  } | null;
+  assigned_by_profile: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    role: string | null;
+  } | null;
+};
+
 type TimelineExportRequest = {
   action?: string;
   assignmentId?: string;
@@ -927,7 +975,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const [schoolsRes, profilesRes, roomsRes, assignmentsRes, recentAssignmentsRes, evaluationAssignmentsRes] = await Promise.all([
+    const [schoolsRes, profilesRes, roomsRes, assignmentsRes, recentAssignmentsRes] = await Promise.all([
       serviceClient.from('schools').select('id, name, slug'),
       serviceClient.from('profiles').select('id, school_id, role'),
       serviceClient.from('rooms').select('id, school_id, is_active'),
@@ -948,7 +996,14 @@ Deno.serve(async (req) => {
         )
         .order('created_at', { ascending: false })
         .limit(20),
-      serviceClient
+    ]);
+
+    const evaluationAssignmentsPageSize = 500;
+    const evaluationAssignmentsData: AssignmentEvaluationSourceRow[] = [];
+    let evaluationAssignmentsFrom = 0;
+
+    while (true) {
+      const { data, error } = await serviceClient
         .from('student_room_assignments')
         .select(
           `
@@ -980,15 +1035,25 @@ Deno.serve(async (req) => {
           `,
         )
         .order('created_at', { ascending: false })
-        .limit(150),
-    ]);
+        .range(
+          evaluationAssignmentsFrom,
+          evaluationAssignmentsFrom + evaluationAssignmentsPageSize - 1,
+        );
+
+      if (error) throw error;
+
+      const page = (data ?? []) as AssignmentEvaluationSourceRow[];
+      evaluationAssignmentsData.push(...page);
+
+      if (page.length < evaluationAssignmentsPageSize) break;
+      evaluationAssignmentsFrom += evaluationAssignmentsPageSize;
+    }
 
     if (schoolsRes.error) throw schoolsRes.error;
     if (profilesRes.error) throw profilesRes.error;
     if (roomsRes.error) throw roomsRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (recentAssignmentsRes.error) throw recentAssignmentsRes.error;
-    if (evaluationAssignmentsRes.error) throw evaluationAssignmentsRes.error;
 
     const schools = schoolsRes.data ?? [];
     const profiles = profilesRes.data ?? [];
@@ -1052,7 +1117,7 @@ Deno.serve(async (req) => {
       roomNumber: row.room?.room_number ?? null,
     }));
 
-    const assignmentEvaluationRows: AssignmentEvaluationRow[] = (evaluationAssignmentsRes.data ?? []).map((row) => ({
+    const assignmentEvaluationRows: AssignmentEvaluationRow[] = evaluationAssignmentsData.map((row) => ({
       id: row.id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

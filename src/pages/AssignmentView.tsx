@@ -6,6 +6,7 @@ import Navbar from '../components/Navbar';
 import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
+import { FeedbackSidebar } from '../components/FeedbackSidebar';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 
@@ -76,8 +77,7 @@ export default function AssignmentView() {
             study_year
           ),
           room:room_id (
-            id,
-            room_number
+            *
           )
         `)
         .eq('id', assignmentId)
@@ -263,6 +263,9 @@ export default function AssignmentView() {
             </div>
 
             <div className="space-y-4">
+              {/* Show feedback sidebar when completed */}
+              <FeedbackSidebar assignment={assignment} />
+              
               <div className="bg-white shadow rounded-lg p-6 space-y-4">
                 <div className="flex items-center gap-2">
                   <FileText className="h-5 w-5 text-gray-500" />
