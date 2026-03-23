@@ -612,23 +612,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     setIsCompleting(true);
     setIsSavingProgressNote(true);
     try {
-      // First, add a completion message
-      const { data: completionResponse, error: completionError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
-        body: {
-          assignmentId,
-          contentOverride: '<completed>',
-          triggeredCompletion: true
-        }
-      });
-      
-      if (completionError) throw completionError;
-      if (!completionResponse?.chatMessage) {
-        throw new Error('Assistant completion message missing from response');
-      }
-      
-      queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
-      
-      // Update the assignment status
+      // Persist completion metadata first so we never land in a completed-without-note state.
       const { error: updateError } = await supabase
         .from('student_room_assignments')
         .update({
@@ -651,13 +635,32 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         completed_at: completedAt,
         completion_hint_views: completionHintViews,
       });
-      
-      // Trigger feedback generation
+
+      // Add completion marker message after assignment update succeeds.
+      const { data: completionResponse, error: completionError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
+        body: {
+          assignmentId,
+          contentOverride: '<completed>',
+          triggeredCompletion: true
+        }
+      });
+
+      if (completionError) {
+        console.error('Error inserting completion marker message:', completionError);
+      } else if (!completionResponse?.chatMessage) {
+        console.error('Assistant completion message missing from response');
+      } else {
+        queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
+      }
+
+      // Trigger feedback generation (non-blocking for completion UX/state).
       const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
         body: { assignmentId }
       });
-      
-      if (feedbackError) throw feedbackError;
+
+      if (feedbackError) {
+        console.error('Error triggering feedback generation:', feedbackError);
+      }
 
       setShowCompletionConfirm(false);
       setProgressNoteDraft('');
