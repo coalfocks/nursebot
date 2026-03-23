@@ -36,6 +36,37 @@ export default function AssignmentView() {
     }
   }, [assignmentId, user]);
 
+  // Subscribe to assignment updates (for feedback generation)
+  useEffect(() => {
+    if (!assignmentId || !assignment) return;
+
+    const channel = supabase
+      .channel(`assignment:${assignmentId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'student_room_assignments',
+          filter: `id=eq.${assignmentId}`,
+        },
+        (payload) => {
+          console.log('Assignment updated:', payload);
+          if (payload.new) {
+            // Update assignment state with new data
+            setAssignment((prev) =>
+              prev ? { ...prev, ...(payload.new as Partial<Assignment>) } : prev
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [assignmentId, assignment?.id]);
+
   const getSignedUrl = async (path: string) => {
     try {
       console.log('Original PDF URL:', path);
