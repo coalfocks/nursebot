@@ -86,13 +86,47 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     }
   };
 
+  /**
+   * Parse a CSV line respecting quoted fields (handles commas inside quotes)
+   */
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          // Escaped quote inside quoted field
+          current += '"';
+          i++;
+        } else {
+          // Toggle quote mode
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        // Field separator (only when not in quotes)
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    // Push the last field
+    result.push(current.trim());
+    return result;
+  };
+
   const parseCSV = (text: string, schoolName?: string): { users: CsvRow[]; warning?: string } => {
     const lines = text.split('\n').filter((line) => line.trim());
     if (lines.length < 2) {
       throw new Error('CSV must have at least a header row and one data row');
     }
 
-    const headers = lines[0].split(',').map((h) => h.trim().replace(/"/g, ''));
+    const headers = parseCSVLine(lines[0]);
     const requiredHeaders = ['name', 'email', 'password', 'specialty'];
     const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
     if (missingHeaders.length > 0) {
@@ -100,7 +134,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     }
 
     const rows = lines.slice(1).map((line) => {
-      const values = line.split(',').map((v) => v.trim().replace(/^"|"$/g, '').trim());
+      const values = parseCSVLine(line);
       const row: Record<string, string> = {};
       values.forEach((value, index) => {
         row[headers[index]] = value;
