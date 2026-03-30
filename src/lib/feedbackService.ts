@@ -72,7 +72,8 @@ export async function checkPendingFeedback(): Promise<void> {
   const { data: pendingAssignments, error } = await supabase
     .from('student_room_assignments')
     .select('id')
-    .eq('feedback_status', 'pending');
+    .eq('feedback_status', 'pending')
+    .in('status', ['completed', 'bedside']);
 
   if (error) {
     console.error('Error checking pending feedback:', error);
