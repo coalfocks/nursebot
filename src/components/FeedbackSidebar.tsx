@@ -163,19 +163,22 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
     );
   }
 
-  // Show error state
-  if (assignment.feedback_status === 'failed') {
-    return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <div className="text-center">
-          <p className="text-sm text-red-600">Something went wrong generating feedback</p>
-        </div>
-      </div>
-    );
-  }
+  // Check if we have actual feedback data (even if status is failed)
+  // Prioritize actual data over status - if feedback exists, show it
+  const hasFeedbackData = assignment.communication_score != null || assignment.mdm_score != null;
 
-  // No feedback yet
-  if (assignment.communication_score == null && assignment.mdm_score == null) {
+  // If we have feedback data, show it (even if status says failed)
+  if (!hasFeedbackData) {
+    // No feedback data yet - show error if failed
+    if (assignment.feedback_status === 'failed') {
+      return (
+        <div className="bg-white shadow rounded-lg p-6">
+          <div className="text-center">
+            <p className="text-sm text-red-600">Something went wrong generating feedback</p>
+          </div>
+        </div>
+      );
+    }
     return null;
   }
 
