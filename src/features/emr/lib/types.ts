@@ -8,6 +8,7 @@ export interface Patient {
   lastName: string;
   dateOfBirth: string;
   gender: 'Male' | 'Female' | 'Other';
+  weightKg?: number;
   room?: string;
   service?: string;
   admissionDate?: string;

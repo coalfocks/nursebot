@@ -95,6 +95,7 @@ const mapPatient = (
     (row.custom_overview_sections as { sections?: CustomOverviewSection[] } | null | undefined)?.sections ??
     undefined,
   intakeOutput: (row.intake_output as IntakeOutput | null | undefined) ?? undefined,
+  weightKg: row.weight_kg ?? undefined,
 });
 
 const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): ClinicalNote => {

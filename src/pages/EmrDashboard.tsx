@@ -107,6 +107,15 @@ export default function EmrDashboard() {
     return Math.max(age, 0);
   }, [selectedPatient?.dateOfBirth]);
 
+  const patientBMI = useMemo(() => {
+    if (!selectedPatient?.weightKg || !selectedPatient?.gender) return null;
+    
+    // Estimate height based on gender (average adult heights)
+    const avgHeightM = selectedPatient.gender === 'Male' ? 1.75 : 1.62;
+    const bmi = selectedPatient.weightKg / (avgHeightM * avgHeightM);
+    return Math.round(bmi * 10) / 10;
+  }, [selectedPatient?.weightKg, selectedPatient?.gender]);
+
   useEffect(() => {
     void (async () => {
       if (!user) return;
@@ -476,6 +485,7 @@ export default function EmrDashboard() {
                 <span>MRN: {selectedPatient.mrn}</span>
                 <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
                 <span className="font-semibold text-foreground">Age: {patientAge ?? '—'}</span>
+                <span className="font-semibold text-foreground">BMI: {patientBMI ?? '—'}</span>
                 <span>{selectedPatient.gender}</span>
                 <span>Room {selectedPatient.room}</span>
               </div>
