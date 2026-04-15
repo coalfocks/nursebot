@@ -500,6 +500,17 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           .eq('id', room.id);
         
         if (error) throw error;
+
+        // Sync patient.room_id when editing an existing room
+        // Clear previous patient's room_id if patient changed
+        const oldPatientId = room.patient_id;
+        const newPatientId = roomData.patient_id ?? oldPatientId;
+        if (oldPatientId && oldPatientId !== newPatientId) {
+          await supabase.from('patients').update({ room_id: null }).eq('id', oldPatientId);
+        }
+        if (newPatientId) {
+          await supabase.from('patients').update({ room_id: room.id }).eq('id', newPatientId);
+        }
       } else {
         const { data: inserted, error } = await supabase
           .from('rooms')

@@ -413,6 +413,24 @@ const nursingOrders: OrderItem[] = [
   },
 ];
 
+const procedureOrders: OrderItem[] = [
+  {
+    id: 'proc-1',
+    name: 'BiPAP',
+    category: 'Procedure',
+    subcategory: 'Respiratory',
+    instructions: 'Settings to be determined by provider',
+    priorities: ['Routine', 'STAT'],
+  },
+  {
+    id: 'proc-2',
+    name: 'Intubation',
+    category: 'Procedure',
+    subcategory: 'Respiratory',
+    priorities: ['STAT'],
+  },
+];
+
 const generalOrders: OrderItem[] = [
   {
     id: 'general-1',
@@ -436,6 +454,7 @@ export const allOrders: OrderItem[] = [
   ...imagingOrders,
   ...consultOrders,
   ...nursingOrders,
+  ...procedureOrders,
   ...generalOrders,
 ].map(withStatPriority);
 
