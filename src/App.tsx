@@ -23,6 +23,7 @@ import CaseBuilder from './pages/CaseBuilder';
 import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
 function App() {
@@ -47,6 +48,7 @@ function App() {
   }
 
   return (
+    <ErrorBoundary>
     <Router>
       <FeedbackProcessor />
       <Routes>
@@ -222,6 +224,7 @@ function App() {
         />
       </Routes>
     </Router>
+    </ErrorBoundary>
   );
 }
 

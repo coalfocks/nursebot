@@ -27,7 +27,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     specialty_id: string | null;
     difficulty_level: string | null;
     school_id: string;
-  };
+  } | null;
 };
 
 type Room = Database['public']['Tables']['rooms']['Row'];
@@ -146,7 +146,7 @@ export default function AssignmentManager() {
         if (specialtiesResult.error) throw specialtiesResult.error;
         if (schoolsResult.error) throw schoolsResult.error;
 
-        setAssignments((assignmentsResult.data ?? []) as Assignment[]);
+        setAssignments(((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null));
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -191,7 +191,7 @@ export default function AssignmentManager() {
     const { data, error } = await query;
 
     if (error) throw error;
-    setAssignments((data ?? []) as Assignment[]);
+    setAssignments(((data ?? []) as Assignment[]).filter(a => a.room !== null));
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {
