@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
-import ExportScoresCard from '../components/admin/ExportScoresCard';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { isSuperAdmin } from '../lib/roles';
@@ -277,9 +276,6 @@ export default function SuperAdminPortal() {
             Curated, read-only platform metrics for cross-school operations.
           </p>
         </section>
-
-            <ExportScoresCard />
-
         {loading ? (
           <div className="flex h-[40vh] items-center justify-center rounded-2xl border border-slate-200 bg-white">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600" />

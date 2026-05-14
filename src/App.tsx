@@ -23,6 +23,7 @@ import CaseBuilder from './pages/CaseBuilder';
 import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
+import DataDownload from './pages/DataDownload';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -194,21 +195,22 @@ function App() {
             )
           } 
         />
+        
         <Route
-          path="/test-rooms"
+          path="/superadmin/portal"
           element={
-            user?.id && isTester ? (
-              <TestRooms />
+            user?.id && superAdmin ? (
+              <SuperAdminPortal />
             ) : (
               <Navigate to="/dashboard" replace />
             )
           }
         />
         <Route
-          path="/superadmin/portal"
+          path="/admin/data-download"
           element={
-            user?.id && superAdmin ? (
-              <SuperAdminPortal />
+            user?.id && isSuperAdmin(profile) ? (
+              <DataDownload />
             ) : (
               <Navigate to="/dashboard" replace />
             )
