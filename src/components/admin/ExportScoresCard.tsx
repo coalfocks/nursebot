@@ -11,7 +11,8 @@ type AssignmentRow = Database['public']['Tables']['student_room_assignments']['R
 type ExportRow = {
   student_id_hash: string;
   school: string;
-  room_id: number;
+  room_number: string | null;
+  specialty: string | null;
   communication_score: number | null;
   mdm_score: number | null;
   overall_score: number | null;
@@ -33,6 +34,7 @@ type AssignmentForExport = Pick<
   | 'school_id'
 > & {
   school: { name: string | null } | null;
+  room: { room_number: string | null; specialty: { name: string | null } | null } | null;
 };
 
 const PAGE_SIZE = 1000;
@@ -70,7 +72,8 @@ const buildCsv = (rows: ExportRow[]) => {
   const headers: Array<keyof ExportRow> = [
     'student_id_hash',
     'school',
-    'room_id',
+    'room_number',
+    'specialty',
     'communication_score',
     'mdm_score',
     'overall_score',
@@ -143,7 +146,8 @@ export default function ExportScoresCard() {
           completed_at,
           feedback_status,
           school_id,
-          school:school_id ( name )
+          school:school_id ( name ),
+          room:room_id ( room_number, specialty:specialty_id ( name ) )
         `)
         .in('status', ['completed', 'bedside'])
         .gte('completed_at', toIsoStart(startDate))
@@ -188,7 +192,8 @@ export default function ExportScoresCard() {
         assignments.map(async (row) => ({
           student_id_hash: await hashStudentId(row.student_id),
           school: row.school?.name ?? row.school_id ?? 'Unknown',
-          room_id: row.room_id,
+          room_number: row.room?.room_number ?? null,
+          specialty: (row.room as { specialty?: { name: string | null } | null } | null)?.specialty?.name ?? null,
           communication_score: row.communication_score,
           mdm_score: row.mdm_score,
           overall_score: row.grade,
