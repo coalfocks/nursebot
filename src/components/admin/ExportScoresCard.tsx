@@ -104,14 +104,13 @@ export default function ExportScoresCard() {
     if (!superAdmin) {
       return schools.filter((school) => school.id === scopedSchoolId);
     }
-    if (!scopedSchoolId) return schools;
-    return schools.filter((school) => school.id === scopedSchoolId);
+    return schools;
   }, [schools, superAdmin, scopedSchoolId]);
 
   const selectedSchoolId = useMemo(() => {
     if (!superAdmin) return scopedSchoolId;
     if (schoolFilter !== 'all') return schoolFilter;
-    return scopedSchoolId ?? null;
+    return null; // super admin with 'all' selected = no filter
   }, [superAdmin, schoolFilter, scopedSchoolId]);
 
   const downloadCsv = (csv: string) => {
@@ -251,7 +250,7 @@ export default function ExportScoresCard() {
               disabled={!superAdmin}
               className="rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
             >
-              {superAdmin && !scopedSchoolId && <option value="all">All schools</option>}
+              {superAdmin && <option value="all">All schools</option>}
               {availableSchools.map((school) => (
                 <option key={school.id} value={school.id}>
                   {school.name}
