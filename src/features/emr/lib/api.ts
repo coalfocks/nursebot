@@ -757,7 +757,7 @@ export const emrApi = {
       );
   },
 
-  async addOrder(order: MedicalOrder, roomId?: number | null): Promise<void> {
+  async addOrder(order: MedicalOrder, roomId?: number | null): Promise<boolean> {
     const overrideScope = deriveScope(order.overrideScope, order.assignmentId, order.roomId ?? roomId ?? null);
     const { error } = await supabase.from('medical_orders').insert({
       patient_id: order.patientId,
@@ -778,7 +778,9 @@ export const emrApi = {
     });
     if (error) {
       console.error('Error inserting order', error);
+      return false;
     }
+    return true;
   },
 
   async updateOrder(orderId: string, updates: Partial<MedicalOrder>): Promise<MedicalOrder | null> {

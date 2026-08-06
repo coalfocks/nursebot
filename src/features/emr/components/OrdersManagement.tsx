@@ -49,6 +49,7 @@ export function OrdersManagement({
   const canEditOrders = isSuperAdmin(profile);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
+  const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
   const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
   const [editingOrder, setEditingOrder] = useState<MedicalOrder | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'Lab' | 'Medication' | 'Imaging' | 'Other'>('all');
@@ -265,14 +266,20 @@ export function OrdersManagement({
       : adjustedOrder.assignmentId ?? assignmentId ?? null;
     const orderForState = { ...adjustedOrder, roomId: effectiveRoomId, assignmentId: effectiveAssignmentId };
 
+    setOrderSaveError(null);
     setOrders((prev) => [orderForState, ...prev]);
-    setShowOrderEntry(false);
-    void emrApi.addOrder(
+    const saved = await emrApi.addOrder(
       {
         ...orderForState,
       },
       effectiveRoomId,
     );
+    if (!saved) {
+      setOrders((prev) => prev.filter((order) => order.id !== orderForState.id));
+      setOrderSaveError('Could not save this order. Please try again.');
+      return;
+    }
+    setShowOrderEntry(false);
 
     if (adjustedOrder.category === 'Imaging') {
       void createImagingStudyForOrder(
@@ -595,6 +602,12 @@ export function OrdersManagement({
           </Button>
         </div>
       </div>
+
+      {orderSaveError && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {orderSaveError}
+        </p>
+      )}
 
       <Tabs value={selectedCategory} onValueChange={(value) => setSelectedCategory(value as typeof selectedCategory)}>
         <TabsList className="grid w-full grid-cols-5">
