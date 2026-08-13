@@ -77,8 +77,7 @@ Deno.serve(async (req) => {
       const completion = await openai.chat.completions.create({
         model: 'gpt-5-mini',
         messages,
-        temperature: 0.7,
-        max_tokens: 10000,
+        max_completion_tokens: 10000,
       });
 
       assistantContent = completion.choices[0].message?.content?.trim() ?? '';

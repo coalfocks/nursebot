@@ -251,7 +251,6 @@ Deno.serve(async (req) => {
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-5-mini',
-      temperature: 0.25,
       messages: [
         {
           role: 'system',

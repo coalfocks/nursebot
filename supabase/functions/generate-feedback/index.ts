@@ -452,8 +452,7 @@ Provide your evaluation in this JSON format:
           { role: "user", content: evaluationPrompt }
         ],
         response_format: { type: "json_object" },
-        temperature: 0.3, // Lower temperature for more consistent scoring
-        max_tokens: 2500
+        max_completion_tokens: 2500,
       });
 
       const content = completion.choices[0].message.content;
