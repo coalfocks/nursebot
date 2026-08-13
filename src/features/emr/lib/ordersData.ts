@@ -5,6 +5,7 @@ import { medicationOrdersFromCsv } from './generatedMedicationOrders';
 export interface OrderItem {
   id: string;
   name: string;
+  aliases?: string[];
   category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing' | 'Consult' | 'General';
   subcategory?: string;
   frequencies?: string[];
@@ -15,13 +16,84 @@ export interface OrderItem {
   instructions?: string;
 }
 
+const standardFrequencies = new Set([
+  'Daily',
+  'BID',
+  'TID',
+  'QID',
+  'q4h',
+  'q6h',
+  'q8h',
+  'q12h',
+  'qHS',
+  'q4h PRN',
+  'q6h PRN',
+  'q8h PRN',
+  'q12h PRN',
+]);
+
+const frequencyAliases: Record<string, string[]> = {
+  daily: ['Daily'],
+  'q24h': ['Daily'],
+  'every 24 hours': ['Daily'],
+  bid: ['BID'],
+  tid: ['TID'],
+  qid: ['QID'],
+  'q4h': ['q4h'],
+  'q6h': ['q6h'],
+  'q8h': ['q8h'],
+  'q12h': ['q12h'],
+  'qhs': ['qHS'],
+  'q4h prn': ['q4h PRN'],
+  'q6h prn': ['q6h PRN'],
+  'q8h prn': ['q8h PRN'],
+  'q12h prn': ['q12h PRN'],
+  'q4-6h': ['q4h', 'q6h'],
+  'q6-8h': ['q6h', 'q8h'],
+  'q8-12h': ['q8h', 'q12h'],
+  'q6-12h': ['q6h', 'q12h'],
+  'q4-12h prn': ['q4h PRN', 'q6h PRN', 'q8h PRN', 'q12h PRN'],
+};
+
+const parseStandardFrequencies = (value: string): string[] => {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (frequencyAliases[lower]) return frequencyAliases[lower];
+  if (standardFrequencies.has(trimmed)) return [trimmed];
+
+  const parsed = new Set<string>();
+  if (!lower.includes('prn') && (/\bq24h\b/.test(lower) || lower.includes('every 24 hours'))) {
+    parsed.add('Daily');
+  }
+  if (/\bhs\b/.test(lower)) {
+    parsed.add('qHS');
+  }
+
+  const rangeMatch = lower.match(/\bq(4|6|8)-(6|8|12)h\b/);
+  if (rangeMatch) {
+    const [, start, end] = rangeMatch;
+    const intervalOptions = ['4', '6', '8', '12'].filter(
+      (interval) => Number(interval) >= Number(start) && Number(interval) <= Number(end),
+    );
+    intervalOptions.forEach((interval) => parsed.add(`q${interval}h${lower.includes('prn') ? ' PRN' : ''}`));
+  }
+
+  Array.from(standardFrequencies).forEach((standard) => {
+    if (lower.includes(standard.toLowerCase())) {
+      parsed.add(standard);
+    }
+  });
+
+  return Array.from(parsed);
+};
+
 const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
   if (!frequencies?.length) return frequencies;
   const normalized = frequencies
-    .map((value) => value)
-    .map((value) => value.trim())
+    .flatMap(parseStandardFrequencies)
     .filter(Boolean);
-  return Array.from(new Set(normalized));
+  const unique = Array.from(new Set(normalized));
+  return unique.length ? unique : undefined;
 };
 
 const curatedLabOrders: OrderItem[] = [
@@ -740,6 +812,11 @@ const withStatPriority = (order: OrderItem): OrderItem => {
   };
 };
 
+const withStandardFrequencies = (order: OrderItem): OrderItem => ({
+  ...order,
+  frequencies: normalizeFrequencies(order.frequencies),
+});
+
 export const allOrders: OrderItem[] = [
   ...labOrders,
   ...medicationOrders,
@@ -748,10 +825,9 @@ export const allOrders: OrderItem[] = [
   ...nursingOrders,
   ...procedureOrders,
   ...generalOrders,
-].map(withStatPriority);
+].map(withStandardFrequencies).map(withStatPriority);
 
 export const frequencies = [
-  { code: 'Once', description: 'One time only', category: 'Single' },
   { code: 'Daily', description: 'Once daily', category: 'Daily' },
   { code: 'BID', description: 'Twice daily', category: 'Daily' },
   { code: 'TID', description: 'Three times daily', category: 'Daily' },
@@ -760,8 +836,11 @@ export const frequencies = [
   { code: 'q6h', description: 'Every 6 hours', category: 'Hourly' },
   { code: 'q8h', description: 'Every 8 hours', category: 'Hourly' },
   { code: 'q12h', description: 'Every 12 hours', category: 'Hourly' },
-  { code: 'PRN', description: 'As needed', category: 'PRN' },
-  { code: 'Weekly', description: 'Once weekly', category: 'Weekly' },
+  { code: 'qHS', description: 'At bedtime', category: 'Daily' },
+  { code: 'q4h PRN', description: 'Every 4 hours as needed', category: 'PRN' },
+  { code: 'q6h PRN', description: 'Every 6 hours as needed', category: 'PRN' },
+  { code: 'q8h PRN', description: 'Every 8 hours as needed', category: 'PRN' },
+  { code: 'q12h PRN', description: 'Every 12 hours as needed', category: 'PRN' },
 ];
 
 export const routes = [

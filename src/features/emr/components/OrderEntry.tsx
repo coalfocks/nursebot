@@ -26,13 +26,12 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
-  const [useCustomFrequency, setUseCustomFrequency] = useState(false);
   const [orderDetails, setOrderDetails] = useState({
     frequency: '',
     route: '',
     dose: '',
     unit: '',
-    priority: 'Routine' as OrderPriority,
+    priority: '' as OrderPriority | '',
     scheduledTime: '',
     instructions: '',
     orderFor: '',
@@ -40,7 +39,22 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
   });
 
   const filteredOrders = allOrders.filter((order) => {
-    const matchesSearch = order.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const searchableText = [
+      order.name,
+      ...(order.aliases ?? []),
+      order.category,
+      order.subcategory,
+      order.defaultDose,
+      order.instructions,
+      ...(order.frequencies ?? []),
+      ...(order.routes ?? []),
+      ...(order.units ?? []),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const matchesSearch = !normalizedSearch || searchableText.includes(normalizedSearch);
     const matchesCategory =
       selectedCategory === 'all' ||
       (selectedCategory === 'Other'
@@ -51,7 +65,6 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
 
   const handleOrderSelect = (order: OrderItem) => {
     setSelectedOrder(order);
-    setUseCustomFrequency(false);
     
     // Extract numeric dose and unit from defaultDose
     // e.g., "10-40 units SC q24h" -> dose: "10", unit: "units"
@@ -74,7 +87,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       route: order.routes?.[0] || '',
       dose: extractedDose,
       unit: order.units?.[0] || extractedUnit,
-      priority: 'Routine',
+      priority: '',
       scheduledTime: '',
       instructions: '',
       orderFor: '',
@@ -82,12 +95,23 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
     });
   };
 
+  const requiresFrequency = Boolean(
+    selectedOrder && ((selectedOrder.frequencies?.length ?? 0) > 0 || selectedOrder.category === 'Medication'),
+  );
+  const hasFrequencyChoices = (selectedOrder?.frequencies?.length ?? 0) > 0;
+  const isOtherOrder = Boolean(selectedOrder && !['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category));
+  const orderFor = orderDetails.orderFor.trim();
+  const orderAction = orderDetails.orderAction.trim();
+  const missingPriority = selectedOrder && !orderDetails.priority;
+  const missingFrequency = selectedOrder && requiresFrequency && hasFrequencyChoices && !orderDetails.frequency.trim();
+  const missingOtherDetails = isOtherOrder && (!orderFor || !orderAction);
+  const cannotPlaceOrder = Boolean(
+    !selectedOrder || missingPriority || missingFrequency || missingOtherDetails || (requiresFrequency && !hasFrequencyChoices),
+  );
+
   const handlePlaceOrder = () => {
     if (!selectedOrder) return;
-    const isOtherOrder = !['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category);
-    const orderFor = orderDetails.orderFor.trim();
-    const orderAction = orderDetails.orderAction.trim();
-    if (isOtherOrder && (!orderFor || !orderAction)) return;
+    if (cannotPlaceOrder) return;
     const instructions = isOtherOrder
       ? `Order for: ${orderFor}\nRequested action: ${orderAction}${orderDetails.instructions.trim() ? `\nNotes: ${orderDetails.instructions.trim()}` : ''}`
       : orderDetails.instructions.trim() || undefined;
@@ -103,7 +127,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       frequency: orderDetails.frequency,
       route: orderDetails.route,
       dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
-      priority: orderDetails.priority,
+      priority: orderDetails.priority as OrderPriority,
       status: 'Active',
       orderedBy: patient.attendingPhysician,
       orderTime: new Date().toISOString(),
@@ -118,7 +142,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       route: '',
       dose: '',
       unit: '',
-      priority: 'Routine',
+      priority: '',
       scheduledTime: '',
       instructions: '',
       orderFor: '',
@@ -238,7 +262,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                       onValueChange={(value: OrderPriority) => setOrderDetails({ ...orderDetails, priority: value })}
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="Select priority" />
                       </SelectTrigger>
                       <SelectContent>
                         {selectedOrder.priorities.map((priority) => (
@@ -255,53 +279,33 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                     </Select>
                   </div>
 
-                  {(selectedOrder.frequencies?.length ?? 0) > 0 ? (
+                  {hasFrequencyChoices ? (
                     <div className="space-y-2">
                       <Label htmlFor="frequency">Frequency</Label>
                       <Select
-                        value={useCustomFrequency ? '__custom' : orderDetails.frequency}
-                        onValueChange={(value) => {
-                          if (value === '__custom') {
-                            setUseCustomFrequency(true);
-                            setOrderDetails({ ...orderDetails, frequency: '' });
-                          } else {
-                            setUseCustomFrequency(false);
-                            setOrderDetails({ ...orderDetails, frequency: value });
-                          }
-                        }}
+                        value={orderDetails.frequency}
+                        onValueChange={(value) => setOrderDetails({ ...orderDetails, frequency: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Select frequency" />
                         </SelectTrigger>
                         <SelectContent>
-                          {selectedOrder.frequencies.map((freq) => (
+                          {selectedOrder.frequencies?.map((freq) => (
                             <SelectItem key={freq} value={freq}>
                               {freq}
                             </SelectItem>
                           ))}
-                          <SelectItem value="__custom">Custom...</SelectItem>
                         </SelectContent>
                       </Select>
-                      {useCustomFrequency && (
-                        <Input
-                          id="frequency"
-                          placeholder="Enter custom frequency"
-                          value={orderDetails.frequency}
-                          onChange={(e) => setOrderDetails({ ...orderDetails, frequency: e.target.value })}
-                        />
-                      )}
                     </div>
-                  ) : (
+                  ) : requiresFrequency ? (
                     <div className="space-y-2">
-                      <Label htmlFor="frequency">Frequency</Label>
-                      <Input
-                        id="frequency"
-                        placeholder="Enter frequency"
-                        value={orderDetails.frequency}
-                        onChange={(e) => setOrderDetails({ ...orderDetails, frequency: e.target.value })}
-                      />
+                      <Label>Frequency</Label>
+                      <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                        No standard frequency is available for this order.
+                      </p>
                     </div>
-                  )}
+                  ) : null}
 
                   {selectedOrder.routes && (
                     <div className="space-y-2">
@@ -433,15 +437,24 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
                 <Button
                   onClick={handlePlaceOrder}
                   className="w-full"
-                  disabled={
-                    !selectedOrder ||
-                    (!['Lab', 'Medication', 'Imaging'].includes(selectedOrder.category) &&
-                      (!orderDetails.orderFor.trim() || !orderDetails.orderAction.trim()))
-                  }
+                  disabled={cannotPlaceOrder}
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Place Order
                 </Button>
+                {cannotPlaceOrder && (
+                  <p className="text-sm text-muted-foreground">
+                    {missingPriority
+                      ? 'Select a priority before placing this order.'
+                      : missingFrequency
+                        ? 'Select a standard frequency before placing this order.'
+                        : requiresFrequency && !hasFrequencyChoices
+                          ? 'This order needs a standard frequency, but none is available.'
+                          : missingOtherDetails
+                            ? 'Complete the order target and requested action before placing this order.'
+                            : 'Complete the required fields before placing this order.'}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="text-center py-8 text-muted-foreground">

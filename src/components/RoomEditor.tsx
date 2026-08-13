@@ -26,6 +26,19 @@ type CompletionHints = {
   planHint: string;
 };
 
+type BedsideRequirement = 'yes' | 'no' | 'situational';
+
+const bedsideRequirementOptions: Array<{ value: BedsideRequirement; label: string }> = [
+  { value: 'yes', label: 'Yes' },
+  { value: 'no', label: 'No' },
+  { value: 'situational', label: 'Situational' },
+];
+
+const normalizeBedsideRequirement = (value: unknown): BedsideRequirement => {
+  if (value === 'yes' || value === 'no' || value === 'situational') return value;
+  return 'situational';
+};
+
 const normalizeEvaluationLeniencyMultiplier = (value: number | null | undefined) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return 1;
   return Math.max(0.75, Math.min(1.5, Number(value.toFixed(2))));
@@ -173,6 +186,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
+  const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
+    normalizeBedsideRequirement(room?.bedside_requirement),
+  );
   const normalVitals = {
     temperature: 98.6,
     blood_pressure_systolic: 120,
@@ -484,6 +500,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         progress_note: progressNote || null,
         completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
+        bedside_requirement: bedsideRequirement,
         orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
@@ -911,6 +928,30 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                 placeholder="Guidance shown when going bedside"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Bedside Verdict
+              </label>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {bedsideRequirementOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setBedsideRequirement(option.value)}
+                    className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+                      bedsideRequirement === option.value
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                Shown in feedback so learners know whether bedside evaluation was warranted.
+              </p>
             </div>
           </div>
         </div>
