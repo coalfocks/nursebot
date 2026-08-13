@@ -1132,11 +1132,17 @@ export type Database = {
           admit_orders: string | null
           admitting_hpi: string
           bedside_exam: string | null
+          bedside_requirement: string
           bedside_required: boolean | null
+          consults: string | null
           created_at: string
           created_by: string | null
           difficulty: string
           event_vitals: string | null
+          generated_at: string | null
+          generation_error: string | null
+          generation_package: Json | null
+          generation_status: string
           harmful_actions: string[] | null
           hospital_days: number | null
           id: string
@@ -1144,7 +1150,9 @@ export type Database = {
           initial_message: string | null
           nurse_exam: string | null
           objectives: string
+          patient_chat_enabled: boolean
           progress_note: string | null
+          room_number: string | null
           school_id: string
           specialty: string
           title: string
@@ -1158,11 +1166,17 @@ export type Database = {
           admit_orders?: string | null
           admitting_hpi: string
           bedside_exam?: string | null
+          bedside_requirement?: string
           bedside_required?: boolean | null
+          consults?: string | null
           created_at?: string
           created_by?: string | null
           difficulty: string
           event_vitals?: string | null
+          generated_at?: string | null
+          generation_error?: string | null
+          generation_package?: Json | null
+          generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
           id?: string
@@ -1170,7 +1184,9 @@ export type Database = {
           initial_message?: string | null
           nurse_exam?: string | null
           objectives: string
+          patient_chat_enabled?: boolean
           progress_note?: string | null
+          room_number?: string | null
           school_id: string
           specialty: string
           title: string
@@ -1184,11 +1200,17 @@ export type Database = {
           admit_orders?: string | null
           admitting_hpi?: string
           bedside_exam?: string | null
+          bedside_requirement?: string
           bedside_required?: boolean | null
+          consults?: string | null
           created_at?: string
           created_by?: string | null
           difficulty?: string
           event_vitals?: string | null
+          generated_at?: string | null
+          generation_error?: string | null
+          generation_package?: Json | null
+          generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
           id?: string
@@ -1196,7 +1218,9 @@ export type Database = {
           initial_message?: string | null
           nurse_exam?: string | null
           objectives?: string
+          patient_chat_enabled?: boolean
           progress_note?: string | null
+          room_number?: string | null
           school_id?: string
           specialty?: string
           title?: string
@@ -1809,6 +1833,7 @@ export type Database = {
         Row: {
           available_school_ids: string[] | null
           bedside_hint: string | null
+          bedside_requirement: string
           case_goals: string | null
           completion_hint: string | null
           completion_token: string
@@ -1841,6 +1866,7 @@ export type Database = {
         Insert: {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
+          bedside_requirement?: string
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string
@@ -1873,6 +1899,7 @@ export type Database = {
         Update: {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
+          bedside_requirement?: string
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string

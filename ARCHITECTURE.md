@@ -36,6 +36,8 @@
 - **lab-results** (`supabase/functions/lab-results`): OpenAI-backed lab generation; supports batch tests with context; returns JSON labs. Used by STAT labs and manual AI labs.
 - **vitals-generator** (`supabase/functions/vitals-generator`): OpenAI-backed vitals generation; returns JSON array of vitals.
 - **chat** (`supabase/functions/chat`): Nurse chatbot backend used by `ChatInterface`.
+- **generate-case-package** (`supabase/functions/generate-case-package`): Admin case-builder generator that turns a structured blueprint into a previewable v2 package for patient demographics, EMR artifacts, event context, orders, bedside interaction, nurse-chat rules, and hidden evaluation data.
+- **patient-chat** (`supabase/functions/patient-chat`): Bedside patient conversation backend. It returns patient replies without writing to the main nurse-chat timeline, so bedside Q&A stays separate from nurse messages.
 - **superadmin-report** (`supabase/functions/superadmin-report`): Curated operations wrapper that verifies `profiles.role = 'super_admin'` before returning cross-school summary/report data plus assignment evaluation rows joined with student/assigned-by profiles.
 - Local generators (`aiLabGenerator.ts`) remain as fallbacks only.
 
@@ -44,6 +46,7 @@
 
 ## Room Configuration
 - `RoomEditor.tsx` (admin) manages room metadata: role/style, nurse context, EMR context (`emr_context`), expected diagnosis/treatment, goals, difficulty, objectives, progress note, completion hints, orders config, PDFs. Seeds initial labs/vitals when linking/creating patient (legacy).
+- `CaseBuilder.tsx` (admin) captures v2 case blueprints, generates preview packages, regenerates individual package sections, and publishes generated packages into live rooms. Published v2 packages are stored in `rooms.emr_context` under `source = case-builder-v2`, with room-scoped generated notes created for the linked EMR patient.
 
 ## Scope & Persistence Rules
 - Baseline (super admin) orders/labs/vitals save without assignmentId; roomId as applicable.
@@ -61,8 +64,9 @@
 - Lint: `npm run lint`
 - Build: `npm run build`
 - Preview: `npm run preview`
+- Legacy room migration: `npm run migrate:case-blueprints -- --dry-run` to inspect, then optionally `npm run migrate:case-blueprints -- --generate` after the `generate-case-package` function is deployed.
 - Supabase functions (serve): `npx supabase functions serve <name>`
-- Supabase functions (deploy): `npx supabase functions deploy lab-results vitals-generator chat ...`
+- Supabase functions (deploy): `npx supabase functions deploy lab-results vitals-generator chat generate-case-package patient-chat ...`
 
 ## Front-End Structure
 - `src/pages/` routes (EmrDashboard, AssignmentView, StudentDashboard, admin screens).

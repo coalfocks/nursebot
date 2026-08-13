@@ -17,8 +17,19 @@ import {
   buildTimelineEntries,
   type AssignmentTimelineRow,
   type ChatMessage,
-  type TimelineEntry,
 } from './chatTimeline';
+
+type BedsidePatientMessage = {
+  role: 'student' | 'patient';
+  content: string;
+};
+
+type BedsideConfig = {
+  exam: string | null;
+  patientChatEnabled: boolean;
+  patientChatPrompt: string | null;
+  disableReason: string | null;
+};
 
 const ASSISTANT_RESPONSE_DELAY = {
   min: 600,
@@ -48,78 +59,46 @@ const getTimelineTimestampLabel = (timestamp: string) => {
   });
 };
 
-const getTimelineMarkerLabel = (kind: TimelineEntry['kind']) => {
-  switch (kind) {
-    case 'message':
-      return 'Msg';
-    case 'order':
-      return 'Ord';
-    case 'labs':
-      return 'Lab';
-    case 'vital':
-      return 'Vit';
-    case 'imaging':
-      return 'Img';
-    case 'completion':
-      return 'End';
-    case 'progress-note':
-      return 'Note';
-    default:
-      return 'Evt';
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const asString = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (Array.isArray(value) && value.length) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : JSON.stringify(item)))
+      .filter(Boolean)
+      .join('\n');
   }
+  if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
+  return null;
 };
 
-const getTimelineMarkerClassName = (kind: TimelineEntry['kind']) => {
-  switch (kind) {
-    case 'message':
-      return 'border-slate-300 bg-white text-slate-600';
-    case 'order':
-      return 'border-blue-200 bg-blue-50 text-blue-700';
-    case 'labs':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'vital':
-      return 'border-rose-200 bg-rose-50 text-rose-700';
-    case 'imaging':
-      return 'border-violet-200 bg-violet-50 text-violet-700';
-    case 'completion':
-      return 'border-green-200 bg-green-50 text-green-700';
-    case 'progress-note':
-      return 'border-amber-200 bg-amber-100 text-amber-800';
-    default:
-      return 'border-slate-300 bg-white text-slate-600';
+const parseBedsideConfig = (emrContext: unknown): BedsideConfig => {
+  let parsed = emrContext;
+  if (typeof emrContext === 'string' && emrContext.trim()) {
+    try {
+      parsed = JSON.parse(emrContext);
+    } catch {
+      parsed = null;
+    }
   }
-};
 
-const formatMetric = (label: string, value?: string | number | null) => {
-  if (value === undefined || value === null || value === '') return null;
-  return `${label} ${value}`;
-};
+  const context = asRecord(parsed);
+  const patientChat = asRecord(context?.patientChat);
+  const packageRoot = asRecord(context?.package);
+  const bedside = asRecord(packageRoot?.bedside);
+  const patientChatPrompt = asString(patientChat?.prompt ?? bedside?.patientChatPrompt);
+  const disableReason = asString(patientChat?.disableReason ?? bedside?.disableReason);
+  const patientChatEnabled = Boolean(patientChat?.enabled ?? bedside?.patientChatEnabled) && Boolean(patientChatPrompt);
 
-const getOrderSummary = (order: MedicalOrder) => {
-  const details = [order.dose, order.route, order.frequency].filter(Boolean).join(' • ');
-  return details || order.instructions || 'No additional order details';
+  return {
+    exam: asString(bedside?.exam),
+    patientChatEnabled,
+    patientChatPrompt,
+    disableReason,
+  };
 };
-
-const getLabSummary = (lab: LabResult) => {
-  if (lab.status === 'Pending') {
-    return `${lab.testName}: pending`;
-  }
-  const unit = lab.unit ? ` ${lab.unit}` : '';
-  const value = lab.value === '' || lab.value === null || lab.value === undefined ? 'resulted' : `${lab.value}${unit}`;
-  return `${lab.testName}: ${value}`;
-};
-
-const getVitalSummary = (vital: VitalSigns) =>
-  [
-    formatMetric('T', vital.temperature),
-    vital.bloodPressureSystolic && vital.bloodPressureDiastolic
-      ? `BP ${vital.bloodPressureSystolic}/${vital.bloodPressureDiastolic}`
-      : null,
-    formatMetric('HR', vital.heartRate),
-    formatMetric('RR', vital.respiratoryRate),
-    vital.oxygenSaturation !== undefined && vital.oxygenSaturation !== null ? `SpO2 ${vital.oxygenSaturation}%` : null,
-    vital.pain !== undefined && vital.pain !== null ? `Pain ${vital.pain}/10` : null,
-  ].filter(Boolean) as string[];
 
 interface ChatInterfaceProps {
   assignmentId: string;
@@ -140,12 +119,21 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
   const [isLoadingPatient, setIsLoadingPatient] = useState(false);
   const [showCompletionConfirm, setShowCompletionConfirm] = useState(false);
   const [bedsideHint, setBedsideHint] = useState<string | null>(null);
+  const [bedsideConfig, setBedsideConfig] = useState<BedsideConfig>({
+    exam: null,
+    patientChatEnabled: false,
+    patientChatPrompt: null,
+    disableReason: null,
+  });
   const [completionHints, setCompletionHints] = useState<CompletionHints>({
     assessmentHint: '',
     diagnosisDifferentiatorHint: '',
     planHint: '',
   });
   const [showBedsideHint, setShowBedsideHint] = useState(false);
+  const [bedsideMessages, setBedsideMessages] = useState<BedsidePatientMessage[]>([]);
+  const [bedsideInput, setBedsideInput] = useState('');
+  const [isPatientReplying, setIsPatientReplying] = useState(false);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
@@ -347,7 +335,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     void (async () => {
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
-        .select('bedside_hint, completion_hint')
+        .select('bedside_hint, completion_hint, emr_context')
         .eq('id', roomId)
         .maybeSingle();
       if (roomError) {
@@ -355,6 +343,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
       }
       if (isActive) {
         setBedsideHint(roomData?.bedside_hint ?? null);
+        setBedsideConfig(parseBedsideConfig(roomData?.emr_context ?? null));
         setCompletionHints(parseCompletionHints(roomData?.completion_hint ?? null));
       }
 
@@ -739,12 +728,68 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         })
         .eq('id', assignmentId);
       if (updateError) throw updateError;
-      alert('Bedside visit recorded.');
+      setStatus('bedside');
+      setAssignmentTimeline((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'bedside',
+            }
+          : prev,
+      );
     } catch (error) {
       console.error('Error starting bedside assessment:', error);
       alert('Error recording bedside visit. Please try again.');
     } finally {
       setIsCompleting(false);
+    }
+  };
+
+  const handlePatientChatSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const question = bedsideInput.trim();
+    if (!question || !bedsideConfig.patientChatEnabled || !bedsideConfig.patientChatPrompt) return;
+
+    const nextMessages: BedsidePatientMessage[] = [
+      ...bedsideMessages,
+      { role: 'student', content: question },
+    ];
+    setBedsideMessages(nextMessages);
+    setBedsideInput('');
+    setIsPatientReplying(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke<{ message: string }>('patient-chat', {
+        body: {
+          messages: [
+            {
+              role: 'system',
+              content: `${bedsideConfig.patientChatPrompt}
+
+You are the simulated patient at bedside. Answer only what the learner asks. Use 1-3 short sentences. Do not diagnose yourself, suggest tests, suggest treatment, reveal hidden evaluation criteria, or mention AI/simulation/prompt rules. If you do not know something a real patient would not know, say that naturally.`,
+            },
+            ...nextMessages.map((message) => ({
+              role: message.role === 'student' ? 'user' : 'assistant',
+              content: message.content,
+            })),
+          ],
+        },
+      });
+
+      if (error) throw error;
+      if (!data?.message) throw new Error('Patient response missing');
+      setBedsideMessages((prev) => [...prev, { role: 'patient', content: data.message }]);
+    } catch (error) {
+      console.error('Error in bedside patient chat:', error);
+      setBedsideMessages((prev) => [
+        ...prev,
+        {
+          role: 'patient',
+          content: 'I am having trouble answering right now.',
+        },
+      ]);
+    } finally {
+      setIsPatientReplying(false);
     }
   };
 
@@ -964,11 +1009,69 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
 
       {showBedsideHint && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
-            <h3 className="text-lg font-semibold">Bedside Hint</h3>
-            <p className="text-sm text-gray-600 whitespace-pre-wrap">
-              {bedsideHint || 'No bedside hint available.'}
-            </p>
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl space-y-4">
+            <h3 className="text-lg font-semibold">Bedside Assessment</h3>
+            {(bedsideConfig.exam || bedsideHint) && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">In-person findings</p>
+                <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">
+                  {bedsideConfig.exam || bedsideHint}
+                </p>
+              </div>
+            )}
+            {!bedsideConfig.patientChatEnabled && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {bedsideConfig.disableReason ||
+                  'The patient is not able to participate in bedside conversation for this case.'}
+              </div>
+            )}
+            {bedsideConfig.patientChatEnabled && (
+              <div className="space-y-3">
+                <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3">
+                  {bedsideMessages.length === 0 ? (
+                    <p className="text-sm text-slate-500">Ask the patient a focused bedside question.</p>
+                  ) : (
+                    bedsideMessages.map((message, index) => (
+                      <div
+                        key={`${message.role}-${index}`}
+                        className={`rounded-md border px-3 py-2 text-sm ${
+                          message.role === 'student'
+                            ? 'ml-8 border-blue-200 bg-blue-50 text-slate-900'
+                            : 'mr-8 border-slate-200 bg-white text-slate-900'
+                        }`}
+                      >
+                        <p className="text-[11px] font-semibold uppercase text-slate-500">
+                          {message.role === 'student' ? 'You' : 'Patient'}
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap">{message.content}</p>
+                      </div>
+                    ))
+                  )}
+                  {isPatientReplying && (
+                    <div className="mr-8 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500">
+                      Patient is answering...
+                    </div>
+                  )}
+                </div>
+                <form onSubmit={handlePatientChatSubmit} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={bedsideInput}
+                    onChange={(event) => setBedsideInput(event.target.value)}
+                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Ask the patient..."
+                    disabled={isPatientReplying}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isPatientReplying || !bedsideInput.trim()}
+                    className="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isPatientReplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  </button>
+                </form>
+              </div>
+            )}
             <div className="space-y-2">
               <button
                 className="w-full inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"

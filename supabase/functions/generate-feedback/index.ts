@@ -375,6 +375,8 @@ Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
 Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
 Case Difficulty: ${caseDifficulty}
 Evaluation Leniency Multiplier: ${evaluationConfig.leniencyMultiplier}
+Bedside Required Verdict: ${assignment.room.bedside_requirement ?? 'situational'}
+Bedside Rationale/Hint: ${assignment.room.bedside_hint || 'Not configured'}
 
 **STUDENT'S WORK:**
 Use the student's progress note as the primary source for their assessment, working diagnosis, supporting evidence, and plan.

@@ -99,6 +99,19 @@ const parseMdmBreakdown = (value: Json | null): MdmBreakdown | null => {
   };
 };
 
+const formatBedsideRequirement = (value: string | null | undefined) => {
+  switch (value) {
+    case 'yes':
+      return 'Yes';
+    case 'no':
+      return 'No';
+    case 'situational':
+      return 'Situational';
+    default:
+      return null;
+  }
+};
+
 const scoreDisplay = (score: number | null | undefined) => (score == null ? '--' : String(score));
 
 function BreakdownRow({
@@ -370,6 +383,22 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
           </div>
           <p className="text-sm text-gray-600 leading-relaxed">
             {assignment.room.case_goals}
+          </p>
+        </div>
+      )}
+
+      {formatBedsideRequirement(assignment.room?.bedside_requirement) && (
+        <div className="border-t pt-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="w-4 h-4 text-emerald-500" />
+            <h3 className="text-sm font-medium text-gray-700">Bedside Verdict</h3>
+          </div>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            Going bedside was{' '}
+            <span className="font-semibold">
+              {formatBedsideRequirement(assignment.room?.bedside_requirement)}
+            </span>
+            {assignment.room?.bedside_hint ? `: ${assignment.room.bedside_hint}` : '.'}
           </p>
         </div>
       )}

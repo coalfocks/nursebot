@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "migrate:case-blueprints": "node scripts/migrate-rooms-to-case-blueprints.mjs",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",

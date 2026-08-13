@@ -28,6 +28,8 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
+const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1 - index) * 24}h prior`;
+
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -127,7 +129,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return () => {
       isActive = false;
     };
-  }, [patient.roomId]);
+  }, [assignmentId, patient.id, patient.roomId]);
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;
@@ -411,7 +413,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (_value: string, index: number) => `Run ${index + 1}`;
+  const formatCollectionLabel = (_value: string, index: number) => formatPriorLabLabel(index, sortedCollectionTimes.length);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -423,7 +425,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       acc[lab.testName] = [];
     }
     acc[lab.testName].push({
-      time: '',
+      time: lab.collectionTime,
       value: numericValue,
       status: lab.status,
     });
@@ -433,7 +435,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const labTrendsWithSequence = Object.fromEntries(
     Object.entries(labTrends).map(([key, data]) => [
       key,
-      data.map((entry, index) => ({ ...entry, time: `Run ${index + 1}` })),
+      [...data]
+        .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+        .map((entry, index) => ({ ...entry, time: formatPriorLabLabel(index, data.length) })),
     ]),
   );
 
