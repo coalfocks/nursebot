@@ -24,6 +24,7 @@ import {
   parseCompletionHints,
   parseCompletionHintViews,
 } from '../_shared/completion-hints.ts';
+import { OPENAI_MODEL } from '../_shared/openai-model.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -446,7 +447,7 @@ Provide your evaluation in this JSON format:
       });
 
       const completion = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: OPENAI_MODEL,
         messages: [
           { role: "system", content: `${EVALUATION_SYSTEM_PROMPT}\nYou must use the rubric language provided by the user prompt. Be precise with scoring, do not invent new score anchors, and keep each subsection feedback equivalent to the exact template line for the selected score.` },
           { role: "user", content: evaluationPrompt }
