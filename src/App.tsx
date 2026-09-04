@@ -61,7 +61,7 @@ function App() {
             ) : (
               <Landing />
             )
-          } 
+          }
         />
         <Route 
           path="/login" 
@@ -87,7 +87,7 @@ function App() {
             ) : (
               <Navigate to="/login" replace />
             )
-          } 
+          }
         />
         <Route 
           path="/emr" 
@@ -140,6 +140,16 @@ function App() {
           element={
             user ? (
               isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/test-rooms"
+          element={
+            user ? (
+              isTester ? <TestRooms /> : <Navigate to="/dashboard" replace />
             ) : (
               <Navigate to="/login" replace />
             )
@@ -218,7 +228,13 @@ function App() {
         />
         <Route 
           path="/assignments" 
-          element={user ? <MyCases /> : <Navigate to="/login" replace />} 
+          element={
+            user ? (
+              isTester ? <TestRooms /> : <MyCases />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
         />
         <Route 
           path="/assignment/:assignmentId" 
