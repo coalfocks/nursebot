@@ -190,6 +190,22 @@ const createClinicalNotePayloads = (
   return notePayloads;
 };
 
+const deriveImagingDetails = (orderName: string) => {
+  const normalized = orderName.toLowerCase();
+  let studyType = orderName;
+  if (normalized.includes('ct')) studyType = 'CT';
+  else if (normalized.includes('mri')) studyType = 'MRI';
+  else if (normalized.includes('ultrasound')) studyType = 'Ultrasound';
+  else if (normalized.includes('echo')) studyType = 'Echocardiogram';
+  else if (normalized.includes('x-ray') || normalized.includes('xray')) studyType = 'X-ray';
+
+  let contrast: 'with' | 'without' | null = null;
+  if (normalized.includes('with') && normalized.includes('contrast')) contrast = 'with';
+  else if (normalized.includes('without') || normalized.includes('no contrast')) contrast = 'without';
+
+  return { studyType, contrast };
+};
+
 const initialForm: CaseFormState = {
   specialty: specialtyOptions[0],
   title: '',
@@ -600,7 +616,97 @@ export default function CaseBuilder() {
         await supabase.from('rooms').update({ patient_id: patientId }).eq('id', roomRecord.id);
       }
 
+      const imagingFailures: string[] = [];
       if (patientId) {
+        const generatedImagingOrders = asStringArray(orders.imaging);
+
+        for (const orderName of generatedImagingOrders) {
+          const { studyType, contrast } = deriveImagingDetails(orderName);
+          const { data: existingStudy, error: existingStudyError } = await supabase
+            .from('imaging_studies')
+            .select('id, report')
+            .eq('patient_id', patientId)
+            .eq('room_id', roomRecord.id)
+            .eq('order_name', orderName)
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (existingStudyError) throw existingStudyError;
+          if (existingStudy?.report) continue;
+
+          const studyId = existingStudy?.id ?? crypto.randomUUID();
+          if (!existingStudy) {
+            const { error: studyError } = await supabase.from('imaging_studies').insert({
+              id: studyId,
+              patient_id: patientId,
+              room_id: roomRecord.id,
+              school_id: scopedSchoolId,
+              override_scope: 'room',
+              order_name: orderName,
+              study_type: studyType,
+              contrast,
+              priority: 'Routine',
+              status: 'Pending',
+              ordered_by: 'Case Builder',
+              order_time: generatedAt,
+              images: [],
+            });
+            if (studyError) throw studyError;
+          } else {
+            const { error: resetStudyError } = await supabase
+              .from('imaging_studies')
+              .update({ status: 'Pending', deleted_at: null })
+              .eq('id', studyId);
+            if (resetStudyError) throw resetStudyError;
+          }
+
+          try {
+            const response = await supabase.functions.invoke('imaging-results', {
+              body: {
+                orderName,
+                priority: 'Routine',
+                modality: studyType,
+                contrast,
+                imageNotes: generatedImagingOrders,
+                context: {
+                  room: { id: roomRecord.id, number: roomNumber },
+                  emrContext: emrContextPayload,
+                  nurseContext: roomPayload.nurse_context,
+                  expectedDiagnosis: roomPayload.expected_diagnosis,
+                  expectedTreatment: roomPayload.expected_treatment,
+                  caseGoals: roomPayload.case_goals,
+                  difficultyLevel: roomPayload.difficulty_level,
+                  objective: roomPayload.objective,
+                  progressNote: roomPayload.progress_note,
+                  completionHint: asString(bedside.completionHint),
+                },
+              },
+            });
+            if (response.error) throw response.error;
+            const report = (response.data as { report?: string } | null)?.report;
+            if (!report) throw new Error('Imaging report missing from response');
+
+            const { error: reportError } = await supabase
+              .from('imaging_studies')
+              .update({
+                report,
+                report_generated_at: new Date().toISOString(),
+                status: 'Completed',
+              })
+              .eq('id', studyId);
+            if (reportError) throw reportError;
+          } catch (error) {
+            console.error(`Failed to generate report for ${orderName}`, error);
+            imagingFailures.push(orderName);
+            await supabase
+              .from('imaging_studies')
+              .update({ status: 'Failed' })
+              .eq('id', studyId);
+          }
+        }
+
         const { error: deleteNotesError } = await supabase
           .from('clinical_notes')
           .update({ deleted_at: new Date().toISOString() })
@@ -623,7 +729,11 @@ export default function CaseBuilder() {
         }
       }
 
-      setError(`Published ${blueprint.title} to room ${roomNumber}.`);
+      setError(
+        imagingFailures.length
+          ? `Published ${blueprint.title} to room ${roomNumber}, but report generation failed for: ${imagingFailures.join(', ')}.`
+          : `Published ${blueprint.title} to room ${roomNumber}.`,
+      );
     } catch (err) {
       console.error('Failed to publish case blueprint to room', err);
       setError(err instanceof Error ? err.message : 'Unable to publish this generated case to a room.');

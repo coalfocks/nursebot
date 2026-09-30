@@ -4,7 +4,7 @@ import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
-import { Loader2, Plus, Upload, X } from 'lucide-react';
+import { Loader2, Plus, Trash, Upload, X } from 'lucide-react';
 import type { ImagingImage, ImagingStudy, Patient } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { supabase } from '../../../lib/supabase';
@@ -15,6 +15,27 @@ type PendingUpload = {
   id: string;
   file: File;
   annotation: string;
+};
+
+type RoomMeta = {
+  context?: string | null;
+  nurse_context?: string | null;
+  emr_context?: Record<string, unknown> | string | null;
+  expected_diagnosis?: string | null;
+  expected_treatment?: string[] | null;
+  case_goals?: string | null;
+  difficulty_level?: string | null;
+  objective?: string | null;
+  progress_note?: string | null;
+  completion_hint?: string | null;
+};
+
+const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] => {
+  if (!emrContext || typeof emrContext !== 'object') return [];
+  const packageOrders = (emrContext.package as { orders?: { imaging?: unknown } } | undefined)?.orders;
+  return Array.isArray(packageOrders?.imaging)
+    ? packageOrders.imaging.filter((item): item is string => typeof item === 'string')
+    : [];
 };
 
 interface ImagingStudiesProps {
@@ -36,6 +57,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
   const [modalImage, setModalImage] = useState<ImagingImage | null>(null);
   const [uploadingStudyId, setUploadingStudyId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<Record<string, PendingUpload[]>>({});
+  const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
   const [createForm, setCreateForm] = useState({
     orderName: '',
     studyType: 'CT',
@@ -58,6 +80,34 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       isMounted = false;
     };
   }, [patient.id, patient.roomId, assignmentId, refreshToken]);
+
+  useEffect(() => {
+    if (!patient.roomId) {
+      setRoomMeta(null);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select('context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint')
+        .eq('id', patient.roomId)
+        .maybeSingle();
+      if (!active || error || !data) return;
+      let emrContext: RoomMeta['emr_context'] = data.emr_context ?? null;
+      if (typeof emrContext === 'string') {
+        try {
+          emrContext = JSON.parse(emrContext);
+        } catch {
+          // Keep legacy text context as-is.
+        }
+      }
+      setRoomMeta({ ...data, emr_context: emrContext });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [patient.roomId]);
 
   const formatDate = (value?: string | null) => {
     if (!value) return '—';
@@ -112,6 +162,95 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       contrast: 'with',
       priority: 'Routine',
     });
+
+    try {
+      const [previousLabs, clinicalNotes, vitals, orders] = await Promise.all([
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+      const response = await supabase.functions.invoke('imaging-results', {
+        body: {
+          orderName: inserted.orderName || inserted.studyType,
+          priority: inserted.priority,
+          modality: inserted.studyType,
+          contrast: inserted.contrast,
+          imageNotes: generatedImagingNotes(roomMeta?.emr_context),
+          context: {
+            patient: {
+              firstName: patient.firstName,
+              lastName: patient.lastName,
+              dateOfBirth: patient.dateOfBirth,
+              gender: patient.gender,
+              mrn: patient.mrn,
+              allergies: patient.allergies,
+              codeStatus: patient.codeStatus,
+              attendingPhysician: patient.attendingPhysician,
+              service: patient.service,
+            },
+            room: { id: patient.roomId ?? null, number: patient.room ?? null },
+            assignmentId: assignmentId ?? null,
+            emrContext: roomMeta?.emr_context ?? null,
+            nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+            expectedDiagnosis: roomMeta?.expected_diagnosis ?? null,
+            expectedTreatment: roomMeta?.expected_treatment ?? null,
+            caseGoals: roomMeta?.case_goals ?? null,
+            difficultyLevel: roomMeta?.difficulty_level ?? null,
+            objective: roomMeta?.objective ?? null,
+            progressNote: roomMeta?.progress_note ?? null,
+            completionHint: roomMeta?.completion_hint ?? null,
+            clinicalNotes: clinicalNotes.slice(0, 6).map((note) => ({
+              type: note.type,
+              title: note.title,
+              content: note.content,
+            })),
+            vitals: vitals.slice(0, 6),
+            previousLabs: previousLabs.slice(0, 10).map((lab) => ({
+              testName: lab.testName,
+              value: lab.value,
+              unit: lab.unit,
+              referenceRange: lab.referenceRange,
+              status: lab.status,
+              collectionTime: lab.collectionTime,
+            })),
+            orders: orders.slice(0, 6).map((order) => ({
+              orderName: order.orderName,
+              category: order.category,
+              priority: order.priority,
+              status: order.status,
+              instructions: order.instructions,
+            })),
+          },
+        },
+      });
+      if (response.error) throw response.error;
+      const report = (response.data as { report?: string } | null)?.report;
+      if (!report) throw new Error('Imaging report missing from response');
+      const updated = await emrApi.updateImagingStudy(inserted.id, {
+        report,
+        reportGeneratedAt: new Date().toISOString(),
+        status: 'Completed',
+      });
+      if (updated) setStudies((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (err) {
+      console.error('Failed to generate imaging report', err);
+      await emrApi.updateImagingStudy(inserted.id, { status: 'Failed' });
+      setStudies((prev) =>
+        prev.map((item) => (item.id === inserted.id ? { ...item, status: 'Failed' } : item)),
+      );
+      setError('Imaging study created, but the radiology report could not be generated.');
+    }
+  };
+
+  const handleDeleteStudy = async (study: ImagingStudy) => {
+    if (!window.confirm(`Delete ${study.orderName || study.studyType}?`)) return;
+    const deleted = await emrApi.deleteImagingStudy(study.id);
+    if (!deleted) {
+      setError('Failed to delete imaging study.');
+      return;
+    }
+    setStudies((prev) => prev.filter((item) => item.id !== study.id));
   };
 
   const handleSelectFiles = (studyId: string, files: FileList | null) => {
@@ -301,6 +440,16 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                     <div className="flex items-center gap-2">
                       {study.priority && <Badge variant="outline">{study.priority}</Badge>}
                       {study.status && <Badge>{study.status}</Badge>}
+                      {canEdit && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleDeleteStudy(study)}
+                          aria-label={`Delete ${study.orderName || study.studyType}`}
+                        >
+                          <Trash className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardHeader>

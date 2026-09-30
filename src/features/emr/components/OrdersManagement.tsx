@@ -37,6 +37,14 @@ type RoomMeta = {
   completion_hint?: string | null;
 };
 
+const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] => {
+  if (!emrContext || typeof emrContext !== 'object') return [];
+  const packageOrders = (emrContext.package as { orders?: { imaging?: unknown } } | undefined)?.orders;
+  return Array.isArray(packageOrders?.imaging)
+    ? packageOrders.imaging.filter((item): item is string => typeof item === 'string')
+    : [];
+};
+
 export function OrdersManagement({
   patient,
   assignmentId,
@@ -178,6 +186,7 @@ export function OrdersManagement({
           priority: order.priority,
           modality: studyType,
           contrast,
+          imageNotes: generatedImagingNotes(roomMeta?.emr_context),
           context: {
             patient: {
               firstName: patient.firstName,

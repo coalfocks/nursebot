@@ -929,6 +929,18 @@ export const emrApi = {
     return mapImagingStudy(data, data.patient_id ?? '');
   },
 
+  async deleteImagingStudy(studyId: string): Promise<boolean> {
+    const { error } = await supabase
+      .from('imaging_studies')
+      .update({ deleted_at: new Date().toISOString(), status: 'Deleted' })
+      .eq('id', studyId);
+    if (error) {
+      console.error('Error deleting imaging study', error);
+      return false;
+    }
+    return true;
+  },
+
   async getRoomOrdersConfig(roomId: number): Promise<RoomOrdersConfig | null> {
     const { data, error } = await supabase
       .from('rooms')
