@@ -48,6 +48,18 @@ const scopeMatchesContext = (
   return true;
 };
 
+const imagingOrderMatchesStudy = (orderName: string, studyName: string) => {
+  const order = orderName.trim().toLowerCase();
+  const study = studyName.trim().toLowerCase();
+  if (!order || !study) return false;
+  if (order === study || order.includes(study) || study.includes(order)) return true;
+
+  const modality = ['mri', 'ct', 'ultrasound', 'echocardiogram', 'echo', 'x-ray', 'xray'].find(
+    (term) => order.includes(term) && study.includes(term),
+  );
+  return Boolean(modality);
+};
+
 const getRoomLineage = async (roomId?: number | null): Promise<RoomLineage | null> => {
   if (!roomId) return null;
   const visited = new Set<number>();
@@ -843,17 +855,43 @@ export const emrApi = {
     roomId?: number | null,
   ): Promise<ImagingStudy[]> {
     const targetRooms = await getRoomLineage(roomId);
-    const { data, error } = await supabase
-      .from('imaging_studies')
-      .select('*')
-      .eq('patient_id', patientId)
-      .is('deleted_at', null)
-      .order('order_time', { ascending: false });
+    const [{ data, error }, placedOrdersResult] = await Promise.all([
+      supabase
+        .from('imaging_studies')
+        .select('*')
+        .eq('patient_id', patientId)
+        .is('deleted_at', null)
+        .order('order_time', { ascending: false }),
+      assignmentId
+        ? supabase
+            .from('medical_orders')
+            .select('order_name, assignment_id, room_id, override_scope, status')
+            .eq('patient_id', patientId)
+            .eq('category', 'Imaging')
+            .is('deleted_at', null)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
 
     if (error) {
       console.error('Error fetching imaging studies', error);
       return [];
     }
+    if (placedOrdersResult.error) {
+      console.error('Error fetching imaging orders for result gating', placedOrdersResult.error);
+      return [];
+    }
+
+    const placedOrderNames = (placedOrdersResult.data ?? [])
+      .filter((order) =>
+        scopeMatchesContext(
+          deriveScope(order.override_scope, order.assignment_id, order.room_id),
+          order.room_id,
+          targetRooms,
+          order.assignment_id,
+          assignmentId,
+        ),
+      )
+      .map((order) => order.order_name);
 
     return (data ?? [])
       .map((row) => mapImagingStudy(row, patientId))
@@ -864,6 +902,13 @@ export const emrApi = {
           targetRooms,
           study.assignmentId ?? null,
           assignmentId,
+        ),
+      )
+      .filter((study) =>
+        !assignmentId ||
+        (study.overrideScope === 'assignment' && study.assignmentId === assignmentId) ||
+        placedOrderNames.some((orderName) =>
+          imagingOrderMatchesStudy(orderName, study.orderName ?? study.studyType),
         ),
       );
   },
