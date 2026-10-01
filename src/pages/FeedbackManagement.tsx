@@ -10,6 +10,7 @@ import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { isFeedbackEligibleStatus } from '../lib/feedbackEligibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: Database['public']['Tables']['profiles']['Row'];
@@ -417,7 +418,8 @@ export default function FeedbackManagement() {
                         )}
                         Export All Cases CSV
                       </button>
-                      {(assignment.feedback_status === 'failed' || assignment.feedback_status === 'pending') && (
+                      {isFeedbackEligibleStatus(assignment.status) &&
+                        (assignment.feedback_status === 'failed' || assignment.feedback_status === 'pending') && (
                         <button
                           onClick={() => handleRetryFeedback(assignment.id)}
                           disabled={processingIds.has(assignment.id)}

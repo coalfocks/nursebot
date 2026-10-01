@@ -25,6 +25,7 @@ import {
   parseCompletionHintViews,
 } from '../_shared/completion-hints.ts';
 import { OPENAI_MODEL } from '../_shared/openai-model.ts';
+import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -206,7 +207,7 @@ Deno.serve(async (req) => {
 
       if (assignmentError) throw assignmentError;
 
-      if (!['completed', 'bedside'].includes(assignment.status)) {
+      if (!isFeedbackEligibleStatus(assignment.status)) {
         throw new Error('Cannot generate feedback for incomplete assignment');
       }
 

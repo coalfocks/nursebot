@@ -149,7 +149,7 @@ export default function ExportScoresCard() {
           school:school_id ( name ),
           room:room_id ( room_number, specialty:specialty_id ( name ) )
         `)
-        .in('status', ['completed', 'bedside'])
+        .eq('status', 'completed')
         .gte('completed_at', toIsoStart(startDate))
         .lte('completed_at', toIsoEnd(endDate))
         .order('completed_at', { ascending: true })
