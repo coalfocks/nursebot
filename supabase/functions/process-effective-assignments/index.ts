@@ -82,22 +82,10 @@ Deno.serve(async (req)=>{
         }).eq('id', assignment.id);
       }
     }
-    const { data: completedAssignments, error: completedError } = await supabase.from('student_room_assignments').select('id').in('status', [
-      'assigned',
-      'in_progress'
-    ]).not('effective_date', 'is', null).lte('effective_date', new Date(Date.now() - 60 * 60 * 1000).toISOString());
-    if (completedError) throw completedError;
-    for (const assignment of completedAssignments || []){
-      await supabase.from('student_room_assignments').update({
-        status: 'completed',
-        updated_at: now,
-        feedback_status: 'pending'
-      }).eq('id', assignment.id);
-    }
     return new Response(JSON.stringify({
       success: true,
       effectiveProcessed: effectiveAssignments?.length || 0,
-      completedProcessed: completedAssignments?.length || 0
+      completedProcessed: 0
     }), {
       status: 200,
       headers: {

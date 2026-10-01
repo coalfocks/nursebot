@@ -351,7 +351,7 @@ const buildHtml = (
               .join('')}
           </tbody>
         </table>
-        <p class="muted">Only assignments with status completed/bedside and feedback status completed are included.</p>
+        <p class="muted">Only explicitly completed assignments with completed feedback are included.</p>
       </section>
     </div>
   </body>
@@ -436,7 +436,7 @@ Deno.serve(async (req) => {
         room:room_id ( room_number )
       `)
       .eq('student_id', user.id)
-      .in('status', ['completed', 'bedside'])
+      .eq('status', 'completed')
       .eq('feedback_status', 'completed')
       .order('completed_at', { ascending: false });
 

@@ -119,7 +119,7 @@ export default function AdminDashboard() {
         let completedQuery = supabase
           .from('student_room_assignments')
           .select('id', { count: 'exact', head: true })
-          .in('status', ['completed', 'bedside']);
+          .eq('status', 'completed');
         if (scopedSchoolId) {
           completedQuery = completedQuery.eq('school_id', scopedSchoolId);
         }
@@ -135,7 +135,8 @@ export default function AdminDashboard() {
 
         let gradeQuery = supabase
           .from('student_room_assignments')
-          .select('grade, nurse_feedback');
+          .select('grade, nurse_feedback')
+          .eq('status', 'completed');
         if (scopedSchoolId) {
           gradeQuery = gradeQuery.eq('school_id', scopedSchoolId);
         }

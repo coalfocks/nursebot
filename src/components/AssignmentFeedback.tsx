@@ -1,5 +1,6 @@
 import { Loader2, Target, ClipboardList } from 'lucide-react';
 import type { Database } from '../lib/database.types';
+import { isFeedbackEligibleStatus } from '../lib/feedbackEligibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room?: Database['public']['Tables']['rooms']['Row'] | null;
@@ -16,7 +17,7 @@ type LegacyFeedback = {
 
 export default function AssignmentFeedback({ assignment, onRetryFeedback }: AssignmentFeedbackProps) {
   // Only show feedback when status is completed
-  if (!['completed', 'bedside'].includes(assignment.status)) {
+  if (!isFeedbackEligibleStatus(assignment.status)) {
     return null;
   }
 

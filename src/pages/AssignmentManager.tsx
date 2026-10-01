@@ -603,9 +603,7 @@ export default function AssignmentManager() {
       completed: 'bg-green-100 text-green-800'
     };
 
-    const label = status === 'bedside'
-      ? 'Completed'
-      : status.replace('_', ' ').charAt(0).toUpperCase() + status.slice(1);
+    const label = status.replace('_', ' ').charAt(0).toUpperCase() + status.slice(1);
 
     return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${badges[status as keyof typeof badges]}`}>
@@ -962,18 +960,20 @@ export default function AssignmentManager() {
                               <MessageSquare className="w-4 h-4 mr-1" />
                               View Chat
                             </button>
-                            <button
-                              onClick={() => handleRerunAssessment(assignment.id)}
-                              disabled={rerunningAssessments.has(assignment.id)}
-                              className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {rerunningAssessments.has(assignment.id) ? (
-                                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                              ) : (
-                                <RefreshCw className="w-4 h-4 mr-1" />
-                              )}
-                              {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
-                            </button>
+                            {assignment.status === 'completed' && (
+                              <button
+                                onClick={() => handleRerunAssessment(assignment.id)}
+                                disabled={rerunningAssessments.has(assignment.id)}
+                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {rerunningAssessments.has(assignment.id) ? (
+                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-4 h-4 mr-1" />
+                                )}
+                                {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
+                              </button>
+                            )}
                           </>
                         )}
                       </div>

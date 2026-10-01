@@ -155,8 +155,8 @@ function BreakdownRow({
 export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
   const [expandedSection, setExpandedSection] = useState<'communication' | 'mdm' | null>(null);
 
-  // Only show for completed/bedside status
-  if (!['completed', 'bedside'].includes(assignment.status || '')) {
+  // Only show after explicit completion
+  if (assignment.status !== 'completed') {
     return null;
   }
 

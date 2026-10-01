@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
     let query = supabaseClient
       .from('student_room_assignments')
       .select('id, room_id, student_id, status, feedback_status')
-      .in('status', ['completed', 'bedside']); // Only rerun completed assignments
+      .eq('status', 'completed'); // Only rerun explicitly completed assignments
 
     // Apply filters based on request
     if (assignment_ids && assignment_ids.length > 0) {

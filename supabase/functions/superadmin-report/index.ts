@@ -1095,13 +1095,13 @@ Deno.serve(async (req) => {
 
     let pendingFeedback = 0;
     for (const assignment of assignments) {
-      if (assignment.feedback_status === 'pending') pendingFeedback += 1;
+      if (assignment.status === 'completed' && assignment.feedback_status === 'pending') pendingFeedback += 1;
       if (!assignment.school_id) continue;
       const summary = schoolSummaries.get(assignment.school_id);
       if (!summary) continue;
 
       summary.assignmentsTotal += 1;
-      if (assignment.status === 'completed' || assignment.status === 'bedside') {
+      if (assignment.status === 'completed') {
         summary.assignmentsCompleted += 1;
       }
     }
@@ -1185,7 +1185,7 @@ Deno.serve(async (req) => {
         activeRooms: rooms.filter((room) => room.is_active).length,
         totalAssignments: assignments.length,
         completedAssignments: assignments.filter((assignment) =>
-          assignment.status === 'completed' || assignment.status === 'bedside'
+          assignment.status === 'completed'
         ).length,
         feedbackPending: pendingFeedback,
       },

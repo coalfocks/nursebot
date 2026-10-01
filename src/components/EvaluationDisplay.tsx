@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Activity, AlertTriangle, CheckCircle, XCircle, Target, Zap } from 'lucide-react';
 import type { Database } from '../lib/database.types';
+import { isFeedbackEligibleStatus } from '../lib/feedbackEligibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'];
 
@@ -53,7 +54,7 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
   const caseDifficulty = (assignment as any).case_difficulty || 'intermediate';
 
   // Only show when feedback is ready
-  if (!['completed', 'bedside'].includes(assignment.status)) {
+  if (!isFeedbackEligibleStatus(assignment.status)) {
     return null;
   }
 

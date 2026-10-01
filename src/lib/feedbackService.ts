@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { isFeedbackEligibleStatus } from './feedbackEligibility';
 
 export interface FeedbackResponse {
   overallScore: number;
@@ -20,6 +21,17 @@ export interface FeedbackResponse {
 
 export async function generateFeedback(assignmentId: string): Promise<void> {
   try {
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('student_room_assignments')
+      .select('status')
+      .eq('id', assignmentId)
+      .maybeSingle();
+
+    if (assignmentError) throw assignmentError;
+    if (!assignment || !isFeedbackEligibleStatus(assignment.status)) {
+      throw new Error('Cannot generate feedback until the assignment is completed');
+    }
+
     // First, reset the status to pending and clear any previous errors
     const { error: resetError } = await supabase
       .from('student_room_assignments')
@@ -73,7 +85,7 @@ export async function checkPendingFeedback(): Promise<void> {
     .from('student_room_assignments')
     .select('id')
     .eq('feedback_status', 'pending')
-    .in('status', ['completed', 'bedside']);
+    .eq('status', 'completed');
 
   if (error) {
     console.error('Error checking pending feedback:', error);

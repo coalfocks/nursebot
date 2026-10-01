@@ -11,6 +11,8 @@ import { emrApi } from '../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { generateFeedback } from '../../../lib/feedbackService';
+import { isFeedbackEligibleStatus } from '../../../lib/feedbackEligibility';
+import { supabase } from '../../../lib/supabase';
 
 interface ClinicalNotesProps {
   patient: Patient;
@@ -134,7 +136,15 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
 
       // Trigger feedback generation for the assignment
       try {
-        await generateFeedback(note.assignmentId);
+        const { data: assignment, error: assignmentError } = await supabase
+          .from('student_room_assignments')
+          .select('status')
+          .eq('id', note.assignmentId)
+          .maybeSingle();
+        if (assignmentError) throw assignmentError;
+        if (isFeedbackEligibleStatus(assignment?.status)) {
+          await generateFeedback(note.assignmentId);
+        }
       } catch (error) {
         console.error('Error generating feedback:', error);
         // Note is still signed even if feedback generation fails
