@@ -392,19 +392,47 @@ export const emrApi = {
 
   async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
     const targetRooms = await getRoomLineage(roomId);
-    const { data, error } = await supabase
-      .from('lab_results')
-      .select('*')
-      .eq('patient_id', patientId)
-      .is('deleted_at', null)
-      .order('collection_time', { ascending: false });
+    const queries = [
+      supabase
+        .from('lab_results')
+        .select('*')
+        .eq('patient_id', patientId)
+        .is('assignment_id', null)
+        .is('room_id', null)
+        .is('deleted_at', null),
+    ];
 
-    if (error) {
-      console.error('Error fetching labs', error);
-      return [];
+    if (targetRooms?.length) {
+      queries.push(
+        supabase
+          .from('lab_results')
+          .select('*')
+          .eq('patient_id', patientId)
+          .in('room_id', targetRooms)
+          .is('assignment_id', null)
+          .is('deleted_at', null),
+      );
     }
 
-    return (data ?? [])
+    if (assignmentId) {
+      queries.push(
+        supabase
+          .from('lab_results')
+          .select('*')
+          .eq('patient_id', patientId)
+          .eq('assignment_id', assignmentId)
+          .is('deleted_at', null),
+      );
+    }
+
+    const results = await Promise.all(queries);
+    const errors = results.map(({ error }) => error).filter(Boolean);
+    if (errors.length) {
+      errors.forEach((error) => console.error('Error fetching labs', error));
+    }
+
+    return results
+      .flatMap(({ data }) => data ?? [])
       .map((row) => {
         const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
         return {
@@ -433,7 +461,12 @@ export const emrApi = {
           lab.assignmentId ?? null,
           assignmentId,
         ),
-      );
+      )
+      .sort((a, b) => {
+        const aTime = new Date(a.collectionTime ?? a.resultTime ?? 0).getTime();
+        const bTime = new Date(b.collectionTime ?? b.resultTime ?? 0).getTime();
+        return bTime - aTime;
+      });
   },
 
   async addLabResults(labs: LabResult[], roomId?: number | null): Promise<void> {

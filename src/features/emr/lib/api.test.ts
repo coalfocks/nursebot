@@ -57,6 +57,17 @@ const builder = (result: { data: unknown; error: unknown }) => {
   return chain;
 };
 
+const readableBuilder = (result: { data: unknown; error: unknown }) => {
+  const chain = {
+    eq: vi.fn(() => chain),
+    in: vi.fn(() => chain),
+    is: vi.fn(() => chain),
+    select: vi.fn(() => chain),
+    then: (resolve: (value: typeof result) => unknown) => Promise.resolve(result).then(resolve),
+  };
+  return chain;
+};
+
 const draftOrder: MedicalOrder = {
   id: 'optimistic-id',
   patientId: 'patient-1',
@@ -116,5 +127,39 @@ describe('emrApi versioned note/order mutations', () => {
       expectedVersion: 3,
       current: expect.objectContaining({ status: 'Completed', recordVersion: 4 }),
     });
+  });
+
+  it('reads baseline, room, and active-assignment labs without mixing other sessions', async () => {
+    const lab = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      id: 'baseline-lab',
+      patient_id: 'patient-1',
+      assignment_id: null,
+      room_id: null,
+      override_scope: 'baseline',
+      test_name: 'AST',
+      value: 1200,
+      unit: 'U/L',
+      reference_range: '10-40',
+      status: 'Critical',
+      collection_time: '2000-01-01T00:00:00.000Z',
+      result_time: '2000-01-01T00:00:00.000Z',
+      ordered_by: 'Admission',
+      created_at: null,
+      deleted_at: null,
+      ...overrides,
+    });
+    let labQuery = 0;
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return builder({ data: { continues_from: null }, error: null });
+      labQuery += 1;
+      if (labQuery === 1) return readableBuilder({ data: [lab()], error: null });
+      if (labQuery === 2) return readableBuilder({ data: [lab({ id: 'room-lab', room_id: 3, override_scope: 'room', test_name: 'INR', value: 1.8 })], error: null });
+      return readableBuilder({ data: [lab({ id: 'active-lab', assignment_id: 'assignment-1', room_id: 3, override_scope: 'assignment', test_name: 'Ammonia', value: 125 })], error: null });
+    });
+
+    const labs = await emrApi.listLabResults('patient-1', 'assignment-1', 3);
+
+    expect(labs).toHaveLength(3);
+    expect(new Set(labs.map((entry) => entry.id))).toEqual(new Set(['active-lab', 'room-lab', 'baseline-lab']));
   });
 });
