@@ -1,7 +1,7 @@
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
-import { OPENAI_MODEL } from '../_shared/openai-model.ts';
+import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 interface ChatMessage {
   role: 'system' | 'assistant' | 'user';
@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
       });
 
       const completion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
+        model: getOpenAIModel('chat'),
         messages,
         max_completion_tokens: 10000,
       });

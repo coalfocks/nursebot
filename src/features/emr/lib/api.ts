@@ -13,40 +13,11 @@ import type {
   IntakeOutput,
 } from './types';
 
-type OverrideScope = 'baseline' | 'room' | 'assignment';
-type RoomLineage = number[];
+import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 
-const deriveScope = (
-  overrideScope: string | null | undefined,
-  assignmentId?: string | null,
-  roomId?: number | null,
-): OverrideScope => {
-  if (overrideScope === 'assignment' || overrideScope === 'room' || overrideScope === 'baseline') {
-    return overrideScope;
-  }
-  if (assignmentId) return 'assignment';
-  if (roomId) return 'room';
-  return 'baseline';
-};
-
-const scopeMatchesContext = (
-  scope: OverrideScope,
-  rowRoomId: number | null,
-  targetRoomIds?: RoomLineage | null,
-  rowAssignmentId?: string | null,
-  targetAssignmentId?: string | null,
-) => {
-  if (scope === 'assignment') {
-    return Boolean(targetAssignmentId && rowAssignmentId === targetAssignmentId);
-  }
-  if (scope === 'room') {
-    if (!targetRoomIds || targetRoomIds.length === 0) return true;
-    return targetRoomIds.includes(rowRoomId ?? -1);
-  }
-  return true;
-};
+const deriveScope = resolveOverrideScope;
 
 const imagingOrderMatchesStudy = (orderName: string, studyName: string) => {
   const order = orderName.trim().toLowerCase();

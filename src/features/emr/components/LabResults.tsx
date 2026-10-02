@@ -12,6 +12,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 interface LabResultsProps {
   patient: Patient;
@@ -60,26 +61,31 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     progress_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
-      const labOptions = useMemo(
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
+  const { capture, isCurrent } = requestIdentity;
+  const labOptions = useMemo(
     () => [...instantLabs, ...pendingLabs].sort((a, b) => a.localeCompare(b)),
     [],
   );
 
   useEffect(() => {
+    const request = capture();
+    setLabResults([]);
     if (isSandbox) {
-      setLabResults(sandboxLabs ?? []);
+      if (isCurrent(request)) setLabResults(sandboxLabs ?? []);
       return;
     }
     void (async () => {
       const data = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
+      if (!isCurrent(request)) return;
       setLabResults(data);
     })();
-  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent]);
 
   useEffect(() => {
-    let isActive = true;
+    const request = capture();
+    setRoomMeta(null);
     if (!patient.roomId) {
-      setRoomMeta(null);
       return;
     }
     void (async () => {
@@ -90,7 +96,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         )
         .eq('id', patient.roomId)
         .maybeSingle();
-      if (!isActive) return;
+      if (!isCurrent(request)) return;
       if (error) {
         console.error('Failed to load room context for labs', error);
         return;
@@ -126,10 +132,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
-    return () => {
-      isActive = false;
-    };
-  }, [assignmentId, patient.id, patient.roomId]);
+  }, [assignmentId, patient.id, patient.roomId, capture, isCurrent]);
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;

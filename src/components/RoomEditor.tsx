@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -116,7 +116,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const advancedSettingsVisible = false;
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
   // Form state
@@ -980,26 +980,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         </div>
       </div>
 
-      {/* Advanced Settings */}
-      <div className="space-y-4 border-t border-gray-200 pt-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-medium text-gray-900">Advanced Settings</h3>
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
-          >
-            {showAdvanced ? (
-              <ChevronUp className="h-4 w-4 mr-1" />
-            ) : (
-              <ChevronDown className="h-4 w-4 mr-1" />
-            )}
-            {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings'}
-          </button>
-        </div>
-
-        {showAdvanced && (
-          <div className="space-y-4">
+      {/* Advanced settings remain in state and roomData for backwards-compatible persistence,
+          but are intentionally not exposed in the editor UI for now. */}
+      {advancedSettingsVisible && (
+          <div className="space-y-4 border-t border-gray-200 pt-6">
             <div>
               <label htmlFor="difficulty" className="block text-sm font-medium text-gray-700">
                 Difficulty Level
@@ -1104,8 +1088,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               </p>
             </div>
           </div>
-        )}
-      </div>
+      )}
 
       {error && (
         <div className="text-sm text-red-600">

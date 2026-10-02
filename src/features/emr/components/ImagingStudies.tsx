@@ -10,6 +10,7 @@ import { emrApi } from '../lib/api';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 type PendingUpload = {
   id: string;
@@ -64,36 +65,34 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
     contrast: 'with',
     priority: 'Routine' as ImagingStudy['priority'],
   });
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
 
   useEffect(() => {
-    let isMounted = true;
+    const request = requestIdentity.capture();
     const load = async () => {
       setLoading(true);
+      setStudies([]);
       const data = await emrApi.listImagingStudies(patient.id, assignmentId, patient.roomId ?? null);
-      if (isMounted) {
-        setStudies(data);
-        setLoading(false);
-      }
+      if (!requestIdentity.isCurrent(request)) return;
+      setStudies(data);
+      setLoading(false);
     };
     void load();
-    return () => {
-      isMounted = false;
-    };
-  }, [patient.id, patient.roomId, assignmentId, refreshToken]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, requestIdentity]);
 
   useEffect(() => {
+    const request = requestIdentity.capture();
+    setRoomMeta(null);
     if (!patient.roomId) {
-      setRoomMeta(null);
       return;
     }
-    let active = true;
     void (async () => {
       const { data, error } = await supabase
         .from('rooms')
         .select('context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint')
         .eq('id', patient.roomId)
         .maybeSingle();
-      if (!active || error || !data) return;
+      if (!requestIdentity.isCurrent(request) || error || !data) return;
       let emrContext: RoomMeta['emr_context'] = data.emr_context ?? null;
       if (typeof emrContext === 'string') {
         try {
@@ -104,10 +103,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       }
       setRoomMeta({ ...data, emr_context: emrContext });
     })();
-    return () => {
-      active = false;
-    };
-  }, [patient.roomId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   const formatDate = (value?: string | null) => {
     if (!value) return '—';

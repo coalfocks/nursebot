@@ -13,6 +13,7 @@ import { isSuperAdmin } from '../../../lib/roles';
 import { generateFeedback } from '../../../lib/feedbackService';
 import { isFeedbackEligibleStatus } from '../../../lib/feedbackEligibility';
 import { supabase } from '../../../lib/supabase';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 interface ClinicalNotesProps {
   patient: Patient;
@@ -35,6 +36,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
     content: '',
   });
   const qualtricsUrl = 'https://blueq.co1.qualtrics.com/jfe/form/SV_7VZqjp5mYkwvJm6';
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
 
   // Check if a note is editable by the current user
   const canEditNote = (note: ClinicalNote): boolean => {
@@ -43,11 +45,15 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
   };
 
   useEffect(() => {
+    const request = requestIdentity.capture();
+    setNotes([]);
+    setEditingNoteId(null);
     void (async () => {
       const data = await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null);
+      if (!requestIdentity.isCurrent(request)) return;
       setNotes(data);
     })();
-  }, [patient.id, patient.roomId, assignmentId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   const [showGenerator, setShowGenerator] = useState(false);
 

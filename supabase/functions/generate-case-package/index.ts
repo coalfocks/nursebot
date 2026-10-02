@@ -1,6 +1,6 @@
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { corsHeaders } from '../_shared/cors.ts';
-import { OPENAI_MODEL } from '../_shared/openai-model.ts';
+import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 type GenerationSection =
   | 'patient'
@@ -266,7 +266,7 @@ Deno.serve(async (req) => {
     });
 
     const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: getOpenAIModel('generate_case_package'),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: prompt.system },

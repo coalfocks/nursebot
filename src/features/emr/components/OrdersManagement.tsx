@@ -12,6 +12,7 @@ import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -70,18 +71,22 @@ export function OrdersManagement({
     status: 'Active' as MedicalOrder['status'],
     instructions: '',
   });
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
 
   useEffect(() => {
+    const request = requestIdentity.capture();
+    setOrders([]);
     void (async () => {
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
+      if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
     })();
-  }, [patient.id, patient.roomId, assignmentId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   useEffect(() => {
-    let isActive = true;
+    const request = requestIdentity.capture();
+    setRoomMeta(null);
     if (!patient.roomId) {
-      setRoomMeta(null);
       return;
     }
     void (async () => {
@@ -92,7 +97,7 @@ export function OrdersManagement({
         )
         .eq('id', patient.roomId)
         .maybeSingle();
-      if (!isActive) return;
+      if (!requestIdentity.isCurrent(request)) return;
       if (error) {
         console.error('Failed to load room context', error);
         return;
@@ -112,10 +117,7 @@ export function OrdersManagement({
         });
       }
     })();
-    return () => {
-      isActive = false;
-    };
-  }, [patient.roomId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   const deriveImagingDetails = (orderName: string) => {
     const normalized = orderName.toLowerCase();

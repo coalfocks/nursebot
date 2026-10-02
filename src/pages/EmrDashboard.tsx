@@ -26,6 +26,7 @@ import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
 import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
+import { useRequestIdentity } from '../hooks/useRequestIdentity';
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -49,11 +50,18 @@ export default function EmrDashboard() {
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
   const [activeTab, setActiveTab] = useState('overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
+  const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
   const [isEnsuringAssignment, setIsEnsuringAssignment] = useState(false);
   const [testAssignmentError, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
   const isTestUserProfile = isTestUser(profile);
-  const effectiveAssignmentId = forceBaseline ? undefined : assignmentId ?? derivedAssignmentId;
+  const effectiveAssignmentId = forceBaseline
+    ? undefined
+    : assignmentId ?? (selectedPatient?.roomId === derivedAssignmentRoomId ? derivedAssignmentId : undefined);
+  const patientRequest = useRequestIdentity(
+    `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
+  );
+  const { capture: capturePatientRequest, isCurrent: isCurrentPatientRequest } = patientRequest;
   const [showMedModal, setShowMedModal] = useState(false);
   const [medForm, setMedForm] = useState({
     name: '',
@@ -189,6 +197,18 @@ export default function EmrDashboard() {
   useEffect(() => {
     if (!selectedPatient) return;
 
+    const request = capturePatientRequest();
+    setRoomMeta(null);
+    setMedicationOrders([]);
+    setOverviewVitals(null);
+    setVitalsForm({});
+    setBaselineEditForm({
+      firstName: selectedPatient.firstName,
+      lastName: selectedPatient.lastName,
+      mrn: selectedPatient.mrn,
+      roomNumber: selectedPatient.room ?? '',
+    });
+
     void (async () => {
       if (selectedPatient.roomId) {
         const { data } = await supabase
@@ -202,6 +222,7 @@ export default function EmrDashboard() {
             specialty_id: data.specialty_id,
             specialty_ids: data.specialty_ids,
           });
+          if (!isCurrentPatientRequest(request)) return;
           const isObgyn = hasObgynSpecialty(specialties);
           if (typeof data.emr_context === 'string') {
             try {
@@ -213,14 +234,17 @@ export default function EmrDashboard() {
               // ignore non-JSON context
             }
           }
+          if (!isCurrentPatientRequest(request)) return;
           setRoomMeta({ id: data.id, room_number: data.room_number, delivery_note: deliveryNote, isObgyn });
           setBaselineEditForm((prev) => ({ ...prev, roomNumber: data.room_number }));
         }
       }
       const orders = await emrApi.listOrders(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
+      if (!isCurrentPatientRequest(request)) return;
       const meds = orders.filter((order) => order.category === 'Medication');
       setMedicationOrders(meds);
       const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
+      if (!isCurrentPatientRequest(request)) return;
       if (vitals.length) {
         setOverviewVitals(vitals[0]);
         setVitalsForm({
@@ -237,24 +261,28 @@ export default function EmrDashboard() {
         setVitalsForm({});
       }
     })();
-  }, [selectedPatient, effectiveAssignmentId]);
+  }, [selectedPatient, effectiveAssignmentId, capturePatientRequest, isCurrentPatientRequest]);
 
   useEffect(() => {
     if (!selectedPatient || !user || forceBaseline) {
       setDerivedAssignmentId(undefined);
+      setDerivedAssignmentRoomId(null);
       setIsEnsuringAssignment(false);
       setTestAssignmentError(null);
       return;
     }
     const fetchAssignmentForPatient = async () => {
+      const request = capturePatientRequest();
       if (assignmentId) {
         setDerivedAssignmentId(undefined);
+        setDerivedAssignmentRoomId(null);
         setIsEnsuringAssignment(false);
         setTestAssignmentError(null);
         return;
       }
       if (!selectedPatient.roomId) {
         setDerivedAssignmentId(undefined);
+        setDerivedAssignmentRoomId(null);
         setIsEnsuringAssignment(false);
         setTestAssignmentError(null);
         return;
@@ -269,6 +297,7 @@ export default function EmrDashboard() {
         .eq('student_id', user.id)
         .eq('room_id', selectedPatient.roomId)
         .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
+      if (!isCurrentPatientRequest(request)) return;
       if (error) {
         console.error('Failed to fetch assignment for patient', error);
         setDerivedAssignmentId(undefined);
@@ -289,6 +318,7 @@ export default function EmrDashboard() {
           })
           .select('id')
           .maybeSingle();
+        if (!isCurrentPatientRequest(request)) return;
         if (insertError) {
           console.error('Failed to create test assignment', insertError);
           setDerivedAssignmentId(undefined);
@@ -298,11 +328,13 @@ export default function EmrDashboard() {
         }
         assignmentRecord = insertedAssignment ?? null;
       }
+      if (!isCurrentPatientRequest(request)) return;
       setDerivedAssignmentId(assignmentRecord?.id ?? undefined);
+      setDerivedAssignmentRoomId(selectedPatient.roomId);
       setIsEnsuringAssignment(false);
     };
     void fetchAssignmentForPatient();
-  }, [selectedPatient, user, forceBaseline, assignmentId, isTestUserProfile, profile?.school_id]);
+  }, [selectedPatient, user, forceBaseline, assignmentId, isTestUserProfile, profile?.school_id, capturePatientRequest, isCurrentPatientRequest]);
 
   const testAssignmentPending = Boolean(
     isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,

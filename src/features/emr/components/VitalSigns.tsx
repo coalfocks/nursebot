@@ -22,6 +22,7 @@ import type { Patient, VitalSigns } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 interface VitalSignsProps {
   patient: Patient;
@@ -60,20 +61,22 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     respiratoryRate: { low: '', high: '' },
     oxygenSaturation: { low: '', high: '' },
   });
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
 
   useEffect(() => {
+    const request = requestIdentity.capture();
+    setVitals([]);
     void (async () => {
       const data = await emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null);
-      if (data.length) {
-        setVitals(data);
-      }
+      if (!requestIdentity.isCurrent(request)) return;
+      setVitals(data);
     })();
-  }, [patient.id, patient.roomId, assignmentId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   useEffect(() => {
-    let isActive = true;
+    const request = requestIdentity.capture();
+    setRoomMeta(null);
     if (!patient.roomId) {
-      setRoomMeta(null);
       return;
     }
     void (async () => {
@@ -84,7 +87,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
         )
         .eq('id', patient.roomId)
         .maybeSingle();
-      if (!isActive) return;
+      if (!requestIdentity.isCurrent(request)) return;
       if (error) {
         console.error('Failed to load room context for vitals', error);
         return;
@@ -101,10 +104,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
         setRoomMeta({ ...data, emr_context: emrContext });
       }
     })();
-    return () => {
-      isActive = false;
-    };
-  }, [patient.roomId]);
+  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
   const handleGenerateVitals = async () => {
     setIsGenerating(true);

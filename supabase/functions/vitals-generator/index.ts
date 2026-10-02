@@ -1,6 +1,6 @@
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { corsHeaders } from '../_shared/cors.ts';
-import { OPENAI_MODEL } from '../_shared/openai-model.ts';
+import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 type VitalContext = {
   patient?: {
@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
     const prompt = buildPrompt(payload);
 
     const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+      model: getOpenAIModel('vitals_generator'),
       messages: [
         { role: 'system', content: prompt.system },
         { role: 'user', content: prompt.user },
