@@ -4,7 +4,7 @@ import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TestTube, TrendingUp, Sparkles, Trash2 } from 'lucide-react';
+import { TestTube, TrendingUp, Sparkles, Trash2, Pencil } from 'lucide-react';
 import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
@@ -41,6 +41,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [aiLabName, setAiLabName] = useState('');
   const [aiLabRequest, setAiLabRequest] = useState('');
   const [showManualLabModal, setShowManualLabModal] = useState(false);
+  const [editingLab, setEditingLab] = useState<LabResult | null>(null);
+  const [labEditForm, setLabEditForm] = useState({
+    value: '',
+    unit: '',
+    referenceRange: '',
+    status: 'Normal' as LabResult['status'],
+    collectionTime: '',
+    resultTime: '',
+  });
+  const [isSavingLabEdit, setIsSavingLabEdit] = useState(false);
   const [manualLabForm, setManualLabForm] = useState({
     testName: '',
     value: '',
@@ -452,6 +462,55 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const abnormalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Abnormal'), [labResults]);
 
+  const startLabEdit = (lab: LabResult) => {
+    setEditingLab(lab);
+    setLabEditForm({
+      value: String(lab.value ?? ''),
+      unit: lab.unit,
+      referenceRange: lab.referenceRange,
+      status: lab.status,
+      collectionTime: lab.collectionTime,
+      resultTime: lab.resultTime ?? lab.collectionTime,
+    });
+    setLabSaveError(null);
+  };
+
+  const saveLabEdit = async () => {
+    if (!editingLab || isSandbox) return;
+    setIsSavingLabEdit(true);
+    setLabSaveError(null);
+    try {
+      const numericValue = Number(labEditForm.value);
+      const valueType = labEditForm.value.trim() !== '' && Number.isFinite(numericValue) ? 'numeric' : 'coded';
+      const updated = await emrApi.updateLabResult(
+        editingLab.id,
+        {
+          value: valueType === 'numeric' ? numericValue : labEditForm.value,
+          valueType,
+          unit: labEditForm.unit,
+          referenceRange: labEditForm.referenceRange,
+          status: labEditForm.status,
+          collectionTime: labEditForm.collectionTime,
+          resultTime: labEditForm.resultTime || labEditForm.collectionTime,
+          lifecycleStatus: labEditForm.status === 'Pending' ? 'pending' : 'corrected',
+        },
+        editingLab.recordVersion,
+      );
+      if (!updated) {
+        setLabSaveError('Could not save this correction. Please try again.');
+      } else if ('conflict' in updated) {
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated.current : lab)));
+        setLabSaveError('This result changed elsewhere. The newer server version is now shown.');
+        setEditingLab(null);
+      } else {
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated : lab)));
+        setEditingLab(null);
+      }
+    } finally {
+      setIsSavingLabEdit(false);
+    }
+  };
+
   const handleDeleteLab = async (labId: string) => {
     if (!canEdit) return;
     const deletedLab = labResults.find((lab) => lab.id === labId);
@@ -608,6 +667,15 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <button
                                               type="button"
+                                              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                                              onClick={() => startLabEdit(lab)}
+                                              title="Edit lab result"
+                                            >
+                                              <Pencil className="h-3 w-3" />
+                                              Edit
+                                            </button>
+                                            <button
+                                              type="button"
                                               className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
                                               onClick={() => void handleDeleteLab(lab.id)}
                                               title="Delete lab"
@@ -674,6 +742,42 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           )}
         </TabsContent>
       </Tabs>
+
+      {editingLab && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEditingLab(null)}>
+          <div className="relative w-full max-w-md rounded-lg bg-background p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="mb-4 text-lg font-semibold">Correct {editingLab.testName}</h3>
+            <div className="space-y-3">
+              <label className="block text-sm font-medium">Value
+                <input className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.value} onChange={(event) => setLabEditForm((prev) => ({ ...prev, value: event.target.value }))} />
+              </label>
+              <label className="block text-sm font-medium">Unit
+                <input className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.unit} onChange={(event) => setLabEditForm((prev) => ({ ...prev, unit: event.target.value }))} />
+              </label>
+              <label className="block text-sm font-medium">Reference range
+                <input className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.referenceRange} onChange={(event) => setLabEditForm((prev) => ({ ...prev, referenceRange: event.target.value }))} />
+              </label>
+              <label className="block text-sm font-medium">Collection time
+                <input type="datetime-local" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.collectionTime.slice(0, 16)} onChange={(event) => setLabEditForm((prev) => ({ ...prev, collectionTime: new Date(event.target.value).toISOString() }))} />
+              </label>
+              <label className="block text-sm font-medium">Status
+                <select className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.status} onChange={(event) => setLabEditForm((prev) => ({ ...prev, status: event.target.value as LabResult['status'] }))}>
+                  <option value="Normal">Normal</option>
+                  <option value="Abnormal">Abnormal</option>
+                  <option value="Critical">Critical</option>
+                  <option value="Pending">Pending</option>
+                </select>
+              </label>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditingLab(null)}>Cancel</Button>
+              <Button onClick={() => void saveLabEdit()} disabled={isSavingLabEdit || !labEditForm.value.trim()}>
+                {isSavingLabEdit ? 'Saving…' : 'Save correction'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Manual Lab Entry Modal */}
       {showManualLabModal && (

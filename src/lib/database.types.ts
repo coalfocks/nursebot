@@ -1480,6 +1480,7 @@ export type Database = {
           ordered_by: string | null
           override_scope: string
           patient_id: string | null
+          record_version: number
           reference_range: string | null
           result_time: string | null
           room_id: number | null
@@ -1506,6 +1507,7 @@ export type Database = {
           ordered_by?: string | null
           override_scope?: string
           patient_id?: string | null
+          record_version?: number
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null
@@ -1532,6 +1534,7 @@ export type Database = {
           ordered_by?: string | null
           override_scope?: string
           patient_id?: string | null
+          record_version?: number
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null

@@ -71,6 +71,7 @@ export interface ClinicalNote {
 
 export interface LabResult {
   id: string;
+  recordVersion?: number;
   patientId: string;
   assignmentId?: string | null;
   roomId?: number | null;

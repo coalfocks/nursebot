@@ -131,6 +131,7 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
   return {
     id: row.id,
+    recordVersion: row.record_version,
     patientId: row.patient_id ?? fallbackPatientId,
     assignmentId: row.assignment_id,
     roomId: row.room_id ?? undefined,
@@ -649,6 +650,60 @@ export const emrApi = {
       return { ok: false, error: error.message };
     }
     return { ok: true };
+  },
+
+  async updateLabResult(
+    labId: string,
+    updates: Partial<Pick<LabResult, 'testName' | 'value' | 'valueType' | 'unit' | 'referenceRange' | 'status' | 'collectionTime' | 'resultTime' | 'interpretation' | 'abnormalFlag' | 'specimen' | 'lifecycleStatus'>>,
+    expectedVersion?: number,
+  ): Promise<VersionedMutationResult<LabResult>> {
+    const valuePatch = updates.value === undefined
+      ? {}
+      : serializeLabValue({
+          id: labId,
+          patientId: '',
+          testName: updates.testName ?? '',
+          value: updates.value,
+          valueType: updates.valueType,
+          unit: updates.unit ?? '',
+          referenceRange: updates.referenceRange ?? '',
+          status: updates.status ?? 'Pending',
+          collectionTime: updates.collectionTime ?? new Date().toISOString(),
+          orderedBy: '',
+        });
+    let query = supabase
+      .from('lab_results')
+      .update({
+        test_name: updates.testName,
+        ...valuePatch,
+        unit: updates.unit,
+        reference_range: updates.referenceRange,
+        status: updates.status,
+        collection_time: updates.collectionTime,
+        result_time: updates.resultTime,
+        interpretation: updates.interpretation,
+        abnormal_flag: updates.abnormalFlag,
+        specimen: updates.specimen,
+        lifecycle_status: updates.lifecycleStatus,
+      })
+      .eq('id', labId);
+    if (expectedVersion !== undefined) query = query.eq('record_version', expectedVersion);
+    const { data, error } = await query.select('*').maybeSingle();
+    if (error) {
+      console.error('Error updating lab result', error);
+      return null;
+    }
+    if (!data) {
+      if (expectedVersion === undefined) return null;
+      const { data: current, error: currentError } = await supabase
+        .from('lab_results')
+        .select('*')
+        .eq('id', labId)
+        .maybeSingle();
+      if (currentError || !current) return null;
+      return { conflict: true, current: mapLabResult(current, current.patient_id ?? ''), expectedVersion };
+    }
+    return mapLabResult(data, data.patient_id ?? '');
   },
 
   async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {
