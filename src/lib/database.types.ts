@@ -1468,11 +1468,15 @@ export type Database = {
       }
       lab_results: {
         Row: {
+          abnormal_flag: boolean | null
           assignment_id: string | null
           collection_time: string | null
           created_at: string | null
           deleted_at: string | null
           id: string
+          interpretation: string | null
+          lifecycle_status: string
+          narrative: string | null
           ordered_by: string | null
           override_scope: string
           patient_id: string | null
@@ -1481,17 +1485,24 @@ export type Database = {
           room_id: number | null
           school_id: string | null
           status: string | null
+          specimen: string | null
           test_name: string
+          text_value: string | null
           unit: string | null
           updated_at: string | null
           value: number | null
+          value_type: string
         }
         Insert: {
+          abnormal_flag?: boolean | null
           assignment_id?: string | null
           collection_time?: string | null
           created_at?: string | null
           deleted_at?: string | null
           id?: string
+          interpretation?: string | null
+          lifecycle_status?: string
+          narrative?: string | null
           ordered_by?: string | null
           override_scope?: string
           patient_id?: string | null
@@ -1500,17 +1511,24 @@ export type Database = {
           room_id?: number | null
           school_id?: string | null
           status?: string | null
+          specimen?: string | null
           test_name: string
+          text_value?: string | null
           unit?: string | null
           updated_at?: string | null
           value?: number | null
+          value_type?: string
         }
         Update: {
+          abnormal_flag?: boolean | null
           assignment_id?: string | null
           collection_time?: string | null
           created_at?: string | null
           deleted_at?: string | null
           id?: string
+          interpretation?: string | null
+          lifecycle_status?: string
+          narrative?: string | null
           ordered_by?: string | null
           override_scope?: string
           patient_id?: string | null
@@ -1519,10 +1537,13 @@ export type Database = {
           room_id?: number | null
           school_id?: string | null
           status?: string | null
+          specimen?: string | null
           test_name?: string
+          text_value?: string | null
           unit?: string | null
           updated_at?: string | null
           value?: number | null
+          value_type?: string
         }
         Relationships: [
           {

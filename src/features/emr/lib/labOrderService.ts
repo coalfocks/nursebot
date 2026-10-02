@@ -117,13 +117,15 @@ export const generateLabResultForOrder = async ({
     });
     if (aiLab) {
       const now = new Date().toISOString();
-      const derivedValue = typeof aiLab.value === 'number' ? aiLab.value : extractNumericValue(String(aiLab.value ?? ''));
+      const rawValue = aiLab.value ?? '';
+      const numericValue = typeof rawValue === 'number' ? rawValue : extractNumericValue(String(rawValue));
       return {
         id: `lab-${Date.now()}`,
         patientId,
         assignmentId: assignmentId ?? null,
         testName: labName,
-        value: derivedValue ?? 0,
+        value: numericValue ?? String(rawValue),
+        valueType: numericValue === null ? 'coded' : 'numeric',
         unit: aiLab.unit ?? '',
         referenceRange: aiLab.referenceRange ?? 'See interpretation',
         status: aiLab.status ?? 'Normal',

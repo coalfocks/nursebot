@@ -162,4 +162,31 @@ describe('emrApi versioned note/order mutations', () => {
     expect(labs).toHaveLength(3);
     expect(new Set(labs.map((entry) => entry.id))).toEqual(new Set(['active-lab', 'room-lab', 'baseline-lab']));
   });
+
+  it('persists coded lab values without coercing them to zero or null-only results', async () => {
+    const insert = vi.fn(async () => ({ error: null }));
+    from.mockReturnValue({ insert });
+
+    await emrApi.addLabResults([
+      {
+        id: 'coded-lab',
+        patientId: 'patient-1',
+        assignmentId: 'assignment-1',
+        roomId: 3,
+        overrideScope: 'assignment',
+        testName: 'ABO/Rh',
+        value: 'O positive',
+        valueType: 'coded',
+        unit: '',
+        referenceRange: '',
+        status: 'Normal',
+        collectionTime: '2026-10-02T21:00:00.000Z',
+        orderedBy: 'Nurse',
+      },
+    ], 3);
+
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded' }),
+    ]);
+  });
 });

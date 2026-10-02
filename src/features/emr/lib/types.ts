@@ -77,6 +77,12 @@ export interface LabResult {
   overrideScope?: 'baseline' | 'room' | 'assignment';
   testName: string;
   value: string | number;
+  valueType?: 'numeric' | 'coded' | 'narrative';
+  narrative?: string | null;
+  interpretation?: string | null;
+  abnormalFlag?: boolean | null;
+  specimen?: string | null;
+  lifecycleStatus?: 'not_ordered' | 'ordered' | 'collected' | 'pending' | 'resulted' | 'corrected' | 'canceled' | 'rejected';
   unit: string;
   referenceRange: string;
   status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending';

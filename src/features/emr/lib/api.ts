@@ -17,6 +17,7 @@ import type {
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
+type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
 type MedicalOrderRow = Database['public']['Tables']['medical_orders']['Row'];
 
 const deriveScope = resolveOverrideScope;
@@ -122,6 +123,49 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     instructions: row.instructions ?? undefined,
     deletedAt: row.deleted_at,
     recordVersion: row.record_version,
+  };
+};
+
+const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
+  const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
+  return {
+    id: row.id,
+    patientId: row.patient_id ?? fallbackPatientId,
+    assignmentId: row.assignment_id,
+    roomId: row.room_id ?? undefined,
+    overrideScope: deriveScope(row.override_scope, row.assignment_id, row.room_id),
+    testName: row.test_name,
+    value: valueType === 'numeric' ? row.value ?? '' : row.text_value ?? row.narrative ?? '',
+    valueType,
+    narrative: row.narrative,
+    interpretation: row.interpretation,
+    abnormalFlag: row.abnormal_flag,
+    specimen: row.specimen,
+    unit: row.unit ?? '',
+    referenceRange: row.reference_range ?? '',
+    status: (row.status as LabResult['status']) ?? 'Pending',
+    lifecycleStatus: row.lifecycle_status as LabResult['lifecycleStatus'],
+    collectionTime: row.collection_time ?? new Date().toISOString(),
+    resultTime: row.result_time ?? undefined,
+    orderedBy: row.ordered_by ?? 'Unknown',
+    createdAt: row.created_at ?? undefined,
+    deletedAt: row.deleted_at,
+  };
+};
+
+const serializeLabValue = (lab: LabResult) => {
+  const explicitType = lab.valueType;
+  const numericValue = typeof lab.value === 'number' ? lab.value : Number(lab.value);
+  const isNumeric = explicitType === 'numeric' || (!explicitType && lab.value !== '' && Number.isFinite(numericValue));
+  return {
+    value: isNumeric && Number.isFinite(numericValue) ? numericValue : null,
+    value_type: explicitType ?? (isNumeric ? 'numeric' : 'coded'),
+    text_value: isNumeric ? null : String(lab.value ?? ''),
+    narrative: lab.narrative ?? null,
+    interpretation: lab.interpretation ?? null,
+    abnormal_flag: lab.abnormalFlag ?? null,
+    specimen: lab.specimen ?? null,
+    lifecycle_status: lab.lifecycleStatus ?? (lab.status === 'Pending' ? 'pending' : 'resulted'),
   };
 };
 
@@ -433,26 +477,7 @@ export const emrApi = {
 
     return results
       .flatMap(({ data }) => data ?? [])
-      .map((row) => {
-        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
-        return {
-          id: row.id,
-          patientId: row.patient_id ?? patientId,
-          assignmentId: row.assignment_id,
-          roomId: row.room_id ?? undefined,
-          overrideScope: scope,
-          testName: row.test_name,
-          value: row.value ?? '',
-          unit: row.unit ?? '',
-          referenceRange: row.reference_range ?? '',
-          status: (row.status as LabResult['status']) ?? 'Pending',
-          collectionTime: row.collection_time ?? new Date().toISOString(),
-          resultTime: row.result_time ?? undefined,
-          orderedBy: row.ordered_by ?? 'Unknown',
-          createdAt: row.created_at ?? undefined,
-          deletedAt: row.deleted_at,
-        };
-      })
+      .map((row) => mapLabResult(row, patientId))
       .filter((lab) =>
         scopeMatchesContext(
           lab.overrideScope ?? 'baseline',
@@ -546,7 +571,7 @@ export const emrApi = {
               room_id: null,
               override_scope: 'baseline' as const,
               test_name: lab.testName,
-              value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+              ...serializeLabValue(lab),
               unit: lab.unit,
               reference_range: lab.referenceRange,
               status: lab.status,
@@ -566,7 +591,7 @@ export const emrApi = {
           room_id: null,
           override_scope: 'baseline' as const,
           test_name: lab.testName,
-          value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+          ...serializeLabValue(lab),
           unit: lab.unit,
           reference_range: lab.referenceRange,
           status: lab.status,
@@ -607,7 +632,7 @@ export const emrApi = {
       room_id: lab.roomId ?? roomId ?? null,
       override_scope: deriveScope(lab.overrideScope, lab.assignmentId, lab.roomId ?? roomId ?? null),
       test_name: lab.testName,
-      value: typeof lab.value === 'number' ? lab.value : Number(lab.value) || null,
+      ...serializeLabValue(lab),
       unit: lab.unit,
       reference_range: lab.referenceRange,
       status: lab.status,
