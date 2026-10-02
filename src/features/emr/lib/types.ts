@@ -93,6 +93,10 @@ export interface LabResult {
   deletedAt?: string | null;
 }
 
+export type LabWriteResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 export interface VitalSigns {
   id: string;
   patientId: string;

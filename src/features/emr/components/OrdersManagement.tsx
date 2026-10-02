@@ -416,7 +416,10 @@ export function OrdersManagement({
           orderedBy: adjustedOrder.orderedBy,
         }));
 
-        await emrApi.addLabResults(labsWithScope, effectiveRoomId);
+        const writeResult = await emrApi.addLabResults(labsWithScope, effectiveRoomId);
+        if (!writeResult.ok) {
+          throw new Error(`Could not save generated labs: ${writeResult.error}`);
+        }
         onLabsGenerated?.();
       } catch (err) {
         console.error('Failed to generate STAT labs', err);

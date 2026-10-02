@@ -34,6 +34,7 @@ const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [labSaveError, setLabSaveError] = useState<string | null>(null);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
   const forceBaseline = isSuperAdmin(profile);
@@ -139,6 +140,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     const orderName = aiLabName.trim();
     const requestDetails = aiLabRequest.trim();
     setIsGenerating(true);
+    setLabSaveError(null);
     try {
       const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
         emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
@@ -252,7 +254,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         });
       } else {
         // Save to database
-        await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
+        const writeResult = await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
+        if (!writeResult.ok) {
+          setLabSaveError(`Could not save generated labs: ${writeResult.error}`);
+          return;
+        }
         
         // Refresh labs from database to get merged results
         const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
@@ -448,17 +454,27 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const handleDeleteLab = async (labId: string) => {
     if (!canEdit) return;
+    const deletedLab = labResults.find((lab) => lab.id === labId);
+    setLabSaveError(null);
+    if (!deletedLab) return;
     setLabResults((prev) => prev.filter((lab) => lab.id !== labId));
     if (!isSandbox) {
       const { error } = await supabase.from('lab_results').update({ deleted_at: new Date().toISOString() }).eq('id', labId);
       if (error) {
         console.error('Failed to delete lab', error);
+        setLabResults((prev) => [deletedLab, ...prev]);
+        setLabSaveError(`Could not delete lab: ${error.message}`);
       }
     }
   };
 
   return (
     <div className="space-y-6">
+      {labSaveError && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {labSaveError}
+        </p>
+      )}
       {canEdit && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -766,7 +782,12 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     });
                   } else {
                     // Save to database
-                    await emrApi.addLabResults([newLab], roomIdForScope);
+                    setLabSaveError(null);
+                    const writeResult = await emrApi.addLabResults([newLab], roomIdForScope);
+                    if (!writeResult.ok) {
+                      setLabSaveError(`Could not save lab: ${writeResult.error}`);
+                      return;
+                    }
                     
                     // Refresh labs from database to get merged results
                     const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);

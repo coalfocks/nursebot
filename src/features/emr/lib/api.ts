@@ -11,6 +11,7 @@ import type {
   RoomOrdersConfig,
   CustomOverviewSection,
   IntakeOutput,
+  type LabWriteResult,
   type VersionedMutationResult,
 } from './types';
 
@@ -494,8 +495,8 @@ export const emrApi = {
       });
   },
 
-  async addLabResults(labs: LabResult[], roomId?: number | null): Promise<void> {
-    if (!labs.length) return;
+  async addLabResults(labs: LabResult[], roomId?: number | null): Promise<LabWriteResult> {
+    if (!labs.length) return { ok: true };
     
     // Check if all labs are baseline scope (no assignment, no room)
     const allBaseline = labs.every((lab) => {
@@ -516,6 +517,7 @@ export const emrApi = {
 
       if (existingError) {
         console.error('Error fetching baseline labs', existingError);
+        return { ok: false, error: existingError.message };
       }
 
       // Always use a single consolidated timestamp for all baseline labs
@@ -548,11 +550,11 @@ export const emrApi = {
               .eq('id', update.id),
           ),
         );
-        normalizeResults.forEach(({ error }) => {
-          if (error) {
-            console.error('Error normalizing baseline lab timestamp', error);
-          }
-        });
+        const normalizationError = normalizeResults.find(({ error }) => error)?.error;
+        if (normalizationError) {
+          console.error('Error normalizing baseline lab timestamp', normalizationError);
+          return { ok: false, error: normalizationError.message };
+        }
       }
 
       const existingByTest = new Map(
@@ -609,20 +611,21 @@ export const emrApi = {
               .eq('id', update.id),
           ),
         );
-        updateResults.forEach(({ error }) => {
-          if (error) {
-            console.error('Error updating baseline lab', error);
-          }
-        });
+        const updateError = updateResults.find(({ error }) => error)?.error;
+        if (updateError) {
+          console.error('Error updating baseline lab', updateError);
+          return { ok: false, error: updateError.message };
+        }
       }
 
       if (inserts.length) {
         const { error: insertError } = await supabase.from('lab_results').insert(inserts);
         if (insertError) {
           console.error('Error inserting baseline labs', insertError);
+          return { ok: false, error: insertError.message };
         }
       }
-      return;
+      return { ok: true };
     }
 
     // Insert new entries for each non-baseline run to preserve multiple runs.
@@ -643,7 +646,9 @@ export const emrApi = {
     const { error } = await supabase.from('lab_results').insert(payload);
     if (error) {
       console.error('Error inserting labs', error);
+      return { ok: false, error: error.message };
     }
+    return { ok: true };
   },
 
   async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {
