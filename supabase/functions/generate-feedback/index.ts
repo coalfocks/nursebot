@@ -57,6 +57,22 @@ type RoomEvaluationConfig = {
   leniencyMultiplier: number;
 };
 
+type AssignmentRoom = Record<string, unknown> & {
+  patient_id?: string | null;
+  difficulty_level?: string | null;
+  emr_context?: string | null;
+  completion_hint?: string | null;
+  expected_diagnosis?: string | null;
+  expected_treatment?: string[] | null;
+  bedside_requirement?: string | null;
+  bedside_hint?: string | null;
+};
+
+const resolvePinnedRoom = (room: AssignmentRoom, baseline: unknown): AssignmentRoom => {
+  if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) return room;
+  return { ...room, ...(baseline as Partial<AssignmentRoom>) };
+};
+
 const rubricReferenceText = `Example feedback template:
 ${FEEDBACK_TEMPLATE}
 
@@ -211,6 +227,9 @@ Deno.serve(async (req) => {
         throw new Error('Cannot generate feedback for incomplete assignment');
       }
 
+      const liveRoom = assignment.room as AssignmentRoom;
+      const pinnedRoom = resolvePinnedRoom(liveRoom, assignment.scenario_baseline);
+
       // Fetch chat messages
       const { data: messages, error: messagesError } = await supabaseClient
         .from('chat_messages')
@@ -221,11 +240,11 @@ Deno.serve(async (req) => {
       if (messagesError) throw messagesError;
 
       // Determine case difficulty
-      const difficultyLevel = assignment.room.difficulty_level || 'intermediate';
+      const difficultyLevel = pinnedRoom.difficulty_level || 'intermediate';
       const caseDifficulty = difficultyLevel === 'beginner' ? 'easy' : 
                             difficultyLevel === 'advanced' ? 'advanced' : 'intermediate';
-      const evaluationConfig = parseRoomEvaluationConfig(assignment.room.emr_context);
-      const patientId = assignment.room.patient_id ?? null;
+      const evaluationConfig = parseRoomEvaluationConfig(pinnedRoom.emr_context);
+      const patientId = liveRoom.patient_id ?? null;
       const targetRoomIds = await getRoomLineage(supabaseClient, assignment.room_id);
 
       let orders: TimelineOrderRow[] = [];
@@ -292,7 +311,7 @@ Deno.serve(async (req) => {
       });
       const timelineSummary = renderTimelineEntriesForEvaluation(timelineEntries);
       const viewedCompletionHints = getViewedCompletionHints(
-        parseCompletionHints(assignment.room.completion_hint),
+        parseCompletionHints(pinnedRoom.completion_hint),
         parseCompletionHintViews(assignment.completion_hint_views),
       );
       const viewedCompletionHintSummary = viewedCompletionHints.length
@@ -373,12 +392,12 @@ Compare to reference note:
 ---
 
 **CASE INFORMATION:**
-Expected Diagnosis: ${JSON.stringify(assignment.room.expected_diagnosis)}
-Expected Treatment: ${JSON.stringify(assignment.room.expected_treatment)}
+Expected Diagnosis: ${JSON.stringify(pinnedRoom.expected_diagnosis)}
+Expected Treatment: ${JSON.stringify(pinnedRoom.expected_treatment)}
 Case Difficulty: ${caseDifficulty}
 Evaluation Leniency Multiplier: ${evaluationConfig.leniencyMultiplier}
-Bedside Required Verdict: ${assignment.room.bedside_requirement ?? 'situational'}
-Bedside Rationale/Hint: ${assignment.room.bedside_hint || 'Not configured'}
+Bedside Required Verdict: ${pinnedRoom.bedside_requirement ?? 'situational'}
+Bedside Rationale/Hint: ${pinnedRoom.bedside_hint || 'Not configured'}
 
 **STUDENT'S WORK:**
 Use the student's progress note as the primary source for their assessment, working diagnosis, supporting evidence, and plan.

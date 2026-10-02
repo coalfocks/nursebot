@@ -13,6 +13,15 @@ interface PatientChatPayload {
   messages?: ChatMessage[];
 }
 
+interface PatientChatRoom {
+  emr_context?: unknown;
+}
+
+const resolvePinnedRoom = (room: PatientChatRoom | null, baseline: unknown) => {
+  if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) return room;
+  return { ...room, ...(baseline as Partial<PatientChatRoom>) };
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!supabaseUrl || !serviceRoleKey) throw new Error('Missing Supabase service credentials');
@@ -58,12 +67,13 @@ Deno.serve(async (req) => {
 
     const { data: assignment, error: assignmentError } = await supabaseAdmin
       .from('student_room_assignments')
-      .select('room:room_id(emr_context)')
+      .select('scenario_baseline, room:room_id(emr_context)')
       .eq('id', payload.assignmentId)
       .maybeSingle();
     if (assignmentError) throw assignmentError;
     const room = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
-    const config = readPatientChatConfig(room?.emr_context);
+    const pinnedRoom = resolvePinnedRoom(room as PatientChatRoom | null, assignment?.scenario_baseline);
+    const config = readPatientChatConfig(pinnedRoom?.emr_context);
     if (!config.enabled) {
       return new Response(JSON.stringify({ error: config.reason }), {
         status: 409,
