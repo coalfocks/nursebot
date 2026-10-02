@@ -87,11 +87,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       return;
     }
     void (async () => {
-      const { data, error } = await supabase
-        .from('rooms')
-        .select('context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint')
-        .eq('id', patient.roomId)
-        .maybeSingle();
+      const { data, error } = await emrApi.getRoomContext(patient.roomId, assignmentId);
       if (!requestIdentity.isCurrent(request) || error || !data) return;
       let emrContext: RoomMeta['emr_context'] = data.emr_context ?? null;
       if (typeof emrContext === 'string') {

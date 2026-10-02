@@ -100,13 +100,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       return;
     }
     void (async () => {
-      const { data, error } = await supabase
-        .from('rooms')
-        .select(
-          'id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint',
-        )
-        .eq('id', patient.roomId)
-        .maybeSingle();
+      const { data, error } = await emrApi.getRoomContext(patient.roomId, assignmentId);
       if (!isCurrent(request)) return;
       if (error) {
         console.error('Failed to load room context for labs', error);

@@ -9,6 +9,7 @@ import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -123,9 +124,10 @@ export default function AssignmentView() {
       }
 
       // Fetch specialties for the room
+      const pinnedRoom = resolveAssignmentRoom(data.room, data.scenario_baseline);
       const roomWithSpecialties = {
-        ...data.room,
-        specialties: await fetchSpecialtiesForRoom(data.room),
+        ...pinnedRoom,
+        specialties: await fetchSpecialtiesForRoom(pinnedRoom),
       };
 
       const assignmentWithSpecialties = {
@@ -144,7 +146,7 @@ export default function AssignmentView() {
           .eq('id', assignmentId);
 
         if (updateError) throw updateError;
-        setAssignment({ ...data, status: 'in_progress' });
+        setAssignment({ ...assignmentWithSpecialties, status: 'in_progress' });
       }
 
       // Get signed URL for PDF if it exists
@@ -288,6 +290,7 @@ export default function AssignmentView() {
                   assignmentId={assignment.id}
                   roomNumber={assignment.room.room_number}
                   roomId={assignment.room.id}
+                  scenarioBaseline={assignment.scenario_baseline}
                   assignmentStatus={assignment.status}
                 />
               </div>

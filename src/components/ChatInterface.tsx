@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, User2, Wand2, ExternalLink, Stethoscope, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 import { useNavigate } from 'react-router-dom';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
@@ -104,10 +105,11 @@ interface ChatInterfaceProps {
   assignmentId: string;
   roomNumber: string;
   roomId?: number;
+  scenarioBaseline?: unknown;
   assignmentStatus?: string;
 }
 
-export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStatus }: ChatInterfaceProps) {
+export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseline, assignmentStatus }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -342,9 +344,10 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
         console.error('Error loading room hints', roomError);
       }
       if (isActive) {
-        setBedsideHint(roomData?.bedside_hint ?? null);
-        setBedsideConfig(parseBedsideConfig(roomData?.emr_context ?? null));
-        setCompletionHints(parseCompletionHints(roomData?.completion_hint ?? null));
+        const pinnedRoom = resolveAssignmentRoom(roomData ?? {}, scenarioBaseline) as typeof roomData;
+        setBedsideHint(pinnedRoom?.bedside_hint ?? null);
+        setBedsideConfig(parseBedsideConfig(pinnedRoom?.emr_context ?? null));
+        setCompletionHints(parseCompletionHints(pinnedRoom?.completion_hint ?? null));
       }
 
       const patient = await emrApi.getPatientByRoomId(roomId);
@@ -356,7 +359,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     return () => {
       isActive = false;
     };
-  }, [roomId]);
+  }, [roomId, scenarioBaseline]);
 
   useEffect(() => {
     void loadTimelineData(patientLink?.patientId ?? null);

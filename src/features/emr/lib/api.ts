@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/supabase';
+import { resolveAssignmentRoom } from '../../../lib/assignmentBaseline';
 import type { Database } from '../../../lib/database.types';
 import type {
   Patient,
@@ -195,6 +196,36 @@ const mapImagingStudy = (row: ImagingStudyRow, fallbackPatientId: string): Imagi
 };
 
 export const emrApi = {
+  async getRoomContext(roomId: number, assignmentId?: string | null) {
+    const { data: room, error } = await supabase
+      .from('rooms')
+      .select('id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint')
+      .eq('id', roomId)
+      .maybeSingle();
+
+    if (error || !room) {
+      if (error) console.error('Failed to load room context', error);
+      return { data: null, error };
+    }
+
+    if (!assignmentId) return { data: room, error: null };
+
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('student_room_assignments')
+      .select('scenario_baseline')
+      .eq('id', assignmentId)
+      .maybeSingle();
+
+    if (assignmentError) {
+      console.error('Failed to load assignment scenario baseline', assignmentError);
+      return { data: room, error: null };
+    }
+
+    return {
+      data: resolveAssignmentRoom(room, assignment?.scenario_baseline),
+      error: null,
+    };
+  },
   async getPatient(patientId: string): Promise<Patient | null> {
     const { data, error } = await supabase
       .from('patients')

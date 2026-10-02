@@ -23,6 +23,11 @@ interface NurseRoomContext {
   nurse_context?: string | null;
 }
 
+const resolvePinnedRoom = (room: NurseRoomContext | null, baseline: unknown) => {
+  if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) return room;
+  return { ...room, ...(baseline as Partial<NurseRoomContext>) };
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -107,12 +112,13 @@ Deno.serve(async (req) => {
 
       const { data: assignment, error: assignmentError } = await supabaseAdmin
         .from('student_room_assignments')
-        .select('room:room_id(role, context, nurse_context, style)')
+        .select('scenario_baseline, room:room_id(role, context, nurse_context, style)')
         .eq('id', resolvedAssignmentId)
         .maybeSingle();
       if (assignmentError) throw assignmentError;
 
       const room = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
+      const pinnedRoom = resolvePinnedRoom(room as NurseRoomContext | null, assignment?.scenario_baseline);
       const learnerMessages = messages
         .filter((message) => message.role !== 'system')
         .map((message) => ({ role: message.role, content: message.content }));
@@ -120,7 +126,7 @@ Deno.serve(async (req) => {
       const completion = await openai.chat.completions.create({
         model: getOpenAIModel('chat'),
         messages: [
-          { role: 'system', content: buildNurseSystemPrompt(room as NurseRoomContext | null) },
+          { role: 'system', content: buildNurseSystemPrompt(pinnedRoom) },
           ...learnerMessages,
         ],
         max_completion_tokens: 10000,

@@ -53,6 +53,7 @@
 - Room-config orders/labs scoped to that room.
 - Student assignment orders/labs/vitals scoped to that assignmentId + roomId; do not leak to other rooms/assignments.
 - Student completion progress notes are stored in `clinical_notes` with `override_scope = 'assignment'` and the current `assignment_id`; they must not be saved as baseline/room-scoped notes.
+- Each new `student_room_assignments` row receives an immutable `scenario_baseline` JSON snapshot of its room (versioned with `scenario_baseline_version`). Assignment-scoped runtime context overlays this snapshot on the live room; legacy assignments with no snapshot safely fall back to the live room.
 - Assignment completion is explicit via the completion modal in `ChatInterface`: save `student_room_assignments.status = 'completed'` together with `completed_at` and `student_progress_note`, then append an assistant `<completed>` marker message. Assistant free-form replies must not auto-complete assignments.
 - Completion hints in the finish-case modal are hidden by default; revealing one records a timestamp in `student_room_assignments.completion_hint_views`, and evaluation includes the viewed hints as part of grading context.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.

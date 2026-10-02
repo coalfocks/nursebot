@@ -2078,6 +2078,8 @@ export type Database = {
           notification_sent_at: string | null
           nurse_feedback: Json | null
           room_id: number
+          scenario_baseline: Json | null
+          scenario_baseline_version: number | null
           school_id: string
           status: string | null
           student_id: string
@@ -2113,6 +2115,8 @@ export type Database = {
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
           room_id: number
+          scenario_baseline?: Json | null
+          scenario_baseline_version?: number | null
           school_id?: string
           status?: string | null
           student_id: string
@@ -2148,6 +2152,8 @@ export type Database = {
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
           room_id?: number
+          scenario_baseline?: Json | null
+          scenario_baseline_version?: number | null
           school_id?: string
           status?: string | null
           student_id?: string

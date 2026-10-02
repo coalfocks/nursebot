@@ -6,6 +6,7 @@ import Navbar from '../components/Navbar';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -73,8 +74,10 @@ export default function StudentDashboard() {
         (data || []).map(async (assignment) => ({
           ...assignment,
           room: {
-            ...assignment.room,
-            specialties: await fetchSpecialtiesForRoom(assignment.room),
+            ...resolveAssignmentRoom(assignment.room, assignment.scenario_baseline),
+            specialties: await fetchSpecialtiesForRoom(
+              resolveAssignmentRoom(assignment.room, assignment.scenario_baseline),
+            ),
           },
         }))
       );
@@ -178,4 +181,4 @@ export default function StudentDashboard() {
       </div>
     </div>
   );
-} 
+}
