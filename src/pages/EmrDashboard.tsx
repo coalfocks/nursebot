@@ -241,7 +241,7 @@ export default function EmrDashboard() {
       }
       const orders = await emrApi.listOrders(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
       if (!isCurrentPatientRequest(request)) return;
-      const meds = orders.filter((order) => order.category === 'Medication');
+      const meds = orders.filter((order) => order.category === 'Medication' && order.status === 'Active');
       setMedicationOrders(meds);
       const vitals = await emrApi.listVitals(selectedPatient.id, effectiveAssignmentId, selectedPatient.roomId ?? null);
       if (!isCurrentPatientRequest(request)) return;
@@ -1519,8 +1519,12 @@ export default function EmrDashboard() {
                     orderedBy: selectedPatient.attendingPhysician,
                     orderTime: new Date().toISOString(),
                   };
-                  setMedicationOrders((prev) => [newOrder, ...prev]);
-                  await emrApi.addOrder(newOrder, forceBaseline ? null : selectedPatient.roomId ?? null);
+                  const savedOrder = await emrApi.addOrder(newOrder, forceBaseline ? null : selectedPatient.roomId ?? null);
+                  if (!savedOrder) {
+                    alert('Could not save medication. Please try again.');
+                    return;
+                  }
+                  setMedicationOrders((prev) => [savedOrder, ...prev.filter((order) => order.id !== newOrder.id)]);
                   setShowMedModal(false);
                   setMedForm({ name: '', dose: '', route: '', frequency: '', priority: 'Routine' });
                 }}
