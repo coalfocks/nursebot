@@ -278,7 +278,6 @@ export function OrdersManagement({
     const orderForState = { ...adjustedOrder, roomId: effectiveRoomId, assignmentId: effectiveAssignmentId };
 
     setOrderSaveError(null);
-    setOrders((prev) => [orderForState, ...prev]);
     const saved = await emrApi.addOrder(
       {
         ...orderForState,
@@ -286,10 +285,10 @@ export function OrdersManagement({
       effectiveRoomId,
     );
     if (!saved) {
-      setOrders((prev) => prev.filter((order) => order.id !== orderForState.id));
       setOrderSaveError('Could not save this order. Please try again.');
       return;
     }
+    setOrders((prev) => [saved, ...prev]);
     setShowOrderEntry(false);
 
     if (adjustedOrder.category === 'Imaging') {
@@ -423,19 +422,19 @@ export function OrdersManagement({
         console.error('Failed to generate STAT labs', err);
       }
     }
-    onOrderAdded?.(orderForState);
+    onOrderAdded?.(saved);
   };
 
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
     const existing = orders.find((order) => order.id === orderId);
     if (!existing) return;
-    setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order)));
-    const updated = await emrApi.updateOrder(orderId, { status: newStatus });
-    if (!updated) {
-      setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: existing.status } : order)));
-      return;
+    const updated = await emrApi.updateOrder(orderId, { status: newStatus }, existing.recordVersion);
+    if (updated && 'conflict' in updated) {
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? updated.current : order)));
+      setOrderSaveError('This order changed elsewhere. The newer server version is now shown.');
+    } else if (updated) {
+      setOrders((prev) => prev.map((order) => (order.id === orderId ? updated : order)));
     }
-    setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, ...updated } : order)));
   };
 
   const handlePlaceIvOrder = async () => {
@@ -452,6 +451,7 @@ export function OrdersManagement({
       orderedBy: patient.attendingPhysician ?? 'Attending',
       orderTime: new Date().toISOString(),
       instructions: 'Establish peripheral IV access.',
+      recordVersion: 1,
     };
     await handleOrderPlaced(quickIvOrder);
   };
@@ -522,9 +522,12 @@ export function OrdersManagement({
       instructions: editForm.instructions || undefined,
     };
 
-    const updated = await emrApi.updateOrder(editingOrder.id, updates);
-    if (updated) {
-      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? { ...o, ...updated } : o)));
+    const updated = await emrApi.updateOrder(editingOrder.id, updates, editingOrder.recordVersion);
+    if (updated && 'conflict' in updated) {
+      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? updated.current : o)));
+      setOrderSaveError('This order changed elsewhere. The newer server version is now shown.');
+    } else if (updated) {
+      setOrders((prev) => prev.map((o) => (o.id === editingOrder.id ? updated : o)));
     }
     setEditingOrder(null);
   };

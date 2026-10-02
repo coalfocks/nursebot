@@ -30,6 +30,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [nurseNoteDraft, setNurseNoteDraft] = useState('');
+  const [noteSaveError, setNoteSaveError] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState<{ title: string; type: ClinicalNote['type']; content: string }>({
     title: '',
     type: 'Progress',
@@ -57,7 +58,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
 
   const [showGenerator, setShowGenerator] = useState(false);
 
-  const handleNoteGenerated = (newNote: ClinicalNote) => {
+  const handleNoteGenerated = async (newNote: ClinicalNote) => {
     if (!canWriteNotes) return;
     const adjustedNote: ClinicalNote = {
       ...newNote,
@@ -65,15 +66,20 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
       roomId: forceBaseline ? null : patient.roomId ?? newNote.roomId ?? null,
       overrideScope: forceBaseline ? 'baseline' : newNote.overrideScope,
     };
-    setNotes((prev) => [adjustedNote, ...prev]);
+    setNoteSaveError(null);
+    const saved = await emrApi.addClinicalNote(adjustedNote);
+    if (!saved) {
+      setNoteSaveError('Could not save this note. Please try again.');
+      return;
+    }
+    setNotes((prev) => [saved, ...prev]);
     setShowGenerator(false);
-    if (adjustedNote.type === 'Progress' && adjustedNote.assignmentId) {
+    if (saved.type === 'Progress' && saved.assignmentId) {
       setShowQualtrics(true);
     }
-    void emrApi.addClinicalNote(adjustedNote);
   };
 
-  const handleAddNurseNote = () => {
+  const handleAddNurseNote = async () => {
     const content = nurseNoteDraft.trim();
     if (!content) return;
     const resolvedAssignmentId = forceBaseline ? null : assignmentId ?? null;
@@ -91,10 +97,16 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
       content,
       author,
       signed: false,
+      recordVersion: 1,
     };
-    setNotes((prev) => [newNote, ...prev]);
+    setNoteSaveError(null);
+    const saved = await emrApi.addClinicalNote(newNote);
+    if (!saved) {
+      setNoteSaveError('Could not save this note. Please try again.');
+      return;
+    }
+    setNotes((prev) => [saved, ...prev]);
     setNurseNoteDraft('');
-    void emrApi.addClinicalNote(newNote);
   };
 
   const startEditing = (note: ClinicalNote) => {
@@ -113,8 +125,11 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
       title: noteDraft.title.trim() || current?.title,
       type: noteDraft.type,
       content: noteDraft.content.trim() || current?.content,
-    });
-    if (updated) {
+    }, current?.recordVersion);
+    if (updated && 'conflict' in updated) {
+      setNotes((prev) => prev.map((note) => (note.id === editingNoteId ? updated.current : note)));
+      setNoteSaveError('This note changed elsewhere. The newer server version is now shown.');
+    } else if (updated) {
       setNotes((prev) => prev.map((note) => (note.id === editingNoteId ? { ...note, ...updated } : note)));
       if ((updated.type ?? noteDraft.type) === 'Progress' && current?.assignmentId) {
         setShowQualtrics(true);
@@ -136,9 +151,12 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
     if (!note.assignmentId) return;
 
     // Update the note to signed
-    const updated = await emrApi.updateClinicalNote(note.id, { signed: true });
-    if (updated) {
-      setNotes((prev) => prev.map((n) => (n.id === note.id ? { ...n, signed: true } : n)));
+    const updated = await emrApi.updateClinicalNote(note.id, { signed: true }, note.recordVersion);
+    if (updated && 'conflict' in updated) {
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? updated.current : n)));
+      setNoteSaveError('This note changed elsewhere. The newer server version is now shown.');
+    } else if (updated) {
+      setNotes((prev) => prev.map((n) => (n.id === note.id ? updated : n)));
 
       // Trigger feedback generation for the assignment
       try {
@@ -325,6 +343,12 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
       )}
 
       {showGenerator && <AINotesGenerator patient={patient} onNoteGenerated={handleNoteGenerated} />}
+
+      {noteSaveError && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {noteSaveError}
+        </p>
+      )}
 
       <Tabs defaultValue="all" className="w-full">
         <TabsList>

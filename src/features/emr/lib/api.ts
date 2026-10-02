@@ -11,11 +11,13 @@ import type {
   RoomOrdersConfig,
   CustomOverviewSection,
   IntakeOutput,
+  type VersionedMutationResult,
 } from './types';
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
+type MedicalOrderRow = Database['public']['Tables']['medical_orders']['Row'];
 
 const deriveScope = resolveOverrideScope;
 
@@ -95,6 +97,31 @@ const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): Clini
     author: row.author ?? 'Unknown',
     timestamp: row.timestamp,
     signed: row.signed ?? false,
+    recordVersion: row.record_version,
+  };
+};
+
+const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalOrder => {
+  const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
+  return {
+    id: row.id,
+    patientId: row.patient_id ?? fallbackPatientId,
+    assignmentId: row.assignment_id ?? undefined,
+    roomId: row.room_id ?? undefined,
+    overrideScope: scope,
+    category: row.category as MedicalOrder['category'],
+    orderName: row.order_name,
+    frequency: row.frequency ?? undefined,
+    route: row.route ?? undefined,
+    dose: row.dose ?? undefined,
+    priority: (row.priority as MedicalOrder['priority']) ?? 'Routine',
+    status: (row.status as MedicalOrder['status']) ?? 'Active',
+    orderedBy: row.ordered_by ?? 'Unknown',
+    orderTime: row.order_time ?? new Date().toISOString(),
+    scheduledTime: row.scheduled_time ?? undefined,
+    instructions: row.instructions ?? undefined,
+    deletedAt: row.deleted_at,
+    recordVersion: row.record_version,
   };
 };
 
@@ -279,7 +306,7 @@ export const emrApi = {
       );
   },
 
-  async addClinicalNote(note: ClinicalNote): Promise<void> {
+  async addClinicalNote(note: ClinicalNote): Promise<ClinicalNote | null> {
     const overrideScope = deriveScope(note.overrideScope, note.assignmentId, note.roomId);
     const payload = {
       patient_id: note.patientId,
@@ -296,17 +323,20 @@ export const emrApi = {
     const cleanPayload = Object.fromEntries(
       Object.entries(payload).filter(([, value]) => value !== undefined),
     );
-    const { error } = await supabase.from('clinical_notes').insert(cleanPayload);
+    const { data, error } = await supabase.from('clinical_notes').insert(cleanPayload).select('*').maybeSingle();
 
     if (error) {
       console.error('Error inserting clinical note', error);
+      return null;
     }
+    return data ? mapClinicalNote(data, note.patientId) : null;
   },
 
   async updateClinicalNote(
     noteId: string,
     updates: Partial<Pick<ClinicalNote, 'title' | 'content' | 'type' | 'signed'>>,
-  ): Promise<ClinicalNote | null> {
+    expectedVersion?: number,
+  ): Promise<VersionedMutationResult<ClinicalNote>> {
     const payload = {
       title: updates.title,
       content: updates.content,
@@ -316,16 +346,26 @@ export const emrApi = {
     const cleanPayload = Object.fromEntries(
       Object.entries(payload).filter(([, value]) => value !== undefined),
     );
-    const { data, error } = await supabase
+    let query = supabase
       .from('clinical_notes')
       .update(cleanPayload)
-      .eq('id', noteId)
-      .select('*')
-      .maybeSingle();
+      .eq('id', noteId);
+    if (expectedVersion !== undefined) query = query.eq('record_version', expectedVersion);
+    const { data, error } = await query.select('*').maybeSingle();
 
-    if (error || !data) {
+    if (error) {
       console.error('Error updating clinical note', error);
       return null;
+    }
+    if (!data) {
+      if (expectedVersion === undefined) return null;
+      const { data: current, error: currentError } = await supabase
+        .from('clinical_notes')
+        .select('*')
+        .eq('id', noteId)
+        .maybeSingle();
+      if (currentError || !current) return null;
+      return { conflict: true, current: mapClinicalNote(current, current.patient_id ?? ''), expectedVersion };
     }
 
     return mapClinicalNote(data, data.patient_id ?? '');
@@ -708,26 +748,7 @@ export const emrApi = {
 
     return (data ?? [])
       .map((row) => {
-        const scope = deriveScope(row.override_scope, row.assignment_id, row.room_id);
-        return {
-          id: row.id,
-          patientId: row.patient_id ?? patientId,
-          assignmentId: row.assignment_id ?? undefined,
-          roomId: row.room_id ?? undefined,
-          overrideScope: scope,
-          category: row.category as MedicalOrder['category'],
-          orderName: row.order_name,
-          frequency: row.frequency ?? undefined,
-          route: row.route ?? undefined,
-          dose: row.dose ?? undefined,
-          priority: (row.priority as MedicalOrder['priority']) ?? 'Routine',
-          status: (row.status as MedicalOrder['status']) ?? 'Active',
-          orderedBy: row.ordered_by ?? 'Unknown',
-          orderTime: row.order_time ?? new Date().toISOString(),
-          scheduledTime: row.scheduled_time ?? undefined,
-          instructions: row.instructions ?? undefined,
-          deletedAt: row.deleted_at,
-        };
+        return mapMedicalOrder(row, patientId);
       })
       .filter((order) =>
         scopeMatchesContext(
@@ -740,9 +761,9 @@ export const emrApi = {
       );
   },
 
-  async addOrder(order: MedicalOrder, roomId?: number | null): Promise<boolean> {
+  async addOrder(order: MedicalOrder, roomId?: number | null): Promise<MedicalOrder | null> {
     const overrideScope = deriveScope(order.overrideScope, order.assignmentId, order.roomId ?? roomId ?? null);
-    const { error } = await supabase.from('medical_orders').insert({
+    const { data, error } = await supabase.from('medical_orders').insert({
       patient_id: order.patientId,
       assignment_id: order.assignmentId ?? null,
       room_id: order.roomId ?? roomId ?? null,
@@ -758,16 +779,20 @@ export const emrApi = {
       order_time: order.orderTime,
       scheduled_time: order.scheduledTime,
       instructions: order.instructions,
-    });
+    }).select('*').maybeSingle();
     if (error) {
       console.error('Error inserting order', error);
-      return false;
+      return null;
     }
-    return true;
+    return data ? mapMedicalOrder(data, order.patientId) : null;
   },
 
-  async updateOrder(orderId: string, updates: Partial<MedicalOrder>): Promise<MedicalOrder | null> {
-    const { error, data } = await supabase
+  async updateOrder(
+    orderId: string,
+    updates: Partial<MedicalOrder>,
+    expectedVersion?: number,
+  ): Promise<VersionedMutationResult<MedicalOrder>> {
+    let query = supabase
       .from('medical_orders')
       .update({
         order_name: updates.orderName,
@@ -779,35 +804,26 @@ export const emrApi = {
         instructions: updates.instructions,
         ordered_by: updates.orderedBy,
       })
-      .eq('id', orderId)
-      .select('*')
-      .maybeSingle();
+      .eq('id', orderId);
+    if (expectedVersion !== undefined) query = query.eq('record_version', expectedVersion);
+    const { error, data } = await query.select('*').maybeSingle();
 
-    if (error || !data) {
-      if (error) console.error('Error updating order', error);
+    if (error) {
+      console.error('Error updating order', error);
       return null;
     }
+    if (!data) {
+      if (expectedVersion === undefined) return null;
+      const { data: current, error: currentError } = await supabase
+        .from('medical_orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
+      if (currentError || !current) return null;
+      return { conflict: true, current: mapMedicalOrder(current), expectedVersion };
+    }
 
-    const scope = deriveScope(data.override_scope, data.assignment_id, data.room_id);
-    return {
-      id: data.id,
-      patientId: data.patient_id ?? '',
-      assignmentId: data.assignment_id ?? undefined,
-      roomId: data.room_id ?? undefined,
-      overrideScope: scope,
-      category: data.category as MedicalOrder['category'],
-      orderName: data.order_name,
-      frequency: data.frequency ?? undefined,
-      route: data.route ?? undefined,
-      dose: data.dose ?? undefined,
-      priority: (data.priority as MedicalOrder['priority']) ?? 'Routine',
-      status: (data.status as MedicalOrder['status']) ?? 'Active',
-      orderedBy: data.ordered_by ?? 'Unknown',
-      orderTime: data.order_time ?? new Date().toISOString(),
-      scheduledTime: data.scheduled_time ?? undefined,
-      instructions: data.instructions ?? undefined,
-      deletedAt: data.deleted_at,
-    };
+    return mapMedicalOrder(data);
   },
 
   async deleteOrder(orderId: string): Promise<void> {

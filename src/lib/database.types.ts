@@ -1304,6 +1304,7 @@ export type Database = {
           override_scope: string
           patient_id: string | null
           room_id: number | null
+          record_version: number
           school_id: string | null
           signed: boolean | null
           timestamp: string | null
@@ -1321,6 +1322,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           room_id?: number | null
+          record_version?: number
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
@@ -1338,6 +1340,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           room_id?: number | null
+          record_version?: number
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
@@ -1569,6 +1572,7 @@ export type Database = {
           patient_id: string | null
           priority: string | null
           room_id: number | null
+          record_version: number
           route: string | null
           scheduled_time: string | null
           school_id: string | null
@@ -1591,6 +1595,7 @@ export type Database = {
           patient_id?: string | null
           priority?: string | null
           room_id?: number | null
+          record_version?: number
           route?: string | null
           scheduled_time?: string | null
           school_id?: string | null
@@ -1613,6 +1618,7 @@ export type Database = {
           patient_id?: string | null
           priority?: string | null
           room_id?: number | null
+          record_version?: number
           route?: string | null
           scheduled_time?: string | null
           school_id?: string | null

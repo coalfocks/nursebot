@@ -65,6 +65,7 @@ export interface ClinicalNote {
   author: string;
   timestamp?: string;
   signed: boolean;
+  recordVersion?: number;
   assignmentId?: string | null;
 }
 
@@ -123,7 +124,16 @@ export interface MedicalOrder {
   scheduledTime?: string;
   instructions?: string;
   deletedAt?: string | null;
+  recordVersion?: number;
 }
+
+export type MutationConflict<T> = {
+  conflict: true;
+  current: T;
+  expectedVersion: number;
+};
+
+export type VersionedMutationResult<T> = T | MutationConflict<T> | null;
 
 export type ImagingImage = {
   id: string;
