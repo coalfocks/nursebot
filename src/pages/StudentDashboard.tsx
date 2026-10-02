@@ -71,15 +71,17 @@ export default function StudentDashboard() {
 
       // Fetch specialties for each room
       const assignmentsWithSpecialties = await Promise.all(
-        (data || []).map(async (assignment) => ({
-          ...assignment,
-          room: {
-            ...resolveAssignmentRoom(assignment.room, assignment.scenario_baseline),
-            specialties: await fetchSpecialtiesForRoom(
-              resolveAssignmentRoom(assignment.room, assignment.scenario_baseline),
-            ),
-          },
-        }))
+        (data || []).map(async (assignment) => {
+          const resolvedRoom = resolveAssignmentRoom(assignment.room, assignment.scenario_baseline);
+
+          return {
+            ...assignment,
+            room: {
+              ...resolvedRoom,
+              specialties: await fetchSpecialtiesForRoom(resolvedRoom),
+            },
+          };
+        })
       );
 
       setAssignments(assignmentsWithSpecialties);
@@ -87,10 +89,11 @@ export default function StudentDashboard() {
       // Get signed URLs for all PDFs
       const urls: Record<string, string> = {};
       for (const assignment of data || []) {
-        if (assignment.room.pdf_url) {
-          const signedUrl = await getSignedUrl(assignment.room.pdf_url);
+        const resolvedRoom = resolveAssignmentRoom(assignment.room, assignment.scenario_baseline);
+        if (resolvedRoom.pdf_url) {
+          const signedUrl = await getSignedUrl(resolvedRoom.pdf_url);
           if (signedUrl) {
-            urls[assignment.room.pdf_url] = signedUrl;
+            urls[resolvedRoom.pdf_url] = signedUrl;
           }
         }
       }

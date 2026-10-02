@@ -8,6 +8,7 @@ import { Loader2, Clock, Book, CheckCircle, ArrowRight, AlertCircle, Download } 
 import type { Database } from '../lib/database.types';
 import { hasAdminAccess } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -48,13 +49,17 @@ export default function MyCases() {
 
       // Fetch specialties for each room
       const assignmentsWithSpecialties = await Promise.all(
-        (data || []).map(async (assignment) => ({
-          ...assignment,
-          room: {
-            ...assignment.room,
-            specialties: await fetchSpecialtiesForRoom(assignment.room),
-          },
-        }))
+        (data || []).map(async (assignment) => {
+          const resolvedRoom = resolveAssignmentRoom(assignment.room, assignment.scenario_baseline);
+
+          return {
+            ...assignment,
+            room: {
+              ...resolvedRoom,
+              specialties: await fetchSpecialtiesForRoom(resolvedRoom),
+            },
+          };
+        })
       );
 
       setAssignments(assignmentsWithSpecialties);

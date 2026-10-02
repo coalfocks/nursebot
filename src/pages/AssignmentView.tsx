@@ -150,9 +150,9 @@ export default function AssignmentView() {
       }
 
       // Get signed URL for PDF if it exists
-      if (data.room.pdf_url) {
-        console.log('Found PDF URL in room data:', data.room.pdf_url);
-        const signedUrl = await getSignedUrl(data.room.pdf_url);
+      if (pinnedRoom.pdf_url) {
+        console.log('Found PDF URL in room data:', pinnedRoom.pdf_url);
+        const signedUrl = await getSignedUrl(pinnedRoom.pdf_url);
         console.log('Generated signed URL:', signedUrl);
         if (signedUrl) {
           setPdfUrl(signedUrl);
