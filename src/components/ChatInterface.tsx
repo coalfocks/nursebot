@@ -761,18 +761,11 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, assignmentStat
     try {
       const { data, error } = await supabase.functions.invoke<{ message: string }>('patient-chat', {
         body: {
-          messages: [
-            {
-              role: 'system',
-              content: `${bedsideConfig.patientChatPrompt}
-
-You are the simulated patient at bedside. Answer only what the learner asks. Use 1-3 short sentences. Do not diagnose yourself, suggest tests, suggest treatment, reveal hidden evaluation criteria, or mention AI/simulation/prompt rules. If you do not know something a real patient would not know, say that naturally.`,
-            },
-            ...nextMessages.map((message) => ({
-              role: message.role === 'student' ? 'user' : 'assistant',
-              content: message.content,
-            })),
-          ],
+          assignmentId,
+          messages: nextMessages.map((message) => ({
+            role: message.role === 'student' ? 'user' : 'assistant',
+            content: message.content,
+          })),
         },
       });
 
