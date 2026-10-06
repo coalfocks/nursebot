@@ -9,6 +9,7 @@ import TestRooms from './TestRooms';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
+import { computeCohortMetrics, type AnalyticsAssignment, type CohortMetrics } from '../lib/analyticsMetrics';
 
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
 type RoomRow = Database['public']['Tables']['rooms']['Row'];
@@ -31,6 +32,7 @@ type DashboardStats = {
   activeRoomCount: number;
   adminCount: number;
   averageScore: number | null;
+  cohortMetrics: CohortMetrics;
 };
 
 const initialStats: DashboardStats = {
@@ -40,6 +42,7 @@ const initialStats: DashboardStats = {
   activeRoomCount: 0,
   adminCount: 0,
   averageScore: null,
+  cohortMetrics: computeCohortMetrics([], 0),
 };
 
 const formatStatusLabel = (status: AssignmentRow['status']) => {
@@ -109,20 +112,30 @@ export default function AdminDashboard() {
           adminQuery = adminQuery.eq('school_id', scopedSchoolId);
         }
 
-        let assignmentQuery = supabase
-          .from('student_room_assignments')
-          .select('id', { count: 'exact', head: true });
-        if (scopedSchoolId) {
-          assignmentQuery = assignmentQuery.eq('school_id', scopedSchoolId);
-        }
+        const loadAssignmentRows = async () => {
+          const rows: Array<Pick<AssignmentRow, 'status' | 'feedback_status' | 'student_id' | 'communication_score' | 'mdm_score' | 'grade' | 'nurse_feedback'>> = [];
+          const pageSize = 1000;
+          let from = 0;
 
-        let completedQuery = supabase
-          .from('student_room_assignments')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'completed');
-        if (scopedSchoolId) {
-          completedQuery = completedQuery.eq('school_id', scopedSchoolId);
-        }
+          while (true) {
+            let query = supabase
+              .from('student_room_assignments')
+              .select('status, feedback_status, student_id, communication_score, mdm_score, grade, nurse_feedback')
+              .range(from, from + pageSize - 1);
+            if (scopedSchoolId) {
+              query = query.eq('school_id', scopedSchoolId);
+            }
+
+            const { data, error: queryError } = await query;
+            if (queryError) throw queryError;
+            const page = (data ?? []) as typeof rows;
+            rows.push(...page);
+            if (page.length < pageSize) break;
+            from += pageSize;
+          }
+
+          return rows;
+        };
 
         let roomsQuery = supabase
           .from('rooms')
@@ -131,14 +144,6 @@ export default function AdminDashboard() {
         if (scopedSchoolId) {
           // Include rooms available to all schools (empty array)
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
-        }
-
-        let gradeQuery = supabase
-          .from('student_room_assignments')
-          .select('grade, nurse_feedback')
-          .eq('status', 'completed');
-        if (scopedSchoolId) {
-          gradeQuery = gradeQuery.eq('school_id', scopedSchoolId);
         }
 
         let recentQuery = supabase
@@ -157,18 +162,14 @@ export default function AdminDashboard() {
         const [
           studentResult,
           adminResult,
-          assignmentResult,
-          completedResult,
+          assignmentRows,
           roomsResult,
-          gradeResult,
           recentResult,
         ] = await Promise.all([
           studentQuery,
           adminQuery,
-          assignmentQuery,
-          completedQuery,
+          loadAssignmentRows(),
           roomsQuery,
-          gradeQuery,
           recentQuery,
         ]);
 
@@ -176,20 +177,24 @@ export default function AdminDashboard() {
 
         if (studentResult.error) throw studentResult.error;
         if (adminResult.error) throw adminResult.error;
-        if (assignmentResult.error) throw assignmentResult.error;
-        if (completedResult.error) throw completedResult.error;
         if (roomsResult.error) throw roomsResult.error;
-        if (gradeResult.error) throw gradeResult.error;
         if (recentResult.error) throw recentResult.error;
 
-        const gradeRows = (gradeResult.data ?? []) as Array<Pick<AssignmentRow, 'grade' | 'nurse_feedback'>>;
+        const cohortAssignments: AnalyticsAssignment[] = assignmentRows.map((row) => ({
+          status: row.status,
+          feedbackStatus: row.feedback_status,
+          studentId: row.student_id,
+          communicationScore: row.communication_score,
+          mdmScore: row.mdm_score,
+          overallScore: row.grade,
+        }));
+        const cohortMetrics = computeCohortMetrics(cohortAssignments, studentResult.count ?? 0);
+        const gradeRows = assignmentRows.filter((row) => row.status === 'completed');
         const scoreValues = gradeRows
           .map((row) => {
             if (typeof row.grade === 'number') return row.grade;
             const feedback = row.nurse_feedback as AssignmentRow['nurse_feedback'];
-            if (feedback && typeof feedback.overall_score === 'number') {
-              return feedback.overall_score;
-            }
+            if (feedback && typeof feedback.overall_score === 'number') return feedback.overall_score;
             return null;
           })
           .filter((value): value is number => value !== null);
@@ -208,10 +213,11 @@ export default function AdminDashboard() {
         setStats({
           studentCount: studentResult.count ?? 0,
           adminCount: adminResult.count ?? 0,
-          assignmentCount: assignmentResult.count ?? 0,
-          completedAssignments: completedResult.count ?? 0,
+          assignmentCount: cohortMetrics.eligibleAssignments,
+          completedAssignments: cohortMetrics.completedAssignments,
           activeRoomCount: roomsResult.count ?? 0,
           averageScore,
+          cohortMetrics,
         });
 
         setRecentAssignments(
@@ -341,6 +347,74 @@ export default function AdminDashboard() {
                       <p className="mt-3 text-xs text-slate-500">{card.description}</p>
                     </article>
                   ))}
+                </section>
+
+                <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">Cohort analytics</h3>
+                      <p className="text-sm text-slate-500">
+                        Scoped to the selected school. Counts use metric contract {stats.cohortMetrics.metricVersion}.
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500">Score source: recorded assignment feedback</p>
+                  </div>
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      {
+                        label: 'Completion',
+                        value: stats.cohortMetrics.completionRate,
+                        detail: `${stats.cohortMetrics.completedAssignments}/${stats.cohortMetrics.eligibleAssignments} opportunities`,
+                      },
+                      {
+                        label: 'Assessment coverage',
+                        value: stats.cohortMetrics.assessmentCoverageRate,
+                        detail: `${stats.cohortMetrics.assessedAssignments}/${stats.cohortMetrics.completedAssignments} completed`,
+                      },
+                      {
+                        label: 'Learners represented',
+                        value: stats.cohortMetrics.participationRate,
+                        detail: `${stats.cohortMetrics.participatingLearners}/${stats.cohortMetrics.eligibleLearners} learners`,
+                      },
+                      {
+                        label: 'Pending reviews',
+                        value: stats.cohortMetrics.pendingReviews,
+                        detail: 'Completed opportunities awaiting feedback review',
+                        raw: true,
+                      },
+                    ].map((metric) => (
+                      <article key={metric.label} className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{metric.label}</p>
+                        <p className="mt-2 text-2xl font-semibold text-slate-900">
+                          {metric.raw ? metric.value ?? 0 : metric.value == null ? '—' : `${metric.value}%`}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">{metric.detail}</p>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+                    {[
+                      ['Communication score distribution', stats.cohortMetrics.scoreDistributions.communication],
+                      ['Medical decision-making distribution', stats.cohortMetrics.scoreDistributions.mdm],
+                    ].map(([label, distribution]) => (
+                      <div key={label as string}>
+                        <p className="text-sm font-medium text-slate-700">{label as string}</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {Object.keys(distribution as Record<string, number>).length === 0 ? (
+                            <span className="text-xs text-slate-500">No valid scores in this scope.</span>
+                          ) : (
+                            Object.entries(distribution as Record<string, number>)
+                              .sort(([left], [right]) => Number(left) - Number(right))
+                              .map(([score, count]) => (
+                                <span key={score} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                                  {score}: {count}
+                                </span>
+                              ))
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </section>
 
                 <section className="grid gap-6 lg:grid-cols-3">
