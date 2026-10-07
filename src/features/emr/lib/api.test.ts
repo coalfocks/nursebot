@@ -164,7 +164,28 @@ describe('emrApi versioned note/order mutations', () => {
   });
 
   it('persists coded lab values without coercing them to zero or null-only results', async () => {
-    const insert = vi.fn(async () => ({ error: null }));
+    const insert = vi.fn(() => ({
+      select: vi.fn(async () => ({
+        data: [{
+          id: 'server-coded-lab',
+          patient_id: 'patient-1',
+          assignment_id: 'assignment-1',
+          room_id: 3,
+          override_scope: 'assignment',
+          test_name: 'ABO/Rh',
+          value: null,
+          text_value: 'O positive',
+          value_type: 'coded',
+          unit: '',
+          reference_range: '',
+          status: 'Normal',
+          collection_time: '2026-10-02T21:00:00.000Z',
+          result_time: null,
+          ordered_by: 'Nurse',
+        }],
+        error: null,
+      })),
+    }));
     from.mockReturnValue({ insert });
 
     await emrApi.addLabResults([

@@ -14,6 +14,7 @@ Use [2026-10-02-authored-room-cases.json](snapshots/2026-10-02-authored-room-cas
 - Make create return the complete committed row and make immediate edits wait for that row.
 - Add idempotency for retryable creates and explicit pending/saved/failed UI states.
 - Add the room 401 lab recovery fixture only after reproducing its current read/write path.
+- The October 7 scope-hardening slice adds database-side patient/room/assignment identity validation and role-aware EMR RLS. It does not rewrite existing authored rows or learner sessions.
 
 ### Stage 2: clinical projections and isolation
 

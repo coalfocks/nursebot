@@ -58,6 +58,10 @@
 - Completion hints in the finish-case modal are hidden by default; revealing one records a timestamp in `student_room_assignments.completion_hint_views`, and evaluation includes the viewed hints as part of grading context.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
+- EMR scope integrity is enforced in both `emrApi` client guards and the
+  `20261007000000_harden_emr_scope_integrity` migration. The database validates
+  patient/room/assignment identity and limits school-admin, learner, and
+  test-user access by role and assignment; the authored snapshot is unchanged.
 - Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.
 
 ## Commands

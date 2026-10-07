@@ -95,7 +95,7 @@ export interface LabResult {
 }
 
 export type LabWriteResult =
-  | { ok: true }
+  | { ok: true; rows: LabResult[] }
   | { ok: false; error: string };
 
 export interface VitalSigns {

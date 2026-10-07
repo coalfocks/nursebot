@@ -16,7 +16,7 @@ import type {
   type VersionedMutationResult,
 } from './types';
 
-import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
+import { resolveOverrideScope, scopeMatchesContext, validateScopeIdentity, type RoomLineage } from './scope';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
@@ -384,6 +384,13 @@ export const emrApi = {
   },
 
   async addClinicalNote(note: ClinicalNote): Promise<ClinicalNote | null> {
+    const validation = validateScopeIdentity({
+      patientId: note.patientId,
+      roomId: note.roomId,
+      assignmentId: note.assignmentId,
+      overrideScope: note.overrideScope,
+    });
+    if (!validation.ok) return null;
     const overrideScope = deriveScope(note.overrideScope, note.assignmentId, note.roomId);
     const payload = {
       patient_id: note.patientId,
@@ -528,7 +535,17 @@ export const emrApi = {
   },
 
   async addLabResults(labs: LabResult[], roomId?: number | null): Promise<LabWriteResult> {
-    if (!labs.length) return { ok: true };
+    if (!labs.length) return { ok: true, rows: [] };
+
+    for (const lab of labs) {
+      const validation = validateScopeIdentity({
+        patientId: lab.patientId,
+        roomId: lab.roomId ?? roomId,
+        assignmentId: lab.assignmentId,
+        overrideScope: lab.overrideScope,
+      });
+      if (!validation.ok) return validation;
+    }
     
     // Check if all labs are baseline scope (no assignment, no room)
     const allBaseline = labs.every((lab) => {
@@ -657,7 +674,16 @@ export const emrApi = {
           return { ok: false, error: insertError.message };
         }
       }
-      return { ok: true };
+      const { data: committed, error: committedError } = await supabase
+        .from('lab_results')
+        .select('*')
+        .eq('patient_id', patientId)
+        .eq('override_scope', 'baseline')
+        .is('assignment_id', null)
+        .is('room_id', null)
+        .is('deleted_at', null);
+      if (committedError) return { ok: false, error: committedError.message };
+      return { ok: true, rows: (committed ?? []).map((row) => mapLabResult(row, patientId)) };
     }
 
     // Insert new entries for each non-baseline run to preserve multiple runs.
@@ -675,12 +701,12 @@ export const emrApi = {
       result_time: lab.resultTime,
       ordered_by: lab.orderedBy,
     }));
-    const { error } = await supabase.from('lab_results').insert(payload);
+    const { data: inserted, error } = await supabase.from('lab_results').insert(payload).select('*');
     if (error) {
       console.error('Error inserting labs', error);
       return { ok: false, error: error.message };
     }
-    return { ok: true };
+    return { ok: true, rows: (inserted ?? []).map((row) => mapLabResult(row, row.patient_id ?? labs[0].patientId)) };
   },
 
   async updateLabResult(
@@ -785,8 +811,18 @@ export const emrApi = {
       );
   },
 
-  async addVitals(vitals: VitalSigns[], roomId?: number | null): Promise<void> {
-    if (!vitals.length) return;
+  async addVitals(vitals: VitalSigns[], roomId?: number | null): Promise<VitalSigns[]> {
+    if (!vitals.length) return [];
+
+    for (const vital of vitals) {
+      const validation = validateScopeIdentity({
+        patientId: vital.patientId,
+        roomId: vital.roomId ?? roomId,
+        assignmentId: vital.assignmentId,
+        overrideScope: vital.overrideScope,
+      });
+      if (!validation.ok) return [];
+    }
     
     // Check if all vitals are baseline scope (no assignment, no room)
     const allBaseline = vitals.every((vital) => {
@@ -819,7 +855,7 @@ export const emrApi = {
         if (error) {
           console.error('Error inserting baseline vitals', error);
         }
-        return;
+        return [];
       }
 
       // Fetch latest baseline vital for this patient
@@ -879,6 +915,34 @@ export const emrApi = {
         console.error('Error inserting vitals', error);
       }
     }
+
+    const { data: committed, error: committedError } = await supabase
+      .from('vital_signs')
+      .select('*')
+      .eq('patient_id', vitals[0].patientId)
+      .is('deleted_at', null);
+    if (committedError) {
+      console.error('Error reading committed vitals', committedError);
+      return [];
+    }
+    return (committed ?? []).map((row) => ({
+      id: row.id,
+      patientId: row.patient_id ?? vitals[0].patientId,
+      assignmentId: row.assignment_id,
+      roomId: row.room_id,
+      overrideScope: deriveScope(row.override_scope, row.assignment_id, row.room_id),
+      timestamp: row.timestamp,
+      temperature: row.temperature ?? undefined,
+      bloodPressureSystolic: row.blood_pressure_systolic ?? undefined,
+      bloodPressureDiastolic: row.blood_pressure_diastolic ?? undefined,
+      heartRate: row.heart_rate ?? undefined,
+      respiratoryRate: row.respiratory_rate ?? undefined,
+      oxygenSaturation: row.oxygen_saturation ?? undefined,
+      pain: row.pain ?? undefined,
+      weight: row.weight ?? undefined,
+      height: row.height ?? undefined,
+      deletedAt: row.deleted_at,
+    }));
   },
 
   async listOrders(patientId: string, assignmentId?: string, roomId?: number | null): Promise<MedicalOrder[]> {
@@ -911,7 +975,15 @@ export const emrApi = {
   },
 
   async addOrder(order: MedicalOrder, roomId?: number | null): Promise<MedicalOrder | null> {
-    const overrideScope = deriveScope(order.overrideScope, order.assignmentId, order.roomId ?? roomId ?? null);
+    const effectiveRoomId = order.roomId ?? roomId;
+    const validation = validateScopeIdentity({
+      patientId: order.patientId,
+      roomId: effectiveRoomId,
+      assignmentId: order.assignmentId,
+      overrideScope: order.overrideScope,
+    });
+    if (!validation.ok) return null;
+    const overrideScope = deriveScope(order.overrideScope, order.assignmentId, effectiveRoomId ?? null);
     const { data, error } = await supabase.from('medical_orders').insert({
       patient_id: order.patientId,
       assignment_id: order.assignmentId ?? null,
@@ -1050,6 +1122,13 @@ export const emrApi = {
   },
 
   async addImagingStudy(study: ImagingStudy): Promise<ImagingStudy | null> {
+    const validation = validateScopeIdentity({
+      patientId: study.patientId,
+      roomId: study.roomId,
+      assignmentId: study.assignmentId,
+      overrideScope: study.overrideScope,
+    });
+    if (!validation.ok) return null;
     const overrideScope = deriveScope(study.overrideScope, study.assignmentId, study.roomId ?? null);
     const { data, error } = await supabase
       .from('imaging_studies')
