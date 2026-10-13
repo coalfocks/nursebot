@@ -28,8 +28,10 @@ type BedsidePatientMessage = {
 type BedsideConfig = {
   exam: string | null;
   patientChatEnabled: boolean;
+  patientChatConfigured: boolean;
   patientChatPrompt: string | null;
   disableReason: string | null;
+  speaker: 'patient' | 'caregiver';
 };
 
 const ASSISTANT_RESPONSE_DELAY = {
@@ -91,13 +93,23 @@ const parseBedsideConfig = (emrContext: unknown): BedsideConfig => {
   const bedside = asRecord(packageRoot?.bedside);
   const patientChatPrompt = asString(patientChat?.prompt ?? bedside?.patientChatPrompt);
   const disableReason = asString(patientChat?.disableReason ?? bedside?.disableReason);
-  const patientChatEnabled = Boolean(patientChat?.enabled ?? bedside?.patientChatEnabled) && Boolean(patientChatPrompt);
+  const hasStructuredConfig = Boolean(
+    patientChatPrompt ||
+    patientChat?.enabled === false ||
+    bedside?.patientChatEnabled === false ||
+    disableReason,
+  );
+  const patientChatEnabled = hasStructuredConfig
+    ? Boolean(patientChat?.enabled ?? bedside?.patientChatEnabled) && Boolean(patientChatPrompt)
+    : false;
 
   return {
     exam: asString(bedside?.exam),
     patientChatEnabled,
+    patientChatConfigured: hasStructuredConfig,
     patientChatPrompt,
     disableReason,
+    speaker: patientChat?.speaker === 'caregiver' || bedside?.patientSpeakerType === 'caregiver' ? 'caregiver' : 'patient',
   };
 };
 
@@ -124,8 +136,10 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const [bedsideConfig, setBedsideConfig] = useState<BedsideConfig>({
     exam: null,
     patientChatEnabled: false,
+    patientChatConfigured: false,
     patientChatPrompt: null,
     disableReason: null,
+    speaker: 'patient',
   });
   const [completionHints, setCompletionHints] = useState<CompletionHints>({
     assessmentHint: '',
@@ -136,6 +150,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const [bedsideMessages, setBedsideMessages] = useState<BedsidePatientMessage[]>([]);
   const [bedsideInput, setBedsideInput] = useState('');
   const [isPatientReplying, setIsPatientReplying] = useState(false);
+  const [bedsideError, setBedsideError] = useState<string | null>(null);
+  const patientRequestIdRef = useRef<string | null>(null);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
@@ -337,7 +353,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     void (async () => {
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
-        .select('bedside_hint, completion_hint, emr_context')
+        .select('bedside_hint, completion_hint, emr_context, patient_conversation_enabled, patient_conversation_prompt, patient_participation_reason, patient_speaker_type')
         .eq('id', roomId)
         .maybeSingle();
       if (roomError) {
@@ -346,7 +362,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       if (isActive) {
         const pinnedRoom = resolveAssignmentRoom(roomData ?? {}, scenarioBaseline) as typeof roomData;
         setBedsideHint(pinnedRoom?.bedside_hint ?? null);
-        setBedsideConfig(parseBedsideConfig(pinnedRoom?.emr_context ?? null));
+        const structuredContext = {
+          ...(pinnedRoom?.emr_context ? (() => {
+            try { return JSON.parse(pinnedRoom.emr_context); } catch { return {}; }
+          })() : {}),
+          patientChat: {
+            enabled: pinnedRoom?.patient_conversation_enabled,
+            prompt: pinnedRoom?.patient_conversation_prompt,
+            disableReason: pinnedRoom?.patient_participation_reason,
+            speaker: pinnedRoom?.patient_speaker_type,
+          },
+        };
+        setBedsideConfig(parseBedsideConfig(structuredContext));
         setCompletionHints(parseCompletionHints(pinnedRoom?.completion_hint ?? null));
       }
 
@@ -354,12 +381,28 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       if (!isActive) return;
       setPatientLink(patient ? { patientId: patient.id, roomId } : null);
       setIsLoadingPatient(false);
+      if (patient) {
+        const { data: transcript, error: transcriptError } = await supabase
+          .from('patient_chat_messages')
+          .select('role, content')
+          .eq('assignment_id', assignmentId)
+          .order('created_at', { ascending: true });
+        if (transcriptError) {
+          console.error('Error loading patient conversation', transcriptError);
+          if (isActive) setBedsideError('Patient conversation could not be loaded.');
+        } else if (isActive) {
+          setBedsideMessages((transcript ?? []).map((message) => ({
+            role: message.role === 'student' ? 'student' : 'patient',
+            content: message.content,
+          })));
+        }
+      }
     })();
 
     return () => {
       isActive = false;
     };
-  }, [roomId, scenarioBaseline]);
+  }, [assignmentId, roomId, scenarioBaseline]);
 
   useEffect(() => {
     void loadTimelineData(patientLink?.patientId ?? null);
@@ -748,23 +791,32 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     }
   };
 
-  const handlePatientChatSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const question = bedsideInput.trim();
+  const submitPatientQuestion = async (question: string) => {
     if (!question || !bedsideConfig.patientChatEnabled || !bedsideConfig.patientChatPrompt) return;
+
+    const requestId = patientRequestIdRef.current ?? crypto.randomUUID();
+    patientRequestIdRef.current = requestId;
 
     const nextMessages: BedsidePatientMessage[] = [
       ...bedsideMessages,
       { role: 'student', content: question },
     ];
+    setBedsideError(null);
     setBedsideMessages(nextMessages);
-    setBedsideInput('');
     setIsPatientReplying(true);
 
     try {
+      const { error: saveQuestionError } = await supabase.from('patient_chat_messages').upsert({
+        assignment_id: assignmentId,
+        client_message_id: requestId,
+        role: 'student',
+        content: question,
+      }, { onConflict: 'assignment_id,client_message_id', ignoreDuplicates: true });
+      if (saveQuestionError) throw saveQuestionError;
       const { data, error } = await supabase.functions.invoke<{ message: string }>('patient-chat', {
         body: {
           assignmentId,
+          clientMessageId: requestId,
           messages: nextMessages.map((message) => ({
             role: message.role === 'student' ? 'user' : 'assistant',
             content: message.content,
@@ -775,18 +827,21 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       if (error) throw error;
       if (!data?.message) throw new Error('Patient response missing');
       setBedsideMessages((prev) => [...prev, { role: 'patient', content: data.message }]);
+      patientRequestIdRef.current = null;
+      setBedsideInput('');
     } catch (error) {
       console.error('Error in bedside patient chat:', error);
-      setBedsideMessages((prev) => [
-        ...prev,
-        {
-          role: 'patient',
-          content: 'I am having trouble answering right now.',
-        },
-      ]);
+      setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === question)));
+      setBedsideInput(question);
+      setBedsideError('Patient conversation could not be loaded. Check your connection and Retry.');
     } finally {
       setIsPatientReplying(false);
     }
+  };
+
+  const handlePatientChatSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    void submitPatientQuestion(bedsideInput.trim());
   };
 
   return (
@@ -1015,10 +1070,19 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
                 </p>
               </div>
             )}
-            {!bedsideConfig.patientChatEnabled && (
+            {!bedsideConfig.patientChatConfigured && !bedsideError && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                {bedsideConfig.disableReason ||
-                  'The patient is not able to participate in bedside conversation for this case.'}
+                Patient conversation could not be loaded. Retry after the room configuration is available.
+              </div>
+            )}
+            {bedsideError && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <div className="flex items-center justify-between gap-3"><span>{bedsideError}</span><button type="button" className="font-semibold underline" disabled={isPatientReplying || !bedsideInput.trim()} onClick={() => { setBedsideError(null); void submitPatientQuestion(bedsideInput.trim()); }}>Retry</button></div>
+              </div>
+            )}
+            {bedsideConfig.patientChatConfigured && !bedsideConfig.patientChatEnabled && !bedsideError && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {bedsideConfig.disableReason || 'This authored case does not allow the patient to participate in conversation.'}
               </div>
             )}
             {bedsideConfig.patientChatEnabled && (
@@ -1049,13 +1113,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
                     </div>
                   )}
                 </div>
-                <form onSubmit={handlePatientChatSubmit} className="flex gap-2">
-                  <input
+                <form onSubmit={handlePatientChatSubmit} className="flex flex-col gap-2">
+                  <label htmlFor="bedside-question" className="text-sm font-medium text-slate-700">Ask the {bedsideConfig.speaker} a question</label>
+                  <div className="flex gap-2">
+                  <textarea
+                    id="bedside-question"
                     type="text"
                     value={bedsideInput}
                     onChange={(event) => setBedsideInput(event.target.value)}
-                    className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Ask the patient..."
+                    onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
+                    rows={3}
+                    className="min-h-20 flex-1 resize-y rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder={`Ask the ${bedsideConfig.speaker}...`}
                     disabled={isPatientReplying}
                   />
                   <button
@@ -1065,6 +1134,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
                   >
                     {isPatientReplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   </button>
+                  </div>
                 </form>
               </div>
             )}

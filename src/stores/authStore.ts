@@ -32,6 +32,11 @@ const withProfileDefaults = (profile: Profile): Profile => ({
   role: profile.role ?? 'student',
 });
 
+// A Super Admin's primary school is account metadata, not the default browsing scope.
+// null is the explicit, persisted All schools state.
+const initialSchoolScope = (profile: Profile): string | null =>
+  profile.role === 'super_admin' ? null : profile.school_id ?? null;
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   profile: null,
@@ -76,14 +81,14 @@ export const useAuthStore = create<AuthState>((set) => ({
         
         if (createError) throw createError;
         const normalized = withProfileDefaults(newProfile as Profile);
-        set({ user: data.user, profile: normalized, activeSchoolId: normalized.school_id ?? null });
+        set({ user: data.user, profile: normalized, activeSchoolId: initialSchoolScope(normalized) });
         return;
       }
       
       if (profileError) throw profileError;
       
       const normalizedProfile = withProfileDefaults(profileData as Profile);
-      set({ user: data.user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
+      set({ user: data.user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile) });
     }
   },
   signUp: async (email, password, fullName, studyYear, caseDesignation, phoneNumber, smsConsent, schoolId) => {
@@ -120,7 +125,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (profileError) throw profileError;
 
     const normalizedProfile = withProfileDefaults(profileData as Profile);
-    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
+    set({ user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile) });
   },
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
@@ -196,7 +201,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
       
       const normalized = withProfileDefaults(newProfile as Profile);
-      set({ user, profile: normalized, activeSchoolId: normalized.school_id ?? null, loading: false });
+    set({ user, profile: normalized, activeSchoolId: initialSchoolScope(normalized), loading: false });
       return;
     }
     
@@ -207,7 +212,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     
     const normalizedProfile = withProfileDefaults(profile as Profile);
-    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null, loading: false });
+    set({ user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile), loading: false });
   },
   setActiveSchoolId: (schoolId) => set({ activeSchoolId: schoolId }),
 }));

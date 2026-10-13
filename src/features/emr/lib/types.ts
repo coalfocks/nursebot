@@ -166,6 +166,13 @@ export interface ImagingStudy {
   orderedBy?: string | null;
   orderTime?: string;
   report?: string | null;
+  bodySite?: string | null;
+  laterality?: string | null;
+  indication?: string | null;
+  findings?: string | null;
+  impression?: string | null;
+  encounterTime?: string | null;
+  recordVersion?: number;
   reportGeneratedAt?: string | null;
   images?: ImagingImage[];
   deletedAt?: string | null;

@@ -1247,6 +1247,7 @@ export type Database = {
       chat_messages: {
         Row: {
           assignment_id: string
+          client_message_id: string | null
           content: string
           created_at: string
           id: string
@@ -1257,6 +1258,7 @@ export type Database = {
         }
         Insert: {
           assignment_id: string
+          client_message_id?: string | null
           content: string
           created_at?: string
           id?: string
@@ -1267,6 +1269,7 @@ export type Database = {
         }
         Update: {
           assignment_id?: string
+          client_message_id?: string | null
           content?: string
           created_at?: string
           id?: string
@@ -1374,11 +1377,17 @@ export type Database = {
       imaging_studies: {
         Row: {
           assignment_id: string | null
+          body_site: string | null
           contrast: string | null
           created_at: string | null
           deleted_at: string | null
+          encounter_time: string | null
+          findings: string | null
           id: string
           images: Json | null
+          indication: string | null
+          impression: string | null
+          laterality: string | null
           order_name: string | null
           order_time: string | null
           ordered_by: string | null
@@ -1387,6 +1396,7 @@ export type Database = {
           priority: string | null
           report: string | null
           report_generated_at: string | null
+          record_version: number
           room_id: number | null
           school_id: string | null
           status: string | null
@@ -1395,11 +1405,17 @@ export type Database = {
         }
         Insert: {
           assignment_id?: string | null
+          body_site?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
+          encounter_time?: string | null
+          findings?: string | null
           id?: string
           images?: Json | null
+          indication?: string | null
+          impression?: string | null
+          laterality?: string | null
           order_name?: string | null
           order_time?: string | null
           ordered_by?: string | null
@@ -1408,6 +1424,7 @@ export type Database = {
           priority?: string | null
           report?: string | null
           report_generated_at?: string | null
+          record_version?: number
           room_id?: number | null
           school_id?: string | null
           status?: string | null
@@ -1416,11 +1433,17 @@ export type Database = {
         }
         Update: {
           assignment_id?: string | null
+          body_site?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
+          encounter_time?: string | null
+          findings?: string | null
           id?: string
           images?: Json | null
+          indication?: string | null
+          impression?: string | null
+          laterality?: string | null
           order_name?: string | null
           order_time?: string | null
           ordered_by?: string | null
@@ -1429,6 +1452,7 @@ export type Database = {
           priority?: string | null
           report?: string | null
           report_generated_at?: string | null
+          record_version?: number
           room_id?: number | null
           school_id?: string | null
           status?: string | null
@@ -1859,6 +1883,77 @@ export type Database = {
           },
         ]
       }
+      patient_chat_messages: {
+        Row: {
+          assignment_id: string
+          content: string
+          created_at: string
+          id: string
+          role: string
+          reply_to_client_message_id: string | null
+        }
+        Insert: {
+          assignment_id: string
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+          reply_to_client_message_id?: string | null
+        }
+        Update: {
+          assignment_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          reply_to_client_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_chat_messages_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "student_room_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      walkthrough_videos: {
+        Row: { id: string; version: number; title: string; description: string; topic: string; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; topic: string; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; topic?: string; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_courses: {
+        Row: { id: string; version: number; title: string; description: string; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_course_items: {
+        Row: { id: string; course_id: string; course_version: number; video_id: string; video_version: number; position: number; required: boolean }
+        Insert: { id?: string; course_id: string; course_version: number; video_id: string; video_version: number; position: number; required?: boolean }
+        Update: { id?: string; course_id?: string; course_version?: number; video_id?: string; video_version?: number; position?: number; required?: boolean }
+        Relationships: []
+      }
+      walkthrough_enrollments: {
+        Row: { id: string; user_id: string; course_id: string; course_version: number; completed_at: string | null; last_video_id: string | null; last_position_seconds: number; created_at: string; updated_at: string }
+        Insert: { id?: string; user_id: string; course_id: string; course_version: number; completed_at?: string | null; last_video_id?: string | null; last_position_seconds?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; user_id?: string; course_id?: string; course_version?: number; completed_at?: string | null; last_video_id?: string | null; last_position_seconds?: number; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_progress: {
+        Row: { id: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds: number; watched_intervals: Json; completed_at: string | null; last_activity_at: string }
+        Insert: { id?: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds?: number; watched_intervals?: Json; completed_at?: string | null; last_activity_at?: string }
+        Update: { id?: string; enrollment_id?: string; user_id?: string; video_id?: string; video_version?: number; position_seconds?: number; watched_intervals?: Json; completed_at?: string | null; last_activity_at?: string }
+        Relationships: []
+      }
+      walkthrough_overrides: {
+        Row: { id: string; user_id: string; enrollment_id: string | null; reason: string; created_by: string; created_at: string }
+        Insert: { id?: string; user_id: string; enrollment_id?: string | null; reason: string; created_by: string; created_at?: string }
+        Update: { id?: string; user_id?: string; enrollment_id?: string | null; reason?: string; created_by?: string; created_at?: string }
+        Relationships: []
+      }
       rooms: {
         Row: {
           available_school_ids: string[] | null
@@ -1883,6 +1978,10 @@ export type Database = {
           order_categories: Json | null
           orders_config: Json | null
           patient_id: string | null
+          patient_conversation_enabled: boolean
+          patient_conversation_prompt: string | null
+          patient_participation_reason: string | null
+          patient_speaker_type: string
           pdf_url: string | null
           progress_note: string | null
           role: string | null
@@ -1916,6 +2015,10 @@ export type Database = {
           order_categories?: Json | null
           orders_config?: Json | null
           patient_id?: string | null
+          patient_conversation_enabled?: boolean
+          patient_conversation_prompt?: string | null
+          patient_participation_reason?: string | null
+          patient_speaker_type?: string
           pdf_url?: string | null
           progress_note?: string | null
           role?: string | null
@@ -1949,6 +2052,10 @@ export type Database = {
           order_categories?: Json | null
           orders_config?: Json | null
           patient_id?: string | null
+          patient_conversation_enabled?: boolean
+          patient_conversation_prompt?: string | null
+          patient_participation_reason?: string | null
+          patient_speaker_type?: string
           pdf_url?: string | null
           progress_note?: string | null
           role?: string | null

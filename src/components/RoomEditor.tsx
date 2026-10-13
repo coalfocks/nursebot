@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
+import { EMR_LABEL } from '../lib/terminology';
 import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { isObgynSpecialtyName } from '../lib/roomHelpers';
@@ -125,6 +126,18 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [objective, setObjective] = useState(room?.objective || '');
   const [style, setStyle] = useState(room?.style || '');
   const [patientName, setPatientName] = useState('');
+  const [patientConversationPrompt, setPatientConversationPrompt] = useState(
+    room?.patient_conversation_prompt || '',
+  );
+  const [patientConversationEnabled, setPatientConversationEnabled] = useState(
+    room?.patient_conversation_enabled ?? true,
+  );
+  const [patientParticipationReason, setPatientParticipationReason] = useState(
+    room?.patient_participation_reason || '',
+  );
+  const [patientSpeakerType, setPatientSpeakerType] = useState(
+    room?.patient_speaker_type || 'patient',
+  );
   const [nurseContext, setNurseContext] = useState(room?.nurse_context || room?.context || '');
   const parsedEmrContext = (() => {
     const raw = room?.emr_context;
@@ -508,6 +521,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         // Preserve empty array for "all schools" - only set to null if truly undefined
         available_school_ids: normalizedSchoolIds ?? null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
+        patient_conversation_prompt: patientConversationPrompt.trim() || null,
+        patient_conversation_enabled: patientConversationEnabled,
+        patient_participation_reason: patientParticipationReason.trim() || null,
+        patient_speaker_type: patientSpeakerType,
       };
 
       if (room) {
@@ -821,7 +838,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
         <div>
           <label htmlFor="emrContext" className="block text-sm font-medium text-gray-700">
-            EHR Context
+            {EMR_LABEL} Context
           </label>
           <textarea
             id="emrContext"
@@ -832,6 +849,73 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             placeholder="Ongoing EMR rules or responses (e.g., “if WBC ordered, increase each run”)."
           />
         </div>
+        <fieldset className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/40 p-4">
+          <legend className="px-1 text-sm font-semibold text-gray-900">Patient Background</legend>
+          <p className="text-xs text-gray-600">
+            Include only facts the patient or caregiver could know: symptoms, personal history,
+            concerns, preferences, and communication limits. Do not include diagnoses, scoring,
+            evaluator hints, or unreleased results.
+          </p>
+          <div>
+            <label htmlFor="patientConversationPrompt" className="block text-sm font-medium text-gray-700">
+              Patient Conversation Prompt
+            </label>
+            <textarea
+              id="patientConversationPrompt"
+              value={patientConversationPrompt}
+              onChange={(e) => setPatientConversationPrompt(e.target.value)}
+              rows={5}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="Patient/caregiver facts and communication guidance"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="patientSpeakerType" className="block text-sm font-medium text-gray-700">
+                Speaker type
+              </label>
+              <select
+                id="patientSpeakerType"
+                value={patientSpeakerType}
+                onChange={(e) => setPatientSpeakerType(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              >
+                <option value="patient">Patient</option>
+                <option value="caregiver">Caregiver</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 pt-6 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={patientConversationEnabled}
+                onChange={(e) => setPatientConversationEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              Patient/caregiver conversation enabled
+            </label>
+          </div>
+          {!patientConversationEnabled && (
+            <div>
+              <label htmlFor="patientParticipationReason" className="block text-sm font-medium text-gray-700">
+                Reason for limited participation
+              </label>
+              <textarea
+                id="patientParticipationReason"
+                value={patientParticipationReason}
+                onChange={(e) => setPatientParticipationReason(e.target.value)}
+                rows={2}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                placeholder="e.g., sedated; caregiver provides history"
+                required
+              />
+            </div>
+          )}
+          <p className="text-xs text-gray-600">
+            Preview: {patientConversationEnabled
+              ? (patientSpeakerType === 'caregiver' ? 'Caregiver' : 'Patient') + ' responds using the authored prompt.'
+              : patientParticipationReason.trim() || 'Participation limitation required.'}
+          </p>
+        </fieldset>
         {isObgynRoom && (
           <div>
             <label htmlFor="deliveryNote" className="block text-sm font-medium text-gray-700">

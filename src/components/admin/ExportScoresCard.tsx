@@ -43,7 +43,8 @@ const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
 
 const defaultStartDate = () => {
   const date = new Date();
-  date.setDate(date.getDate() - 30);
+  date.setUTCMonth(0, 1);
+  date.setUTCHours(0, 0, 0, 0);
   return formatDateInput(date);
 };
 

@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TestTube, TrendingUp, Sparkles, Trash2, Pencil } from 'lucide-react';
-import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
@@ -13,6 +13,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -28,8 +29,6 @@ type LabTrendPoint = {
   value: number;
   status: LabResult['status'];
 };
-
-const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1 - index) * 24}h prior`;
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
@@ -127,8 +126,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 patientId: patient.id,
                 assignmentId: assignmentId ?? null,
                 roomId: patient.roomId ?? null,
-                collectionTime: lab.collectionTime ?? new Date().toISOString(),
-                resultTime: lab.resultTime ?? new Date().toISOString(),
+                collectionTime: clampToMinimumPrior(lab.collectionTime, patient.admissionDate),
+                resultTime: clampToMinimumPrior(lab.resultTime ?? lab.collectionTime, patient.admissionDate),
                 orderedBy: lab.orderedBy ?? 'Admission',
                 status: lab.status ?? 'Normal',
               }));
@@ -206,22 +205,17 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       }
 
       const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
-        ? ((aiResponse.data as { labs: unknown }).labs as Array<{
-            testName?: string;
-            value?: string | number;
-            unit?: string;
-            referenceRange?: string;
-            status?: LabResult['status'];
-            collectionTime?: string;
-            resultTime?: string;
-          }>)
+        ? validateGeneratedLabResults(
+            (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+            requestedTests,
+          )
         : null;
 
       const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
       const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
 
       const generatedLabs =
-        aiLabs?.length && requestedTests.length
+        aiLabs?.length === requestedTests.length
           ? aiLabs
           : await generateLabResults(patient.id, orderName, {
               patient,
@@ -233,7 +227,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               vitals,
             });
 
-      const runTimestamp = new Date().toISOString();
+      const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
@@ -426,7 +420,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (_value: string, index: number) => formatPriorLabLabel(index, sortedCollectionTimes.length);
+  const formatCollectionLabel = (value: string) => formatScenarioPrior(value, patient.admissionDate);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -450,7 +444,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       key,
       [...data]
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-        .map((entry, index) => ({ ...entry, time: formatPriorLabLabel(index, data.length) })),
+        .map((entry) => ({ ...entry, time: formatScenarioPrior(entry.time, patient.admissionDate) })),
     ]),
   );
 
@@ -867,8 +861,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     unit: manualLabForm.unit.trim(),
                     referenceRange: manualLabForm.referenceRange.trim(),
                     status: manualLabForm.status,
-                    collectionTime: new Date().toISOString(),
-                    resultTime: new Date().toISOString(),
+                    collectionTime: minimumPriorTimestamp(patient.admissionDate),
+                    resultTime: minimumPriorTimestamp(patient.admissionDate),
                     orderedBy: patient.attendingPhysician ?? 'Manual Entry',
                   };
 

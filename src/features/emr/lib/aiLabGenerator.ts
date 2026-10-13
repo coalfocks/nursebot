@@ -10,11 +10,49 @@ export type LabGenerationContext = {
   vitals?: VitalSigns[];
 };
 
-type LabTemplate = {
+export type LabTemplate = {
   testName: string;
   unit: string;
   referenceRange: string;
   normal: [number, number];
+};
+
+const canonicalAnalyteKey = (name: string) => name
+  .toLowerCase()
+  .replace(/[\u2018\u2019']/g, '')
+  .replace(/\(serum\)|\(plasma\)|\s+/g, ' ')
+  .trim();
+
+const validReferenceRange = (range: unknown) => {
+  if (typeof range !== 'string' || !range.trim()) return false;
+  return /^-?\d+(?:\.\d+)?\s*(?:-|to)\s*\+?-?\d+(?:\.\d+)?(?:\s*%|\s*[a-zA-Z/%]+)?$/.test(range.trim());
+};
+
+export type GeneratedLabPayload = {
+  testName?: string;
+  value?: string | number;
+  unit?: string;
+  referenceRange?: string;
+  status?: LabResult['status'];
+  collectionTime?: string;
+  resultTime?: string;
+};
+
+/** Keep model output inside the explicitly ordered panel contract. */
+export const validateGeneratedLabResults = (
+  results: GeneratedLabPayload[],
+  requestedTests: LabTemplate[],
+): GeneratedLabPayload[] => {
+  const requestedByKey = new Map(requestedTests.map((test) => [canonicalAnalyteKey(test.testName), test]));
+  const seen = new Set<string>();
+  return results.flatMap((result) => {
+    if (!result.testName) return [];
+    const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
+    if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
+    if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
+    seen.add(template.testName);
+    return [{ ...result, testName: template.testName, unit: template.unit, referenceRange: template.referenceRange }];
+  });
 };
 
 const labTemplates: LabTemplate[] = [

@@ -1,9 +1,17 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Activity, AlertTriangle, CheckCircle, XCircle, Target, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Activity, AlertTriangle, Target, Zap } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 import { isFeedbackEligibleStatus } from '../lib/feedbackEligibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'];
+type EvaluationAssignment = Assignment & {
+  communication_score?: number | null;
+  mdm_score?: number | null;
+  communication_breakdown?: CommunicationBreakdown | null;
+  mdm_breakdown?: MDMBreakdown | null;
+  learning_objectives?: string | null;
+  case_difficulty?: string | null;
+};
 
 interface CommunicationBreakdown {
   information_sharing: {
@@ -38,20 +46,20 @@ interface MDMBreakdown {
 }
 
 interface EvaluationDisplayProps {
-  assignment: Assignment;
+  assignment: EvaluationAssignment;
   onRetryFeedback?: () => void;
 }
 
-export default function EvaluationDisplay({ assignment, onRetryFeedback }: EvaluationDisplayProps) {
+export default function EvaluationDisplay({ assignment }: EvaluationDisplayProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>('communication');
 
   // Type assertion for new scoring columns
-  const communicationScore = (assignment as any).communication_score;
-  const mdmScore = (assignment as any).mdm_score;
-  const communicationBreakdown = (assignment as any).communication_breakdown as CommunicationBreakdown | null;
-  const mdmBreakdown = (assignment as any).mdm_breakdown as MDMBreakdown | null;
-  const learningObjectives = (assignment as any).learning_objectives;
-  const caseDifficulty = (assignment as any).case_difficulty || 'intermediate';
+  const communicationScore = assignment.communication_score;
+  const mdmScore = assignment.mdm_score;
+  const communicationBreakdown = assignment.communication_breakdown;
+  const mdmBreakdown = assignment.mdm_breakdown;
+  const learningObjectives = assignment.learning_objectives;
+  const caseDifficulty = assignment.case_difficulty || 'intermediate';
 
   // Only show when feedback is ready
   if (!isFeedbackEligibleStatus(assignment.status)) {
@@ -65,21 +73,6 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
-  };
-
-  const ScoreBadge = ({ score, maxScore = 5, label }: { score: number; maxScore?: number; label: string }) => {
-    const percentage = (score / maxScore) * 100;
-    const color = percentage >= 80 ? 'bg-green-100 text-green-800 border-green-300' :
-                  percentage >= 60 ? 'bg-blue-100 text-blue-800 border-blue-300' :
-                  percentage >= 40 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
-                  'bg-red-100 text-red-800 border-red-300';
-
-    return (
-      <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${color}`}>
-        <span>{label}: </span>
-        <span className="ml-1">{score.toFixed(1)}/{maxScore}</span>
-      </div>
-    );
   };
 
   const SubScoreRow = ({ 

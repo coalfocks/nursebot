@@ -24,6 +24,8 @@ import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
+import About from './pages/About';
+import AdminWalkthroughVideos, { AdminOnboarding } from './pages/AdminWalkthroughVideos';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -78,6 +80,10 @@ function App() {
         <Route 
           path="/reset-password" 
           element={<ResetPassword />} 
+        />
+        <Route
+          path="/about"
+          element={user ? <About /> : <Navigate to="/login" replace />}
         />
         <Route 
           path="/dashboard" 
@@ -225,6 +231,14 @@ function App() {
               <Navigate to="/dashboard" replace />
             )
           }
+        />
+        <Route
+          path="/admin/walkthrough-videos"
+          element={user?.id && hasAdmin ? <AdminWalkthroughVideos /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/onboarding"
+          element={user?.id && hasAdmin ? <AdminOnboarding /> : <Navigate to="/dashboard" replace />}
         />
         <Route 
           path="/assignments" 

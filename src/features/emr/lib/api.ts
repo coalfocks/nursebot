@@ -189,6 +189,13 @@ const mapImagingStudy = (row: ImagingStudyRow, fallbackPatientId: string): Imagi
     orderedBy: row.ordered_by ?? undefined,
     orderTime: row.order_time,
     report: row.report ?? undefined,
+    bodySite: row.body_site ?? undefined,
+    laterality: row.laterality ?? undefined,
+    indication: row.indication ?? undefined,
+    findings: row.findings ?? undefined,
+    impression: row.impression ?? undefined,
+    encounterTime: row.encounter_time ?? undefined,
+    recordVersion: row.record_version,
     reportGeneratedAt: row.report_generated_at ?? undefined,
     images,
     deletedAt: row.deleted_at,
@@ -1083,29 +1090,62 @@ export const emrApi = {
 
   async updateImagingStudy(
     studyId: string,
-    updates: Partial<Pick<ImagingStudy, 'report' | 'reportGeneratedAt' | 'status' | 'images'>>,
+    updates: Partial<Pick<ImagingStudy, 'report' | 'reportGeneratedAt' | 'status' | 'images' | 'bodySite' | 'laterality' | 'indication' | 'findings' | 'impression' | 'encounterTime' | 'contrast'>> & { expectedVersion?: number },
   ): Promise<ImagingStudy | null> {
+    const { data: existing, error: existingError } = await supabase
+      .from('imaging_studies')
+      .select('*')
+      .eq('id', studyId)
+      .maybeSingle();
+    if (existingError || !existing) return null;
+    if (updates.expectedVersion !== undefined && existing.record_version !== updates.expectedVersion) {
+      console.error('Imaging report edit conflict', { studyId, expected: updates.expectedVersion, actual: existing.record_version });
+      return null;
+    }
     const payload = {
       report: updates.report,
       report_generated_at: updates.reportGeneratedAt,
       status: updates.status,
       images: updates.images,
+      body_site: updates.bodySite,
+      laterality: updates.laterality,
+      indication: updates.indication,
+      findings: updates.findings,
+      impression: updates.impression,
+      encounter_time: updates.encounterTime,
+      record_version: updates.expectedVersion !== undefined ? updates.expectedVersion + 1 : undefined,
     };
     const cleanPayload = Object.fromEntries(
       Object.entries(payload).filter(([, value]) => value !== undefined),
     );
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('imaging_studies')
       .update(cleanPayload)
-      .eq('id', studyId)
-      .select('*')
-      .maybeSingle();
+      .eq('id', studyId);
+    if (updates.expectedVersion !== undefined) query = query.eq('record_version', updates.expectedVersion);
+    const { data, error } = await query.select('*').maybeSingle();
 
     if (error || !data) {
       console.error('Error updating imaging study', error);
       return null;
     }
+
+    const nextVersion = data.record_version ?? (existing.record_version + 1);
+    await supabase.from('imaging_study_versions').upsert({
+      study_id: studyId,
+      version: nextVersion,
+      report: data.report,
+      body_site: data.body_site,
+      laterality: data.laterality,
+      contrast: data.contrast,
+      indication: data.indication,
+      findings: data.findings,
+      impression: data.impression,
+      status: data.status,
+      encounter_time: data.encounter_time,
+      is_addendum: false,
+    }, { onConflict: 'study_id,version' });
 
     return mapImagingStudy(data, data.patient_id ?? '');
   },

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useAuthStore } from './authStore';
 import { createMockUser, createMockProfile, createMockAuthError } from '../test/mocks';
 import * as supabaseModule from '../lib/supabase';
@@ -20,10 +20,9 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 describe('authStore', () => {
-  let supabase: any;
+  const supabase = vi.mocked(supabaseModule.supabase, { deep: true });
 
   beforeEach(() => {
-    supabase = supabaseModule.supabase;
     vi.clearAllMocks();
   });
 
