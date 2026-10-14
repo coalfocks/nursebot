@@ -83,6 +83,20 @@ export const getDefaultReferenceRange = (
   return SEX_SPECIFIC_DEFAULTS[key][sex === 'Male' ? 'Male' : 'Female'];
 };
 
+/** Reconcile historical sex-dependent ranges for display without rewriting stored rows. */
+export const getPatientReferenceRange = (
+  testName: string,
+  storedReferenceRange: unknown,
+  sex?: Patient['gender'] | null,
+): string => {
+  const defaultRange = sex === 'Male' || sex === 'Female'
+    ? getDefaultReferenceRange(testName, sex)
+    : null;
+  return defaultRange
+    ? formatNumericReferenceRange(defaultRange)
+    : (typeof storedReferenceRange === 'string' ? storedReferenceRange : '');
+};
+
 export const formatNumericReferenceRange = (range: NumericReferenceRange): string =>
   `${range.low}-${range.high}`;
 
@@ -140,3 +154,11 @@ export const normalizeLabResult = <T extends Pick<LabResult, 'testName' | 'value
     abnormalFlag: classification.abnormalFlag,
   };
 };
+
+export const normalizeLabResultForPatient = <T extends Pick<LabResult, 'testName' | 'value' | 'referenceRange'> & Partial<LabResult>>(
+  lab: T,
+  sex?: Patient['gender'] | null,
+): T & Pick<LabResult, 'status' | 'abnormalFlag'> => normalizeLabResult({
+  ...lab,
+  referenceRange: getPatientReferenceRange(lab.testName, lab.referenceRange, sex),
+});

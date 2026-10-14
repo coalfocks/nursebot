@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
@@ -12,6 +12,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
+import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
 
@@ -31,7 +32,11 @@ type LabTrendPoint = {
 };
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
-  const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
+  const normalizeForPatient = useCallback(
+    (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender)),
+    [patient.gender],
+  );
+  const [labResults, setLabResults] = useState<LabResult[]>(normalizeForPatient(sandboxLabs ?? []));
   const [isGenerating, setIsGenerating] = useState(false);
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
   const { profile } = useAuthStore();
@@ -84,15 +89,15 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     const request = capture();
     setLabResults([]);
     if (isSandbox) {
-      if (isCurrent(request)) setLabResults(sandboxLabs ?? []);
+      if (isCurrent(request)) setLabResults(normalizeForPatient(sandboxLabs ?? []));
       return;
     }
     void (async () => {
       const data = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
       if (!isCurrent(request)) return;
-      setLabResults(data);
+      setLabResults(normalizeForPatient(data));
     })();
-  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent, normalizeForPatient]);
 
   useEffect(() => {
     const request = capture();
@@ -125,7 +130,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           if (labs?.labs && labs.labs.length) {
             const admissionLabs = labs.labs
               .filter((lab) => lab.testName && lab.value !== undefined)
-              .map((lab, idx) => ({
+              .map((lab, idx) => normalizeLabResultForPatient({
                 ...lab,
                 id: lab.id ?? `admission-${data.id}-${idx}`,
                 patientId: patient.id,
@@ -135,7 +140,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 resultTime: clampToMinimumPrior(lab.resultTime ?? lab.collectionTime, patient.admissionDate),
                 orderedBy: lab.orderedBy ?? 'Admission',
                 status: lab.status ?? 'Normal',
-              }));
+              }, patient.gender));
             const admissionIds = new Set(admissionLabs.map((lab) => lab.id));
             setLabResults((prev) => [
               ...admissionLabs,
@@ -145,7 +150,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
-  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, capture, isCurrent]);
+  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, patient.gender, capture, isCurrent]);
 
   // Instant labs are result-producing orders in the simulator. Older orders can
   // predate the order-placement callback, so reconcile them when the Labs tab
@@ -258,7 +263,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           const writeResult = await emrApi.addLabResults(labsWithScope, patient.roomId ?? null);
           if (!writeResult.ok) throw new Error(writeResult.error);
           if (isCurrent(request)) {
-            setLabResults(await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null));
+            setLabResults(normalizeForPatient(await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null)));
           }
         } catch (error) {
           autoResultingOrderIds.current.delete(order.id);
@@ -266,7 +271,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
-  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded]);
+  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient]);
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;
@@ -390,7 +395,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         
         // Refresh labs from database to get merged results
         const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-        setLabResults(refreshedLabs);
+        setLabResults(normalizeForPatient(refreshedLabs));
       }
       setAiLabName('');
       setAiLabRequest('');
@@ -622,11 +627,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!updated) {
         setLabSaveError('Could not save this correction. Please try again.');
       } else if ('conflict' in updated) {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated.current : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated.current, patient.gender) : lab)));
         setLabSaveError('This result changed elsewhere. The newer server version is now shown.');
         setEditingLab(null);
       } else {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated, patient.gender) : lab)));
         setEditingLab(null);
       }
     } finally {
@@ -1018,7 +1023,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     
                     // Refresh labs from database to get merged results
                     const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-                    setLabResults(refreshedLabs);
+                    setLabResults(normalizeForPatient(refreshedLabs));
                   }
 
                   setShowManualLabModal(false);

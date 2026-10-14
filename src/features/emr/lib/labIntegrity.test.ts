@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyLabResult,
   getDefaultReferenceRange,
+  getPatientReferenceRange,
+  normalizeLabResultForPatient,
   parseNumericLabValue,
   parseNumericReferenceRange,
 } from './labIntegrity';
@@ -40,6 +42,17 @@ describe('lab integrity', () => {
     expect(resolveLabTemplates('CBC', 'Male').find((test) => test.testName === 'Hemoglobin')?.referenceRange).toBe('13.5-17.5');
     expect(resolveLabTemplates('CBC', 'Female').find((test) => test.testName === 'Hematocrit')?.referenceRange).toBe('36-46');
     expect(resolveLabTemplates('CBC').find((test) => test.testName === 'Hemoglobin')?.referenceRange).toBe('12.0-15.5');
+  });
+
+  it('reclassifies historical sex-dependent rows without changing stored chart data', () => {
+    expect(getPatientReferenceRange('Hemoglobin', '12.0-15.5', 'Male')).toBe('13.5-17.5');
+    expect(getPatientReferenceRange('Hematocrit', '36-46', 'Male')).toBe('41-53');
+    expect(getPatientReferenceRange('White Blood Cell Count', '4.0-11.0', 'Male')).toBe('4.0-11.0');
+    const historical = { testName: 'Hemoglobin', value: 15.6, referenceRange: '12.0-15.5', status: 'Abnormal' as const };
+    expect(normalizeLabResultForPatient(historical, 'Male')).toMatchObject({
+      referenceRange: '13.5-17.5', status: 'Normal', abnormalFlag: false,
+    });
+    expect(historical.referenceRange).toBe('12.0-15.5');
   });
 
   it('does not coerce malformed or qualitative values into numeric classifications', () => {
