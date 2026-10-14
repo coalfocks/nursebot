@@ -15,6 +15,7 @@ import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
 import { LabResults } from '../features/emr/components/LabResults';
 import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
 import { OrdersManagement } from '../features/emr/components/OrdersManagement';
+import { MedicationAdministrationRecord } from '../features/emr/components/MedicationAdministrationRecord';
 import { ImagingStudies } from '../features/emr/components/ImagingStudies';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
 import { Button } from '../features/emr/components/ui/Button';
@@ -52,9 +53,10 @@ export default function EmrDashboard() {
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [vitalsError, setVitalsError] = useState<string | null>(null);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') === 'mar' ? 'mar' : 'overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
   const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
+  const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [, setIsEnsuringAssignment] = useState(false);
   const [, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -62,6 +64,7 @@ export default function EmrDashboard() {
   const effectiveAssignmentId = forceBaseline
     ? undefined
     : assignmentId ?? (selectedPatient?.roomId === derivedAssignmentRoomId ? derivedAssignmentId : undefined);
+  const completedStudentReview = !forceBaseline && assignmentStatus === 'completed' && !isSuperAdmin(profile);
   const patientRequest = useRequestIdentity(
     `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
   );
@@ -362,6 +365,29 @@ export default function EmrDashboard() {
     isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,
   );
 
+  useEffect(() => {
+    if (!effectiveAssignmentId || forceBaseline) {
+      setAssignmentStatus(null);
+      return;
+    }
+    let active = true;
+    void supabase
+      .from('student_room_assignments')
+      .select('status')
+      .eq('id', effectiveAssignmentId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          console.error('Failed to load assignment status', error);
+          setAssignmentStatus(null);
+          return;
+        }
+        setAssignmentStatus(data?.status ?? null);
+      });
+    return () => { active = false; };
+  }, [effectiveAssignmentId, forceBaseline]);
+
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
     setCustomSectionDraft(
@@ -552,7 +578,7 @@ export default function EmrDashboard() {
               </h1>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                 <span>MRN: {selectedPatient.mrn}</span>
-                <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
+                {showAdminLayout && <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>}
                 <span className="font-semibold text-foreground">Age: {patientAge ?? '—'}</span>
                 <span className="font-semibold text-foreground">BMI: {patientBMI ?? '—'}</span>
                 <span>{selectedPatient.gender}</span>
@@ -589,7 +615,7 @@ export default function EmrDashboard() {
             </div>
           ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
+            <TabsList className="grid w-full grid-cols-7">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
                 Overview
@@ -613,6 +639,10 @@ export default function EmrDashboard() {
               <TabsTrigger value="orders" className="flex items-center gap-2">
                 <Pill className="h-4 w-4" />
                 Orders
+              </TabsTrigger>
+              <TabsTrigger value="mar" className="flex items-center gap-2">
+                <Pill className="h-4 w-4" />
+                MAR
               </TabsTrigger>
             </TabsList>
 
@@ -1139,9 +1169,19 @@ export default function EmrDashboard() {
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
                 forceBaseline={forceBaseline}
+                readOnly={completedStudentReview}
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
                 onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}
+              />
+            </TabsContent>
+
+            <TabsContent value="mar">
+              <MedicationAdministrationRecord
+                patient={selectedPatient}
+                assignmentId={effectiveAssignmentId}
+                forceBaseline={forceBaseline}
+                readOnly={completedStudentReview}
               />
             </TabsContent>
 

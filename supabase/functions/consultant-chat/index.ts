@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { resolvePinnedConversationPrompt } from '../_shared/conversation-prompt-config.ts';
+import { canCreateConsultantWrite, shouldCleanupConsultantArtifacts } from './guards.ts';
 
 type ConsultantRequest = {
   serviceId?: string;
@@ -92,6 +93,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let createdRequestId: string | null = null;
   let createdOrderId: string | null = null;
+  let requestCreatedHere = false;
   try {
     const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim();
     if (!token) return json({ error: 'Authentication required' }, 401);
@@ -114,9 +116,10 @@ Deno.serve(async (req) => {
     }
     if ([summary, clinicalQuestion, reason].some((value) => value.length > 1200)) return json({ error: 'Consult fields must be 1,200 characters or fewer' }, 400);
 
-    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, emr_context, role, context)').eq('id', payload.assignmentId).maybeSingle();
+    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, status, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, emr_context, role, context)').eq('id', payload.assignmentId).maybeSingle();
     if (error) throw error;
     if (!assignment || assignment.student_id !== auth.user.id) return json({ error: 'Assignment not found' }, 404);
+    if (!canCreateConsultantWrite(assignment.status)) return json({ error: 'COMPLETED_ASSIGNMENT_READ_ONLY' }, 409);
     const room = Array.isArray(assignment.room) ? assignment.room[0] : assignment.room;
     const roomRecord = record(room);
     const patientId = typeof roomRecord.patient_id === 'string' ? roomRecord.patient_id : null;
@@ -130,6 +133,7 @@ Deno.serve(async (req) => {
     if (existingRequest && (existingRequest.service_id !== serviceId || existingRequest.audience !== audience || existingRequest.message_text !== message)) return json({ error: 'This request id is already bound to a different consultant message or audience' }, 409);
     if (existingRequest?.status === 'answered' || existingRequest?.status === 'assumes_care') return json({ message: existingRequest.response, disposition: existingRequest.disposition, orderId: existingRequest.consult_order_id, requestId: existingRequest.id, idempotent: true });
 
+    requestCreatedHere = !existingRequest;
     const { data: consultRequest, error: requestError } = await admin.from('consultant_requests').upsert({ assignment_id: payload.assignmentId, patient_id: patientId, room_id: roomId, service_id: serviceId, service_label: service.label, audience, message_text: message || clinicalQuestion, specialty, summary, clinical_question: clinicalQuestion, reason, urgency, client_request_id: request.clientRequestId, status: 'requested' }, { onConflict: 'assignment_id,client_request_id' }).select('id').single();
     if (requestError) throw requestError;
     createdRequestId = consultRequest.id;
@@ -156,10 +160,14 @@ Deno.serve(async (req) => {
     }
     if (orderError) throw orderError;
     if (!order) throw new Error('Consult order could not be resolved');
-    createdOrderId = order.id;
+    if (!priorOrder?.consult_order_id) createdOrderId = order.id;
+    // A follow-up can intentionally reuse the original consult order. Only
+    // delete an order if this invocation inserted it itself.
+    const messageAt = new Date();
+    const responseAt = new Date(messageAt.getTime() + 1);
     const { error: messageError } = await admin.from('consultant_chat_messages').insert([
-      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'student', content: message || clinicalQuestion, service_id: serviceId, service_label: service.label, audience, specialty, urgency, consult_order_id: order.id },
-      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'consultant', content: answer, service_id: serviceId, service_label: service.label, audience, specialty, urgency, consult_order_id: order.id },
+      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'student', content: message || clinicalQuestion, service_id: serviceId, service_label: service.label, audience, specialty, urgency, consult_order_id: order.id, created_at: messageAt.toISOString() },
+      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'consultant', content: answer, service_id: serviceId, service_label: service.label, audience, specialty, urgency, consult_order_id: order.id, created_at: responseAt.toISOString() },
     ]);
     if (messageError) throw messageError;
     // `routine_review` is a disposition, not a persistence status. The
@@ -172,7 +180,7 @@ Deno.serve(async (req) => {
     // Keep retries exact-once even if a downstream insert/update fails after
     // the idempotency row has been created. Service-role cleanup is scoped to
     // only artifacts created by this invocation.
-    if (createdRequestId) {
+    if (createdRequestId && shouldCleanupConsultantArtifacts(requestCreatedHere)) {
       await admin.from('consultant_chat_messages').delete().eq('request_id', createdRequestId);
       if (createdOrderId) await admin.from('medical_orders').delete().eq('id', createdOrderId);
       await admin.from('consultant_requests').update({ status: 'failed' }).eq('id', createdRequestId);

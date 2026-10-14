@@ -68,6 +68,7 @@ export interface ClinicalNote {
   recordVersion?: number;
   assignmentId?: string | null;
   timelineEntryId?: string | null;
+  relativeLabel?: string | null;
   relativeOffsetHours?: number | null;
 }
 
@@ -95,7 +96,9 @@ export interface LabResult {
   createdAt?: string;
   deletedAt?: string | null;
   timelineEntryId?: string | null;
+  relativeLabel?: string | null;
   relativeOffsetHours?: number | null;
+  orderId?: string | null;
 }
 
 export type LabWriteResult =
@@ -141,6 +144,42 @@ export interface MedicalOrder {
   scheduledTime?: string;
   instructions?: string;
   deletedAt?: string | null;
+  recordVersion?: number;
+  labGenerationStatus?: 'not_requested' | 'generating' | 'succeeded' | 'failed';
+  labGenerationRequestId?: string | null;
+  labGenerationError?: string | null;
+  labGenerationAttempts?: number;
+  labGenerationUpdatedAt?: string | null;
+}
+
+export type MarCategory = 'scheduled' | 'prn' | 'one_time' | 'infusion';
+export type MarStatus = 'Given' | 'Held' | 'Refused' | 'Not given' | 'Started' | 'Rate changed' | 'Stopped' | 'Not documented';
+
+export interface MarAdministrationEvent {
+  id: string;
+  patientId: string;
+  roomId: number;
+  assignmentId?: string | null;
+  orderId?: string | null;
+  caseVersion?: string | null;
+  occurrenceKey: string;
+  relativeOffsetHours?: number | null;
+  administeredAt?: string | null;
+  medicationName: string;
+  orderedDose?: string | null;
+  administeredDose?: string | null;
+  unit?: string | null;
+  route?: string | null;
+  frequency?: string | null;
+  category: MarCategory;
+  status: MarStatus;
+  simulatedClinician?: string | null;
+  reason?: string | null;
+  prnIndication?: string | null;
+  response?: string | null;
+  infusionDetails?: Record<string, unknown> | null;
+  source: 'automatic' | 'manual' | 'snapshot';
+  actorLabel?: string | null;
   recordVersion?: number;
 }
 

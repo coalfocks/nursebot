@@ -59,3 +59,49 @@ export const formatScopedEmrTimestamp = (
   }
   return formatScenarioPrior(timestamp, admissionDate, relativeOffsetHours);
 };
+
+/** Render a recorded clinical timestamp without deriving an ordinal age from
+ * the encounter clock. Relative offsets are meaningful only when the record
+ * explicitly carries one, so they are appended as context rather than
+ * replacing the stored date/time. */
+export const formatRecordedEmrTimestamp = (
+  timestamp: string | null | undefined,
+  relativeOffsetHours?: number | null,
+): string => {
+  if (!timestamp) return 'Time unavailable';
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return 'Time unavailable';
+
+  const recorded = parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  });
+  if (relativeOffsetHours === null || relativeOffsetHours === undefined || !Number.isFinite(relativeOffsetHours)) {
+    return recorded;
+  }
+  return `${recorded} • ${relativeOffsetHours === 0 ? 'at encounter' : `${relativeOffsetHours}h prior`}`;
+};
+
+/** Learner-facing time labels never expose authored calendar timestamps. */
+export const formatLearnerEmrTime = (
+  timestamp: string | null | undefined,
+  admissionDate?: string | null,
+  relativeOffsetHours?: number | null,
+): string => {
+  if (relativeOffsetHours !== null && relativeOffsetHours !== undefined && Number.isFinite(relativeOffsetHours)) {
+    return relativeOffsetHours === 0 ? 'Now' : `${relativeOffsetHours} hours prior`;
+  }
+
+  const parsed = timestamp ? new Date(timestamp) : null;
+  const encounter = resolveEncounterTime(admissionDate);
+  if (!parsed || Number.isNaN(parsed.getTime())) return 'Time unavailable';
+  const elapsedHours = Math.max(0, Math.floor((encounter.getTime() - parsed.getTime()) / HOUR_MS));
+  if (!Number.isFinite(elapsedHours) || elapsedHours === 0) return 'Now';
+  if (elapsedHours > MAX_DISPLAY_PRIOR_HOURS) return 'Prior to encounter';
+  return `${elapsedHours} hours prior`;
+};

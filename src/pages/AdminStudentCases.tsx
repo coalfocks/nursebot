@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, Navigate } from 'react-router-dom';
-import { Loader2, ArrowLeft } from 'lucide-react';
+import { Loader2, ArrowLeft, UserPlus } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { LEARNER_PROGRAMS, getLearnerProgramLabel, type LearnerProgram } from '../lib/programTracks';
+import { assignmentStatusLabel, assignmentStatusTone } from '../lib/assignmentStatus';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -142,19 +143,11 @@ export default function AdminStudentCases() {
     );
   }
 
-  const getStatusBadge = (status: AssignmentRow['status']) => {
-    const base = 'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium';
-    switch (status) {
-      case 'completed':
-        return <span className={`${base} bg-emerald-100 text-emerald-700`}>Completed</span>;
-      case 'bedside':
-        return <span className={`${base} bg-emerald-100 text-emerald-700`}>Completed</span>;
-      case 'in_progress':
-        return <span className={`${base} bg-amber-100 text-amber-700`}>In Progress</span>;
-      default:
-        return <span className={`${base} bg-slate-100 text-slate-600`}>Assigned</span>;
-    }
-  };
+  const getStatusBadge = (status: AssignmentRow['status']) => (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${assignmentStatusTone(status)}`}>
+      {assignmentStatusLabel(status)}
+    </span>
+  );
 
   const updateLearnerProgram = async (nextProgram: LearnerProgram) => {
     if (!student || !profile) return;
@@ -193,6 +186,13 @@ export default function AdminStudentCases() {
             <p className="text-sm text-slate-500">Year {student.study_year} · {getLearnerProgramLabel(student.learner_program)}</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <Link
+              to={`/admin/assignments?studentId=${encodeURIComponent(student.id)}`}
+              className="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              <UserPlus className="mr-2 h-4 w-4" />
+              Assign Case
+            </Link>
             <label htmlFor="learner-program" className="text-xs font-medium text-slate-500">Program</label>
             <select
               id="learner-program"

@@ -51,8 +51,10 @@ const builder = (result: { data: unknown; error: unknown }) => {
     insert: vi.fn(() => chain),
     update: vi.fn(() => chain),
     eq: vi.fn(() => chain),
+    is: vi.fn(() => chain),
     select: vi.fn(() => chain),
     maybeSingle: vi.fn(async () => result),
+    then: (resolve: (value: typeof result) => unknown) => Promise.resolve(result).then(resolve),
   };
   return chain;
 };
@@ -144,6 +146,7 @@ describe('emrApi versioned note/order mutations', () => {
       collection_time: '2000-01-01T00:00:00.000Z',
       result_time: '2000-01-01T00:00:00.000Z',
       ordered_by: 'Admission',
+      relative_label: 'On admission',
       created_at: null,
       deleted_at: null,
       ...overrides,
@@ -163,6 +166,7 @@ describe('emrApi versioned note/order mutations', () => {
     expect(new Set(labs.map((entry) => entry.id))).toEqual(new Set(['active-lab', 'room-lab', 'baseline-lab']));
     expect(labs.find((entry) => entry.id === 'room-lab')?.status).toBe('Abnormal');
     expect(labs.find((entry) => entry.id === 'active-lab')?.status).toBe('Abnormal');
+    expect(labs.find((entry) => entry.id === 'baseline-lab')?.relativeLabel).toBe('On admission');
   });
 
   it('persists coded lab values without coercing them to zero or null-only results', async () => {
@@ -215,5 +219,70 @@ describe('emrApi versioned note/order mutations', () => {
     expect(insert).toHaveBeenCalledWith([
       expect.objectContaining({ value: 1, status: 'Normal', abnormal_flag: false }),
     ]);
+  });
+
+  it('preserves an explicit baseline relative label on insert', async () => {
+    const selectResult = builder({ data: [], error: null });
+    const insert = vi.fn(async () => ({ error: null }));
+    from.mockReturnValueOnce(selectResult).mockReturnValueOnce({ insert });
+
+    await emrApi.addLabResults([{
+      id: 'baseline-lab',
+      patientId: 'patient-1',
+      testName: 'AST',
+      value: 42,
+      valueType: 'numeric',
+      unit: 'U/L',
+      referenceRange: '10-40',
+      status: 'Abnormal',
+      collectionTime: '2026-10-02T21:00:00.000Z',
+      orderedBy: 'Admission',
+      relativeLabel: 'On admission',
+    }]);
+
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({ relative_label: 'On admission', collection_time: '2026-10-02T21:00:00.000Z' }),
+    ]);
+  });
+
+  it('preserves an explicit baseline relative label on update without changing its timestamp', async () => {
+    const existing = {
+      id: 'baseline-lab-id',
+      test_name: 'AST',
+      collection_time: '2026-10-02T21:00:00.000Z',
+      result_time: '2026-10-02T21:00:00.000Z',
+    };
+    const selectResult = builder({ data: [existing], error: null });
+    const update = vi.fn(() => builder({ data: [{ id: 'baseline-lab' }], error: null }));
+    from.mockReturnValueOnce(selectResult).mockReturnValueOnce({ update });
+
+    await emrApi.addLabResults([{
+      id: 'baseline-lab',
+      patientId: 'patient-1',
+      testName: 'AST',
+      value: 44,
+      valueType: 'numeric',
+      unit: 'U/L',
+      referenceRange: '10-40',
+      status: 'Abnormal',
+      collectionTime: '2026-10-02T21:00:00.000Z',
+      orderedBy: 'Admission',
+      relativeLabel: 'Post-treatment',
+    }]);
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      relative_label: 'Post-treatment',
+      collection_time: '2026-10-02T21:00:00.000Z',
+      result_time: '2026-10-02T21:00:00.000Z',
+    }));
+  });
+
+  it('keeps baseline label updates label-only', async () => {
+    const update = vi.fn(() => builder({ data: [{ id: 'baseline-lab' }], error: null }));
+    from.mockReturnValue({ update });
+
+    await expect(emrApi.updateBaselineLabSetLabel('patient-1', '2026-10-02T21:00:00.000Z', 'Post-treatment')).resolves.toBe(true);
+
+    expect(update).toHaveBeenCalledWith({ relative_label: 'Post-treatment' });
   });
 });

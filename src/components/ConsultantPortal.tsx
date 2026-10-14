@@ -49,7 +49,17 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
       if (epoch !== scopeEpoch.current) return;
       if (loadError) setError(loadError.message);
       const grouped: Record<string, ConsultantMessage[]> = {};
-      for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      const rows = ((data ?? []) as Array<Record<string, unknown>>).sort((left, right) => {
+        const leftTime = String(left.created_at ?? '');
+        const rightTime = String(right.created_at ?? '');
+        const timeOrder = leftTime.localeCompare(rightTime);
+        if (timeOrder !== 0) return timeOrder;
+        if (left.request_id && left.request_id === right.request_id) {
+          return left.role === 'student' ? -1 : right.role === 'student' ? 1 : 0;
+        }
+        return String(left.id ?? '').localeCompare(String(right.id ?? ''));
+      });
+      for (const row of rows) {
         const id = typeof row.service_id === 'string' ? row.service_id : '';
         const rowAudience = row.audience === 'adult' || row.audience === 'pediatric' ? row.audience : null;
         const key = rowAudience && id ? `${rowAudience}:${id}` : 'legacy';

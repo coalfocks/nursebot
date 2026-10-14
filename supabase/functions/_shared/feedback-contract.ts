@@ -65,7 +65,9 @@ const asGoalStrings = (value: unknown): string[] => {
     // A generated prompt can contain a heading followed by a long prose block.
     // Keep only concise authored action statements, never the evaluator prompt.
     if (cleaned.length > 260) {
-      const clauses = cleaned.split(/(?<=[.!?])\s+/).map(conciseGoal).filter((clause): clause is string => Boolean(clause) && !goalInstruction.test(clause));
+      const clauses = cleaned.split(/(?<=[.!?])\s+/)
+        .map((clause) => conciseGoal(clause))
+        .filter((clause): clause is string => clause !== null && clause.length > 0 && !goalInstruction.test(clause));
       goals.push(...clauses.slice(0, 4));
       continue;
     }

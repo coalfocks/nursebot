@@ -6,19 +6,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Tabs, TabsList, TabsTrigger } from './ui/Tabs';
 import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, User, Pencil, Trash } from 'lucide-react';
-import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
+import type { Patient, MedicalOrder, ImagingStudy, RoomOrdersConfig } from '../lib/types';
 import { emrApi } from '../lib/api';
-import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
+import { applyAuthoredLabValues, authoredLabEntries, matchingAuthoredLabSetting, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { minimumPriorTimestamp } from '../lib/scenarioTime';
+import { decideLabMaterialization, getLabType } from '../lib/labOrderDecision';
 
 interface OrdersManagementProps {
   patient: Patient;
   assignmentId?: string;
   forceBaseline?: boolean;
+  readOnly?: boolean;
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
@@ -37,6 +39,7 @@ type RoomMeta = {
   objective?: string | null;
   progress_note?: string | null;
   completion_hint?: string | null;
+  orders_config?: RoomOrdersConfig | null;
 };
 
 const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] => {
@@ -51,6 +54,7 @@ export function OrdersManagement({
   patient,
   assignmentId,
   forceBaseline,
+  readOnly = false,
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
@@ -58,6 +62,8 @@ export function OrdersManagement({
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
   const [isPlacingIv, setIsPlacingIv] = useState(false);
@@ -78,9 +84,13 @@ export function OrdersManagement({
 
   useEffect(() => {
     const request = requestIdentity.capture();
+    setIsLoadingOrders(true);
+    setOrderLoadError(null);
     setOrders([]);
     void (async () => {
-      const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
+      const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null, (message) => {
+        if (requestIdentity.isCurrent(request)) setOrderLoadError(message);
+      });
       if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
       // A completed order may predate the result callback (or a prior route
@@ -97,6 +107,7 @@ export function OrdersManagement({
         }
         if (requestIdentity.isCurrent(request)) onLabsGenerated?.();
       }
+      if (requestIdentity.isCurrent(request)) setIsLoadingOrders(false);
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
@@ -275,6 +286,7 @@ export function OrdersManagement({
   };
 
   const handleOrderPlaced = async (newOrder: MedicalOrder): Promise<boolean> => {
+    if (readOnly) return false;
     const adjustedOrder: MedicalOrder = {
       ...newOrder,
       assignmentId: forceBaseline ? null : newOrder.assignmentId,
@@ -294,9 +306,10 @@ export function OrdersManagement({
         ...orderForState,
       },
       effectiveRoomId,
+      (message) => setOrderSaveError(`Could not save this order: ${message}`),
     );
     if (!saved) {
-      setOrderSaveError('Could not save this order. Please try again.');
+      setOrderSaveError((current) => current ?? 'Could not save this order. Please try again.');
       return false;
     }
     setOrders((prev) => [saved, ...prev]);
@@ -311,22 +324,34 @@ export function OrdersManagement({
       );
     }
 
-    if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
+    if (adjustedOrder.category === 'Lab' && getLabType(adjustedOrder.orderName) === 'instant') {
       try {
         const [previousLabs, clinicalNotes, vitals] = await Promise.all([
           emrApi.listLabResults(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const resolvedTests = resolveLabTemplates(adjustedOrder.orderName, patient.gender, patient.dateOfBirth);
+        const authoredLab = matchingAuthoredLabSetting(roomMeta?.orders_config, adjustedOrder.orderName);
+        if (!authoredLab) {
+          throw new Error(`No authored lab target is configured for this room: ${adjustedOrder.orderName}`);
+        }
+        const resolvedTests = resolveLabTemplates(authoredLab.name, patient.gender, patient.dateOfBirth);
+        if (!resolvedTests.length) {
+          throw new Error(`No supported assay mapping exists for the authored lab: ${authoredLab.name}`);
+        }
         const requestedTests = resolvedTests.map((template) => ({
           testName: template.testName,
           unit: template.unit,
           referenceRange: template.referenceRange,
         }));
 
+        const requestId = saved.labGenerationRequestId ?? saved.id;
+        const generating = await emrApi.updateLabGenerationState(saved.id, 'generating', requestId);
+        if (generating) setOrders((prev) => prev.map((item) => item.id === saved.id ? generating : item));
         const aiResponse = await supabase.functions.invoke('lab-results', {
           body: {
+            orderId: saved.id,
+            requestId,
             orderName: adjustedOrder.orderName,
             priority: adjustedOrder.priority,
             tests: requestedTests,
@@ -356,6 +381,11 @@ export function OrdersManagement({
               objective: roomMeta?.objective ?? null,
               progressNote: roomMeta?.progress_note ?? null,
               completionHint: roomMeta?.completion_hint ?? null,
+              userRequest: [
+                authoredLab.instruction,
+                authoredLab.valueOverride ? `Authored target/value: ${authoredLab.valueOverride}` : null,
+                ...authoredLabEntries(roomMeta?.emr_context).map((entry) => `${entry.labName}: ${entry.value}`),
+              ].filter(Boolean).join('; ') || null,
               clinicalNotes: clinicalNotes.slice(0, 6).map((note) => ({
                 type: note.type,
                 title: note.title,
@@ -387,23 +417,24 @@ export function OrdersManagement({
 
         const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
           ? validateGeneratedLabResults(
-              (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+              applyAuthoredLabValues(
+                (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+                resolvedTests,
+                roomMeta?.emr_context,
+                authoredLab.valueOverride ? [{ labName: authoredLab.name, value: authoredLab.valueOverride }] : [],
+              ),
               resolvedTests,
             )
           : null;
 
-        const generatedLabs =
-          aiLabs?.length === requestedTests.length
-            ? aiLabs
-            : await generateLabResults(patient.id, adjustedOrder.orderName, {
-                patient,
-                assignmentId: effectiveAssignmentId,
-                roomId: contextualRoomId,
-                orderName: adjustedOrder.orderName,
-                previousLabs,
-                clinicalNotes,
-                vitals,
-              });
+        if (!aiLabs || aiLabs.length !== requestedTests.length) {
+          const missing = requestedTests
+            .filter((test) => !aiLabs?.some((lab) => lab.testName === test.testName))
+            .map((test) => test.testName)
+            .join(', ');
+          throw new Error(`Generated lab panel was incomplete; missing: ${missing || 'validated analytes'}`);
+        }
+        const generatedLabs = aiLabs;
 
           const runTimestamp = effectiveAssignmentId
             ? new Date().toISOString()
@@ -423,59 +454,130 @@ export function OrdersManagement({
           collectionTime: runTimestamp,
           resultTime: runTimestamp,
           orderedBy: adjustedOrder.orderedBy,
+          orderId: saved.id,
         }));
 
         const writeResult = await emrApi.addLabResults(labsWithScope, effectiveRoomId);
         if (!writeResult.ok) {
           throw new Error(`Could not save generated labs: ${writeResult.error}`);
         }
+        const completed = await emrApi.updateLabGenerationState(saved.id, 'succeeded', requestId);
+        if (completed) setOrders((prev) => prev.map((item) => item.id === saved.id ? completed : item));
         onLabsGenerated?.();
       } catch (err) {
         console.error('Failed to generate STAT labs', err);
+        const message = err instanceof Error ? err.message : 'Generated lab panel failed clinical coherence validation';
+        const failed = await emrApi.updateLabGenerationState(saved.id, 'failed', saved.labGenerationRequestId ?? saved.id, message);
+        if (failed) setOrders((prev) => prev.map((item) => item.id === saved.id ? failed : item));
+        setOrderSaveError(`Result generation failed — retry. ${message}`);
       }
     }
     onOrderAdded?.(saved);
     return true;
   };
 
-  const ensureCompletedLabResults = async (order: MedicalOrder) => {
-    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return;
-    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
-    const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
-    const existingNames = new Set(existing.filter((lab) => lab.assignmentId === assignmentId).map((lab) => lab.testName.toLowerCase()));
-    const missing = templates.filter((template) => !existingNames.has(template.testName.toLowerCase()));
-    if (!missing.length) return;
-    const generated = await generateLabResults(patient.id, order.orderName, {
-      patient,
-      assignmentId,
-      roomId: patient.roomId,
-      orderName: order.orderName,
-    });
-    const byName = new Map(generated.map((lab) => [lab.testName.toLowerCase(), lab]));
-    const now = new Date().toISOString();
-    const results = missing.map((template, index) => {
-      const generatedLab = byName.get(template.testName.toLowerCase());
-      return {
-        id: generatedLab?.id ?? `completed-lab-${order.id}-${index}`,
+  const retryLabGeneration = async (order: MedicalOrder) => {
+    // Retry is deliberately attached to the existing order. It never calls
+    // addOrder and therefore cannot create a second clinical order.
+    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
+    const authoredLab = matchingAuthoredLabSetting(roomMeta?.orders_config, order.orderName);
+    if (!authoredLab) {
+      setOrderSaveError(`Result generation cannot retry: no authored lab target is configured for this room (${order.orderName}).`);
+      return;
+    }
+    const expected = resolveLabTemplates(authoredLab.name, patient.gender, patient.dateOfBirth);
+    if (!expected.length) {
+      setOrderSaveError(`Result generation cannot retry: no supported assay mapping exists for ${authoredLab.name}.`);
+      return;
+    }
+    const linked = existing.filter((lab) => lab.orderId === order.id);
+    if (linked.length >= expected.length) {
+      const succeeded = await emrApi.updateLabGenerationState(order.id, 'succeeded', order.labGenerationRequestId ?? order.id);
+      if (succeeded) setOrders((prev) => prev.map((item) => item.id === order.id ? succeeded : item));
+      return;
+    }
+    // Reuse the same order path with an explicit retry request. The shared
+    // request identity remains stable, so a successful retry is idempotent.
+    setOrderSaveError(null);
+    const requestId = order.labGenerationRequestId ?? order.id;
+    const generating = await emrApi.updateLabGenerationState(order.id, 'generating', requestId);
+    if (generating) setOrders((prev) => prev.map((item) => item.id === order.id ? generating : item));
+    try {
+      const [previousLabs, clinicalNotes, vitals] = await Promise.all([
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+      const requestedTests = expected.map((template) => ({ testName: template.testName, unit: template.unit, referenceRange: template.referenceRange }));
+      const response = await supabase.functions.invoke('lab-results', {
+        body: {
+          orderId: order.id,
+          requestId,
+          orderName: order.orderName,
+          priority: order.priority,
+          tests: requestedTests,
+          context: {
+            assignmentId,
+            room: { id: patient.roomId, number: patient.room },
+            previousLabs,
+            clinicalNotes,
+            vitals,
+            orders,
+            userRequest: [authoredLab.instruction, authoredLab.valueOverride ? `Authored target/value: ${authoredLab.valueOverride}` : null].filter(Boolean).join('; ') || null,
+          },
+        },
+      });
+      if (response.error) throw response.error;
+      const validated = Array.isArray((response.data as { labs?: unknown })?.labs)
+        ? validateGeneratedLabResults((response.data as { labs: GeneratedLabPayload[] }).labs, expected)
+        : [];
+      if (validated.length !== requestedTests.length) throw new Error('Generated lab panel was incomplete; retry returned no complete validated bundle');
+      const now = new Date().toISOString();
+      const writeResult = await emrApi.addLabResults(validated.map((lab) => ({
+        id: `lab-${order.id}-${lab.testName}`,
         patientId: patient.id,
         assignmentId,
         roomId: patient.roomId,
         overrideScope: 'assignment' as const,
-        testName: template.testName,
-        value: generatedLab?.value ?? 0,
-        unit: template.unit,
-        referenceRange: template.referenceRange,
-        status: generatedLab?.status ?? 'Normal',
+        orderId: order.id,
+        testName: lab.testName ?? 'Lab',
+        value: lab.value ?? '',
+        unit: lab.unit ?? '',
+        referenceRange: lab.referenceRange ?? '',
+        status: lab.status ?? 'Unknown',
         collectionTime: now,
         resultTime: now,
         orderedBy: order.orderedBy,
-      };
+      })), patient.roomId);
+      if (!writeResult.ok) throw new Error(writeResult.error);
+      const succeeded = await emrApi.updateLabGenerationState(order.id, 'succeeded', requestId);
+      if (succeeded) setOrders((prev) => prev.map((item) => item.id === order.id ? succeeded : item));
+      onLabsGenerated?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Generated lab panel failed clinical coherence validation';
+      const failed = await emrApi.updateLabGenerationState(order.id, 'failed', requestId, message);
+      if (failed) setOrders((prev) => prev.map((item) => item.id === order.id ? failed : item));
+      setOrderSaveError(`Result generation failed — retry. ${message}`);
+    }
+  };
+
+  const ensureCompletedLabResults = async (order: MedicalOrder) => {
+    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return;
+    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
+    const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+    const linkedCount = existing.filter((lab) => lab.orderId === order.id).length;
+    const decision = decideLabMaterialization({
+      category: order.category,
+      orderName: order.orderName,
+      existingResultCount: linkedCount,
+      expectedResultCount: templates.length,
     });
-    const writeResult = await emrApi.addLabResults(results, patient.roomId);
-    if (!writeResult.ok) throw new Error(writeResult.error);
+    if (decision === 'already_satisfied' || decision === 'pending') return;
+    await retryLabGeneration(order);
   };
 
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
+    if (readOnly) return;
     const existing = orders.find((order) => order.id === orderId);
     if (!existing) return;
     const updated = await emrApi.updateOrder(orderId, { status: newStatus }, existing.recordVersion);
@@ -500,7 +602,7 @@ export function OrdersManagement({
   };
 
   const handlePlaceIvOrder = async () => {
-    if (isPlacingIv) return;
+    if (readOnly || isPlacingIv) return;
     setIsPlacingIv(true);
     setIvSuccess(null);
     const quickIvOrder: MedicalOrder = {
@@ -652,6 +754,15 @@ export function OrdersManagement({
                   {getStatusIcon(order.status)}
                   <Badge variant={getStatusColor(order.status)}>{order.status}</Badge>
                 </div>
+                {order.labGenerationStatus === 'failed' && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-xs font-medium text-red-700">Result generation failed — retry</p>
+                    <Button size="sm" variant="outline" onClick={() => void retryLabGeneration(order)}>
+                      Retry result
+                    </Button>
+                  </div>
+                )}
+                {order.labGenerationStatus === 'generating' && <p className="mt-1 text-xs text-amber-700">Generating result…</p>}
               </TableCell>
               <TableCell>
                 <div className="text-sm">
@@ -677,7 +788,7 @@ export function OrdersManagement({
             {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {!readOnly && <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => void handlePlaceIvOrder()} disabled={isPlacingIv}>
             {isPlacingIv ? 'Saving…' : 'Order peripheral IV access'}
           </Button>
@@ -685,8 +796,14 @@ export function OrdersManagement({
             <Plus className="h-4 w-4" />
             New Order
           </Button>
-        </div>
+        </div>}
       </div>
+
+      {readOnly && (
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          Completed student review is read-only. Educator audit controls remain available to authorized staff.
+        </p>
+      )}
 
       {orderSaveError && (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -709,7 +826,7 @@ export function OrdersManagement({
         </TabsList>
       </Tabs>
 
-      {showOrderEntry && (
+      {showOrderEntry && !readOnly && (
         <OrderEntry
           patient={patient}
           assignmentId={assignmentId}
@@ -723,7 +840,11 @@ export function OrdersManagement({
           <CardTitle>All Orders</CardTitle>
         </CardHeader>
         <CardContent>
-          {filteredOrders.length ? (
+          {isLoadingOrders ? (
+            <p className="text-sm text-muted-foreground">Loading saved medical orders…</p>
+          ) : orderLoadError ? (
+            <p role="alert" className="text-sm text-red-700">{orderLoadError}</p>
+          ) : filteredOrders.length ? (
             renderOrdersTable(filteredOrders)
           ) : (
             <p className="text-sm text-muted-foreground">No orders yet.</p>
@@ -779,6 +900,15 @@ export function OrdersManagement({
                           {getStatusIcon(order.status)}
                           <Badge variant={getStatusColor(order.status)}>{order.status}</Badge>
                         </div>
+                        {order.labGenerationStatus === 'failed' && (
+                          <div className="mt-2 space-y-1">
+                            <p className="text-xs font-medium text-red-700">Result generation failed — retry</p>
+                            <Button size="sm" variant="outline" onClick={() => void retryLabGeneration(order)}>
+                              Retry result
+                            </Button>
+                          </div>
+                        )}
+                        {order.labGenerationStatus === 'generating' && <p className="mt-1 text-xs text-amber-700">Generating result…</p>}
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
@@ -790,20 +920,22 @@ export function OrdersManagement({
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleOrderStatusChange(order.id, 'Completed')}
-                          >
-                            Complete
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}
-                          >
-                            D/C
-                          </Button>
+                          {!readOnly && <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handleOrderStatusChange(order.id, 'Completed')}
+                            >
+                              Complete
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}
+                            >
+                              D/C
+                            </Button>
+                          </>}
                           {canEditOrders && order.category === 'Medication' && (
                             <>
                               <Button size="sm" variant="outline" onClick={() => startEdit(order)}>

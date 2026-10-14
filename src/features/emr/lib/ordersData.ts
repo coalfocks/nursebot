@@ -93,16 +93,16 @@ const parseStandardFrequencies = (value: string): string[] => {
     }
   });
 
-  return Array.from(parsed);
+  return parsed.size ? Array.from(parsed) : [trimmed];
 };
 
-const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
-  if (!frequencies?.length) return frequencies;
+export const normalizeFrequencies = (frequencies?: string[]): string[] => {
+  if (!frequencies?.length) return ['Once'];
   const normalized = frequencies
     .flatMap(parseStandardFrequencies)
     .filter(Boolean);
   const unique = Array.from(new Set(normalized));
-  return unique.length ? unique : undefined;
+  return unique.length ? (unique.includes('Once') ? unique : ['Once', ...unique]) : ['Once'];
 };
 
 const curatedLabOrders: OrderItem[] = [
@@ -892,10 +892,12 @@ const withStatPriority = (order: OrderItem): OrderItem => {
   };
 };
 
-const withStandardFrequencies = (order: OrderItem): OrderItem => ({
+export const normalizeOrderItem = (order: OrderItem): OrderItem => ({
   ...order,
   frequencies: normalizeFrequencies(order.frequencies),
 });
+
+export const getInitialFrequency = (order: OrderItem): string => order.frequencies?.[0] ?? 'Once';
 
 export const allOrders: OrderItem[] = [
   ...labOrders,
@@ -905,7 +907,7 @@ export const allOrders: OrderItem[] = [
   ...nursingOrders,
   ...procedureOrders,
   ...generalOrders,
-].map(withStandardFrequencies).map(withStatPriority);
+].map(normalizeOrderItem).map(withStatPriority);
 
 export const frequencies = [
   { code: 'Daily', description: 'Once daily', category: 'Daily' },

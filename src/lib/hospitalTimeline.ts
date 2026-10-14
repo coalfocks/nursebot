@@ -44,6 +44,11 @@ export const DEFAULT_HOSPITAL_TIMELINE: HospitalTimeline = {
   entries: [],
 };
 
+/** Compare parsed timelines so formatting-only JSON edits do not count as authoring changes. */
+export function hospitalTimelineChanged(current: HospitalTimeline, original: HospitalTimeline): boolean {
+  return JSON.stringify(current) !== JSON.stringify(original);
+}
+
 export function parseHospitalTimeline(value: unknown): HospitalTimeline {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return DEFAULT_HOSPITAL_TIMELINE;
   const candidate = value as Partial<HospitalTimeline>;
@@ -83,7 +88,10 @@ export function validateHospitalTimeline(timeline: HospitalTimeline): string[] {
   }
   if (timeline.encounterType === 'inpatient' || timeline.encounterType === 'ld') {
     for (let day = 1; day <= timeline.stayDays; day += 1) {
-      if (!(byDay.get(day) ?? []).some((entry) => entry.kind === 'progress_note')) errors.push(`Hospital day ${day} requires one chronological progress note.`);
+      const dayEntries = byDay.get(day) ?? [];
+      const hasProgressNote = dayEntries.some((entry) => entry.kind === 'progress_note');
+      const firstNightAdmission = day === 1 && timeline.stayDays === 1 && dayEntries.some((entry) => entry.kind === 'admission');
+      if (!hasProgressNote && !firstNightAdmission) errors.push(`Hospital day ${day} requires one chronological progress note.`);
     }
   }
   const offsets = timeline.entries.map(entryRelativeHours);

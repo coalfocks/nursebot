@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampToMinimumPrior, formatScenarioPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from './scenarioTime';
+import { clampToMinimumPrior, formatLearnerEmrTime, formatScenarioPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from './scenarioTime';
 
 describe('scenario EMR timestamps', () => {
   it('places newly authored records exactly twelve hours before the encounter', () => {
@@ -29,5 +29,10 @@ describe('scenario EMR timestamps', () => {
     );
     expect(label).not.toContain('12h prior');
     expect(label).toContain('2026');
+  });
+
+  it('uses the saved authored set offset for learner labels', () => {
+    expect(formatLearnerEmrTime('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z', 12)).toBe('12 hours prior');
+    expect(formatLearnerEmrTime('2026-10-13T12:00:00.000Z', '2026-10-13T12:00:00.000Z', 0)).toBe('Now');
   });
 });

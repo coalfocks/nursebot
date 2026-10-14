@@ -14,6 +14,7 @@ import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
 import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
 import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
+import { availabilityPatchValue, describeRoomAvailabilityChange } from '../lib/roomAvailability';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -125,6 +126,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   const [error, setError] = useState<string>('');
   const [patientPromptStatus, setPatientPromptStatus] = useState('');
   const [consultantPromptStatus, setConsultantPromptStatus] = useState('');
+  const [bedsideFindingsStatus, setBedsideFindingsStatus] = useState('');
   const [promptPreview, setPromptPreview] = useState<ConversationPromptKind | null>(null);
   const [timelineWarning, setTimelineWarning] = useState<string>('');
   const advancedSettingsVisible = false;
@@ -322,7 +324,68 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   })();
   const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
   const [allSchoolsSelected, setAllSchoolsSelected] = useState(isAllSchools);
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
+  const [availabilityStatus, setAvailabilityStatus] = useState('');
   const pdfUrl = room?.pdf_url ?? null;
+
+  const saveSchoolAvailability = async () => {
+    if (!room?.id) {
+      setAvailabilityStatus('Save the room before changing school availability.');
+      return;
+    }
+    if (availabilitySaving) return;
+    const primarySchoolId = room.school_id ?? schoolId ?? scopedSchoolId;
+    if (!primarySchoolId) {
+      setAvailabilityStatus('A primary school is required.');
+      return;
+    }
+    const authorizedIds = new Set(schools.map((school) => school.id));
+    const selectedIds = allSchoolsSelected ? [] : availableSchoolIds;
+    const invalidIds = selectedIds.filter((id) => !authorizedIds.has(id));
+    if (invalidIds.length > 0) {
+      setAvailabilityStatus('One or more selected schools is not authorized for this admin scope.');
+      return;
+    }
+    const nextValue = availabilityPatchValue(allSchoolsSelected, selectedIds, primarySchoolId);
+    const change = describeRoomAvailabilityChange(
+      room.available_school_ids,
+      nextValue,
+      primarySchoolId,
+      schools.map((school) => ({ id: school.id, label: getSchoolDisplayName(school) })),
+    );
+    setAvailabilitySaving(true);
+    setAvailabilityStatus('Saving school availability…');
+    setError('');
+    try {
+      let query = supabase
+        .from('rooms')
+        .update({ available_school_ids: nextValue })
+        .eq('id', room.id);
+      query = room.updated_at == null ? query.is('updated_at', null) : query.eq('updated_at', room.updated_at);
+      const { data, error: saveError } = await query
+        .select('available_school_ids, updated_at')
+        .maybeSingle();
+      if (saveError) throw saveError;
+      if (!data) {
+        setAvailabilityStatus('Save conflict: this room changed elsewhere. Your draft was kept; reload before retrying.');
+        return;
+      }
+      const savedIds = data.available_school_ids ?? null;
+      setAvailabilityStatus(
+        `Saved ${change.beforeLabel} → ${change.afterLabel}` +
+        `${change.addedLabels.length ? ` · added: ${change.addedLabels.join(', ')}` : ''}` +
+        `${change.removedLabels.length ? ` · removed: ${change.removedLabels.join(', ')}` : ''}` +
+        ` · read back ${savedIds === null ? 'primary only' : savedIds.length === 0 ? 'all schools' : `${savedIds.length} schools`}`,
+      );
+      setAvailableSchoolIds(savedIds ?? [primarySchoolId]);
+      setAllSchoolsSelected(Array.isArray(savedIds) && savedIds.length === 0);
+      onRoomPatch?.({ available_school_ids: savedIds, updated_at: data.updated_at } as Partial<Room>);
+    } catch (saveError) {
+      setAvailabilityStatus(`Save failed: ${saveError instanceof Error ? saveError.message : 'unable to update school availability.'}`);
+    } finally {
+      setAvailabilitySaving(false);
+    }
+  };
   const buildInitialLabResults = (patientId: string, schoolId?: string | null) => {
     // Use consolidated baseline timestamp for all initial labs
     const baselineTimestamp = '2000-01-01T00:00:00.000Z';
@@ -521,6 +584,30 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
     }
   };
 
+  const saveBedsideFindings = async () => {
+    if (!room?.id) {
+      setBedsideFindingsStatus('Save the room once before saving bedside findings independently.');
+      return;
+    }
+    setBedsideFindingsStatus('Saving…');
+    setError('');
+    try {
+      const { data, error: saveError } = await supabase
+        .from('rooms')
+        .update({ bedside_hint: bedsideHint.trim() || null })
+        .eq('id', room.id)
+        .select('bedside_hint')
+        .single();
+      if (saveError) throw saveError;
+      const saved = data?.bedside_hint ?? '';
+      setBedsideHint(saved);
+      onRoomPatch?.({ bedside_hint: saved || null } as Partial<Room>);
+      setBedsideFindingsStatus('Saved bedside findings.');
+    } catch (saveError) {
+      setBedsideFindingsStatus(`Save failed: ${saveError instanceof Error ? saveError.message : 'unable to save bedside findings.'}`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -537,6 +624,93 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       }
       const finalPdfUrl = pdfUrl;
 
+      const initialTimelineText = JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2);
+      const currentNonContextSnapshot = {
+        roomNumber,
+        learnerProgram,
+        role,
+        objective,
+        style,
+        patientName,
+        nurseContext,
+        caseGoals,
+        progressNote,
+        assessmentHint,
+        diagnosisDifferentiatorHint,
+        planHint,
+        bedsideHint,
+        bedsideRequirement,
+        patientConversationPrompt,
+        patientConversationEnabled,
+        patientResponseMode,
+        consultantResponsePrompt,
+        encounterType,
+        hospitalStayDays,
+        hospitalTimelineText,
+        specialtyIds,
+        difficultyLevel,
+        expectedDiagnosis,
+        expectedTreatment,
+        ordersConfig,
+        isActive,
+        continuesFrom,
+        schoolId,
+        availableSchoolIds,
+        allSchoolsSelected,
+        deliveryNote,
+        evaluationLeniencyMultiplier,
+      };
+      const originalNonContextSnapshot = {
+        roomNumber: room?.room_number || '',
+        learnerProgram: room?.learner_program === 'nursing' ? 'nursing' : 'medical',
+        role: room?.role || '',
+        objective: room?.objective || '',
+        style: room?.style || '',
+        patientName: '',
+        nurseContext: room?.nurse_context || room?.context || '',
+        caseGoals: room?.case_goals || '',
+        progressNote: room?.progress_note || '',
+        assessmentHint: parsedCompletionHints.assessmentHint,
+        diagnosisDifferentiatorHint: parsedCompletionHints.diagnosisDifferentiatorHint,
+        planHint: parsedCompletionHints.planHint,
+        bedsideHint: room?.bedside_hint || '',
+        bedsideRequirement: normalizeBedsideRequirement(room?.bedside_requirement),
+        patientConversationPrompt: room?.patient_conversation_prompt || parsedEmrContext.generatedPatientPrompt || '',
+        patientConversationEnabled: room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
+        patientResponseMode: parsedEmrContext.generatedPatientResponseMode,
+        consultantResponsePrompt: room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
+        encounterType: roomWithTimeline?.encounter_type ?? originalTimelineWithRoomSettings.encounterType,
+        hospitalStayDays: String(roomWithTimeline?.hospital_stay_days ?? originalTimelineWithRoomSettings.stayDays),
+        hospitalTimelineText: initialTimelineText,
+        specialtyIds: initialSpecialtyIds,
+        difficultyLevel: room?.difficulty_level || null,
+        expectedDiagnosis: room?.expected_diagnosis || '',
+        expectedTreatment: room?.expected_treatment || [],
+        ordersConfig: initialOrdersConfig,
+        isActive: room?.is_active ?? true,
+        continuesFrom: room?.continues_from ? String(room.continues_from) : '',
+        schoolId: scopedSchoolId ?? '',
+        availableSchoolIds: initialAvailableSchoolIds,
+        allSchoolsSelected: isAllSchools,
+        deliveryNote: parsedEmrContext.deliveryNote,
+        evaluationLeniencyMultiplier: String(parsedEmrContext.evaluationLeniencyMultiplier),
+      };
+      const contextOnlyUpdate = room
+        ? buildContextOnlyRoomUpdate(room.emr_context, emrContext, currentNonContextSnapshot, originalNonContextSnapshot)
+        : null;
+
+      // Legacy context-only saves must not validate or materialize the unrelated
+      // hospital timeline, nor rebuild defaults into the nested EMR payload.
+      if (contextOnlyUpdate && room) {
+        const { error } = await supabase
+          .from('rooms')
+          .update(contextOnlyUpdate)
+          .eq('id', room.id);
+        if (error) throw error;
+        onSave();
+        return;
+      }
+
       let hospitalTimeline: HospitalTimeline;
       try {
         hospitalTimeline = parseHospitalTimeline(JSON.parse(hospitalTimelineText));
@@ -545,7 +719,13 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       }
       hospitalTimeline = { ...hospitalTimeline, encounterType, stayDays: Number(hospitalStayDays) };
       const timelineErrors = validateHospitalTimeline(hospitalTimeline);
-      if (timelineErrors.length) throw new Error(timelineErrors.join(' '));
+      const timelineWasEdited = !room || hospitalTimelineChanged(hospitalTimeline, originalTimelineWithRoomSettings);
+      if (timelineErrors.length && timelineWasEdited) throw new Error(`Pre-page hospital timeline: ${timelineErrors.join(' ')}`);
+      if (timelineErrors.length && !timelineWasEdited) {
+        setTimelineWarning(`Legacy pre-page timeline is incomplete but unchanged; context-only edits can still be saved. ${timelineErrors.join(' ')}`);
+      } else {
+        setTimelineWarning('');
+      }
 
       const initialVitals = vitalEntries.reduce<Record<string, unknown>>((acc, entry) => {
         const key = entry.key.trim();
@@ -568,17 +748,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         }))
         .filter((entry) => entry.labName || entry.note || entry.value);
 
-      let existingEmrContext: Record<string, unknown> = {};
-      if (typeof room?.emr_context === 'string') {
-        try {
-          const parsed = JSON.parse(room.emr_context);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            existingEmrContext = parsed as Record<string, unknown>;
-          }
-        } catch {
-          // Replace malformed legacy JSON with the fields being explicitly saved.
-        }
-      }
+      const existingEmrContext: Record<string, unknown> = parseRoomEmrContext(room?.emr_context);
       const emrContextPayloadObject: Record<string, unknown> = mergePatientChatContext(existingEmrContext, patientResponseMode);
       if (cleanedAdmissionLabs.length > 0) {
         emrContextPayloadObject.admission = { labs: cleanedAdmissionLabs };
@@ -727,7 +897,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         }
       }
 
-      if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
+      if (timelineWasEdited && timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
         const { error } = await supabase.rpc('materialize_hospital_timeline', {
           p_room_id: timelineRoomId,
           p_patient_id: timelinePatientId,
@@ -743,7 +913,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       onSave();
     } catch (error) {
       console.error('Error saving room:', error);
-      setError('Failed to save room. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to save room. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -835,6 +1005,27 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
                   </select>
                   <p className="mt-1 text-xs text-gray-500">Primary school is always included.</p>
                 </>
+              )}
+              {room?.id && (
+                <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-blue-900">School availability</p>
+                      <p className="text-xs text-blue-800">Saves only available_school_ids; Style and timeline validation are not involved.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void saveSchoolAvailability()}
+                      disabled={availabilitySaving}
+                      className="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {availabilitySaving ? 'Saving…' : 'Save school availability'}
+                    </button>
+                  </div>
+                  {availabilityStatus && (
+                    <p role="status" className="mt-2 text-xs text-blue-900">{availabilityStatus}</p>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -983,8 +1174,14 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               onChange={(e) => setPatientConversationPrompt(e.target.value)}
               rows={4}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Patient persona, authored history, and answer boundaries. Do not reveal diagnosis or hidden goals. Leave blank to disable patient chat."
+              placeholder="Complete patient persona, known history, voice/affect, knowledge boundaries, and response rules."
             />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => void saveConversationPrompt('patient')} className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Save patient prompt</button>
+              <button type="button" onClick={() => setPromptPreview(promptPreview === 'patient' ? null : 'patient')} className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700">{promptPreview === 'patient' ? 'Hide preview' : 'Preview'}</button>
+              {patientPromptStatus && <span role="status" className="text-xs text-gray-600">{patientPromptStatus}</span>}
+            </div>
+            {promptPreview === 'patient' && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-white p-2 text-xs text-gray-700">{patientConversationPrompt.trim() || 'Prompt not configured'}</pre>}
             <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -1006,11 +1203,11 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               <option value="responsive">Respond using the authored patient prompt</option>
               <option value="unable">Unable to respond — return the fixed learner-facing response</option>
             </select>
-            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by student patient chat.</p>
+            <p className="mt-1 text-xs text-gray-500">{patientConversationPrompt.trim() ? 'Saved directly to the room and used by the pinned patient-chat runtime.' : 'Prompt not configured. Patient chat will remain unavailable until an administrator authors it.'}</p>
           </div>
           <div>
             <label htmlFor="consultantResponsePrompt" className="block text-sm font-medium text-gray-700">
-              Consultant Response Behavior
+              Consultant Conversation Prompt
             </label>
             <textarea
               id="consultantResponsePrompt"
@@ -1198,7 +1395,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
             </div>
             <div>
               <label htmlFor="bedsideHint" className="block text-sm font-medium text-gray-700">
-                Go To Bedside Hint
+                Bedside findings
               </label>
               <input
                 type="text"
@@ -1206,8 +1403,20 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
                 value={bedsideHint}
                 onChange={(e) => setBedsideHint(e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                placeholder="Guidance shown when going bedside"
+                placeholder="Physical exam findings shown in the learner bedside panel"
               />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  data-testid="save-bedside-findings"
+                  onClick={() => void saveBedsideFindings()}
+                  className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+                >
+                  Save bedside findings
+                </button>
+                <span className="text-xs text-gray-500">Only physical exam findings belong here; visit advice and coaching stay out of the learner panel.</span>
+                {bedsideFindingsStatus && <span role="status" className="text-xs text-gray-600">{bedsideFindingsStatus}</span>}
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
