@@ -77,6 +77,30 @@ const asString = (value: unknown): string | null => {
   return null;
 };
 
+const getPatientChatErrorSuffix = async (error: unknown): Promise<string> => {
+  const errorRecord = asRecord(error);
+  const context = errorRecord?.context;
+  if (!(context instanceof Response)) return '';
+
+  try {
+    const response = asRecord(await context.json());
+    const requestId = typeof response?.requestId === 'string'
+      ? response.requestId.trim().slice(0, 8)
+      : '';
+    const category = typeof response?.category === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(response.category)
+      ? response.category.replace(/[_-]+/g, ' ')
+      : '';
+    const details = [
+      requestId ? `Request ${requestId}` : '',
+      category ? `Category: ${category}` : '',
+    ].filter(Boolean);
+
+    return details.length ? ` (${details.join(' · ')})` : '';
+  } catch {
+    return '';
+  }
+};
+
 const parseBedsideConfig = (emrContext: unknown): BedsideConfig => {
   let parsed = emrContext;
   if (typeof emrContext === 'string' && emrContext.trim()) {
@@ -806,13 +830,13 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     setIsPatientReplying(true);
 
     try {
-      const { error: saveQuestionError } = await supabase.from('patient_chat_messages').upsert({
+      const { error: saveQuestionError } = await supabase.from('patient_chat_messages').insert({
         assignment_id: assignmentId,
         client_message_id: requestId,
         role: 'student',
         content: question,
-      }, { onConflict: 'assignment_id,client_message_id', ignoreDuplicates: true });
-      if (saveQuestionError) throw saveQuestionError;
+      });
+      if (saveQuestionError && saveQuestionError.code !== '23505') throw saveQuestionError;
       const { data, error } = await supabase.functions.invoke<{ message: string }>('patient-chat', {
         body: {
           assignmentId,
@@ -833,7 +857,8 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       console.error('Error in bedside patient chat:', error);
       setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === question)));
       setBedsideInput(question);
-      setBedsideError('Patient conversation could not be loaded. Check your connection and Retry.');
+      const errorSuffix = await getPatientChatErrorSuffix(error);
+      setBedsideError(`Patient conversation could not be loaded. Check your connection and Retry.${errorSuffix}`);
     } finally {
       setIsPatientReplying(false);
     }
