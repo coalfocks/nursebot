@@ -131,12 +131,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 orderedBy: lab.orderedBy ?? 'Admission',
                 status: lab.status ?? 'Normal',
               }));
-            setLabResults((prev) => [...admissionLabs, ...prev]);
+            const admissionIds = new Set(admissionLabs.map((lab) => lab.id));
+            setLabResults((prev) => [
+              ...admissionLabs,
+              ...prev.filter((lab) => !admissionIds.has(lab.id)),
+            ]);
           }
         }
       }
     })();
-  }, [assignmentId, patient.id, patient.roomId, capture, isCurrent]);
+  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, capture, isCurrent]);
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;
@@ -152,8 +156,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
       ]);
 
-      const tests = resolveLabTemplates(orderName);
-      const requestedTests = tests.length ? tests : resolveLabTemplates('default');
+      const tests = resolveLabTemplates(orderName, patient.gender);
+      const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender);
 
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
@@ -448,7 +452,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     ]),
   );
 
-  const abnormalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Abnormal'), [labResults]);
+  const nonNormalLabs = useMemo(
+    () => labResults.filter((lab) => lab.status === 'Abnormal' || lab.status === 'Critical'),
+    [labResults],
+  );
+  const criticalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Critical'), [labResults]);
 
   const startLabEdit = (lab: LabResult) => {
     setEditingLab(lab);
@@ -473,6 +481,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const updated = await emrApi.updateLabResult(
         editingLab.id,
         {
+          testName: editingLab.testName,
           value: valueType === 'numeric' ? numericValue : labEditForm.value,
           valueType,
           unit: labEditForm.unit,
@@ -528,7 +537,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             <div>
               <h2 className="text-2xl font-bold">Laboratory Results</h2>
               <p className="text-muted-foreground">
-                {abnormalLabs.length} Abnormal • {labResults.length} Total
+                {nonNormalLabs.length} Non-normal • {criticalLabs.length} Critical • {labResults.length} Total
               </p>
             </div>
             <Button
@@ -586,7 +595,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           <div>
             <h2 className="text-2xl font-bold">Laboratory Results</h2>
             <p className="text-muted-foreground">
-              {abnormalLabs.length} Abnormal • {labResults.length} Total
+              {nonNormalLabs.length} Non-normal • {criticalLabs.length} Critical • {labResults.length} Total
             </p>
           </div>
         </div>

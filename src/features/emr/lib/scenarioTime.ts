@@ -1,6 +1,7 @@
 export const MINIMUM_EMR_PRIOR_HOURS = 12;
 
 const HOUR_MS = 60 * 60 * 1000;
+const MAX_DISPLAY_PRIOR_HOURS = 2 * 365 * 24;
 
 export const resolveEncounterTime = (admissionDate?: string | null, fallback = new Date()): Date => {
   if (admissionDate) {
@@ -34,5 +35,8 @@ export const formatScenarioPrior = (
     MINIMUM_EMR_PRIOR_HOURS,
     Math.floor((encounter.getTime() - new Date(displayTimestamp).getTime()) / HOUR_MS),
   );
+  if (!Number.isFinite(elapsedHours) || elapsedHours > MAX_DISPLAY_PRIOR_HOURS) {
+    return 'Prior to encounter';
+  }
   return `${elapsedHours}h prior • ${new Date(displayTimestamp).toLocaleString()}`;
 };

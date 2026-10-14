@@ -973,7 +973,7 @@ export default function EmrDashboard() {
                                   emrApi.listVitals(selectedPatient.id, null, selectedPatient.roomId ?? null),
                                   emrApi.listOrders(selectedPatient.id, null, selectedPatient.roomId ?? null),
                                 ]);
-                                const tests = resolveLabTemplates(sandboxLabForm.testName.trim());
+                                const tests = resolveLabTemplates(sandboxLabForm.testName.trim(), selectedPatient.gender);
                                 const aiResponse = await supabase.functions.invoke('lab-results', {
                                   body: {
                                     orderName: sandboxLabForm.testName.trim(),

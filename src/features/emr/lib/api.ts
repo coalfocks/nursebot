@@ -17,6 +17,7 @@ import type {
 } from './types';
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
+import { normalizeLabResult } from './labIntegrity';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
@@ -130,7 +131,7 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
 
 const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
-  return {
+  const mapped: LabResult = {
     id: row.id,
     recordVersion: row.record_version,
     patientId: row.patient_id ?? fallbackPatientId,
@@ -147,13 +148,14 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     unit: row.unit ?? '',
     referenceRange: row.reference_range ?? '',
     status: (row.status as LabResult['status']) ?? 'Pending',
-    lifecycleStatus: row.lifecycle_status as LabResult['lifecycleStatus'],
+    lifecycleStatus: (row.lifecycle_status as LabResult['lifecycleStatus']) ?? (row.status === 'Pending' ? 'pending' : 'resulted'),
     collectionTime: row.collection_time ?? new Date().toISOString(),
     resultTime: row.result_time ?? undefined,
     orderedBy: row.ordered_by ?? 'Unknown',
     createdAt: row.created_at ?? undefined,
     deletedAt: row.deleted_at,
   };
+  return normalizeLabResult(mapped);
 };
 
 const serializeLabValue = (lab: LabResult) => {
@@ -536,6 +538,7 @@ export const emrApi = {
 
   async addLabResults(labs: LabResult[], roomId?: number | null): Promise<LabWriteResult> {
     if (!labs.length) return { ok: true };
+    labs = labs.map((lab) => normalizeLabResult(lab));
     
     // Check if all labs are baseline scope (no assignment, no room)
     const allBaseline = labs.every((lab) => {
@@ -695,9 +698,9 @@ export const emrApi = {
     updates: Partial<Pick<LabResult, 'testName' | 'value' | 'valueType' | 'unit' | 'referenceRange' | 'status' | 'collectionTime' | 'resultTime' | 'interpretation' | 'abnormalFlag' | 'specimen' | 'lifecycleStatus'>>,
     expectedVersion?: number,
   ): Promise<VersionedMutationResult<LabResult>> {
-    const valuePatch = updates.value === undefined
-      ? {}
-      : serializeLabValue({
+    const normalizedValue = updates.value === undefined
+      ? null
+      : normalizeLabResult({
           id: labId,
           patientId: '',
           testName: updates.testName ?? '',
@@ -705,10 +708,14 @@ export const emrApi = {
           valueType: updates.valueType,
           unit: updates.unit ?? '',
           referenceRange: updates.referenceRange ?? '',
-          status: updates.status ?? 'Pending',
+          status: updates.status ?? 'Unknown',
           collectionTime: updates.collectionTime ?? new Date().toISOString(),
           orderedBy: '',
+          lifecycleStatus: updates.lifecycleStatus,
         });
+    const valuePatch = normalizedValue === null
+      ? {}
+      : serializeLabValue(normalizedValue);
     let query = supabase
       .from('lab_results')
       .update({
@@ -716,11 +723,11 @@ export const emrApi = {
         ...valuePatch,
         unit: updates.unit,
         reference_range: updates.referenceRange,
-        status: updates.status,
+        status: normalizedValue?.status,
         collection_time: updates.collectionTime,
         result_time: updates.resultTime,
         interpretation: updates.interpretation,
-        abnormal_flag: updates.abnormalFlag,
+        abnormal_flag: normalizedValue ? normalizedValue.abnormalFlag : updates.abnormalFlag,
         specimen: updates.specimen,
         lifecycle_status: updates.lifecycleStatus,
       })

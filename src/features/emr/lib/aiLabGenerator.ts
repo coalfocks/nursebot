@@ -1,4 +1,5 @@
 import type { ClinicalNote, LabResult, Patient, VitalSigns } from './types';
+import { classifyLabResult, formatNumericReferenceRange, getDefaultReferenceRange } from './labIntegrity';
 
 export type LabGenerationContext = {
   patient?: Patient;
@@ -51,7 +52,13 @@ export const validateGeneratedLabResults = (
     if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
     if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
     seen.add(template.testName);
-    return [{ ...result, testName: template.testName, unit: template.unit, referenceRange: template.referenceRange }];
+    return [{
+      ...result,
+      testName: template.testName,
+      unit: template.unit,
+      referenceRange: template.referenceRange,
+      status: classifyLabResult(template.testName, result.value, template.referenceRange).status,
+    }];
   });
 };
 
@@ -147,9 +154,15 @@ const labTemplates: LabTemplate[] = [
 
 const randomInRange = (min: number, max: number) => Number((Math.random() * (max - min) + min).toFixed(1));
 
-export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
+export const resolveLabTemplates = (orderName?: string, sex?: Patient['gender']): LabTemplate[] => {
   const normalized = (orderName ?? '').toLowerCase().replace(/[–—]/g, '-');
-  const templateMap = Object.fromEntries(labTemplates.map((t) => [t.testName.toLowerCase(), t]));
+  const templatesForPatient = labTemplates.map((template) => {
+    const sexSpecificRange = sex === 'Male' ? getDefaultReferenceRange(template.testName, sex) : null;
+    return sexSpecificRange
+      ? { ...template, referenceRange: formatNumericReferenceRange(sexSpecificRange) }
+      : template;
+  });
+  const templateMap = Object.fromEntries(templatesForPatient.map((t) => [t.testName.toLowerCase(), t]));
 
   const panelMatches: Record<string, string[]> = {
     'cbc with differential': [
@@ -252,21 +265,11 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
       .filter(Boolean) as LabTemplate[];
   }
 
-  const directMatches = labTemplates.filter((template) => normalized.includes(template.testName.toLowerCase()));
+  const directMatches = templatesForPatient.filter((template) => normalized.includes(template.testName.toLowerCase()));
   if (directMatches.length) return directMatches;
 
   const defaultPanel = ['white blood cell count', 'hemoglobin', 'platelets', 'sodium', 'potassium', 'creatinine', 'glucose'];
   return defaultPanel.map((name) => templateMap[name]).filter(Boolean) as LabTemplate[];
-};
-
-const deriveLabStatus = (value: number, [low, high]: [number, number]) => {
-  if (value < low * 0.9 || value > high * 1.1) {
-    return 'Critical';
-  }
-  if (value < low || value > high) {
-    return 'Abnormal';
-  }
-  return 'Normal';
 };
 
 type ClinicalSignals = {
@@ -404,7 +407,7 @@ export async function generateLabResults(
   context?: LabGenerationContext,
 ): Promise<LabResult[]> {
   const signals = deriveClinicalSignals(caseDescription, context);
-  const templates = resolveLabTemplates(context?.orderName ?? caseDescription);
+  const templates = resolveLabTemplates(context?.orderName ?? caseDescription, context?.patient?.gender);
 
   const results = templates.map((template, index) => {
     const [low, high] = template.normal;
@@ -413,7 +416,7 @@ export async function generateLabResults(
     const variance = signals.emphasis === 'Critical' ? 0.3 : signals.emphasis === 'Abnormal' ? 0.18 : 0.08;
     const drifted = base * (1 + randomInRange(-variance, variance));
     const biasedValue = applyClinicalBias(template, drifted, signals);
-    const status = emphasizeStatus(deriveLabStatus(biasedValue, template.normal), signals.emphasis);
+    const status = classifyLabResult(template.testName, biasedValue, template.referenceRange).status;
 
     return {
       id: `generated-lab-${Date.now()}-${index}`,
@@ -433,13 +436,6 @@ export async function generateLabResults(
 
   return Promise.resolve(results);
 }
-
-const emphasizeStatus = (status: LabResult['status'], emphasis: string): LabResult['status'] => {
-  if (emphasis === 'Abnormal' && status === 'Normal') {
-    return 'Abnormal';
-  }
-  return status;
-};
 
 export async function generateVitalSigns(patientId: string, caseDescription: string): Promise<VitalSigns[]> {
   const baseTemp = caseDescription.toLowerCase().includes('fever') ? 100 : 98.4;

@@ -304,7 +304,8 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const requestedTests = resolveLabTemplates(adjustedOrder.orderName).map((template) => ({
+        const resolvedTests = resolveLabTemplates(adjustedOrder.orderName, patient.gender);
+        const requestedTests = resolvedTests.map((template) => ({
           testName: template.testName,
           unit: template.unit,
           referenceRange: template.referenceRange,
@@ -373,7 +374,7 @@ export function OrdersManagement({
         const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
           ? validateGeneratedLabResults(
               (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
-              resolveLabTemplates(adjustedOrder.orderName),
+              resolvedTests,
             )
           : null;
 

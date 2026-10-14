@@ -86,7 +86,7 @@ export interface LabResult {
   lifecycleStatus?: 'not_ordered' | 'ordered' | 'collected' | 'pending' | 'resulted' | 'corrected' | 'canceled' | 'rejected';
   unit: string;
   referenceRange: string;
-  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending';
+  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending' | 'Unknown';
   collectionTime: string;
   resultTime?: string;
   orderedBy: string;

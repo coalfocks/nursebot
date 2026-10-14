@@ -14,4 +14,10 @@ describe('scenario EMR timestamps', () => {
   it('shows the relative minimum and exact timestamp together', () => {
     expect(formatScenarioPrior('2026-10-13T11:00:00.000Z', '2026-10-13T12:00:00.000Z')).toContain('12h prior');
   });
+
+  it('renders sentinel and nonsensically distant timestamps without enormous hour counts', () => {
+    expect(formatScenarioPrior('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('Prior to encounter');
+    expect(formatScenarioPrior('1900-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('Prior to encounter');
+    expect(clampToMinimumPrior('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('2000-01-01T00:00:00.000Z');
+  });
 });
