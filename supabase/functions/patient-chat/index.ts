@@ -2,6 +2,7 @@ import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { decideExistingPatientChatRequest } from '../_shared/patient-chat-request-claim.ts';
 
 interface ChatMessage {
   role: 'system' | 'assistant' | 'user';
@@ -145,16 +146,12 @@ const claimRequest = async (assignmentId: string, clientMessageId: string) => {
   if (existingError) throw existingError;
   if (!existingRequest) throw new Error('Request claim was not persisted');
 
-  if (existingRequest.status === 'completed') {
+  const now = new Date().toISOString();
+  const decision = decideExistingPatientChatRequest(existingRequest, now);
+  if (decision === 'completed') {
     return { kind: 'completed' as const, request: existingRequest };
   }
-
-  const now = new Date().toISOString();
-  if (
-    existingRequest.status === 'pending' &&
-    existingRequest.lease_expires_at &&
-    existingRequest.lease_expires_at > now
-  ) {
+  if (decision === 'processing') {
     return { kind: 'processing' as const, request: existingRequest };
   }
 
