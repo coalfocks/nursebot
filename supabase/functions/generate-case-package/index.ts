@@ -58,6 +58,12 @@ const sectionKeys: GenerationSection[] = [
 
 const packageSkeleton = {
   patient: {
+    // Structured identity fields are required for publication. Keep demographics as
+    // authored narrative context, but never make the publisher parse it for identity.
+    firstName: '',
+    lastName: '',
+    dateOfBirth: '',
+    gender: '',
     demographics: '',
     allergies: '',
     codeStatus: '',
@@ -116,6 +122,10 @@ const stringifyBlueprint = (blueprint: CaseBlueprintPayload) => JSON.stringify(b
 const schemaInstruction = `Return compact JSON only. Use this exact top-level shape:
 {
   "patient": {
+    "firstName": "synthetic first name",
+    "lastName": "synthetic last name",
+    "dateOfBirth": "YYYY-MM-DD date-only value",
+    "gender": "sex/gender value used for reference ranges",
     "demographics": "age/sex and brief background, no real PHI",
     "allergies": "string",
     "codeStatus": "string",

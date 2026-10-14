@@ -1299,6 +1299,8 @@ export type Database = {
         Row: {
           assignment_id: string | null
           author: string | null
+          case_blueprint_id: string | null
+          case_publish_key: string | null
           content: string
           created_at: string | null
           deleted_at: string | null
@@ -1317,6 +1319,8 @@ export type Database = {
         Insert: {
           assignment_id?: string | null
           author?: string | null
+          case_blueprint_id?: string | null
+          case_publish_key?: string | null
           content: string
           created_at?: string | null
           deleted_at?: string | null
@@ -1335,6 +1339,8 @@ export type Database = {
         Update: {
           assignment_id?: string | null
           author?: string | null
+          case_blueprint_id?: string | null
+          case_publish_key?: string | null
           content?: string
           created_at?: string | null
           deleted_at?: string | null
@@ -1378,6 +1384,7 @@ export type Database = {
         Row: {
           assignment_id: string | null
           body_site: string | null
+          case_blueprint_id: string | null
           contrast: string | null
           created_at: string | null
           deleted_at: string | null
@@ -1406,6 +1413,7 @@ export type Database = {
         Insert: {
           assignment_id?: string | null
           body_site?: string | null
+          case_blueprint_id?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
@@ -1434,6 +1442,7 @@ export type Database = {
         Update: {
           assignment_id?: string | null
           body_site?: string | null
+          case_blueprint_id?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
@@ -1959,6 +1968,7 @@ export type Database = {
           available_school_ids: string[] | null
           bedside_hint: string | null
           bedside_requirement: string
+          case_blueprint_id: string | null
           case_goals: string | null
           completion_hint: string | null
           completion_token: string
@@ -1996,6 +2006,7 @@ export type Database = {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
           bedside_requirement?: string
+          case_blueprint_id?: string | null
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string
@@ -2033,6 +2044,7 @@ export type Database = {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
           bedside_requirement?: string
+          case_blueprint_id?: string | null
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string
@@ -2067,6 +2079,13 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "rooms_case_blueprint_id_fkey"
+            columns: ["case_blueprint_id"]
+            isOneToOne: false
+            referencedRelation: "case_blueprints"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "rooms_continues_from_fkey"
             columns: ["continues_from"]
