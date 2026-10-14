@@ -22,8 +22,13 @@ type CriticalThreshold = {
 };
 
 const NUMBER_PATTERN = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:e[+-]?\\d+)?';
+// Keep the numeric bounds strict, but accept the unit/annotation suffixes that
+// are part of a displayed lab interval (for example `10-45 U/L` or
+// `57-254 U/L (female, age 13-<15 years)`). A suffix must begin with a unit,
+// percent sign, or parenthetical annotation so malformed values such as
+// `1-2-3` remain invalid.
 const CLOSED_RANGE_PATTERN = new RegExp(
-  `^\\s*(${NUMBER_PATTERN})\\s*(?:-|–|—|to)\\s*(${NUMBER_PATTERN})\\s*(?:%)?\\s*$`,
+  `^\\s*(${NUMBER_PATTERN})\\s*(?:-|–|—|to)\\s*(${NUMBER_PATTERN})(?:\\s*(?=[A-Za-zµμ%]|\\()[\\s\\S]*)?\\s*$`,
   'i',
 );
 const NUMERIC_VALUE_PATTERN = new RegExp(`^\\s*${NUMBER_PATTERN}\\s*$`, 'i');

@@ -13,8 +13,11 @@ describe('lab integrity', () => {
   it('parses bounded numeric ranges without accepting malformed text', () => {
     expect(parseNumericReferenceRange(' -2 to +2 ')).toEqual({ low: -2, high: 2 });
     expect(parseNumericReferenceRange('3.5–5.0')).toEqual({ low: 3.5, high: 5 });
+    expect(parseNumericReferenceRange('10-45 U/L')).toEqual({ low: 10, high: 45 });
+    expect(parseNumericReferenceRange('57–254 U/L (female, age 13-<15 years)')).toEqual({ low: 57, high: 254 });
     expect(parseNumericReferenceRange('5-3')).toBeNull();
     expect(parseNumericReferenceRange('1-2-3')).toBeNull();
+    expect(parseNumericReferenceRange('1-2-3mg/dL')).toBeNull();
     expect(parseNumericReferenceRange('normal')).toBeNull();
     expect(parseNumericReferenceRange(null)).toBeNull();
   });
@@ -79,6 +82,27 @@ describe('lab integrity', () => {
     expect(normalizeLabResultForPatient(adolescentFemale, 'Female', '2012-01-01')).toMatchObject({
       referenceRange: '12-16', status: 'Normal', abnormalFlag: false,
     });
+  });
+
+  it('classifies numeric pediatric chemistry results when displayed ranges include units and age annotations', () => {
+    const room401Results = [
+      { testName: 'ALT', value: 1358, referenceRange: '10-45 U/L' },
+      { testName: 'AST', value: 1200, referenceRange: '15-40 U/L' },
+      { testName: 'Total Bilirubin', value: 1.8, referenceRange: '0.2-1.2 mg/dL' },
+      { testName: 'Alkaline Phosphatase', value: 180, referenceRange: '57–254 U/L (female, age 13-<15 years)' },
+      { testName: 'Platelets', value: 275, referenceRange: '150-450 K/uL' },
+      { testName: 'Creatinine', value: 0.8, referenceRange: '0.5-1.0 mg/dL' },
+    ];
+
+    const normalized = room401Results.map((lab) => normalizeLabResultForPatient(
+      lab,
+      'Female',
+      '2011-11-15',
+    ));
+
+    expect(normalized.slice(0, 3).map((lab) => lab.status)).toEqual(['Abnormal', 'Abnormal', 'Abnormal']);
+    expect(normalized.slice(0, 3).every((lab) => lab.abnormalFlag === true)).toBe(true);
+    expect(normalized.slice(3).map((lab) => lab.status)).toEqual(['Normal', 'Normal', 'Normal']);
   });
 
   it('does not coerce malformed or qualitative values into numeric classifications', () => {
