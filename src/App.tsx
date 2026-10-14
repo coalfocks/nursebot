@@ -26,6 +26,7 @@ import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
 import About from './pages/About';
 import AdminWalkthroughVideos, { AdminOnboarding } from './pages/AdminWalkthroughVideos';
+import AdminAnalytics from './pages/AdminAnalytics';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -231,6 +232,10 @@ function App() {
               <Navigate to="/dashboard" replace />
             )
           }
+        />
+        <Route
+          path="/admin/analytics"
+          element={user?.id && hasAdmin ? <AdminAnalytics /> : <Navigate to="/dashboard" replace />}
         />
         <Route
           path="/admin/walkthrough-videos"

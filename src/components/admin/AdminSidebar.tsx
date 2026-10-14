@@ -13,6 +13,7 @@ import {
   UserPlus,
   Download,
   Video,
+  BarChart3,
 } from 'lucide-react';
 import { EMR_LABEL } from '../../lib/terminology';
 
@@ -40,6 +41,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
     { label: 'Students', to: '/cases', icon: GraduationCap },
+    { label: 'Analytics', to: '/admin/analytics', icon: BarChart3 },
     { label: 'Data Download', to: '/admin/data-download', icon: Download },
     { label: 'Walkthrough Videos', to: '/admin/walkthrough-videos', icon: Video },
     { label: 'Patients', to: '/admin/patients', icon: UserPlus },

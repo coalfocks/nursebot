@@ -7,6 +7,30 @@ export type AnalyticsAssignment = {
   overallScore: number | null;
 };
 
+export type AnalyticsRow = AnalyticsAssignment & {
+  id: string;
+  schoolId: string | null;
+  studentName: string;
+  studentRole: string | null;
+  roomId: number;
+  roomNumber: string;
+  specialty: string;
+  createdAt: string | null;
+  completedAt: string | null;
+  feedbackGeneratedAt: string | null;
+  caseDifficulty: string | null;
+  communicationBreakdown: Record<string, unknown> | null;
+  mdmBreakdown: Record<string, unknown> | null;
+};
+
+export type DashboardMetrics = CohortMetrics & {
+  medianCompletionMinutes: number | null;
+  completionTimeSampleSize: number;
+  trend: Array<{ label: string; attempts: number; completed: number; assessed: number }>;
+  domainPerformance: Array<{ domain: string; average: number | null; scored: number; eligible: number }>;
+  caseHeatmap: Array<{ caseLabel: string; attempts: number; completed: number; average: number | null }>;
+};
+
 export type MetricDefinition = {
   metricId: string;
   name: string;
@@ -107,5 +131,65 @@ export const computeCohortMetrics = (
     assessmentCoverageRate: percentage(assessed.length, completed.length),
     participationRate: percentage(participatingLearners, eligibleLearners),
     scoreDistributions: { communication, mdm },
+  };
+};
+
+const average = (values: number[]) =>
+  values.length ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)) : null;
+
+const median = (values: number[]) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : Number(((sorted[middle - 1] + sorted[middle]) / 2).toFixed(1));
+};
+
+export const computeDashboardMetrics = (rows: AnalyticsRow[], eligibleLearners: number): DashboardMetrics => {
+  const base = computeCohortMetrics(rows, eligibleLearners);
+  const completionMinutes = rows
+    .filter((row) => row.status === 'completed' && row.createdAt && row.completedAt)
+    .map((row) => (new Date(row.completedAt as string).getTime() - new Date(row.createdAt as string).getTime()) / 60000)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  const trendMap = new Map<string, { attempts: number; completed: number; assessed: number }>();
+  rows.forEach((row) => {
+    const date = (row.completedAt ?? row.createdAt)?.slice(0, 10) ?? 'Unknown date';
+    const current = trendMap.get(date) ?? { attempts: 0, completed: 0, assessed: 0 };
+    current.attempts += 1;
+    if (row.status === 'completed') current.completed += 1;
+    if (row.status === 'completed' && row.feedbackStatus === 'completed') current.assessed += 1;
+    trendMap.set(date, current);
+  });
+
+  const domainDefinitions = [
+    { domain: 'Communication', values: rows.map((row) => row.communicationScore) },
+    { domain: 'Medical decision-making', values: rows.map((row) => row.mdmScore) },
+  ];
+
+  const caseMap = new Map<string, { attempts: number; completed: number; scores: number[] }>();
+  rows.forEach((row) => {
+    const label = row.roomNumber || `Room ${row.roomId}`;
+    const current = caseMap.get(label) ?? { attempts: 0, completed: 0, scores: [] };
+    current.attempts += 1;
+    if (row.status === 'completed') current.completed += 1;
+    if (typeof row.overallScore === 'number') current.scores.push(row.overallScore);
+    caseMap.set(label, current);
+  });
+
+  return {
+    ...base,
+    medianCompletionMinutes: median(completionMinutes),
+    completionTimeSampleSize: completionMinutes.length,
+    trend: [...trendMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, value]) => ({ label, ...value })),
+    domainPerformance: domainDefinitions.map(({ domain, values }) => {
+      const scored = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+      return { domain, average: average(scored), scored: scored.length, eligible: rows.length };
+    }),
+    caseHeatmap: [...caseMap.entries()].map(([caseLabel, value]) => ({
+      caseLabel,
+      attempts: value.attempts,
+      completed: value.completed,
+      average: average(value.scores),
+    })).sort((a, b) => a.caseLabel.localeCompare(b.caseLabel)),
   };
 };
