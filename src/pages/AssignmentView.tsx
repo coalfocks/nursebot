@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, ArrowLeft, Clock, ExternalLink } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, ExternalLink, Book, CheckCircle } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
 import type { Database } from '../lib/database.types';
