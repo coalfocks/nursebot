@@ -154,12 +154,19 @@ const labTemplates: LabTemplate[] = [
 
 const randomInRange = (min: number, max: number) => Number((Math.random() * (max - min) + min).toFixed(1));
 
-export const resolveLabTemplates = (orderName?: string, sex?: Patient['gender']): LabTemplate[] => {
+export const resolveLabTemplates = (
+  orderName?: string,
+  sex?: Patient['gender'],
+  dateOfBirth?: string | null,
+  asOf: unknown = new Date(),
+): LabTemplate[] => {
   const normalized = (orderName ?? '').toLowerCase().replace(/[–—]/g, '-');
   const templatesForPatient = labTemplates.map((template) => {
-    const sexSpecificRange = sex === 'Male' ? getDefaultReferenceRange(template.testName, sex) : null;
-    return sexSpecificRange
-      ? { ...template, referenceRange: formatNumericReferenceRange(sexSpecificRange) }
+    const demographicRange = sex === 'Male' || sex === 'Female'
+      ? getDefaultReferenceRange(template.testName, sex, dateOfBirth, asOf)
+      : null;
+    return demographicRange
+      ? { ...template, referenceRange: formatNumericReferenceRange(demographicRange), normal: [demographicRange.low, demographicRange.high] as [number, number] }
       : template;
   });
   const templateMap = Object.fromEntries(templatesForPatient.map((t) => [t.testName.toLowerCase(), t]));
@@ -407,7 +414,11 @@ export async function generateLabResults(
   context?: LabGenerationContext,
 ): Promise<LabResult[]> {
   const signals = deriveClinicalSignals(caseDescription, context);
-  const templates = resolveLabTemplates(context?.orderName ?? caseDescription, context?.patient?.gender);
+  const templates = resolveLabTemplates(
+    context?.orderName ?? caseDescription,
+    context?.patient?.gender,
+    context?.patient?.dateOfBirth,
+  );
 
   const results = templates.map((template, index) => {
     const [low, high] = template.normal;

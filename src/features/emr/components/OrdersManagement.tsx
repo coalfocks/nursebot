@@ -304,7 +304,7 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const resolvedTests = resolveLabTemplates(adjustedOrder.orderName, patient.gender);
+        const resolvedTests = resolveLabTemplates(adjustedOrder.orderName, patient.gender, patient.dateOfBirth);
         const requestedTests = resolvedTests.map((template) => ({
           testName: template.testName,
           unit: template.unit,

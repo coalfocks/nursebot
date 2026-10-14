@@ -55,6 +55,32 @@ describe('lab integrity', () => {
     expect(historical.referenceRange).toBe('12.0-15.5');
   });
 
+  it('uses pediatric age bands instead of adult or one generic pediatric range', () => {
+    expect(getDefaultReferenceRange('Hemoglobin', 'Female', '2025-01-01', '2025-03-01')).toEqual({ low: 9.5, high: 14.1 });
+    expect(getDefaultReferenceRange('White Blood Cell Count', 'Male', '2018-01-01', '2026-01-01')).toEqual({ low: 4.5, high: 13.5 });
+    expect(getDefaultReferenceRange('Hemoglobin', 'Female', '2012-01-01', '2026-01-01')).toEqual({ low: 12, high: 16 });
+    expect(getDefaultReferenceRange('Hemoglobin', 'Male', '2012-01-01', '2026-01-01')).toEqual({ low: 13, high: 16 });
+    expect(getDefaultReferenceRange('Hemoglobin', 'Male', '2010-01-01', '2026-01-01')).toEqual({ low: 13, high: 16 });
+  });
+
+  it('reclassifies historical pediatric results using the age at collection', () => {
+    const schoolAgeMale = {
+      testName: 'Hemoglobin', value: 16, referenceRange: '13.5-17.5',
+      collectionTime: '2026-01-01T12:00:00.000Z', status: 'Normal' as const,
+    };
+    expect(normalizeLabResultForPatient(schoolAgeMale, 'Male', '2018-01-01')).toMatchObject({
+      referenceRange: '11.5-15.5', status: 'Abnormal', abnormalFlag: true,
+    });
+
+    const adolescentFemale = {
+      testName: 'Hemoglobin', value: 15.8, referenceRange: '12.0-15.5',
+      collectionTime: '2026-01-01T12:00:00.000Z', status: 'Abnormal' as const,
+    };
+    expect(normalizeLabResultForPatient(adolescentFemale, 'Female', '2012-01-01')).toMatchObject({
+      referenceRange: '12-16', status: 'Normal', abnormalFlag: false,
+    });
+  });
+
   it('does not coerce malformed or qualitative values into numeric classifications', () => {
     expect(parseNumericLabValue('12 mg/dL')).toBeNull();
     expect(parseNumericLabValue('12abc')).toBeNull();

@@ -33,8 +33,8 @@ type LabTrendPoint = {
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const normalizeForPatient = useCallback(
-    (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender)),
-    [patient.gender],
+    (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender, patient.dateOfBirth)),
+    [patient.gender, patient.dateOfBirth],
   );
   const [labResults, setLabResults] = useState<LabResult[]>(normalizeForPatient(sandboxLabs ?? []));
   const [isGenerating, setIsGenerating] = useState(false);
@@ -140,7 +140,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 resultTime: clampToMinimumPrior(lab.resultTime ?? lab.collectionTime, patient.admissionDate),
                 orderedBy: lab.orderedBy ?? 'Admission',
                 status: lab.status ?? 'Normal',
-              }, patient.gender));
+              }, patient.gender, patient.dateOfBirth));
             const admissionIds = new Set(admissionLabs.map((lab) => lab.id));
             setLabResults((prev) => [
               ...admissionLabs,
@@ -150,7 +150,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
-  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, patient.gender, capture, isCurrent]);
+  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, patient.gender, patient.dateOfBirth, capture, isCurrent]);
 
   // Instant labs are result-producing orders in the simulator. Older orders can
   // predate the order-placement callback, so reconcile them when the Labs tab
@@ -180,7 +180,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
       for (const order of candidates) {
         if (autoResultingOrderIds.current.has(order.id)) continue;
-        const requestedTests = resolveLabTemplates(order.orderName, patient.gender);
+        const requestedTests = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
         const hasResult = requestedTests.every((test) =>
           existingLabs.some((lab) =>
             lab.testName.toLowerCase() === test.testName.toLowerCase() &&
@@ -287,8 +287,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
       ]);
 
-      const tests = resolveLabTemplates(orderName, patient.gender);
-      const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender);
+      const tests = resolveLabTemplates(orderName, patient.gender, patient.dateOfBirth);
+      const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender, patient.dateOfBirth);
 
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
@@ -627,11 +627,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!updated) {
         setLabSaveError('Could not save this correction. Please try again.');
       } else if ('conflict' in updated) {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated.current, patient.gender) : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated.current, patient.gender, patient.dateOfBirth) : lab)));
         setLabSaveError('This result changed elsewhere. The newer server version is now shown.');
         setEditingLab(null);
       } else {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated, patient.gender) : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated, patient.gender, patient.dateOfBirth) : lab)));
         setEditingLab(null);
       }
     } finally {

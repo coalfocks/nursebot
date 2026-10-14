@@ -5,6 +5,11 @@ export type NumericReferenceRange = {
   high: number;
 };
 
+export type PatientLabDemographics = {
+  gender?: Patient['gender'] | null;
+  dateOfBirth?: string | null;
+};
+
 export type LabClassification = {
   status: LabResult['status'];
   abnormalFlag: boolean | null;
@@ -52,6 +57,78 @@ const SEX_SPECIFIC_DEFAULTS: Record<'hemoglobin' | 'hematocrit', Record<'Male' |
   },
 };
 
+// Simulator reference intervals are intentionally explicit by age band. They are
+// used for deterministic display/classification and are not a substitute for a
+// laboratory's local reference catalog.
+type PediatricReferenceBand = {
+  maxMonths: number;
+  hemoglobin: NumericReferenceRange;
+  hematocrit: NumericReferenceRange;
+  whiteBloodCellCount: NumericReferenceRange;
+};
+
+const PEDIATRIC_REFERENCE_BANDS: PediatricReferenceBand[] = [
+  { maxMonths: 1, hemoglobin: { low: 13.5, high: 19.5 }, hematocrit: { low: 42, high: 65 }, whiteBloodCellCount: { low: 9, high: 30 } },
+  { maxMonths: 6, hemoglobin: { low: 9.5, high: 14.1 }, hematocrit: { low: 29, high: 41 }, whiteBloodCellCount: { low: 6, high: 17.5 } },
+  { maxMonths: 12, hemoglobin: { low: 10.5, high: 14 }, hematocrit: { low: 33, high: 42 }, whiteBloodCellCount: { low: 6, high: 17.5 } },
+  { maxMonths: 72, hemoglobin: { low: 11, high: 14.5 }, hematocrit: { low: 32, high: 42 }, whiteBloodCellCount: { low: 5, high: 15.5 } },
+  { maxMonths: 144, hemoglobin: { low: 11.5, high: 15.5 }, hematocrit: { low: 35, high: 45 }, whiteBloodCellCount: { low: 4.5, high: 13.5 } },
+  { maxMonths: 216, hemoglobin: { low: 12, high: 16 }, hematocrit: { low: 36, high: 46 }, whiteBloodCellCount: { low: 4.5, high: 13.5 } },
+];
+
+const parseDateOnlyUtc = (value: string): Date | null => {
+  const match = /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : value.slice(0, 10);
+  const parsed = new Date(`${match}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+export const calculateAgeInMonths = (dateOfBirth: unknown, asOf: unknown = new Date()): number | null => {
+  if (typeof dateOfBirth !== 'string' || !dateOfBirth || typeof asOf !== 'string' && !(asOf instanceof Date)) return null;
+  const birth = parseDateOnlyUtc(dateOfBirth);
+  const reference = asOf instanceof Date ? asOf : parseDateOnlyUtc(asOf);
+  if (!birth || !reference || reference < birth) return null;
+  let months = (reference.getUTCFullYear() - birth.getUTCFullYear()) * 12
+    + reference.getUTCMonth() - birth.getUTCMonth();
+  if (reference.getUTCDate() < birth.getUTCDate()) months -= 1;
+  return Math.max(0, months);
+};
+
+const pediatricBandFor = (dateOfBirth: string | null | undefined, asOf: unknown): PediatricReferenceBand | null => {
+  const ageMonths = calculateAgeInMonths(dateOfBirth, asOf);
+  if (ageMonths === null || ageMonths >= 216) return null;
+  return PEDIATRIC_REFERENCE_BANDS.find((band) => ageMonths < band.maxMonths)
+    ?? PEDIATRIC_REFERENCE_BANDS[PEDIATRIC_REFERENCE_BANDS.length - 1]
+    ?? null;
+};
+
+const pediatricRangeFor = (
+  testName: string,
+  demographics: PatientLabDemographics,
+  asOf: unknown,
+): NumericReferenceRange | null => {
+  const band = pediatricBandFor(demographics.dateOfBirth, asOf);
+  if (!band) return null;
+  const ageMonths = calculateAgeInMonths(demographics.dateOfBirth, asOf);
+  if (ageMonths !== null && ageMonths >= 144) {
+    if (analyteKey(testName) === 'hemoglobin') {
+      return demographics.gender === 'Male' ? { low: 13, high: 16 } : { low: 12, high: 16 };
+    }
+    if (analyteKey(testName) === 'hematocrit') {
+      return demographics.gender === 'Male' ? { low: 37, high: 49 } : { low: 36, high: 46 };
+    }
+  }
+  switch (analyteKey(testName)) {
+    case 'hemoglobin':
+      return band.hemoglobin;
+    case 'hematocrit':
+      return band.hematocrit;
+    case 'white blood cell count':
+      return band.whiteBloodCellCount;
+    default:
+      return null;
+  }
+};
+
 const QUALITATIVE_ANALYTE_PATTERN = /(?:pcr|antigen|antibody|culture|screen|toxin|smear|coombs|occult blood)/i;
 const QUALITATIVE_NORMAL = new Set(['negative', 'not detected', 'nonreactive', 'no growth']);
 const QUALITATIVE_ABNORMAL = new Set(['positive', 'detected', 'reactive', 'growth']);
@@ -76,8 +153,12 @@ export const parseNumericLabValue = (value: unknown): number | null => {
 export const getDefaultReferenceRange = (
   testName: string,
   sex?: Patient['gender'] | null,
+  dateOfBirth?: string | null,
+  asOf: unknown = new Date(),
 ): NumericReferenceRange | null => {
   const key = analyteKey(testName);
+  const pediatricRange = pediatricRangeFor(testName, { gender: sex, dateOfBirth }, asOf);
+  if (pediatricRange) return pediatricRange;
   if (key !== 'hemoglobin' && key !== 'hematocrit') return null;
   // Female is the historic fallback and remains the fallback for Other/unknown.
   return SEX_SPECIFIC_DEFAULTS[key][sex === 'Male' ? 'Male' : 'Female'];
@@ -88,9 +169,11 @@ export const getPatientReferenceRange = (
   testName: string,
   storedReferenceRange: unknown,
   sex?: Patient['gender'] | null,
+  dateOfBirth?: string | null,
+  asOf: unknown = new Date(),
 ): string => {
   const defaultRange = sex === 'Male' || sex === 'Female'
-    ? getDefaultReferenceRange(testName, sex)
+    ? getDefaultReferenceRange(testName, sex, dateOfBirth, asOf)
     : null;
   return defaultRange
     ? formatNumericReferenceRange(defaultRange)
@@ -158,7 +241,8 @@ export const normalizeLabResult = <T extends Pick<LabResult, 'testName' | 'value
 export const normalizeLabResultForPatient = <T extends Pick<LabResult, 'testName' | 'value' | 'referenceRange'> & Partial<LabResult>>(
   lab: T,
   sex?: Patient['gender'] | null,
+  dateOfBirth?: string | null,
 ): T & Pick<LabResult, 'status' | 'abnormalFlag'> => normalizeLabResult({
   ...lab,
-  referenceRange: getPatientReferenceRange(lab.testName, lab.referenceRange, sex),
+  referenceRange: getPatientReferenceRange(lab.testName, lab.referenceRange, sex, dateOfBirth, lab.collectionTime),
 });
