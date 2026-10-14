@@ -177,7 +177,12 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         if (autoResultingOrderIds.current.has(order.id)) continue;
         const requestedTests = resolveLabTemplates(order.orderName, patient.gender);
         const hasResult = requestedTests.every((test) =>
-          existingLabs.some((lab) => lab.testName.toLowerCase() === test.testName.toLowerCase()),
+          existingLabs.some((lab) =>
+            lab.testName.toLowerCase() === test.testName.toLowerCase() &&
+            (assignmentId
+              ? lab.assignmentId === assignmentId
+              : lab.assignmentId == null && lab.roomId === patient.roomId),
+          ),
         );
         if (hasResult) continue;
         autoResultingOrderIds.current.add(order.id);
