@@ -89,4 +89,18 @@ describe('feedback v2 canonical contract', () => {
     expect(result?.mdm_score).toBe(2);
     expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
+
+  it('recovers bedside-first clinical evidence without treating a nurse page as learner evidence', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
+      { kind: 'order', title: 'Order: telemetry', body: 'STAT' },
+      { kind: 'progress-note', title: 'Student progress note', body: 'Reassessed unstable patient and escalated.' },
+    ], 'Reassessed unstable patient and escalated.');
+
+    expect(result).not.toBeNull();
+    expect(result?.communication_score).toBeGreaterThan(0);
+    expect(result?.mdm_score).toBeGreaterThan(0);
+    expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(0);
+    expect(result?.communication_breakdown.focused_information_gathering.feedback).not.toContain('nurse');
+  });
 });

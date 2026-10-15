@@ -88,7 +88,12 @@ export const buildEvidenceBackedFallback = (
   const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging');
   const hasNote = Boolean(progressNote?.trim());
   if (learnerMessages.length === 0 && orders.length === 0 && !hasNote) return null;
-  const focused = learnerMessages.length > 0 ? 1 : 0;
+  // Assignment-scoped clinical actions are learner evidence even when the
+  // bedside-first flow produced no persisted chat message. Never count a
+  // nurse-page message here: the fallback only receives post-page entries.
+  const focused = learnerMessages.length > 0 || orders.length > 0 || hasNote ? 1 : 0;
+  // A note/order can support bedside assessment and MDM, but cannot prove
+  // closed-loop team communication without an observed learner message.
   const closedLoop = learnerMessages.length > 0 && orders.length > 0 ? 1 : 0;
   const orderQuality = orders.length > 0 ? 1 : 0;
   const reasoning = hasNote || learnerMessages.length > 0 ? 1 : 0;
@@ -98,7 +103,7 @@ export const buildEvidenceBackedFallback = (
     communication_score: focused + closedLoop,
     mdm_score: orderQuality + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: 'Observed learner-authored post-page communication; detailed component evidence was recovered conservatively.', evidence_event_ids: [] },
+      focused_information_gathering: { score: focused, feedback: 'Observed learner-authored post-page bedside or clinical-action evidence; detailed component evidence was recovered conservatively.', evidence_event_ids: [] },
       closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored communication paired with a post-page clinical action.' : 'No linked post-page clinical action was observed for closed-loop communication.', evidence_event_ids: [] },
     },
     mdm_breakdown: {

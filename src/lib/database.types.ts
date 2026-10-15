@@ -2083,6 +2083,7 @@ export type Database = {
           effective_date: string | null
           feedback: string | null
           feedback_error: string | null
+          feedback_debrief: Json | null
           feedback_generated_at: string | null
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
@@ -2091,6 +2092,13 @@ export type Database = {
           learner_program: string
           mdm_breakdown: Json | null
           mdm_score: number | null
+          safety_result: Json | null
+          scoring_start_at: string | null
+          rubric_version: string | null
+          case_key_version: string | null
+          assessment_version: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
           notification_sent: boolean | null
           notification_sent_at: string | null
           nurse_feedback: Json | null
@@ -2119,6 +2127,7 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2129,6 +2138,13 @@ export type Database = {
           learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2157,6 +2173,7 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2167,6 +2184,13 @@ export type Database = {
           learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2212,6 +2236,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      feedback_assessment_runs: {
+        Row: {
+          id: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
+          result: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          assignment_id?: string
+          attempt_id?: string
+          rubric_version?: string
+          case_key_version?: string
+          assessment_version?: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          created_at?: string
+        }
+        Relationships: []
       }
       vital_signs: {
         Row: {
