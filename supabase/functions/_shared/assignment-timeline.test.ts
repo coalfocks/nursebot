@@ -220,4 +220,20 @@ describe('assignment timeline for evaluation', () => {
     expect(entries[0].meta).toContain('Channel: bedside');
     expect(entries[1].meta).toContain('Channel: team');
   });
+
+  it('excludes authored pre-page chart rows from learner evidence', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [], orders: [],
+      labs: [{
+        id: 'seed-lab', assignment_id: null, room_id: 7, override_scope: 'room',
+        timeline_entry_id: 'day-1-wbc', test_name: 'WBC', value: 12, unit: 'K/uL', status: 'Unknown',
+        collection_time: '2026-03-12T08:00:00.000Z', result_time: '2026-03-12T08:00:00.000Z', created_at: '2026-03-12T08:00:00.000Z',
+      }],
+      vitals: [], imaging: [],
+    });
+    expect(entries).toEqual([]);
+  });
 });

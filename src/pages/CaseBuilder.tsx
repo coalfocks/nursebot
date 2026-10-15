@@ -15,7 +15,7 @@ import {
   validateGeneratedCasePackage,
   type GeneratedCasePackage,
 } from '../lib/caseBuilderPublish';
-import { DEFAULT_HOSPITAL_TIMELINE, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -194,6 +194,27 @@ const createClinicalNotePayloads = (
   );
 
   return notePayloads;
+};
+
+const materializeTimelineForRoom = async (
+  timeline: HospitalTimeline,
+  patientId: string,
+  roomId: number,
+  schoolId: string,
+  blueprintId: string,
+  nurseContext: string,
+  generatedAt: string,
+) => {
+  const { error } = await supabase.rpc('materialize_hospital_timeline', {
+    p_room_id: roomId,
+    p_patient_id: patientId,
+    p_school_id: schoolId,
+    p_case_blueprint_id: blueprintId,
+    p_timeline: timeline,
+    p_nurse_context: nurseContext,
+    p_generated_at: generatedAt,
+  });
+  if (error) throw error;
 };
 
 const deriveImagingDetails = (orderName: string) => {
@@ -556,12 +577,12 @@ export default function CaseBuilder() {
         continues_from: blueprint.continues_from_room_id,
         role: blueprint.title,
         context: buildRoomText(event.trigger, event.nurseObservations),
-        nurse_context: buildRoomText(
+        nurse_context: mergeHospitalTimelineIntoNurseContext(buildRoomText(
           nurseChat.initialMessage,
           nurseChat.behaviorRules,
           nurseChat.knownFacts,
           nurseChat.protectedFacts,
-        ),
+        ), parseHospitalTimeline(blueprint.hospital_timeline)),
         emr_context: JSON.stringify(emrContextPayload),
         expected_diagnosis: asString(evaluation.bedsideVerdict),
         expected_treatment: asStringArray(evaluation.expectedWorkup),
@@ -757,6 +778,16 @@ export default function CaseBuilder() {
       const imagingFailures: string[] = [];
       let noteCount = 0;
       if (patientId) {
+        const authoredTimeline = parseHospitalTimeline(blueprint.hospital_timeline);
+        await materializeTimelineForRoom(
+          authoredTimeline,
+          patientId,
+          roomRecord.id,
+          scopedSchoolId,
+          blueprint.id,
+          roomPayload.nurse_context,
+          generatedAt,
+        );
         const generatedImagingOrders = asStringArray(orders.imaging);
 
         for (const orderName of generatedImagingOrders) {

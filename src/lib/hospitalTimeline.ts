@@ -13,6 +13,15 @@ export type HospitalTimelineEntry = {
   trend?: 'stable' | 'improving' | 'worsening';
   consultant?: string;
   recommendation?: string;
+  vitals?: {
+    temperature?: number;
+    bloodPressureSystolic?: number;
+    bloodPressureDiastolic?: number;
+    heartRate?: number;
+    respiratoryRate?: number;
+    oxygenSaturation?: number;
+    pain?: number;
+  };
 };
 
 export type HospitalTimeline = {
@@ -74,4 +83,41 @@ export function timelineTrend(timeline: HospitalTimeline) {
   return timeline.entries
     .filter((entry) => entry.kind === 'lab' && entry.analyte && entry.value)
     .map((entry) => `${entry.analyte}: ${entry.value} ${entry.unit ?? ''} · day ${entry.hospitalDay} · ${entry.trend ?? 'stable'}`);
+}
+
+export const HOSPITAL_TIMELINE_NURSE_MARKER = '[AUTHORED HOSPITAL COURSE]';
+
+/**
+ * The authored timeline is chart context, not learner activity. This compact
+ * block is deliberately facts-only so the nurse can answer a requested trend
+ * without volunteering the evaluation key or dumping the whole chart.
+ */
+export function renderHospitalTimelineForNurse(timeline: HospitalTimeline): string {
+  const entries = [...timeline.entries].sort((a, b) => a.offsetHours - b.offsetHours);
+  const facts = entries
+    .filter((entry) => ['admission', 'progress_note', 'consult', 'lab', 'vital', 'procedure'].includes(entry.kind))
+    .map((entry) => {
+      const label = `Day ${entry.hospitalDay}, +${entry.offsetHours}h`;
+      if (entry.kind === 'lab') return `${label} ${entry.analyte}: ${entry.value} ${entry.unit ?? ''}`.trim();
+      if (entry.kind === 'vital' && entry.vitals) return `${label} vital signs: ${Object.entries(entry.vitals).map(([key, value]) => `${key} ${value}`).join(', ')}`;
+      if (entry.kind === 'consult' && entry.consultant) return `${label} ${entry.consultant} consult: ${entry.recommendation ?? entry.content}`;
+      return `${label} ${entry.title}: ${entry.content}`;
+    });
+  if (!facts.length) return '';
+  return `${HOSPITAL_TIMELINE_NURSE_MARKER}\nVerified chart history and trends (answer only when asked; do not volunteer a data dump or hidden goals):\n${facts.join('\n')}`;
+}
+
+export function mergeHospitalTimelineIntoNurseContext(current: string | null | undefined, timeline: HospitalTimeline): string {
+  const block = renderHospitalTimelineForNurse(timeline);
+  const withoutPrevious = (current ?? '').replace(new RegExp(`\\n?${HOSPITAL_TIMELINE_NURSE_MARKER}[\\s\\S]*$`), '').trim();
+  return [withoutPrevious, block].filter(Boolean).join('\n\n');
+}
+
+export function timelineAnchorTimestamp(timeline: HospitalTimeline, generatedAt = new Date().toISOString()): string {
+  const maxOffset = timeline.entries.reduce((max, entry) => Math.max(max, entry.offsetHours), 0);
+  return new Date(new Date(generatedAt).getTime() - maxOffset * 60 * 60 * 1000).toISOString();
+}
+
+export function timelineEntryTimestamp(timeline: HospitalTimeline, entry: HospitalTimelineEntry, generatedAt?: string): string {
+  return new Date(new Date(timelineAnchorTimestamp(timeline, generatedAt)).getTime() + entry.offsetHours * 60 * 60 * 1000).toISOString();
 }

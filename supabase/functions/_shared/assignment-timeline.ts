@@ -39,6 +39,7 @@ export type TimelineLabRow = {
   result_time: string | null;
   created_at: string | null;
   deleted_at?: string | null;
+  timeline_entry_id?: string | null;
 };
 
 export type TimelineVitalRow = {
@@ -55,6 +56,7 @@ export type TimelineVitalRow = {
   oxygen_saturation: number | null;
   pain: number | null;
   deleted_at?: string | null;
+  timeline_entry_id?: string | null;
 };
 
 export type TimelineImagingRow = {
@@ -270,6 +272,7 @@ export const buildAssignmentTimelineEntries = ({
 
   const groupedLabs = new Map<string, TimelineLabRow[]>();
   for (const lab of filteredLabs) {
+    if (lab.timeline_entry_id) continue;
     const timestamp = getLabTimelineTimestamp(lab);
     if (!timestamp) continue;
     const key = `${deriveTimelineScope(lab.override_scope, lab.assignment_id, lab.room_id)}-${timestamp.slice(0, 16)}`;
@@ -310,6 +313,7 @@ export const buildAssignmentTimelineEntries = ({
   );
 
   for (const vital of filteredVitals) {
+    if (vital.timeline_entry_id) continue;
     const timestamp = normalizeTimelineTimestamp(vital.timestamp);
     if (!timestamp) continue;
     const details = [

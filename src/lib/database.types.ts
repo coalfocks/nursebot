@@ -1096,6 +1096,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      materialize_hospital_timeline: {
+        Args: {
+          p_case_blueprint_id?: string | null
+          p_generated_at?: string
+          p_nurse_context: string
+          p_patient_id: string
+          p_room_id: number
+          p_school_id: string
+          p_timeline: Json
+        }
+        Returns: Json
+      }
       change_learner_program: {
         Args: { change_reason: string; next_program: string; target_profile_id: string }
         Returns: Database["public"]["Tables"]["profiles"]["Row"]
@@ -1333,6 +1345,7 @@ export type Database = {
           signed: boolean | null
           timestamp: string | null
           title: string
+          timeline_entry_id: string | null
           updated_at: string | null
         }
         Insert: {
@@ -1353,6 +1366,7 @@ export type Database = {
           signed?: boolean | null
           timestamp?: string | null
           title: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -1373,6 +1387,7 @@ export type Database = {
           signed?: boolean | null
           timestamp?: string | null
           title?: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1540,6 +1555,7 @@ export type Database = {
           status: string | null
           specimen: string | null
           test_name: string
+          timeline_entry_id: string | null
           text_value: string | null
           unit: string | null
           updated_at: string | null
@@ -1567,6 +1583,7 @@ export type Database = {
           status?: string | null
           specimen?: string | null
           test_name: string
+          timeline_entry_id?: string | null
           text_value?: string | null
           unit?: string | null
           updated_at?: string | null
@@ -1594,6 +1611,7 @@ export type Database = {
           status?: string | null
           specimen?: string | null
           test_name?: string
+          timeline_entry_id?: string | null
           text_value?: string | null
           unit?: string | null
           updated_at?: string | null
@@ -2451,6 +2469,7 @@ export type Database = {
           school_id: string | null
           temperature: number | null
           timestamp: string
+          timeline_entry_id: string | null
           updated_at: string | null
           weight: number | null
         }
@@ -2472,6 +2491,7 @@ export type Database = {
           school_id?: string | null
           temperature?: number | null
           timestamp: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
           weight?: number | null
         }
@@ -2493,6 +2513,7 @@ export type Database = {
           school_id?: string | null
           temperature?: number | null
           timestamp?: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
           weight?: number | null
         }

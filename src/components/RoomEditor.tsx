@@ -9,7 +9,7 @@ import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
-import { DEFAULT_HOSPITAL_TIMELINE, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -507,8 +507,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         learner_program: learnerProgram,
         role,
         objective,
-        context: nurseContext,
-        nurse_context: nurseContext,
+        context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
+        nurse_context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
         emr_context: emrContextPayload,
         style,
         specialty_id: specialtyIds[0] ?? null,
@@ -532,6 +532,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         hospital_stay_days: hospitalTimeline.stayDays,
         hospital_timeline: hospitalTimeline,
       };
+
+      let timelinePatientId: string | null = room?.patient_id ?? null;
+      let timelineRoomId: number | null = room?.id ?? null;
 
       if (room) {
         const { error } = await supabase
@@ -587,6 +590,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             console.error('Failed to create patient for room', patientError);
             setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
           } else {
+            timelinePatientId = patientRecord.id;
+            timelineRoomId = inserted.id;
             await supabase.from('rooms').update({ patient_id: patientRecord.id }).eq('id', inserted.id);
             try {
               const initialLabs = buildInitialLabResults(
@@ -602,6 +607,19 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             }
           }
         }
+      }
+
+      if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
+        const { error } = await supabase.rpc('materialize_hospital_timeline', {
+          p_room_id: timelineRoomId,
+          p_patient_id: timelinePatientId,
+          p_school_id: finalSchoolId,
+          p_case_blueprint_id: room?.case_blueprint_id ?? null,
+          p_timeline: hospitalTimeline,
+          p_nurse_context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
+          p_generated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
       }
 
       onSave();
