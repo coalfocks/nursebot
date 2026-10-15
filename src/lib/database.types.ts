@@ -1154,6 +1154,8 @@ export type Database = {
           progress_note: string | null
           room_number: string | null
           school_id: string
+          source_patient_id: string | null
+          continues_from_room_id: number | null
           specialty: string
           title: string
           typical_questions: string[] | null
@@ -1188,6 +1190,8 @@ export type Database = {
           progress_note?: string | null
           room_number?: string | null
           school_id: string
+          source_patient_id?: string | null
+          continues_from_room_id?: number | null
           specialty: string
           title: string
           typical_questions?: string[] | null
@@ -1222,6 +1226,8 @@ export type Database = {
           progress_note?: string | null
           room_number?: string | null
           school_id?: string
+          source_patient_id?: string | null
+          continues_from_room_id?: number | null
           specialty?: string
           title?: string
           typical_questions?: string[] | null

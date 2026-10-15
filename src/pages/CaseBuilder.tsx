@@ -31,6 +31,8 @@ type CaseFormState = {
   specialty: string;
   title: string;
   roomNumber: string;
+  sourcePatientId: string;
+  continuesFromRoomId: string;
   difficulty: CaseBlueprint['difficulty'];
   objectives: string;
   admittingHpi: string;
@@ -219,6 +221,8 @@ const initialForm: CaseFormState = {
   specialty: specialtyOptions[0],
   title: '',
   roomNumber: '',
+  sourcePatientId: '',
+  continuesFromRoomId: '',
   difficulty: 'easy',
   objectives: '',
   admittingHpi: '',
@@ -331,6 +335,8 @@ export default function CaseBuilder() {
         title: form.title.trim(),
         specialty: form.specialty,
         room_number: form.roomNumber.trim() || null,
+        source_patient_id: form.sourcePatientId.trim() || null,
+        continues_from_room_id: form.continuesFromRoomId ? Number.parseInt(form.continuesFromRoomId, 10) : null,
         difficulty: form.difficulty,
         objectives: form.objectives.trim(),
         admitting_hpi: form.admittingHpi.trim(),
@@ -509,6 +515,8 @@ export default function CaseBuilder() {
     setPublishingId(blueprint.id);
     setError(null);
 
+    let createdRoomId: number | null = null;
+    let createdPatientId: string | null = null;
     try {
       const patient = getGeneratedSection(generatedPackage, 'patient');
       const event = getGeneratedSection(generatedPackage, 'event');
@@ -528,6 +536,7 @@ export default function CaseBuilder() {
       const roomPayload = {
         room_number: roomNumber,
         case_blueprint_id: blueprint.id,
+        continues_from: blueprint.continues_from_room_id,
         role: blueprint.title,
         context: buildRoomText(event.trigger, event.nurseObservations),
         nurse_context: buildRoomText(
@@ -567,6 +576,13 @@ export default function CaseBuilder() {
         created_by: user?.id ?? null,
         is_active: true,
       };
+
+      if (!roomPayload.objective || !roomPayload.nurse_context || !roomPayload.emr_context) {
+        throw new Error('[CASE_ROOM_INCOMPLETE] Objective, Nurse Context, and EMR context are required before publishing.');
+      }
+      if (roomPayload.patient_conversation_enabled && !roomPayload.patient_conversation_prompt) {
+        throw new Error('[CASE_BEDSIDE_PROMPT_REQUIRED] Add a patient conversation prompt or disable patient chat before publishing.');
+      }
 
       const { data: blueprintRoom, error: blueprintRoomError } = await supabase
         .from('rooms')
@@ -623,13 +639,34 @@ export default function CaseBuilder() {
           reusedRoom = true;
         } else {
           roomRecord = insertedRoom;
+          createdRoomId = insertedRoom.id;
         }
       }
 
       if (!roomRecord) throw new Error('Room publish failed');
 
-      let patientId = roomRecord.patient_id;
+      let patientId = roomRecord.patient_id ?? blueprint.source_patient_id;
       let patientSkippedForMissingDob = false;
+      if (blueprint.source_patient_id) {
+        const { data: sourcePatient, error: sourcePatientError } = await supabase
+          .from('patients')
+          .select('id, school_id, deleted_at')
+          .eq('id', blueprint.source_patient_id)
+          .eq('school_id', scopedSchoolId)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (sourcePatientError) throw sourcePatientError;
+        if (!sourcePatient) throw new Error('[CASE_SOURCE_PATIENT_NOT_FOUND] The selected synthetic patient is not available in this school.');
+        patientId = sourcePatient.id;
+        if (!roomRecord.patient_id) {
+          const { error: sourceLinkError } = await supabase
+            .from('rooms')
+            .update({ patient_id: patientId })
+            .eq('id', roomRecord.id)
+            .eq('school_id', scopedSchoolId);
+          if (sourceLinkError) throw sourceLinkError;
+        }
+      }
       if (!patientId) {
         const identity = getStructuredPatientIdentity(patient);
         if (!identity.dateOfBirth) {
@@ -673,6 +710,7 @@ export default function CaseBuilder() {
               .single();
             if (patientError && !isUniqueViolation(patientError)) throw patientError;
             patientId = insertedPatient?.id ?? deterministicPatientId;
+            createdPatientId = patientId;
           } else {
             patientId = existingPatient.id;
           }
@@ -819,7 +857,8 @@ export default function CaseBuilder() {
         }
       }
 
-      const linkedIds = `Room ID ${roomRecord.id}; patient ID ${patientId ?? 'none'}; ${noteCount} generated note${noteCount === 1 ? '' : 's'}.`;
+      if (!patientId) throw new Error('[CASE_EMR_LINK_REQUIRED] Publishing completed without a patient/chart link.');
+      const linkedIds = `Room ID ${roomRecord.id}; patient/chart ID ${patientId}; ${noteCount} generated note${noteCount === 1 ? '' : 's'}.`;
       const publishVerb = reusedRoom ? 'Reused' : 'Published';
       const details = patientSkippedForMissingDob
         ? ' No patient was created because the generated package has no structured dateOfBirth; regenerate with structured identity data or link a patient manually.'
@@ -832,6 +871,14 @@ export default function CaseBuilder() {
       );
     } catch (err) {
       console.error('Failed to publish case blueprint to room', err);
+      if (createdPatientId) {
+        await supabase.from('clinical_notes').delete().eq('patient_id', createdPatientId).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('imaging_studies').delete().eq('patient_id', createdPatientId).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('rooms').delete().eq('id', createdRoomId ?? -1).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('patients').delete().eq('id', createdPatientId).eq('school_id', scopedSchoolId);
+      } else if (createdRoomId) {
+        await supabase.from('rooms').delete().eq('id', createdRoomId).eq('case_blueprint_id', blueprint.id);
+      }
       setError(err instanceof Error ? err.message : 'Unable to publish this generated case to a room.');
     } finally {
       setPublishingId(null);
@@ -975,6 +1022,27 @@ export default function CaseBuilder() {
                       onChange={(e) => setForm((prev) => ({ ...prev, roomNumber: e.target.value }))}
                       className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       placeholder="412"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Existing synthetic patient ID (optional)</label>
+                    <input
+                      type="text"
+                      value={form.sourcePatientId}
+                      onChange={(e) => setForm((prev) => ({ ...prev, sourcePatientId: e.target.value }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      placeholder="Reuse patient/chart UUID for Part B/C"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Prior room ID (optional)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={form.continuesFromRoomId}
+                      onChange={(e) => setForm((prev) => ({ ...prev, continuesFromRoomId: e.target.value }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      placeholder="Carry over prior case context"
                     />
                   </div>
                 </div>
