@@ -92,6 +92,7 @@ describe('feedback v2 canonical contract', () => {
 
   it('recovers bedside-first clinical evidence without treating a nurse page as learner evidence', () => {
     const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
       { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
       { kind: 'order', title: 'Order: telemetry', body: 'STAT' },
       { kind: 'progress-note', title: 'Student progress note', body: 'Reassessed unstable patient and escalated.' },

@@ -70,21 +70,27 @@ Deno.serve(async (req) => {
         if (!recovered) throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry with no learner-authored post-page action to recover');
         evaluation = recovered;
       }
-      const idsForKinds = (kinds: string[]) => scoredEntries.filter((entry) => kinds.includes(entry.kind)).map((entry) => entry.id);
+      const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
+        .filter((entry) => kinds.includes(entry.kind))
+        .filter((entry) => !learnerMessagesOnly || entry.kind !== 'message' || entry.meta?.includes('Author: Student'))
+        .map((entry) => entry.id);
+      const learnerCommunicationIds = idsForKinds(['message', 'vital'], true);
+      const learnerClosedLoopIds = idsForKinds(['message'], true);
+      const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'order', 'labs', 'vital', 'imaging'], true);
       const evidence = {
         communication: {
-          focused: normalizeEvidenceEventIds(evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids, sourceEventIds),
-          closedLoop: normalizeEvidenceEventIds(evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids, sourceEventIds),
+          focused: normalizeEvidenceEventIds(evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids, learnerCommunicationIds),
+          closedLoop: normalizeEvidenceEventIds(evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids, learnerClosedLoopIds),
         },
         mdm: {
-          orders: normalizeEvidenceEventIds(evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids, sourceEventIds),
-          reasoning: normalizeEvidenceEventIds(evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids, sourceEventIds),
+          orders: normalizeEvidenceEventIds(evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids, idsForKinds(['order', 'labs', 'vital', 'imaging'])),
+          reasoning: normalizeEvidenceEventIds(evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids, learnerReasoningIds),
         },
       };
-      if (!evidence.communication.focused.length) evidence.communication.focused = idsForKinds(['message', 'vital']);
-      if (!evidence.communication.closedLoop.length) evidence.communication.closedLoop = idsForKinds(['message', 'order', 'vital']);
+      if (!evidence.communication.focused.length) evidence.communication.focused = learnerCommunicationIds;
+      if (!evidence.communication.closedLoop.length) evidence.communication.closedLoop = learnerClosedLoopIds;
       if (!evidence.mdm.orders.length) evidence.mdm.orders = idsForKinds(['order', 'labs', 'vital', 'imaging']);
-      if (!evidence.mdm.reasoning.length) evidence.mdm.reasoning = idsForKinds(['progress-note', 'message', 'order', 'labs', 'vital', 'imaging']);
+      if (!evidence.mdm.reasoning.length) evidence.mdm.reasoning = learnerReasoningIds;
       evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids = evidence.communication.focused;
       evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids = evidence.communication.closedLoop;
       evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids = evidence.mdm.orders;
