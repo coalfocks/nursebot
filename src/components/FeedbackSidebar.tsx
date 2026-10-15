@@ -8,6 +8,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  Printer,
 } from 'lucide-react';
 import type { Database, Json } from '../lib/database.types';
 
@@ -197,13 +198,6 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
 
   const commScore = assignment.communication_score;
   const mdmScore = assignment.mdm_score;
-  const availableScores = [commScore, mdmScore].filter((score): score is number => score != null);
-  const computedGrade =
-    availableScores.length > 0
-      ? Math.round((availableScores.reduce((sum, score) => sum + score, 0) / availableScores.length) * 20)
-      : null;
-  const grade = assignment.grade ?? computedGrade;
-
   const communicationBreakdown = parseCommunicationBreakdown(assignment.communication_breakdown);
   const mdmBreakdown = parseMdmBreakdown(assignment.mdm_breakdown);
 
@@ -214,29 +208,26 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
     return 'text-red-600 bg-red-50 border-red-200';
   };
 
-  const getGradeColor = (g: number) => {
-    if (g >= 90) return 'text-green-600';
-    if (g >= 80) return 'text-blue-600';
-    if (g >= 70) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
   return (
     <div className="bg-white shadow rounded-lg p-6 space-y-5">
-      <div className="flex items-center gap-2 border-b pb-3">
-        <Award className="h-5 w-5 text-amber-500" />
-        <h2 className="text-lg font-semibold text-gray-900">Your Results</h2>
+      <div className="flex items-center justify-between gap-2 border-b pb-3">
+        <div className="flex items-center gap-2">
+          <Award className="h-5 w-5 text-amber-500" />
+          <h2 className="text-lg font-semibold text-gray-900">Review your feedback</h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 print:hidden"
+        >
+          <Printer className="h-3.5 w-3.5" />
+          Print
+        </button>
       </div>
 
-      {/* Grade */}
-      <div className="text-center py-2">
-        {grade != null ? (
-          <div className={`text-4xl font-bold ${getGradeColor(grade)}`}>{grade}</div>
-        ) : (
-          <div className="text-4xl font-bold text-gray-400">--</div>
-        )}
-        <p className="text-xs text-gray-500 mt-1">Overall Grade</p>
-      </div>
+      <p className="text-xs text-gray-500">
+        Formative feedback from this simulation—not an ACGME Milestone, EPA entrustment decision, or validated competence determination.
+      </p>
 
       {/* Score Circles */}
       <div className="grid grid-cols-2 gap-3">

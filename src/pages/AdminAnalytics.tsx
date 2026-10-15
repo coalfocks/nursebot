@@ -24,7 +24,7 @@ type RawAnalyticsRecord = {
   case_difficulty: string | null;
   communication_breakdown: Record<string, unknown> | null;
   mdm_breakdown: Record<string, unknown> | null;
-  nurse_feedback: { overall_score?: number } | null;
+  nurse_feedback: Record<string, unknown> | null;
   student: { id: string; full_name: string | null; role: string | null } | null;
   room: { id: number; room_number: string | null; specialty_id: string | null; specialty_ids: string[] | null } | null;
 };
@@ -97,9 +97,13 @@ export default function AdminAnalytics() {
             studentRole: item.student?.role ?? null, roomId: item.room_id, roomNumber: room.room_number ?? String(item.room_id),
             specialty: ids.map((id: string) => specialtyMap.get(id)).filter(Boolean).join(', ') || 'Unspecified',
             status: item.status, feedbackStatus: item.feedback_status, communicationScore: item.communication_score,
-            mdmScore: item.mdm_score, overallScore: typeof item.grade === 'number' ? item.grade : item.nurse_feedback?.overall_score ?? null,
+            mdmScore: item.mdm_score,
+            overallScore: item.communication_score != null && item.mdm_score != null
+              ? Number(((item.communication_score + item.mdm_score) / 2).toFixed(2))
+              : null,
             createdAt: item.created_at, completedAt: item.completed_at, feedbackGeneratedAt: item.feedback_generated_at,
             caseDifficulty: item.case_difficulty, communicationBreakdown: item.communication_breakdown, mdmBreakdown: item.mdm_breakdown,
+            nurseFeedback: item.nurse_feedback,
           };
         });
         if (!cancelled) setRows(mapped);
@@ -138,6 +142,30 @@ export default function AdminAnalytics() {
   const metrics = useMemo(() => computeDashboardMetrics(filteredRows, eligibleLearners), [filteredRows, eligibleLearners]);
   const reviewQueue = filteredRows.filter((row) => row.status === 'completed' && row.feedbackStatus !== 'completed').slice(0, 12);
   const maxTrend = Math.max(1, ...metrics.trend.map((point) => point.attempts));
+  const feedbackHighlights = useMemo(() => {
+    const strengths = new Set<string>();
+    const growth = new Set<string>();
+    const collect = (value: unknown, target: Set<string>) => {
+      if (!Array.isArray(value)) return;
+      value.forEach((item) => {
+        if (typeof item === 'string' && item.trim()) target.add(item.trim());
+      });
+    };
+    filteredRows.forEach((row) => {
+      const feedback = row.nurseFeedback ?? {};
+      collect(feedback.strengths, strengths);
+      collect(feedback.areas_for_improvement, growth);
+      collect(feedback.recommendations, growth);
+      ['communication', 'clinical_reasoning', 'mdm'].forEach((domain) => {
+        const section = feedback[domain];
+        if (section && typeof section === 'object' && !Array.isArray(section)) {
+          collect((section as Record<string, unknown>).strengths, strengths);
+          collect((section as Record<string, unknown>).areas_for_improvement, growth);
+        }
+      });
+    });
+    return { strengths: [...strengths].slice(0, 8), growth: [...growth].slice(0, 8) };
+  }, [filteredRows]);
 
   const exportCsv = () => {
     const headers = ['assignment_id', 'learner', 'school_id', 'case', 'specialty', 'status', 'created_at', 'completed_at', 'feedback_status', 'communication_score', 'mdm_score', 'overall_score', 'test_data_included'];
@@ -166,6 +194,20 @@ export default function AdminAnalytics() {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">{[['Eligible attempts', metrics.eligibleAssignments, `denominator: ${metrics.eligibleAssignments}`], ['Completed', `${metrics.completedAssignments} / ${metrics.eligibleAssignments}`, pct(metrics.completionRate)], ['Assessment coverage', `${metrics.assessedAssignments} / ${metrics.completedAssignments}`, pct(metrics.assessmentCoverageRate)], ['Learners participating', `${metrics.participatingLearners} / ${metrics.eligibleLearners}`, pct(metrics.participationRate)], ['Median completion time', formatCompletionDuration(metrics.medianCompletionMinutes), `${metrics.completionTimeSampleSize} created/completed timestamp pairs`]].map(([label, value, detail]) => <div key={String(label)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>)}</section>
         <div className="grid gap-6 xl:grid-cols-2"><Panel title="Attempts over time" subtitle="Counts use assignment timestamps; this is not time-on-task."><div className="space-y-3">{metrics.trend.map((point) => <div key={point.label} className="grid grid-cols-[7rem_1fr_8rem] items-center gap-3 text-sm"><span>{point.label}</span><div className="h-5 rounded bg-slate-100"><div className="h-5 rounded bg-blue-500" style={{ width: `${(point.attempts / maxTrend) * 100}%` }} title={`${point.attempts} attempts`} /></div><span className="text-right text-xs text-slate-600">{point.completed}/{point.attempts} complete</span></div>)}</div></Panel><Panel title="Domain performance" subtitle="AI-generated rubric scores; coverage shows how much data is available."><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Domain</th><th>Average</th><th>Scored</th><th>Eligible</th></tr></thead><tbody>{metrics.domainPerformance.map((item) => <tr key={item.domain} className="border-b last:border-0"><td className="py-3">{item.domain}</td><td>{item.average ?? '—'} / 5</td><td>{item.scored}</td><td>{item.eligible}</td></tr>)}</tbody></table></Panel><Panel title="Case × performance" subtitle="Distribution-friendly table alternative; averages are not used alone."><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Case</th><th>Attempts</th><th>Completed</th><th>Overall score</th></tr></thead><tbody>{metrics.caseHeatmap.map((item) => <tr key={item.caseLabel} className="border-b last:border-0"><td className="py-3">{item.caseLabel}</td><td>{item.attempts}</td><td>{item.completed}</td><td>{item.average ?? '—'}</td></tr>)}</tbody></table></Panel><Panel title="Review queue" subtitle="Only explicit missing/pending/failed feedback is flagged; no risk labels.">{reviewQueue.length ? <div className="space-y-2">{reviewQueue.map((row) => <button key={row.id} onClick={() => navigate(`/assignment/${row.id}`)} className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:bg-slate-50"><span><span className="block text-sm font-medium">{row.studentName} · Room {row.roomNumber}</span><span className="block text-xs text-slate-500">Completed, feedback {row.feedbackStatus ?? 'missing'} · evidence review needed</span></span><ExternalLink className="h-4 w-4 text-slate-400" /></button>)}</div> : <p className="text-sm text-slate-600">No completed attempts currently need feedback review.</p>}</Panel></div>
         <LearnerTable rows={filteredRows} navigate={navigate} />
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="font-semibold text-slate-900">Learner strengths and growth</h2>
+          <p className="mt-1 text-xs text-slate-500">Formative themes from stored feedback in the same scope and date range. Missing narrative evidence is shown as unavailable.</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+              <h3 className="text-sm font-semibold text-emerald-900">Strengths</h3>
+              {feedbackHighlights.strengths.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-emerald-900">{feedbackHighlights.strengths.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-900">Not observed in the selected feedback.</p>}
+            </div>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
+              <h3 className="text-sm font-semibold text-amber-900">Growth opportunities</h3>
+              {feedbackHighlights.growth.length ? <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">{feedbackHighlights.growth.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-2 text-sm text-amber-900">Not observed in the selected feedback.</p>}
+            </div>
+          </div>
+        </section>
         <GroupedTable rows={filteredRows} groupBy="specialty" />
         {isSuperAdmin(profile) && <GroupedTable rows={filteredRows} groupBy="school" />}
       </>}

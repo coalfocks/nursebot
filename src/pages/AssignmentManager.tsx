@@ -76,33 +76,53 @@ export default function AssignmentManager() {
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
+  const loadAllAssignments = async (schoolId: string | null) => {
+    const allRows: Assignment[] = [];
+    const pageSize = 1000;
+    let from = 0;
+
+    while (true) {
+      let query = supabase
+        .from('student_room_assignments')
+        .select(`
+          *,
+          student:student_id (
+            id,
+            full_name,
+            study_year,
+            email,
+            school_id,
+            specialization_interest
+          ),
+          room:room_id (
+            id,
+            room_number,
+            specialty_id,
+            difficulty_level,
+            school_id
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (schoolId) query = query.eq('school_id', schoolId);
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const page = ((data ?? []) as Assignment[]);
+      allRows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return allRows.filter((assignment) => assignment.room !== null);
+  };
+
   useEffect(() => {
     if (!hasAdmin) return;
     const loadData = async () => {
       setLoading(true);
       try {
-        let assignmentsQuery = supabase
-          .from('student_room_assignments')
-          .select(`
-            *,
-            student:student_id (
-              id,
-              full_name,
-              study_year,
-              email,
-              school_id,
-              specialization_interest
-            ),
-            room:room_id (
-              id,
-              room_number,
-              specialty_id,
-              difficulty_level,
-              school_id
-            )
-          `)
-          .order('created_at', { ascending: false });
-
         let studentsQuery = supabase
           .from('profiles')
           .select('id, full_name, study_year, email, role, school_id, specialization_interest, created_at')
@@ -120,7 +140,6 @@ export default function AssignmentManager() {
           .order('name');
 
         if (scopedSchoolId) {
-          assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
           studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
           specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
@@ -133,20 +152,19 @@ export default function AssignmentManager() {
           specialtiesResult,
           schoolsResult,
         ] = await Promise.all([
-          assignmentsQuery,
+          loadAllAssignments(scopedSchoolId),
           studentsQuery,
           roomsQuery,
           specialtiesQuery,
           supabase.from('schools').select('*').order('name'),
         ]);
 
-        if (assignmentsResult.error) throw assignmentsResult.error;
         if (studentsResult.error) throw studentsResult.error;
         if (roomsResult.error) throw roomsResult.error;
         if (specialtiesResult.error) throw specialtiesResult.error;
         if (schoolsResult.error) throw schoolsResult.error;
 
-        setAssignments(((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null));
+        setAssignments(assignmentsResult);
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -162,36 +180,7 @@ export default function AssignmentManager() {
   }, [hasAdmin, scopedSchoolId]);
 
   const fetchAssignments = async () => {
-    let query = supabase
-      .from('student_room_assignments')
-      .select(`
-        *,
-        student:student_id (
-          id,
-          full_name,
-          study_year,
-          email,
-          school_id,
-          specialization_interest
-        ),
-        room:room_id (
-          id,
-          room_number,
-          specialty_id,
-          difficulty_level,
-          school_id
-        )
-      `)
-      .order('created_at', { ascending: false });
-
-    if (scopedSchoolId) {
-      query = query.eq('school_id', scopedSchoolId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    setAssignments(((data ?? []) as Assignment[]).filter(a => a.room !== null));
+    setAssignments(await loadAllAssignments(scopedSchoolId));
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {

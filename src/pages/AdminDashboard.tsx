@@ -102,6 +102,34 @@ export default function AdminDashboard() {
           return rows;
         };
 
+        const buildAssignmentCountQuery = () => {
+          let query = supabase
+            .from('student_room_assignments')
+            .select('id', { count: 'exact', head: true })
+            .neq('status', 'cancelled');
+          if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
+          return query;
+        };
+
+        const buildCompletedCountQuery = () => {
+          let query = supabase
+            .from('student_room_assignments')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'completed');
+          if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
+          return query;
+        };
+
+        const buildAssessedCountQuery = () => {
+          let query = supabase
+            .from('student_room_assignments')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'completed')
+            .eq('feedback_status', 'completed');
+          if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
+          return query;
+        };
+
         let roomsQuery = supabase
           .from('rooms')
           .select('id', { count: 'exact', head: true })
@@ -115,11 +143,17 @@ export default function AdminDashboard() {
           studentResult,
           adminResult,
           assignmentRows,
+          assignmentCountResult,
+          completedCountResult,
+          assessedCountResult,
           roomsResult,
         ] = await Promise.all([
           studentQuery,
           adminQuery,
           loadAssignmentRows(),
+          buildAssignmentCountQuery(),
+          buildCompletedCountQuery(),
+          buildAssessedCountQuery(),
           roomsQuery,
         ]);
 
@@ -127,6 +161,9 @@ export default function AdminDashboard() {
 
         if (studentResult.error) throw studentResult.error;
         if (adminResult.error) throw adminResult.error;
+        if (assignmentCountResult.error) throw assignmentCountResult.error;
+        if (completedCountResult.error) throw completedCountResult.error;
+        if (assessedCountResult.error) throw assessedCountResult.error;
         if (roomsResult.error) throw roomsResult.error;
 
         const cohortAssignments: AnalyticsAssignment[] = assignmentRows.map((row) => ({
@@ -137,16 +174,22 @@ export default function AdminDashboard() {
           mdmScore: row.mdm_score,
           overallScore: row.grade,
         }));
-        const cohortMetrics = computeCohortMetrics(cohortAssignments, studentResult.count ?? 0);
-        const gradeRows = assignmentRows.filter((row) => row.status === 'completed');
-        const scoreValues = gradeRows
-          .map((row) => {
-            if (typeof row.grade === 'number') return row.grade;
-            const feedback = row.nurse_feedback as AssignmentRow['nurse_feedback'];
-            if (feedback && typeof feedback.overall_score === 'number') return feedback.overall_score;
-            return null;
-          })
-          .filter((value): value is number => value !== null);
+        const computedCohortMetrics = computeCohortMetrics(cohortAssignments, studentResult.count ?? 0);
+        const eligibleAssignments = assignmentCountResult.count ?? computedCohortMetrics.eligibleAssignments;
+        const completedAssignments = completedCountResult.count ?? computedCohortMetrics.completedAssignments;
+        const assessedAssignments = assessedCountResult.count ?? computedCohortMetrics.assessedAssignments;
+        const cohortMetrics = {
+          ...computedCohortMetrics,
+          eligibleAssignments,
+          completedAssignments,
+          assessedAssignments,
+          completionRate: eligibleAssignments > 0 ? Number(((completedAssignments / eligibleAssignments) * 100).toFixed(1)) : null,
+          assessmentCoverageRate: completedAssignments > 0 ? Number(((assessedAssignments / completedAssignments) * 100).toFixed(1)) : null,
+        };
+        const scoreValues = assignmentRows
+          .filter((row) => row.status === 'completed' && row.feedback_status === 'completed')
+          .flatMap((row) => [row.communication_score, row.mdm_score])
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
         const averageScore = scoreValues.length
           ? Number((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length).toFixed(1))
@@ -155,8 +198,8 @@ export default function AdminDashboard() {
         setStats({
           studentCount: studentResult.count ?? 0,
           adminCount: adminResult.count ?? 0,
-          assignmentCount: cohortMetrics.eligibleAssignments,
-          completedAssignments: cohortMetrics.completedAssignments,
+          assignmentCount: assignmentCountResult.count ?? 0,
+          completedAssignments: completedCountResult.count ?? 0,
           activeRoomCount: roomsResult.count ?? 0,
           averageScore,
           cohortMetrics,
@@ -249,7 +292,7 @@ export default function AdminDashboard() {
                   }, {
                     title: 'Average Score',
                     value: stats.averageScore ?? '—',
-                    description: 'Latest recorded average',
+                    description: 'Current rubric scores only (0–5)',
                     icon: TrendingUp,
                     accent: 'bg-purple-100 text-purple-600',
                   }, {

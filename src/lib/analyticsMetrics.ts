@@ -21,6 +21,7 @@ export type AnalyticsRow = AnalyticsAssignment & {
   caseDifficulty: string | null;
   communicationBreakdown: Record<string, unknown> | null;
   mdmBreakdown: Record<string, unknown> | null;
+  nurseFeedback: Record<string, unknown> | null;
 };
 
 export type DashboardMetrics = CohortMetrics & {
