@@ -1152,7 +1152,7 @@ export default function CaseBuilder() {
                     try {
                       const timeline = { ...parseHospitalTimeline(JSON.parse(form.hospitalTimeline)), encounterType: form.encounterType };
                       const errors = validateHospitalTimeline(timeline);
-                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <p className="text-emerald-700">Timeline preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p>}</div>;
+                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <><p className="text-emerald-700">Trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p><details className="mt-2 rounded border border-slate-200 bg-white p-2"><summary className="cursor-pointer font-semibold text-slate-700">Read-only timeline preview ({timeline.entries.length} entries)</summary><ol className="mt-2 space-y-1 text-slate-600">{timeline.entries.map((entry) => <li key={entry.id}><span className="font-medium">Day {entry.hospitalDay}, +{entry.offsetHours}h · {entry.title}</span>: {entry.content}{entry.kind === 'lab' && ` (${entry.analyte}: ${entry.value} ${entry.unit})`}</li>)}</ol></details></>}</div>;
                     } catch {
                       return <p className="mt-2 text-xs text-rose-700">Timeline JSON is not valid yet.</p>;
                     }
