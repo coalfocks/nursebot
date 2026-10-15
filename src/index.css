@@ -22,6 +22,18 @@
     break-inside: avoid;
     box-shadow: none !important;
   }
+
+  #feedback-print-root > .print-sheet {
+    display: block !important;
+  }
+
+  #feedback-print-root > .print\:hidden {
+    display: none !important;
+  }
+}
+
+.print-sheet {
+  display: none;
 }
 
 @layer base {
