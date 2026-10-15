@@ -28,7 +28,11 @@ export const clampToMinimumPrior = (
 export const formatScenarioPrior = (
   timestamp: string | null | undefined,
   admissionDate?: string | null,
+  relativeOffsetHours?: number | null,
 ): string => {
+  if (relativeOffsetHours !== null && relativeOffsetHours !== undefined && Number.isFinite(relativeOffsetHours)) {
+    return relativeOffsetHours === 0 ? 'At encounter' : `${relativeOffsetHours} hours prior`;
+  }
   const displayTimestamp = clampToMinimumPrior(timestamp, admissionDate);
   const encounter = resolveEncounterTime(admissionDate);
   const elapsedHours = Math.max(

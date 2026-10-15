@@ -1,5 +1,5 @@
 import type { HospitalTimeline, HospitalTimelineEntry } from './hospitalTimeline';
-import { timelineEntryTimestamp } from './hospitalTimeline';
+import { entryRelativeHours, timelineEntryTimestamp } from './hospitalTimeline';
 
 const numeric = (value: string | undefined) => {
   if (!value?.trim()) return null;
@@ -20,6 +20,7 @@ export function buildTimelineChartRows(timeline: HospitalTimeline, context: Time
   const notes: Array<Record<string, unknown>> = [];
   const labs: Array<Record<string, unknown>> = [];
   const vitals: Array<Record<string, unknown>> = [];
+  const imaging: Array<Record<string, unknown>> = [];
   const timestamp = (entry: HospitalTimelineEntry) => timelineEntryTimestamp(timeline, entry, context.generatedAt);
 
   for (const entry of timeline.entries) {
@@ -31,6 +32,7 @@ export function buildTimelineChartRows(timeline: HospitalTimeline, context: Time
       case_blueprint_id: context.caseBlueprintId ?? null,
       override_scope: 'room',
       timeline_entry_id: entry.id,
+      relative_offset_hours: entryRelativeHours(entry),
       timestamp: at,
     };
 
@@ -65,6 +67,21 @@ export function buildTimelineChartRows(timeline: HospitalTimeline, context: Time
       });
     }
 
+    if (entry.kind === 'imaging' && (entry.studyType || entry.title) && (entry.report || entry.content)) {
+      imaging.push({
+        ...base,
+        order_name: entry.title,
+        study_type: entry.studyType ?? entry.title,
+        status: 'Completed',
+        ordered_by: 'Authored pre-page timeline',
+        order_time: at,
+        report: entry.report ?? entry.content,
+        impression: entry.impression ?? null,
+        report_generated_at: at,
+        timeline_entry_id: entry.id,
+      });
+    }
+
     if (entry.kind === 'admission' || entry.kind === 'progress_note' || entry.kind === 'consult' || entry.kind === 'procedure') {
       notes.push({
         ...base,
@@ -75,9 +92,10 @@ export function buildTimelineChartRows(timeline: HospitalTimeline, context: Time
           : entry.content,
         author: entry.consultant || 'Authored pre-page timeline',
         signed: true,
+        relative_offset_hours: entryRelativeHours(entry),
       });
     }
   }
 
-  return { notes, labs, vitals };
+  return { notes, labs, vitals, imaging };
 }

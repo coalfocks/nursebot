@@ -67,6 +67,8 @@ export interface ClinicalNote {
   signed: boolean;
   recordVersion?: number;
   assignmentId?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface LabResult {
@@ -92,6 +94,8 @@ export interface LabResult {
   orderedBy: string;
   createdAt?: string;
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export type LabWriteResult =
@@ -115,6 +119,8 @@ export interface VitalSigns {
   weight?: number;
   height?: number;
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface MedicalOrder {
@@ -176,6 +182,8 @@ export interface ImagingStudy {
   reportGeneratedAt?: string | null;
   images?: ImagingImage[];
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface ImagingResult {

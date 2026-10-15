@@ -193,7 +193,7 @@ const buildPrompt = ({ blueprint, section, existingPackage }: Required<GenerateC
     'Keep nurse chat short and text-like. No suggestions, no hints, no diagnosis leakage.',
     'Gate lab, imaging, and study results behind matching placed orders.',
     'Use the blueprint overrides exactly when present; otherwise generate clinically plausible content.',
-    'Use hospital_timeline as the source of truth for dated pre-page chart context. Preserve the 12-hour immediate context window and never imply more than hospital_stay_days (1–3) inpatient days. ED is one encounter; L&D is a short labor/postpartum course unless the authored timeline explicitly supports up to 3 days.',
+    'Use hospital_timeline as the source of truth for relative-hour pre-page chart context. Display baseline items only as hours prior to the student encounter; never render calendar dates, clock times, or hospital-day labels. Preserve the 12-hour immediate context window and never imply more than hospital_stay_days (1–3) inpatient days. ED is one encounter; L&D is a short labor/postpartum course unless the authored timeline explicitly supports up to 3 days.',
     'Require one chronological progress note for every inpatient day and keep labs/vitals as dated entries with analyte, value, and unit. Do not collapse a daily series into one undated result or invent unmodeled results.',
     'Pass the same verified hospital-course and trend facts into nurse_chat. The nurse may answer a requested trend concisely, but must not volunteer a data dump or leak evaluation goals.',
     'Disable bedside patient chat for altered, sedated, intubated, unconscious, or otherwise non-participatory patients.',
@@ -274,9 +274,13 @@ const validateTimeline = (blueprint: CaseBlueprintPayload) => {
       throw new Error(`Hospital day ${day} requires a progress note`);
     }
   }
-  const offsets = entries.map((entry) => Number(entry.offsetHours));
-  if (offsets.some((offset, index) => index > 0 && offset < offsets[index - 1])) throw new Error('Hospital timeline must be chronological');
-  if (entries.some((entry) => entry.kind === 'nurse_page' && Number(entry.offsetHours) < Math.max(0, days * 24 - 12))) throw new Error('Nurse page must be in the final 12-hour window');
+  const offsets = entries.map((entry) => Number(entry.relativeHoursBeforeEncounter ?? entry.offsetHours ?? 0));
+  const usesRelativeOffsets = entries.some((entry) => entry.relativeHoursBeforeEncounter !== undefined);
+  const outOfOrder = usesRelativeOffsets
+    ? offsets.some((offset, index) => index > 0 && offset > offsets[index - 1])
+    : offsets.some((offset, index) => index > 0 && offset < offsets[index - 1]);
+  if (outOfOrder) throw new Error('Hospital timeline must be chronological by relative offset');
+  if (entries.some((entry) => entry.kind === 'nurse_page' && Number(entry.relativeHoursBeforeEncounter ?? entry.offsetHours ?? 0) > 12)) throw new Error('Nurse page must be in the final 12-hour window');
 };
 
 Deno.serve(async (req) => {

@@ -105,8 +105,8 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
-  const formatDate = (value?: string | null) => {
-    return formatScenarioPrior(value, patient.admissionDate);
+  const formatDate = (value?: string | null, relativeOffsetHours?: number | null) => {
+    return formatScenarioPrior(value, patient.admissionDate, relativeOffsetHours);
   };
 
   const handleCreateStudy = async () => {
@@ -456,7 +456,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                       <CardTitle>{study.orderName || study.studyType}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         {study.studyType}
-                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime)}
+                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime, study.relativeOffsetHours)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -481,7 +481,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                     )}
                     {study.reportGeneratedAt && (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Generated {formatDate(study.reportGeneratedAt)}
+                        Generated {formatDate(study.reportGeneratedAt, study.relativeOffsetHours)}
                       </p>
                     )}
                   </div>

@@ -16,6 +16,7 @@ import {
   type GeneratedCasePackage,
 } from '../lib/caseBuilderPublish';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { HospitalTimelineEditor } from '../components/HospitalTimelineEditor';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -1169,21 +1170,16 @@ export default function CaseBuilder() {
                 </div>
 
                 <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
-                  <label className="text-sm font-medium text-slate-700">Pre-page hospital timeline (JSON)</label>
-                  <textarea
-                    value={form.hospitalTimeline}
-                    onChange={(e) => setForm((prev) => ({ ...prev, hospitalTimeline: e.target.value }))}
-                    className="mt-1 h-48 w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-xs shadow-sm"
-                    aria-describedby="timeline-help"
-                  />
+                  <label className="text-sm font-medium text-slate-700">Pre-page hospital timeline</label>
+                  <div className="mt-2"><HospitalTimelineEditor value={form.hospitalTimeline} encounterType={form.encounterType} onChange={(hospitalTimeline) => setForm((prev) => ({ ...prev, hospitalTimeline }))} /></div>
                   <p id="timeline-help" className="mt-1 text-xs text-slate-600">
-                    Use dated entries for admission, one progress note per inpatient day, consults, labs, vitals, procedures, and the nurse page. The nurse page must be in the final 12-hour window; this chart context is excluded from student scoring.
+                    Use relative-hour entries for admission, one progress note per inpatient day, consults, labs, vitals, procedures, and the nurse page. Learners see labels such as “24 hours prior”; this chart context is excluded from student scoring.
                   </p>
                   {(() => {
                     try {
                       const timeline = { ...parseHospitalTimeline(JSON.parse(form.hospitalTimeline)), encounterType: form.encounterType };
                       const errors = validateHospitalTimeline(timeline);
-                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <><p className="text-emerald-700">Trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p><details className="mt-2 rounded border border-slate-200 bg-white p-2"><summary className="cursor-pointer font-semibold text-slate-700">Read-only timeline preview ({timeline.entries.length} entries)</summary><ol className="mt-2 space-y-1 text-slate-600">{timeline.entries.map((entry) => <li key={entry.id}><span className="font-medium">Day {entry.hospitalDay}, +{entry.offsetHours}h · {entry.title}</span>: {entry.content}{entry.kind === 'lab' && ` (${entry.analyte}: ${entry.value} ${entry.unit})`}</li>)}</ol></details></>}</div>;
+                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <p className="text-emerald-700">Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p>}</div>;
                     } catch {
                       return <p className="mt-2 text-xs text-rose-700">Timeline JSON is not valid yet.</p>;
                     }

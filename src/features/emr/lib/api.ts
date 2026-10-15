@@ -102,6 +102,8 @@ const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): Clini
     timestamp: row.timestamp,
     signed: row.signed ?? false,
     recordVersion: row.record_version,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
 };
 
@@ -154,6 +156,8 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     orderedBy: row.ordered_by ?? 'Unknown',
     createdAt: row.created_at ?? undefined,
     deletedAt: row.deleted_at,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
   return normalizeLabResult(mapped);
 };
@@ -201,6 +205,8 @@ const mapImagingStudy = (row: ImagingStudyRow, fallbackPatientId: string): Imagi
     reportGeneratedAt: row.report_generated_at ?? undefined,
     images,
     deletedAt: row.deleted_at,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
 };
 
@@ -776,6 +782,8 @@ export const emrApi = {
           roomId: row.room_id ?? undefined,
           overrideScope: scope,
           timestamp: row.timestamp,
+          timelineEntryId: row.timeline_entry_id,
+          relativeOffsetHours: row.relative_offset_hours,
           temperature: row.temperature ?? undefined,
           bloodPressureSystolic: row.blood_pressure_systolic ?? undefined,
           bloodPressureDiastolic: row.blood_pressure_diastolic ?? undefined,

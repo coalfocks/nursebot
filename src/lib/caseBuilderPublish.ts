@@ -107,11 +107,10 @@ const learnerFieldAllowlist = {
 export const buildLearnerEmrContext = (
   generatedPackage: GeneratedCasePackage,
   blueprintId: string,
-  generatedAt: string,
+  _generatedAt: string,
 ) => ({
   source: 'case-builder-v2',
   blueprintId,
-  generatedAt,
   patient: pickFields(generatedPackage.patient ?? {}, learnerFieldAllowlist.patient),
   emr: pickFields(generatedPackage.emr ?? {}, learnerFieldAllowlist.emr),
   event: pickFields(generatedPackage.event ?? {}, learnerFieldAllowlist.event),

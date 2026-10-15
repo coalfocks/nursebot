@@ -1341,6 +1341,7 @@ export type Database = {
           patient_id: string | null
           room_id: number | null
           record_version: number
+          relative_offset_hours: number | null
           school_id: string | null
           signed: boolean | null
           timestamp: string | null
@@ -1362,6 +1363,7 @@ export type Database = {
           patient_id?: string | null
           room_id?: number | null
           record_version?: number
+          relative_offset_hours?: number | null
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
@@ -1383,6 +1385,7 @@ export type Database = {
           patient_id?: string | null
           room_id?: number | null
           record_version?: number
+          relative_offset_hours?: number | null
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
@@ -1438,10 +1441,12 @@ export type Database = {
           report: string | null
           report_generated_at: string | null
           record_version: number
+          relative_offset_hours: number | null
           room_id: number | null
           school_id: string | null
           status: string | null
           study_type: string
+          timeline_entry_id: string | null
           updated_at: string | null
         }
         Insert: {
@@ -1467,10 +1472,12 @@ export type Database = {
           report?: string | null
           report_generated_at?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           room_id?: number | null
           school_id?: string | null
           status?: string | null
           study_type: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -1496,10 +1503,12 @@ export type Database = {
           report?: string | null
           report_generated_at?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           room_id?: number | null
           school_id?: string | null
           status?: string | null
           study_type?: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1548,6 +1557,7 @@ export type Database = {
           override_scope: string
           patient_id: string | null
           record_version: number
+          relative_offset_hours: number | null
           reference_range: string | null
           result_time: string | null
           room_id: number | null
@@ -1576,6 +1586,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null
@@ -1604,6 +1615,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null
@@ -2470,6 +2482,7 @@ export type Database = {
           temperature: number | null
           timestamp: string
           timeline_entry_id: string | null
+          relative_offset_hours: number | null
           updated_at: string | null
           weight: number | null
         }
@@ -2492,6 +2505,7 @@ export type Database = {
           temperature?: number | null
           timestamp: string
           timeline_entry_id?: string | null
+          relative_offset_hours?: number | null
           updated_at?: string | null
           weight?: number | null
         }
@@ -2514,6 +2528,7 @@ export type Database = {
           temperature?: number | null
           timestamp?: string
           timeline_entry_id?: string | null
+          relative_offset_hours?: number | null
           updated_at?: string | null
           weight?: number | null
         }

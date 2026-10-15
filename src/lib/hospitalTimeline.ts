@@ -2,9 +2,12 @@ export type EncounterType = 'inpatient' | 'ed' | 'ld';
 
 export type HospitalTimelineEntry = {
   id: string;
-  kind: 'admission' | 'progress_note' | 'consult' | 'lab' | 'vital' | 'procedure' | 'nurse_page';
+  kind: 'admission' | 'progress_note' | 'consult' | 'lab' | 'vital' | 'procedure' | 'imaging' | 'nurse_page';
   hospitalDay: number;
-  offsetHours: number;
+  /** Relative hours before the student encounter. Zero is the encounter anchor. */
+  relativeHoursBeforeEncounter?: number;
+  /** Legacy authoring alias; accepted on read and normalized on write. */
+  offsetHours?: number;
   title: string;
   content: string;
   analyte?: string;
@@ -13,6 +16,9 @@ export type HospitalTimelineEntry = {
   trend?: 'stable' | 'improving' | 'worsening';
   consultant?: string;
   recommendation?: string;
+  studyType?: string;
+  report?: string;
+  impression?: string;
   vitals?: {
     temperature?: number;
     bloodPressureSystolic?: number;
@@ -45,7 +51,12 @@ export function parseHospitalTimeline(value: unknown): HospitalTimeline {
     encounterType: candidate.encounterType === 'ed' || candidate.encounterType === 'ld' ? candidate.encounterType : 'inpatient',
     stayDays: Number.isInteger(candidate.stayDays) ? Number(candidate.stayDays) : 1,
     priorContextHours: 12,
-    entries: Array.isArray(candidate.entries) ? candidate.entries as HospitalTimelineEntry[] : [],
+    entries: Array.isArray(candidate.entries) ? (candidate.entries as HospitalTimelineEntry[]).map((entry) => ({
+      ...entry,
+      relativeHoursBeforeEncounter: Number.isFinite(entry.relativeHoursBeforeEncounter)
+        ? Number(entry.relativeHoursBeforeEncounter)
+        : Number(entry.offsetHours ?? 0),
+    })) : [],
   };
 }
 
@@ -60,9 +71,11 @@ export function validateHospitalTimeline(timeline: HospitalTimeline): string[] {
   for (const entry of timeline.entries) {
     if (!entry.id || !entry.kind || !entry.title.trim() || !entry.content.trim()) errors.push('Every timeline entry needs an id, type, title, and content.');
     if (!Number.isInteger(entry.hospitalDay) || entry.hospitalDay < 1 || entry.hospitalDay > timeline.stayDays) errors.push(`${entry.title || 'Timeline entry'} has a hospital day outside the configured stay.`);
-    if (!Number.isFinite(entry.offsetHours) || entry.offsetHours < 0 || entry.offsetHours > maxOffset) errors.push(`${entry.title || 'Timeline entry'} has an invalid time offset.`);
+    const relativeHours = entryRelativeHours(entry);
+    if (!Number.isFinite(relativeHours) || relativeHours < 0 || relativeHours > maxOffset) errors.push(`${entry.title || 'Timeline entry'} has an invalid relative-hour offset.`);
     if (entry.kind === 'lab' && (!entry.analyte?.trim() || !entry.unit?.trim() || !entry.value?.trim())) errors.push('Each lab entry needs an analyte, value, and unit.');
     if (entry.kind === 'consult' && (!entry.consultant?.trim() || !entry.recommendation?.trim())) errors.push('Each consult entry needs a consultant and recommendation.');
+    if (entry.kind === 'imaging' && (!entry.studyType?.trim() || !entry.report?.trim())) errors.push('Each imaging entry needs a study type and report.');
     if (entry.kind === 'progress_note' && !entry.content.trim()) errors.push(`Hospital day ${entry.hospitalDay} needs a progress note.`);
     const day = byDay.get(entry.hospitalDay) ?? [];
     day.push(entry);
@@ -73,16 +86,31 @@ export function validateHospitalTimeline(timeline: HospitalTimeline): string[] {
       if (!(byDay.get(day) ?? []).some((entry) => entry.kind === 'progress_note')) errors.push(`Hospital day ${day} requires one chronological progress note.`);
     }
   }
-  const offsets = timeline.entries.map((entry) => entry.offsetHours);
-  if (offsets.some((offset, index) => index > 0 && offset < offsets[index - 1])) errors.push('Timeline entries must be chronological by offset.');
-  if (timeline.entries.some((entry) => entry.kind === 'nurse_page' && entry.offsetHours < Math.max(0, maxOffset - 12))) errors.push('The nurse page must remain in the final 12-hour context window.');
+  const offsets = timeline.entries.map(entryRelativeHours);
+  const usesRelativeOffsets = timeline.entries.some((entry) => entry.relativeHoursBeforeEncounter !== undefined);
+  const outOfOrder = usesRelativeOffsets
+    ? offsets.some((offset, index) => index > 0 && offset > offsets[index - 1])
+    : offsets.some((offset, index) => index > 0 && offset < offsets[index - 1]);
+  if (outOfOrder) errors.push('Timeline entries must be chronological by relative offset.');
+  if (timeline.entries.some((entry) => entry.kind === 'nurse_page' && (entry.relativeHoursBeforeEncounter === undefined
+    ? entryRelativeHours(entry) < Math.max(0, maxOffset - 12)
+    : entryRelativeHours(entry) > 12))) errors.push('The nurse page must remain in the final 12-hour context window.');
   return [...new Set(errors)];
 }
 
 export function timelineTrend(timeline: HospitalTimeline) {
   return timeline.entries
     .filter((entry) => entry.kind === 'lab' && entry.analyte && entry.value)
-    .map((entry) => `${entry.analyte}: ${entry.value} ${entry.unit ?? ''} · day ${entry.hospitalDay} · ${entry.trend ?? 'stable'}`);
+    .map((entry) => `${entry.analyte}: ${entry.value} ${entry.unit ?? ''} · ${relativeOffsetLabel(entry)} · ${entry.trend ?? 'stable'}`);
+}
+
+export function entryRelativeHours(entry: HospitalTimelineEntry): number {
+  return Number.isFinite(entry.relativeHoursBeforeEncounter) ? entry.relativeHoursBeforeEncounter : Number(entry.offsetHours ?? 0);
+}
+
+export function relativeOffsetLabel(entry: HospitalTimelineEntry): string {
+  const hours = entryRelativeHours(entry);
+  return hours === 0 ? 'At encounter' : `${hours} hours prior`;
 }
 
 export const HOSPITAL_TIMELINE_NURSE_MARKER = '[AUTHORED HOSPITAL COURSE]';
@@ -93,14 +121,15 @@ export const HOSPITAL_TIMELINE_NURSE_MARKER = '[AUTHORED HOSPITAL COURSE]';
  * without volunteering the evaluation key or dumping the whole chart.
  */
 export function renderHospitalTimelineForNurse(timeline: HospitalTimeline): string {
-  const entries = [...timeline.entries].sort((a, b) => a.offsetHours - b.offsetHours);
+  const entries = [...timeline.entries].sort((a, b) => entryRelativeHours(b) - entryRelativeHours(a));
   const facts = entries
-    .filter((entry) => ['admission', 'progress_note', 'consult', 'lab', 'vital', 'procedure'].includes(entry.kind))
+    .filter((entry) => ['admission', 'progress_note', 'consult', 'lab', 'vital', 'imaging', 'procedure'].includes(entry.kind))
     .map((entry) => {
-      const label = `Day ${entry.hospitalDay}, +${entry.offsetHours}h`;
+      const label = relativeOffsetLabel(entry);
       if (entry.kind === 'lab') return `${label} ${entry.analyte}: ${entry.value} ${entry.unit ?? ''}`.trim();
       if (entry.kind === 'vital' && entry.vitals) return `${label} vital signs: ${Object.entries(entry.vitals).map(([key, value]) => `${key} ${value}`).join(', ')}`;
       if (entry.kind === 'consult' && entry.consultant) return `${label} ${entry.consultant} consult: ${entry.recommendation ?? entry.content}`;
+      if (entry.kind === 'imaging') return `${label} ${entry.studyType ?? entry.title}: ${entry.impression ?? entry.report ?? entry.content}`;
       return `${label} ${entry.title}: ${entry.content}`;
     });
   if (!facts.length) return '';
@@ -114,10 +143,17 @@ export function mergeHospitalTimelineIntoNurseContext(current: string | null | u
 }
 
 export function timelineAnchorTimestamp(timeline: HospitalTimeline, generatedAt = new Date().toISOString()): string {
-  const maxOffset = timeline.entries.reduce((max, entry) => Math.max(max, entry.offsetHours), 0);
-  return new Date(new Date(generatedAt).getTime() - maxOffset * 60 * 60 * 1000).toISOString();
+  const legacyEntries = timeline.entries.filter((entry) => entry.relativeHoursBeforeEncounter === undefined);
+  if (legacyEntries.length === timeline.entries.length) {
+    const maxOffset = timeline.entries.reduce((max, entry) => Math.max(max, Number(entry.offsetHours ?? 0)), 0);
+    return new Date(new Date(generatedAt).getTime() - maxOffset * 60 * 60 * 1000).toISOString();
+  }
+  return generatedAt;
 }
 
 export function timelineEntryTimestamp(timeline: HospitalTimeline, entry: HospitalTimelineEntry, generatedAt?: string): string {
-  return new Date(new Date(timelineAnchorTimestamp(timeline, generatedAt)).getTime() + entry.offsetHours * 60 * 60 * 1000).toISOString();
+  if (entry.relativeHoursBeforeEncounter === undefined) {
+    return new Date(new Date(timelineAnchorTimestamp(timeline, generatedAt)).getTime() + Number(entry.offsetHours ?? 0) * 60 * 60 * 1000).toISOString();
+  }
+  return new Date(new Date(generatedAt ?? new Date().toISOString()).getTime() - entryRelativeHours(entry) * 60 * 60 * 1000).toISOString();
 }

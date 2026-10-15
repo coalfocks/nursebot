@@ -34,4 +34,13 @@ describe('hospital timeline chart adapter', () => {
     expect(rows.vitals).toHaveLength(0);
     expect(rows.notes.every((row) => row.room_id === 9001 && row.patient_id === 'patient-1')).toBe(true);
   });
+
+  it('materializes relative offsets and imaging without learner-facing dates', () => {
+    const rows = buildTimelineChartRows({
+      ...timeline,
+      entries: [{ id: 'xray', kind: 'imaging', hospitalDay: 1, relativeHoursBeforeEncounter: 24, title: 'Chest x-ray', content: 'No focal opacity.', studyType: 'Chest x-ray', report: 'No focal opacity.' }],
+    }, { patientId: 'patient-1', roomId: 9001, schoolId: 'school-1', generatedAt: '2026-10-15T12:00:00.000Z' });
+    expect(rows.imaging[0]).toMatchObject({ timeline_entry_id: 'xray', relative_offset_hours: 24, study_type: 'Chest x-ray' });
+    expect(rows.imaging[0].order_time).toBe('2026-10-14T12:00:00.000Z');
+  });
 });

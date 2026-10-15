@@ -555,7 +555,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (value: string) => formatScenarioPrior(value, patient.admissionDate);
+  const formatCollectionLabel = (value: string) => formatScenarioPrior(value, patient.admissionDate, labResults.find((lab) => lab.collectionTime === value)?.relativeOffsetHours);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -579,7 +579,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       key,
       [...data]
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-        .map((entry) => ({ ...entry, time: formatScenarioPrior(entry.time, patient.admissionDate) })),
+        .map((entry) => ({ ...entry, time: formatScenarioPrior(entry.time, patient.admissionDate, labResults.find((lab) => lab.collectionTime === entry.time)?.relativeOffsetHours) })),
     ]),
   );
 

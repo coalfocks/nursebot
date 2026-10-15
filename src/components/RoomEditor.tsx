@@ -10,6 +10,7 @@ import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -862,9 +863,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               <input type="number" min="1" max="3" value={hospitalStayDays} onChange={(e) => setHospitalStayDays(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 text-sm" />
             </label>
           </div>
-          <label htmlFor="hospitalTimeline" className="mt-3 block text-sm font-medium text-gray-700">Dated entries and analyte trends (JSON)</label>
-          <textarea id="hospitalTimeline" value={hospitalTimelineText} onChange={(e) => setHospitalTimelineText(e.target.value)} rows={8} className="mt-1 block w-full rounded-md border-gray-300 font-mono text-xs" />
-          {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <><p>Trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p><details className="mt-2 rounded border border-blue-200 bg-white p-2"><summary className="cursor-pointer font-semibold text-gray-700">Read-only timeline preview ({timeline.entries.length} entries)</summary><ol className="mt-2 space-y-1 text-gray-600">{timeline.entries.map((entry) => <li key={entry.id}><span className="font-medium">Day {entry.hospitalDay}, +{entry.offsetHours}h · {entry.title}</span>: {entry.content}{entry.kind === 'lab' && ` (${entry.analyte}: ${entry.value} ${entry.unit})`}</li>)}</ol></details></>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
+          <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} onChange={setHospitalTimelineText} /></div>
+          {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <p>Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
 
         <div>

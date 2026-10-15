@@ -68,7 +68,6 @@ describe('case builder publish helpers', () => {
     expect(context).toEqual({
       source: 'case-builder-v2',
       blueprintId: 'blueprint-id',
-      generatedAt: '2026-10-14T18:00:00.000Z',
       patient: { demographics: 'Authored demographics' },
       emr: { hAndP: 'Authored H&P' },
       event: { trigger: 'Authored event' },
