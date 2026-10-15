@@ -15,6 +15,7 @@ import {
   validateGeneratedCasePackage,
   type GeneratedCasePackage,
 } from '../lib/caseBuilderPublish';
+import { DEFAULT_HOSPITAL_TIMELINE, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -37,6 +38,8 @@ type CaseFormState = {
   objectives: string;
   admittingHpi: string;
   hospitalDays: string;
+  encounterType: EncounterType;
+  hospitalTimeline: string;
   admitOrders: string;
   admissionVitals: string;
   admissionLabs: string;
@@ -227,6 +230,8 @@ const initialForm: CaseFormState = {
   objectives: '',
   admittingHpi: '',
   hospitalDays: '',
+  encounterType: 'inpatient',
+  hospitalTimeline: JSON.stringify(DEFAULT_HOSPITAL_TIMELINE, null, 2),
   admitOrders: '',
   admissionVitals: '',
   admissionLabs: '',
@@ -328,6 +333,15 @@ export default function CaseBuilder() {
 
       const parsedHospitalDays = form.hospitalDays ? parseInt(form.hospitalDays, 10) : null;
       const hospitalDays = Number.isNaN(parsedHospitalDays) ? null : parsedHospitalDays;
+      let hospitalTimeline: HospitalTimeline;
+      try {
+        hospitalTimeline = parseHospitalTimeline(JSON.parse(form.hospitalTimeline));
+      } catch {
+        throw new Error('[TIMELINE_INVALID_JSON] Hospital timeline must be valid JSON.');
+      }
+      hospitalTimeline = { ...hospitalTimeline, encounterType: form.encounterType, stayDays: hospitalDays ?? hospitalTimeline.stayDays };
+      const timelineErrors = validateHospitalTimeline(hospitalTimeline);
+      if (timelineErrors.length) throw new Error(`[TIMELINE_INVALID] ${timelineErrors.join(' ')}`);
 
       const trimmedQuestions = form.typicalQuestions.map((q) => q.trim()).filter(Boolean);
       const trimmedHarmful = form.harmfulActions.map((q) => q.trim()).filter(Boolean);
@@ -342,6 +356,9 @@ export default function CaseBuilder() {
         objectives: form.objectives.trim(),
         admitting_hpi: form.admittingHpi.trim(),
         hospital_days: hospitalDays,
+        encounter_type: form.encounterType,
+        hospital_stay_days: hospitalTimeline.stayDays,
+        hospital_timeline: hospitalTimeline,
         admit_orders: form.admitOrders.trim() || null,
         admission_vitals: form.admissionVitals.trim() || null,
         admission_labs: form.admissionLabs.trim() || null,
@@ -528,11 +545,10 @@ export default function CaseBuilder() {
       const bedsideRequirement = getBlueprintBedsideRequirement(blueprint);
       const generatedAt = blueprint.generated_at ?? new Date().toISOString();
 
-      const emrContextPayload = buildLearnerEmrContext(
-        generatedPackage,
-        blueprint.id,
-        generatedAt,
-      );
+      const emrContextPayload = {
+        ...buildLearnerEmrContext(generatedPackage, blueprint.id, generatedAt),
+        hospitalTimeline: blueprint.hospital_timeline,
+      };
 
       const roomPayload = {
         room_number: roomNumber,
@@ -576,6 +592,9 @@ export default function CaseBuilder() {
         school_id: scopedSchoolId,
         created_by: user?.id ?? null,
         is_active: true,
+        encounter_type: blueprint.encounter_type,
+        hospital_stay_days: blueprint.hospital_stay_days,
+        hospital_timeline: blueprint.hospital_timeline,
       };
 
       if (!roomPayload.objective || !roomPayload.nurse_context || !roomPayload.emr_context) {
@@ -1075,13 +1094,26 @@ export default function CaseBuilder() {
                     <label className="text-sm font-medium text-slate-700">Days in hospital</label>
                     <input
                       type="number"
-                      min="0"
+                      min="1"
+                      max="3"
                       value={form.hospitalDays}
                       onChange={(e) => setForm((prev) => ({ ...prev, hospitalDays: e.target.value }))}
                       className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      placeholder="Example: 3"
+                      placeholder="1–3"
                     />
-                    <p className="mt-1 text-xs text-slate-500">Days before the incident occurred.</p>
+                    <p className="mt-1 text-xs text-slate-500">Hard maximum 3; ED remains one encounter.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Encounter type</label>
+                    <select
+                      value={form.encounterType}
+                      onChange={(e) => setForm((prev) => ({ ...prev, encounterType: e.target.value as EncounterType }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                    >
+                      <option value="inpatient">Inpatient</option>
+                      <option value="ed">ED visit (single encounter)</option>
+                      <option value="ld">L&amp;D / postpartum</option>
+                    </select>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700">Bedside verdict</label>
@@ -1103,6 +1135,28 @@ export default function CaseBuilder() {
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Used by feedback after the case.</p>
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+                  <label className="text-sm font-medium text-slate-700">Pre-page hospital timeline (JSON)</label>
+                  <textarea
+                    value={form.hospitalTimeline}
+                    onChange={(e) => setForm((prev) => ({ ...prev, hospitalTimeline: e.target.value }))}
+                    className="mt-1 h-48 w-full rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-xs shadow-sm"
+                    aria-describedby="timeline-help"
+                  />
+                  <p id="timeline-help" className="mt-1 text-xs text-slate-600">
+                    Use dated entries for admission, one progress note per inpatient day, consults, labs, vitals, procedures, and the nurse page. The nurse page must be in the final 12-hour window; this chart context is excluded from student scoring.
+                  </p>
+                  {(() => {
+                    try {
+                      const timeline = { ...parseHospitalTimeline(JSON.parse(form.hospitalTimeline)), encounterType: form.encounterType };
+                      const errors = validateHospitalTimeline(timeline);
+                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <p className="text-emerald-700">Timeline preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p>}</div>;
+                    } catch {
+                      return <p className="mt-2 text-xs text-rose-700">Timeline JSON is not valid yet.</p>;
+                    }
+                  })()}
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">

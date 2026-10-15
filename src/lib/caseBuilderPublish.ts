@@ -97,6 +97,7 @@ const learnerFieldAllowlist = {
     'consultNotes',
     'nursingNotes',
     'labTrends',
+    'hospitalTimeline',
   ] as const,
   event: ['trigger', 'eventVitals', 'nurseObservations', 'timeCourse'] as const,
   // expectedOrders and harmfulOrUnnecessary are evaluator-facing and intentionally excluded.

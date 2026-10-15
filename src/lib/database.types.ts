@@ -1149,6 +1149,9 @@ export type Database = {
           generation_status: string
           harmful_actions: string[] | null
           hospital_days: number | null
+          encounter_type: string
+          hospital_stay_days: number
+          hospital_timeline: Json
           id: string
           imaging_and_orders: string | null
           initial_message: string | null
@@ -1185,6 +1188,9 @@ export type Database = {
           generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           id?: string
           imaging_and_orders?: string | null
           initial_message?: string | null
@@ -1221,6 +1227,9 @@ export type Database = {
           generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           id?: string
           imaging_and_orders?: string | null
           initial_message?: string | null
@@ -1991,6 +2000,9 @@ export type Database = {
           created_by: string | null
           difficulty_level: string | null
           emr_context: string | null
+          encounter_type: string
+          hospital_stay_days: number
+          hospital_timeline: Json
           example_progress_note: string | null
           expected_diagnosis: string | null
           expected_treatment: string[] | null
@@ -2030,6 +2042,9 @@ export type Database = {
           created_by?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           example_progress_note?: string | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
@@ -2069,6 +2084,9 @@ export type Database = {
           created_by?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           example_progress_note?: string | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null

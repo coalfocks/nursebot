@@ -9,6 +9,7 @@ import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
+import { DEFAULT_HOSPITAL_TIMELINE, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -176,6 +177,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
+  const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
+  const [encounterType, setEncounterType] = useState<EncounterType>(roomWithTimeline?.encounter_type ?? 'inpatient');
+  const [hospitalStayDays, setHospitalStayDays] = useState(String(roomWithTimeline?.hospital_stay_days ?? 1));
+  const [hospitalTimelineText, setHospitalTimelineText] = useState(JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2));
   const [deliveryNote, setDeliveryNote] = useState(parsedEmrContext.deliveryNote);
   const [evaluationLeniencyMultiplier, setEvaluationLeniencyMultiplier] = useState(
     String(parsedEmrContext.evaluationLeniencyMultiplier),
@@ -428,6 +433,16 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
       const finalPdfUrl = pdfUrl;
 
+      let hospitalTimeline: HospitalTimeline;
+      try {
+        hospitalTimeline = parseHospitalTimeline(JSON.parse(hospitalTimelineText));
+      } catch {
+        throw new Error('Hospital timeline must be valid JSON.');
+      }
+      hospitalTimeline = { ...hospitalTimeline, encounterType, stayDays: Number(hospitalStayDays) };
+      const timelineErrors = validateHospitalTimeline(hospitalTimeline);
+      if (timelineErrors.length) throw new Error(timelineErrors.join(' '));
+
       const initialVitals = vitalEntries.reduce<Record<string, unknown>>((acc, entry) => {
         const key = entry.key.trim();
         if (!key) return acc;
@@ -513,6 +528,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         // Preserve empty array for "all schools" - only set to null if truly undefined
         available_school_ids: normalizedSchoolIds ?? null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
+        encounter_type: encounterType,
+        hospital_stay_days: hospitalTimeline.stayDays,
+        hospital_timeline: hospitalTimeline,
       };
 
       if (room) {
@@ -811,6 +829,24 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             required
           />
+        </div>
+
+        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+          <h3 className="text-sm font-semibold text-gray-900">Pre-page hospital timeline</h3>
+          <p className="mt-1 text-xs text-gray-600">Chart history is visible before the overnight encounter but is never treated as learner action evidence.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-gray-700">Encounter type
+              <select value={encounterType} onChange={(e) => setEncounterType(e.target.value as EncounterType)} className="mt-1 block w-full rounded-md border-gray-300 text-sm">
+                <option value="inpatient">Inpatient</option><option value="ed">ED visit (single encounter)</option><option value="ld">L&amp;D / postpartum</option>
+              </select>
+            </label>
+            <label className="text-sm font-medium text-gray-700">Hospital stay days (1–3)
+              <input type="number" min="1" max="3" value={hospitalStayDays} onChange={(e) => setHospitalStayDays(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 text-sm" />
+            </label>
+          </div>
+          <label htmlFor="hospitalTimeline" className="mt-3 block text-sm font-medium text-gray-700">Dated entries and analyte trends (JSON)</label>
+          <textarea id="hospitalTimeline" value={hospitalTimelineText} onChange={(e) => setHospitalTimelineText(e.target.value)} rows={8} className="mt-1 block w-full rounded-md border-gray-300 font-mono text-xs" />
+          {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <p className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? errors.join(' ') : `Trend preview: ${timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}`}</p>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
 
         <div>
