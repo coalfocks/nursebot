@@ -142,7 +142,7 @@ export default function EvaluationDisplay({ assignment }: EvaluationDisplayProps
                   <div className="text-3xl font-bold text-white">
                     {mdmScore.toFixed(1)}
                   </div>
-                  <div className="text-xs text-blue-100 uppercase tracking-wide">Medical Decision</div>
+                  <div className="text-xs text-blue-100 uppercase tracking-wide">Clinical Reasoning</div>
                 </div>
               </div>
             )}
@@ -228,7 +228,7 @@ export default function EvaluationDisplay({ assignment }: EvaluationDisplayProps
             <div className="flex items-center gap-3">
               <Brain className="w-6 h-6 text-purple-600" />
               <div className="text-left">
-                <h3 className="text-lg font-semibold text-gray-900">Medical Decision Making</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Clinical Reasoning Score</h3>
                 <p className="text-sm text-gray-500">
                   Raw: {(
                     mdmBreakdown.labs_orders_quality.score +
@@ -277,7 +277,7 @@ export default function EvaluationDisplay({ assignment }: EvaluationDisplayProps
       <div className="px-6 py-4 bg-gray-50 text-xs text-gray-500">
         <p><strong>Scoring Formula:</strong></p>
         <p>Communication = clamp(Information Sharing (0-2) + Responsive Communication (0-3) + Efficiency Deduction (-2 to 0), 0, 5)</p>
-        <p>MDM = clamp(Labs/Orders (0-3) + Note Thought Process (0-2) + Safety Deduction (-2 to 0), 0, 5)</p>
+        <p>Clinical Reasoning = clamp(Orders/Monitoring (0-3) + Clinical Reasoning/Documentation (0-2) + Safety Deduction (0, −1, −2), 0, 5)</p>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-export const FEEDBACK_RUBRIC_VERSION = 'feedback-v2-2026-10-15';
+export const FEEDBACK_RUBRIC_VERSION = 'feedback-v3-2026-10-15';
 export const CASE_KEY_VERSION = 'case-key-v2';
 export const ASSESSMENT_VERSION = 'assessment-v2-2026-10-15';
 
@@ -42,6 +42,14 @@ const asGoalStrings = (value: unknown): string[] => {
     .filter(Boolean);
 };
 
+const postCompletionGoals = (diagnosis: unknown, goals: string[]) => {
+  const diagnosisText = typeof diagnosis === 'string' ? diagnosis.replace(/\s+/g, ' ').trim() : '';
+  const joined = goals.join(' ');
+  if (!diagnosisText || goals.length === 0 || /^do hard things$/i.test(joined)) return goals;
+  if (/persistent pneumonia/i.test(diagnosisText) && /acute cholecystitis/i.test(joined)) return goals;
+  return [`Recognize ${diagnosisText}.`, `Apply the case-specific diagnostic and management priorities: ${joined}`];
+};
+
 export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEvaluationKey => {
   let packageEvaluation: Record<string, unknown> = {};
   try {
@@ -53,11 +61,12 @@ export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEva
     packageEvaluation = {};
   }
   const source = { ...packageEvaluation };
+  const authoredGoals = asGoalStrings(source.goals ?? room.case_goals).length
+    ? asGoalStrings(source.goals ?? room.case_goals)
+    : (typeof room.objective === 'string' && room.objective.trim() ? [room.objective.trim()] : []);
   return {
     version: typeof source.version === 'string' ? source.version : CASE_KEY_VERSION,
-    goals: asGoalStrings(source.goals ?? room.case_goals).length
-      ? asGoalStrings(source.goals ?? room.case_goals)
-      : (typeof room.objective === 'string' && room.objective.trim() ? [room.objective.trim()] : []),
+    goals: postCompletionGoals(room.expected_diagnosis, authoredGoals),
     acuity_urgency_trigger: typeof source.acuityUrgencyTrigger === 'string'
       ? source.acuityUrgencyTrigger : (typeof room.bedside_requirement === 'string' ? room.bedside_requirement : null),
     expected_endpoint: typeof source.expectedEndpoint === 'string' ? source.expectedEndpoint : null,
@@ -96,4 +105,4 @@ export const normalizeEvidenceEventIds = (
     : [];
 };
 
-export const formativeNotice = 'Formative feedback for learning only; this is not an ACGME Milestone, EPA entrustment decision, or validated competence determination.';
+export const formativeNotice = 'Formative feedback for learning only.';

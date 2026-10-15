@@ -30,7 +30,10 @@ const rooms = [...snapshot.rooms]
       diagnosis: diagnosis || null,
       status,
       disposition,
-      exact_post_completion_goal_text: status === 'supported' ? authoredGoals : [],
+      updated: status === 'supported',
+      exact_post_completion_goal_text: status === 'supported'
+        ? [`Recognize ${diagnosis}.`, `Apply the case-specific diagnostic and management priorities: ${authoredGoals.join(' ')}`]
+        : authoredGoals,
     };
   });
 
