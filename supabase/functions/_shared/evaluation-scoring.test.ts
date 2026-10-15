@@ -128,4 +128,40 @@ describe('feedback v2 canonical contract', () => {
     expect(result.strengths[0]).toContain('assessed the patient in the simulation');
     expect(result.communication_breakdown.focused_information_gathering.feedback).toContain('simulated bedside interaction');
   });
+
+  it('applies the confirmed three-part deductions only when supplied by case-specific evidence', () => {
+    const result = canonicalizeEvaluation({
+      communication_breakdown: {
+        focused_information_gathering: { score: 2, feedback: 'focused' },
+        closed_loop_team_communication: { score: 3, feedback: 'closed loop' },
+        efficiency_deduction: { score: -1, feedback: 'Observed case-specific unnecessary delay.' },
+      },
+      clinical_reasoning_breakdown: {
+        orders_monitoring_quality: { score: 3, feedback: 'orders' },
+        clinical_reasoning_documentation: { score: 2, feedback: 'reasoning' },
+        safety_deduction: { score: -2, feedback: 'One actual unsafe order.' },
+      },
+      safety_result: { level: 'critical', action: 'unsafe order', rationale: 'specific action', evidence_event_ids: ['order-1'] },
+    });
+    expect(result.communication_score).toBe(4);
+    expect(result.clinical_reasoning_score).toBe(3);
+    expect(result.mdm_score).toBe(3);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBe(-1);
+    expect(result.clinical_reasoning_breakdown.safety_deduction.score).toBe(-2);
+  });
+
+  it('does not impose an efficiency deduction for bedside-first care or missing nurse chat', () => {
+    const result = canonicalizeEvaluation({
+      communication_breakdown: {
+        focused_information_gathering: { score: 1, feedback: 'bedside finding' },
+        closed_loop_team_communication: { score: 1, feedback: 'team escalation' },
+      },
+      clinical_reasoning_breakdown: {
+        orders_monitoring_quality: { score: 1, feedback: 'monitoring' },
+        clinical_reasoning_documentation: { score: 1, feedback: 'note' },
+      },
+    });
+    expect(result.communication_score).toBe(2);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBe(0);
+  });
 });
