@@ -78,7 +78,15 @@ export default function StudentDashboard() {
     <div className="min-h-screen bg-gray-100">
       <Navbar />
       <div className="mx-auto w-full max-w-5xl p-6">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">Rooms</h2>
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">Rooms</h2>
+            <p className="mt-1 text-sm text-gray-500">Practice in assigned simulation rooms and review learner tutorials.</p>
+          </div>
+          <Link to="/walkthrough-videos" className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 shadow-sm hover:bg-blue-50">
+            Student walkthroughs
+          </Link>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {assignments.map((assignment) => (
             <Link

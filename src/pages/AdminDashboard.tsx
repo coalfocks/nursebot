@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, FileText, GraduationCap, School, TrendingUp, Users, Clock } from 'lucide-react';
+import { Loader2, FileText, GraduationCap, School, TrendingUp, Users } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
@@ -12,18 +12,6 @@ import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { computeCohortMetrics, type AnalyticsAssignment, type CohortMetrics } from '../lib/analyticsMetrics';
 
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
-type RoomRow = Database['public']['Tables']['rooms']['Row'];
-type ProfileRow = Database['public']['Tables']['profiles']['Row'];
-
-type RecentAssignment = {
-  id: string;
-  status: AssignmentRow['status'];
-  createdAt: string;
-  grade: number | null;
-  studentName: string;
-  roomNumber: string;
-  specialty?: string | null;
-};
 
 type DashboardStats = {
   studentCount: number;
@@ -45,28 +33,6 @@ const initialStats: DashboardStats = {
   cohortMetrics: computeCohortMetrics([], 0),
 };
 
-const formatStatusLabel = (status: AssignmentRow['status']) => {
-  switch (status) {
-    case 'completed':
-      return 'Completed';
-    case 'in_progress':
-      return 'In Progress';
-    default:
-      return 'Assigned';
-  }
-};
-
-const statusBadgeClass = (status: AssignmentRow['status']) => {
-  switch (status) {
-    case 'completed':
-      return 'bg-emerald-100 text-emerald-700';
-    case 'in_progress':
-      return 'bg-amber-100 text-amber-700';
-    default:
-      return 'bg-slate-100 text-slate-600';
-  }
-};
-
 const formatDayPartGreeting = () => {
   const hour = new Date().getHours();
   if (hour < 12) return 'Good morning';
@@ -78,7 +44,6 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const { user, profile, activeSchoolId } = useAuthStore();
   const [stats, setStats] = useState<DashboardStats>(initialStats);
-  const [recentAssignments, setRecentAssignments] = useState<RecentAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const hasAdmin = hasAdminAccess(profile);
@@ -146,31 +111,16 @@ export default function AdminDashboard() {
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
         }
 
-        let recentQuery = supabase
-          .from('student_room_assignments')
-          .select(
-            `id, status, grade, created_at,
-             room:room_id ( room_number, specialty:specialty_id ( name ) ),
-             student:student_id ( full_name )`
-          )
-          .order('created_at', { ascending: false })
-          .limit(6);
-        if (scopedSchoolId) {
-          recentQuery = recentQuery.eq('school_id', scopedSchoolId);
-        }
-
         const [
           studentResult,
           adminResult,
           assignmentRows,
           roomsResult,
-          recentResult,
         ] = await Promise.all([
           studentQuery,
           adminQuery,
           loadAssignmentRows(),
           roomsQuery,
-          recentQuery,
         ]);
 
         if (!isMounted) return;
@@ -178,7 +128,6 @@ export default function AdminDashboard() {
         if (studentResult.error) throw studentResult.error;
         if (adminResult.error) throw adminResult.error;
         if (roomsResult.error) throw roomsResult.error;
-        if (recentResult.error) throw recentResult.error;
 
         const cohortAssignments: AnalyticsAssignment[] = assignmentRows.map((row) => ({
           status: row.status,
@@ -203,13 +152,6 @@ export default function AdminDashboard() {
           ? Number((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length).toFixed(1))
           : null;
 
-        const recentRows = (recentResult.data ?? []) as Array<
-          Pick<AssignmentRow, 'id' | 'status' | 'grade' | 'created_at'> & {
-            room: Pick<RoomRow, 'room_number'> & { specialty: { name: string | null } | null } | null;
-            student: Pick<ProfileRow, 'full_name'> | null;
-          }
-        >;
-
         setStats({
           studentCount: studentResult.count ?? 0,
           adminCount: adminResult.count ?? 0,
@@ -220,17 +162,6 @@ export default function AdminDashboard() {
           cohortMetrics,
         });
 
-        setRecentAssignments(
-          recentRows.map((row) => ({
-            id: row.id,
-            status: row.status,
-            grade: row.grade,
-            createdAt: row.created_at,
-            studentName: row.student?.full_name ?? 'Unassigned',
-            roomNumber: row.room?.room_number ?? '—',
-            specialty: row.room?.specialty?.name ?? null,
-          }))
-        );
       } catch (err) {
         console.error('Failed to load admin dashboard', err);
         if (err instanceof Error) {
@@ -392,92 +323,9 @@ export default function AdminDashboard() {
                       </article>
                     ))}
                   </div>
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    {[
-                      ['Communication score distribution', stats.cohortMetrics.scoreDistributions.communication],
-                      ['Medical decision-making distribution', stats.cohortMetrics.scoreDistributions.mdm],
-                    ].map(([label, distribution]) => (
-                      <div key={label as string}>
-                        <p className="text-sm font-medium text-slate-700">{label as string}</p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {Object.keys(distribution as Record<string, number>).length === 0 ? (
-                            <span className="text-xs text-slate-500">No valid scores in this scope.</span>
-                          ) : (
-                            Object.entries(distribution as Record<string, number>)
-                              .sort(([left], [right]) => Number(left) - Number(right))
-                              .map(([score, count]) => (
-                                <span key={score} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                                  {score}: {count}
-                                </span>
-                              ))
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 </section>
 
-                <section className="grid gap-6 lg:grid-cols-3">
-                  <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">Recent Case Assignments</h3>
-                        <p className="text-sm text-slate-500">Latest activity across cohorts</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => navigate('/admin/assignments')}
-                        className="text-sm font-medium text-blue-600 hover:text-blue-700"
-                      >
-                        View all
-                      </button>
-                    </div>
-                    <div className="mt-6 space-y-4">
-                      {recentAssignments.length === 0 ? (
-                        <p className="rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
-                          No assignments have been created yet.
-                        </p>
-                      ) : (
-                        recentAssignments.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-4 rounded-lg border border-slate-100 px-4 py-3">
-                            <div className="flex items-center gap-3 overflow-hidden">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-700">
-                                {item.studentName
-                                  .split(' ')
-                                  .map((part) => part[0])
-                                  .join('')
-                                  .slice(0, 2)
-                                  .toUpperCase()}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-slate-900">{item.studentName}</p>
-                                <p className="text-xs text-slate-500">
-                                  Room {item.roomNumber}
-                                  {item.specialty ? ` • ${item.specialty}` : ''}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClass(item.status)}`}>
-                                {formatStatusLabel(item.status)}
-                              </span>
-                              {typeof item.grade === 'number' && (
-                                <span className="text-sm font-semibold text-slate-900">{item.grade.toFixed(1)}</span>
-                              )}
-                              <div className="flex items-center gap-1 text-xs text-slate-500">
-                                <Clock className="h-3.5 w-3.5" />
-                                {new Date(item.createdAt).toLocaleDateString(undefined, {
-                                  month: 'short',
-                                  day: 'numeric',
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </article>
-
+                <section className="grid gap-6">
                   <article className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
                     <h3 className="text-lg font-semibold text-slate-900">Quick Actions</h3>
                     <p className="text-sm text-slate-500">Jump straight into common admin workflows</p>

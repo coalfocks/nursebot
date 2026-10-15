@@ -25,11 +25,12 @@ import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
 import About from './pages/About';
-import AdminWalkthroughVideos, { AdminOnboarding } from './pages/AdminWalkthroughVideos';
+import AdminWalkthroughVideos, { AdminOnboarding, CourseEditor } from './pages/AdminWalkthroughVideos';
+import StudentWalkthroughVideos from './pages/StudentWalkthroughVideos';
 import AdminAnalytics from './pages/AdminAnalytics';
 import AdminUsers from './pages/AdminUsers';
 import ErrorBoundary from './components/ErrorBoundary';
-import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
+import { hasAdminAccess, isStudent, isSuperAdmin, isTestUser } from './lib/roles';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -249,6 +250,18 @@ function App() {
         <Route
           path="/admin/onboarding"
           element={user?.id && hasAdmin ? <AdminOnboarding /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/walkthrough-courses/new"
+          element={user?.id && superAdmin ? <CourseEditor /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/walkthrough-courses/:courseId"
+          element={user?.id && superAdmin ? <CourseEditor /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/walkthrough-videos"
+          element={user?.id && (isStudent(profile) || isTester) ? <StudentWalkthroughVideos /> : <Navigate to="/dashboard" replace />}
         />
         <Route 
           path="/assignments" 

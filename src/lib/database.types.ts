@@ -1928,9 +1928,9 @@ export type Database = {
         ]
       }
       walkthrough_videos: {
-        Row: { id: string; version: number; title: string; description: string; topic: string; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; version?: number; title: string; description?: string; topic: string; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; version?: number; title?: string; description?: string; topic?: string; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; version: number; title: string; description: string; topic: string; audience: 'admin' | 'student' | 'both'; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; topic: string; audience?: 'admin' | 'student' | 'both'; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; topic?: string; audience?: 'admin' | 'student' | 'both'; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
         Relationships: []
       }
       walkthrough_courses: {
