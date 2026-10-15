@@ -90,7 +90,7 @@ describe('feedback v2 canonical contract', () => {
     expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
 
-  it('recovers bedside-first clinical evidence without treating a nurse page as learner evidence', () => {
+  it('does not treat vitals or a generic progress note as Communication evidence', () => {
     const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
       { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
       { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
@@ -99,9 +99,22 @@ describe('feedback v2 canonical contract', () => {
     ], 'Reassessed unstable patient and escalated.');
 
     expect(result).not.toBeNull();
-    expect(result?.communication_score).toBeGreaterThan(0);
+    expect(result?.communication_score).toBe(0);
     expect(result?.mdm_score).toBeGreaterThan(0);
     expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(0);
-    expect(result?.communication_breakdown.focused_information_gathering.feedback).not.toContain('nurse');
+    expect(result?.communication_breakdown.focused_information_gathering.feedback).toContain('vitals');
+  });
+
+  it('credits a structured learner bedside finding and team escalation without nurse chat', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
+      { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
+      { kind: 'learner-action', title: 'Learner bedside finding', body: 'At bedside: cool extremities and delayed capillary refill.', meta: ['Channel: bedside', 'Author: Student'] },
+      { kind: 'learner-action', title: 'Learner team escalation', body: 'Escalated concern to senior clinician and requested immediate review.', meta: ['Channel: team', 'Author: Student'] },
+      { kind: 'order', title: 'Order: telemetry', body: 'STAT' },
+    ], 'Bedside findings and escalation documented.');
+
+    expect(result?.communication_score).toBe(2);
+    expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(1);
   });
 });

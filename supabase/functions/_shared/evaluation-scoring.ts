@@ -16,27 +16,50 @@ export interface EvaluationScoringResponse {
   recommendations: string[];
 };
 
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, Number.isFinite(value) ? Math.round(value) : min));
+const clamp = (value: unknown, min: number, max: number) => {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  return Math.max(min, Math.min(max, Number.isFinite(numeric) ? Math.round(numeric) : min));
+};
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
 export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
-  const focused = clamp(raw.communication_breakdown?.focused_information_gathering?.score ?? 0, 0, 2);
-  const closedLoop = clamp(raw.communication_breakdown?.closed_loop_team_communication?.score ?? 0, 0, 3);
-  const orders = clamp(raw.mdm_breakdown?.orders_monitoring_quality?.score ?? 0, 0, 3);
-  const reasoning = clamp(raw.mdm_breakdown?.clinical_reasoning_documentation?.score ?? 0, 0, 2);
+  const source = raw as Record<string, any>;
+  const communication = (source.communication_breakdown ?? source.communication ?? {}) as Record<string, any>;
+  const mdm = (source.mdm_breakdown ?? source.medical_decision_making ?? source.mdm ?? {}) as Record<string, any>;
+  const focusedRaw = communication.focused_information_gathering
+    ?? communication.information_gathering
+    ?? communication.information_sharing
+    ?? communication.focused_gathering;
+  const closedLoopRaw = communication.closed_loop_team_communication
+    ?? communication.closed_loop_communication
+    ?? communication.responsive_communication
+    ?? communication.team_communication;
+  const ordersRaw = mdm.orders_monitoring_quality
+    ?? mdm.orders_monitoring
+    ?? mdm.labs_orders_quality
+    ?? mdm.orders_quality;
+  const reasoningRaw = mdm.clinical_reasoning_documentation
+    ?? mdm.reasoning_documentation
+    ?? mdm.note_thought_process
+    ?? mdm.reasoning;
+  const componentScore = (component: Record<string, any> | undefined) => component?.score ?? component?.value ?? component?.points ?? 0;
+  const focused = clamp(componentScore(focusedRaw), 0, 2);
+  const closedLoop = clamp(componentScore(closedLoopRaw), 0, 3);
+  const orders = clamp(componentScore(ordersRaw), 0, 3);
+  const reasoning = clamp(componentScore(reasoningRaw), 0, 2);
   const safety = raw.safety_result?.level === 'critical' || raw.safety_result?.level === 'concern' ? raw.safety_result.level : 'none';
   return {
     learning_objectives: text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.'),
     communication_score: focused + closedLoop,
     mdm_score: orders + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: text(raw.communication_breakdown?.focused_information_gathering?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(raw.communication_breakdown?.focused_information_gathering?.evidence_event_ids) },
-      closed_loop_team_communication: { score: closedLoop, feedback: text(raw.communication_breakdown?.closed_loop_team_communication?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(raw.communication_breakdown?.closed_loop_team_communication?.evidence_event_ids) },
+      focused_information_gathering: { score: focused, feedback: text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
+      closed_loop_team_communication: { score: closedLoop, feedback: text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
     },
     mdm_breakdown: {
-      orders_monitoring_quality: { score: orders, feedback: text(raw.mdm_breakdown?.orders_monitoring_quality?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(raw.mdm_breakdown?.orders_monitoring_quality?.evidence_event_ids) },
-      clinical_reasoning_documentation: { score: reasoning, feedback: text(raw.mdm_breakdown?.clinical_reasoning_documentation?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(raw.mdm_breakdown?.clinical_reasoning_documentation?.evidence_event_ids) },
+      orders_monitoring_quality: { score: orders, feedback: text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
+      clinical_reasoning_documentation: { score: reasoning, feedback: text(reasoningRaw?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(reasoningRaw?.evidence_event_ids) },
     },
     safety_result: { level: safety, action: raw.safety_result?.action ?? null, rationale: raw.safety_result?.rationale ?? null, evidence_event_ids: ids(raw.safety_result?.evidence_event_ids) },
     strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string') : [],
@@ -47,7 +70,10 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
 
 export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;
 
-type EvidenceShape = { kind: string; title: string; body?: string };
+type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
+
+const learnerActionKinds = new Set(['learner-action']);
+const learnerCommunicationKinds = new Set(['learner-action']);
 
 /**
  * Conservative safety net for a malformed evaluator response. It uses only
@@ -62,11 +88,17 @@ export const buildEvidenceBackedFallback = (
 ): EvaluationScoringResponse | null => {
   if (evaluation.communication_score !== 0 || evaluation.mdm_score !== 0) return evaluation;
   const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
-  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging');
+  const clinicalActions = entries.filter((entry) => learnerActionKinds.has(entry.kind));
+  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'imaging');
   const hasNote = Boolean(progressNote?.trim());
-  if (learnerMessages.length === 0 && orders.length === 0 && !hasNote) return null;
-  const focused = learnerMessages.length > 0 ? 1 : 0;
-  const closedLoop = learnerMessages.length > 0 && orders.length > 0 ? 1 : 0;
+  if (learnerMessages.length === 0 && clinicalActions.length === 0 && orders.length === 0 && !hasNote) return null;
+  // Vitals, orders, and a generic progress note may support MDM, but they do
+  // not prove that the learner gathered information or communicated. Those
+  // components require a learner-authored interaction/action with a channel.
+  const communicationActions = entries.filter((entry) => learnerCommunicationKinds.has(entry.kind));
+  const focused = learnerMessages.length > 0 || communicationActions.length > 0 ? 1 : 0;
+  const closedLoop = entries.some((entry) => entry.kind === 'learner-action' && entry.meta?.some((value) => /team|escalat/i.test(value)))
+    || (learnerMessages.length > 0 && orders.length > 0) ? 1 : 0;
   const orderQuality = orders.length > 0 ? 1 : 0;
   const reasoning = hasNote || learnerMessages.length > 0 ? 1 : 0;
   return {
@@ -75,8 +107,8 @@ export const buildEvidenceBackedFallback = (
     communication_score: focused + closedLoop,
     mdm_score: orderQuality + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: 'Observed learner-authored post-page communication; detailed component evidence was recovered conservatively.', evidence_event_ids: [] },
-      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored communication paired with a post-page clinical action.' : 'No linked post-page clinical action was observed for closed-loop communication.', evidence_event_ids: [] },
+      focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or structured bedside action.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
+      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored team escalation/closed-loop communication.' : 'Not observed: no linked learner team communication was captured.', evidence_event_ids: [] },
     },
     mdm_breakdown: {
       orders_monitoring_quality: { score: orderQuality, feedback: orderQuality ? 'Observed post-page order, monitoring, result, or reassessment evidence.' : 'No post-page order, monitoring, result, or reassessment evidence was observed.', evidence_event_ids: [] },

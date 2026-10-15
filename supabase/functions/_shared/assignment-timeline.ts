@@ -72,6 +72,17 @@ export type TimelineImagingRow = {
   deleted_at?: string | null;
 };
 
+export type TimelineLearnerActionRow = {
+  id: string;
+  assignment_id: string;
+  room_id: number | null;
+  action_type: 'bedside_finding' | 'patient_interaction' | 'team_escalation' | 'clinical_action';
+  channel: string;
+  content: string;
+  occurred_at: string | null;
+  created_at: string | null;
+};
+
 export type TimelineAssignmentSummary = {
   id: string;
   completed_at: string | null;
@@ -80,7 +91,7 @@ export type TimelineAssignmentSummary = {
 
 export type EvaluationTimelineEntry = {
   id: string;
-  kind: 'message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note';
+  kind: 'message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
   timestamp: string;
   title: string;
   body?: string;
@@ -158,6 +169,8 @@ const getTimelineKindRank = (kind: EvaluationTimelineEntry['kind']) => {
       return 6;
     case 'progress-note':
       return 7;
+    case 'learner-action':
+      return 2;
     default:
       return 99;
   }
@@ -172,6 +185,7 @@ export const buildAssignmentTimelineEntries = ({
   labs,
   vitals,
   imaging,
+  learnerActions,
 }: {
   assignment: TimelineAssignmentSummary;
   assignmentId: string;
@@ -181,8 +195,22 @@ export const buildAssignmentTimelineEntries = ({
   labs: TimelineLabRow[];
   vitals: TimelineVitalRow[];
   imaging: TimelineImagingRow[];
+  learnerActions?: TimelineLearnerActionRow[];
 }): EvaluationTimelineEntry[] => {
   const entries: EvaluationTimelineEntry[] = [];
+
+  for (const action of learnerActions ?? []) {
+    const timestamp = normalizeTimelineTimestamp(action.occurred_at ?? action.created_at);
+    if (!timestamp || action.assignment_id !== assignmentId || !action.content.trim()) continue;
+    entries.push({
+      id: `learner-action-${action.id}`,
+      kind: 'learner-action',
+      timestamp,
+      title: `Learner ${action.action_type.replaceAll('_', ' ')}`,
+      body: action.content.trim(),
+      meta: [`Channel: ${action.channel}`, 'Author: Student'],
+    });
+  }
 
   for (const message of messages) {
     const timestamp = normalizeTimelineTimestamp(message.created_at);

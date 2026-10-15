@@ -46,7 +46,9 @@ export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEva
   const source = { ...packageEvaluation };
   return {
     version: typeof source.version === 'string' ? source.version : CASE_KEY_VERSION,
-    goals: asStrings(source.goals ?? room.case_goals),
+    goals: asStrings(source.goals ?? room.case_goals).length
+      ? asStrings(source.goals ?? room.case_goals)
+      : (typeof room.objective === 'string' && room.objective.trim() ? [room.objective.trim()] : []),
     acuity_urgency_trigger: typeof source.acuityUrgencyTrigger === 'string'
       ? source.acuityUrgencyTrigger : (typeof room.bedside_requirement === 'string' ? room.bedside_requirement : null),
     expected_endpoint: typeof source.expectedEndpoint === 'string' ? source.expectedEndpoint : null,
