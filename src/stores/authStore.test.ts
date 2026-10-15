@@ -25,6 +25,7 @@ describe('authStore', () => {
   beforeEach(() => {
     supabase = supabaseModule.supabase;
     vi.clearAllMocks();
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -124,6 +125,43 @@ describe('authStore', () => {
       expect(result.current.user).toEqual(mockUser);
       expect(result.current.profile.role).toBe('student'); // Default applied
       expect(result.current.profile.full_name).toBe('test');
+    });
+
+    it('defaults superadmins to All schools and restores an explicitly saved school scope', async () => {
+      const mockUser = createMockUser({ id: 'superadmin-1', email: 'admin@example.com' });
+      const mockProfile = createMockProfile({
+        id: mockUser.id,
+        email: mockUser.email,
+        role: 'super_admin',
+        school_id: 'primary-school',
+      });
+
+      supabase.auth.signInWithPassword.mockResolvedValue({
+        data: { user: mockUser },
+        error: null,
+      });
+      supabase.from.mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: mockProfile, error: null }),
+      });
+
+      const { result } = renderHook(() => useAuthStore());
+      await act(async () => {
+        await result.current.signIn(mockUser.email!, 'password');
+      });
+      expect(result.current.activeSchoolId).toBeNull();
+
+      act(() => result.current.setActiveSchoolId('qa-north'));
+      expect(window.localStorage.getItem(`nursealthea:school-scope:${mockUser.id}`)).toBe('qa-north');
+
+      await act(async () => {
+        await result.current.signIn(mockUser.email!, 'password');
+      });
+      expect(result.current.activeSchoolId).toBe('qa-north');
+
+      act(() => result.current.setActiveSchoolId(null));
+      expect(window.localStorage.getItem(`nursealthea:school-scope:${mockUser.id}`)).toBeNull();
     });
 
     it('throws error on sign in failure', async () => {

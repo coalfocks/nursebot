@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +28,7 @@ export default function RoomManagement() {
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientOptions, setPatientOptions] = useState<Database['public']['Tables']['patients']['Row'][]>([]);
   const [selectedProgram, setSelectedProgram] = useState<LearnerProgram>('medical');
+  const fetchRequestId = useRef(0);
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -37,10 +38,13 @@ export default function RoomManagement() {
       return;
     }
     
-    fetchRooms();
+    void fetchRooms(scopedSchoolId);
   }, [user, hasAdmin, navigate, scopedSchoolId]);
 
-  const fetchRooms = async () => {
+  const fetchRooms = async (schoolId: string | null = scopedSchoolId) => {
+    const requestId = ++fetchRequestId.current;
+    setLoading(true);
+    setRooms([]);
     try {
       let query = supabase
         .from('rooms')
@@ -51,12 +55,12 @@ export default function RoomManagement() {
         `)
         .order('room_number');
 
-      if (scopedSchoolId) {
+      if (schoolId) {
         // Filter to show rooms where:
         // 1. school_id matches scoped school, OR
         // 2. available_school_ids contains scoped school, OR
         // 3. available_school_ids is empty array (all schools)
-        query = query.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
+        query = query.or(`school_id.eq.${schoolId},available_school_ids.cs.{${schoolId}},available_school_ids.cs.{}`);
       }
 
       const { data, error } = await query;
@@ -71,11 +75,11 @@ export default function RoomManagement() {
         }))
       );
 
-      setRooms(roomsWithSpecialties);
+      if (requestId === fetchRequestId.current) setRooms(roomsWithSpecialties);
     } catch (error) {
       console.error('Error fetching rooms:', error);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestId.current) setLoading(false);
     }
   };
 

@@ -33,6 +33,28 @@ const withProfileDefaults = (profile: Profile): Profile => ({
   role: profile.role ?? 'student',
 });
 
+const schoolScopeStorageKey = (userId: string) => `nursealthea:school-scope:${userId}`;
+
+const initialSchoolScope = (profile: Profile, userId: string): string | null => {
+  if (profile.role !== 'super_admin') return profile.school_id ?? null;
+  try {
+    return window.localStorage.getItem(schoolScopeStorageKey(userId)) || null;
+  } catch {
+    return null;
+  }
+};
+
+const persistSchoolScope = (userId: string | null, schoolId: string | null) => {
+  if (!userId) return;
+  try {
+    const key = schoolScopeStorageKey(userId);
+    if (schoolId) window.localStorage.setItem(key, schoolId);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Keep the in-memory scope correct when browser storage is unavailable.
+  }
+};
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   profile: null,
@@ -77,14 +99,14 @@ export const useAuthStore = create<AuthState>((set) => ({
         
         if (createError) throw createError;
         const normalized = withProfileDefaults(newProfile as Profile);
-        set({ user: data.user, profile: normalized, activeSchoolId: normalized.school_id ?? null });
+        set({ user: data.user, profile: normalized, activeSchoolId: initialSchoolScope(normalized, data.user.id) });
         return;
       }
       
       if (profileError) throw profileError;
       
       const normalizedProfile = withProfileDefaults(profileData as Profile);
-      set({ user: data.user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
+      set({ user: data.user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile, data.user.id) });
     }
   },
   signUp: async (email, password, fullName, studyYear, caseDesignation, phoneNumber, smsConsent, schoolId, learnerProgram = 'medical') => {
@@ -122,7 +144,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (profileError) throw profileError;
 
     const normalizedProfile = withProfileDefaults(profileData as Profile);
-    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
+    set({ user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile, user.id) });
   },
   signOut: async () => {
     const { error } = await supabase.auth.signOut();
@@ -198,7 +220,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
       
       const normalized = withProfileDefaults(newProfile as Profile);
-      set({ user, profile: normalized, activeSchoolId: normalized.school_id ?? null, loading: false });
+      set({ user, profile: normalized, activeSchoolId: initialSchoolScope(normalized, user.id), loading: false });
       return;
     }
     
@@ -209,7 +231,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
     
     const normalizedProfile = withProfileDefaults(profile as Profile);
-    set({ user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null, loading: false });
+    set({ user, profile: normalizedProfile, activeSchoolId: initialSchoolScope(normalizedProfile, user.id), loading: false });
   },
-  setActiveSchoolId: (schoolId) => set({ activeSchoolId: schoolId }),
+  setActiveSchoolId: (schoolId) => {
+    const userId = useAuthStore.getState().user?.id ?? null;
+    persistSchoolScope(userId, schoolId);
+    set({ activeSchoolId: schoolId });
+  },
 }));
