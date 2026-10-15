@@ -27,7 +27,9 @@ type CaseBlueprintPayload = {
   bedside_requirement?: string | null;
   bedside_required?: boolean | null;
   patient_chat_enabled?: boolean | null;
+  patient_conversation_prompt?: string | null;
   consults?: string | null;
+  consultant_response_prompt?: string | null;
   event_vitals?: string | null;
   nurse_exam?: string | null;
   bedside_exam?: string | null;
@@ -92,6 +94,7 @@ const packageSkeleton = {
     exam: '',
     patientChatEnabled: false,
     patientChatPrompt: '',
+    consultantResponsePrompt: '',
     disableReason: '',
   },
   nurse_chat: {
@@ -150,6 +153,7 @@ const schemaInstruction = `Return compact JSON only. Use this exact top-level sh
     "exam": "what the learner sees in person",
     "patientChatEnabled": true,
     "patientChatPrompt": "patient persona and answer boundaries, empty if disabled",
+    "consultantResponsePrompt": "consultant response behavior and boundaries, empty when no consultant portal is authored",
     "disableReason": "why chat is disabled if altered/sedated/intubated/unconscious"
   },
   "nurse_chat": {
@@ -180,6 +184,7 @@ const buildPrompt = ({ blueprint, section, existingPackage }: Required<GenerateC
     'Use the blueprint overrides exactly when present; otherwise generate clinically plausible content.',
     'Generate enough chart depth to match hospital_days. If hospital_days is absent, infer a plausible inpatient course.',
     'Disable bedside patient chat for altered, sedated, intubated, unconscious, or otherwise non-participatory patients.',
+    'When patient_conversation_prompt or consultant_response_prompt is authored, preserve it as the corresponding behavior prompt; do not replace it with generic instructions.',
     'Future reverse-mode should remain possible: keep learner-facing nurse behavior separate from hidden evaluation facts.',
   ].join('\n- ');
 
