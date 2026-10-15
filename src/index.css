@@ -12,6 +12,16 @@
   body {
     background: white !important;
   }
+
+  #feedback-print-root {
+    max-width: none !important;
+    color: #111827 !important;
+  }
+
+  #feedback-print-root section {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
 }
 
 @layer base {

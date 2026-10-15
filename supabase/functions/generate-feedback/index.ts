@@ -102,7 +102,19 @@ Deno.serve(async (req) => {
         observed_event_ids: sourceEventIds,
         items: actionReview,
       };
-      const debrief = { formative_notice: formativeNotice, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths, improvements: evaluation.improvements, recommendations: evaluation.recommendations, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
+      const growthEvidence = scoredEntries
+        .filter((entry) => ['learner-action', 'order', 'progress-note'].includes(entry.kind))
+        .filter((entry) => /monitor|reassess|vital|perfusion|senior|escalat|document/i.test(`${entry.title} ${entry.body ?? ''}`))
+        .slice(0, 4)
+        .map((entry) => ({ event_id: entry.id, occurred_at: entry.timestamp, label: `${entry.title}: ${entry.body ?? 'Observed post-page action.'}` }));
+      const growthAreas = [{
+        title: 'Close the loop after urgent monitoring',
+        case_goal: key.goals.find((goal) => /monitor|reassess|escalat/i.test(goal)) ?? key.goals[0] ?? 'Link actions to the case goals and observable reassessment.',
+        practice_example: 'After urgent monitoring, state when you will repeat vital signs and reassess perfusion, then document the observed result and communicate whether the plan changed.',
+        evidence: growthEvidence,
+        scoring_start_at: start.scoring_start_at,
+      }];
+      const debrief = { formative_notice: formativeNotice, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths, improvements: evaluation.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
       const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
       if (run.error) throw run.error;
