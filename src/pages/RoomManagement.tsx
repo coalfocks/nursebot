@@ -9,6 +9,7 @@ import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { getRoomDisplayName, fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { getLearnerProgramLabel, type LearnerProgram } from '../lib/programTracks';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   patients?: Database['public']['Tables']['patients']['Row'][] | null;
@@ -26,6 +27,7 @@ export default function RoomManagement() {
   const [expandedRooms, setExpandedRooms] = useState<Set<number>>(new Set());
   const [selectedPatientId, setSelectedPatientId] = useState('');
   const [patientOptions, setPatientOptions] = useState<Database['public']['Tables']['patients']['Row'][]>([]);
+  const [selectedProgram, setSelectedProgram] = useState<LearnerProgram>('medical');
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -88,6 +90,7 @@ export default function RoomManagement() {
   };
 
   const resolveRoomPatient = (room: Room) => room.patient ?? room.patients?.[0] ?? null;
+  const visibleRooms = rooms.filter((room) => (room.learner_program === 'nursing' ? 'nursing' : 'medical') === selectedProgram);
 
   const handleSave = () => {
     setIsEditing(false);
@@ -259,12 +262,36 @@ export default function RoomManagement() {
         </div>
 
         <div className="mt-8 flex flex-col">
+          <div className="mb-4 grid gap-3 md:grid-cols-2" role="tablist" aria-label="Room programs">
+            {(['medical', 'nursing'] as const).map((program) => {
+              const count = rooms.filter((room) => (room.learner_program === 'nursing' ? 'nursing' : 'medical') === program).length;
+              const active = selectedProgram === program;
+              return (
+                <button
+                  key={program}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setSelectedProgram(program)}
+                  className={`rounded-lg border p-4 text-left transition ${active ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 bg-white hover:border-gray-300'}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-900">{getLearnerProgramLabel(program)} Rooms</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{count}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {program === 'nursing' ? 'Separate track; no nursing cases have been authored yet.' : 'Current physician cases remain here unchanged.'}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
           <div className="-my-2 -mx-4 overflow-x-auto sm:-mx-6 lg:-mx-8">
             <div className="inline-block min-w-full py-2 align-middle md:px-6 lg:px-8">
               <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
                 <div className="bg-white">
                   <ul role="list" className="divide-y divide-gray-200">
-                    {rooms.map((room) => {
+                    {visibleRooms.map((room) => {
                       const linkedPatient = resolveRoomPatient(room);
                       return (
                         <li key={room.id} className="p-4">
@@ -286,6 +313,9 @@ export default function RoomManagement() {
                                   Room {room.room_number}
                                 </h3>
                           <div className="flex items-center space-x-2 mt-1">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                              {getLearnerProgramLabel(room.learner_program)}
+                            </span>
                       {room.specialties && room.specialties.length > 0 && (
                         room.specialties.map((specialty) => (
                           <span key={specialty.id} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -423,6 +453,14 @@ export default function RoomManagement() {
                       </li>
                     );
                     })}
+                    {visibleRooms.length === 0 && (
+                      <li className="p-8 text-center">
+                        <p className="font-medium text-gray-900">No {selectedProgram === 'nursing' ? 'nursing' : 'medical'} cases yet</p>
+                        <p className="mt-1 text-sm text-gray-500">
+                          {selectedProgram === 'nursing' ? 'Nurse Student Rooms is intentionally empty until a nursing case is authored.' : 'No rooms are available in this school scope.'}
+                        </p>
+                      </li>
+                    )}
                   </ul>
                 </div>
               </div>

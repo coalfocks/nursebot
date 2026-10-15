@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { AlertTriangle, Eye, EyeOff } from 'lucide-react';
-import { useSchools } from '../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../hooks/useSchools';
+import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 
 export default function Register() {
   const [email, setEmail] = useState('');
@@ -14,11 +15,19 @@ export default function Register() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
   const [schoolId, setSchoolId] = useState('');
+  const [learnerProgram, setLearnerProgram] = useState<LearnerProgram>('medical');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { signUp } = useAuthStore();
   const navigate = useNavigate();
   const { schools, loading: schoolsLoading, error: schoolsError } = useSchools();
+
+  const selectedSchool = schools.find((school) => school.id === schoolId);
+  const enabledPrograms = selectedSchool?.enabled_programs?.length ? selectedSchool.enabled_programs : ['medical'];
+
+  useEffect(() => {
+    if (!enabledPrograms.includes(learnerProgram)) setLearnerProgram('medical');
+  }, [learnerProgram, enabledPrograms.join('|')]);
 
   useEffect(() => {
     if (!schoolsLoading && schools.length > 0 && !schoolId) {
@@ -83,7 +92,13 @@ export default function Register() {
       // Format phone number for storage
       const formattedPhoneNumber = phoneNumber ? formatPhoneNumber(phoneNumber) : null;
 
-      await signUp(email, password, fullName, studyYear, caseDesignation, formattedPhoneNumber, smsConsent, schoolId);
+      if (!enabledPrograms.includes(learnerProgram)) {
+        setError('Choose a learner program enabled by this school');
+        setLoading(false);
+        return;
+      }
+
+      await signUp(email, password, fullName, studyYear, caseDesignation, formattedPhoneNumber, smsConsent, schoolId, learnerProgram);
       navigate('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create account');
@@ -256,10 +271,28 @@ export default function Register() {
                 {!schoolsLoading && schools.length === 0 && <option value="">No schools available</option>}
                 {!schoolsLoading && schools.map((school) => (
                   <option key={school.id} value={school.id}>
-                    {school.name}
+                    {getSchoolDisplayName(school)}
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label htmlFor="learnerProgram" className="block text-sm font-medium text-gray-700">
+                Learner program
+              </label>
+              <select
+                id="learnerProgram"
+                name="learnerProgram"
+                value={learnerProgram}
+                onChange={(e) => setLearnerProgram(e.target.value as LearnerProgram)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              >
+                {LEARNER_PROGRAMS.filter((program) => enabledPrograms.includes(program.value)).map((program) => (
+                  <option key={program.value} value={program.value}>{program.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">Program controls room visibility; school authorization remains separate.</p>
             </div>
 
             <div>

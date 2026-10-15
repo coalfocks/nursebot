@@ -7,6 +7,7 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { LEARNER_PROGRAMS, getLearnerProgramLabel, type LearnerProgram } from '../lib/programTracks';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -24,6 +25,7 @@ export default function AdminStudentCases() {
   const [error, setError] = useState<string | null>(null);
   const [student, setStudent] = useState<ProfileRow | null>(null);
   const [assignments, setAssignments] = useState<AssignmentWithRoom[]>([]);
+  const [savingProgram, setSavingProgram] = useState(false);
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -153,6 +155,27 @@ export default function AdminStudentCases() {
     }
   };
 
+  const updateLearnerProgram = async (nextProgram: LearnerProgram) => {
+    if (!student || !profile) return;
+    const reason = window.prompt('Reason for this audited program correction:');
+    if (!reason?.trim()) return;
+    setSavingProgram(true);
+    setError(null);
+    try {
+      const { data, error: updateError } = await supabase.rpc('change_learner_program', {
+        target_profile_id: student.id,
+        next_program: nextProgram,
+        change_reason: reason.trim(),
+      });
+      if (updateError) throw updateError;
+      setStudent(data as ProfileRow);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update learner program');
+    } finally {
+      setSavingProgram(false);
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="px-6 py-6 space-y-6">
@@ -166,7 +189,19 @@ export default function AdminStudentCases() {
           </Link>
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">{student.full_name}</h1>
-            <p className="text-sm text-slate-500">Year {student.study_year}</p>
+            <p className="text-sm text-slate-500">Year {student.study_year} · {getLearnerProgramLabel(student.learner_program)}</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <label htmlFor="learner-program" className="text-xs font-medium text-slate-500">Program</label>
+            <select
+              id="learner-program"
+              value={student.learner_program === 'nursing' ? 'nursing' : 'medical'}
+              disabled={savingProgram}
+              onChange={(event) => void updateLearnerProgram(event.target.value as LearnerProgram)}
+              className="rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+            >
+              {LEARNER_PROGRAMS.map((program) => <option key={program.value} value={program.value}>{program.label}</option>)}
+            </select>
           </div>
         </div>
 

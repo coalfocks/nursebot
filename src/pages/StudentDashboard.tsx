@@ -15,7 +15,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 };
 
 export default function StudentDashboard() {
-  const { user } = useAuthStore();
+  const { user, profile } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [selectedRoom, setSelectedRoom] = useState<Assignment | null>(null);
@@ -24,7 +24,7 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!user) return;
     fetchAssignments();
-  }, [user]);
+  }, [user, profile]);
 
   const getSignedUrl = async (path: string) => {
     try {
@@ -84,7 +84,11 @@ export default function StudentDashboard() {
         })
       );
 
-      setAssignments(assignmentsWithSpecialties);
+      const learnerProgram = profile?.learner_program === 'nursing' ? 'nursing' : 'medical';
+      setAssignments(assignmentsWithSpecialties.filter((assignment) => {
+        const roomProgram = assignment.room.learner_program === 'nursing' ? 'nursing' : 'medical';
+        return roomProgram === learnerProgram && assignment.learner_program === learnerProgram;
+      }));
 
       // Get signed URLs for all PDFs
       const urls: Record<string, string> = {};

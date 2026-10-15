@@ -3,11 +3,12 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
-import { useSchools } from '../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
+import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -121,6 +122,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   
   // Form state
   const [roomNumber, setRoomNumber] = useState(room?.room_number || '');
+  const [learnerProgram, setLearnerProgram] = useState<LearnerProgram>(
+    room?.learner_program === 'nursing' ? 'nursing' : 'medical',
+  );
   const [role, setRole] = useState(room?.role || '');
   const [objective, setObjective] = useState(room?.objective || '');
   const [style, setStyle] = useState(room?.style || '');
@@ -485,6 +489,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
       const roomData = {
         room_number: roomNumber,
+        learner_program: learnerProgram,
         role,
         objective,
         context: nurseContext,
@@ -626,7 +631,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 </option>
                 {schools.map((school) => (
                   <option key={school.id} value={school.id}>
-                    {school.name}
+                    {getSchoolDisplayName(school)}
                   </option>
                 ))}
               </select>
@@ -670,7 +675,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                   >
                     {(schoolId ? schools.filter((school) => school.id !== schoolId) : schools).map((school) => (
                       <option key={school.id} value={school.id}>
-                        {school.name}
+                        {getSchoolDisplayName(school)}
                       </option>
                     ))}
                   </select>
@@ -688,6 +693,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             </p>
           </div>
         )}
+        <div>
+          <label htmlFor="learnerProgram" className="block text-sm font-medium text-gray-700">
+            Learner program
+          </label>
+          <select
+            id="learnerProgram"
+            value={learnerProgram}
+            onChange={(e) => setLearnerProgram(e.target.value as LearnerProgram)}
+            disabled={Boolean(room)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100"
+          >
+            {LEARNER_PROGRAMS.map((program) => (
+              <option key={program.value} value={program.value}>{program.label}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            {room ? 'Existing rooms remain in their current track.' : 'Choose the track for this future room; no room is created until you save.'}
+          </p>
+        </div>
+
         <div>
           <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
             Specialties

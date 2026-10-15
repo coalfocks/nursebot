@@ -11,6 +11,7 @@ import {
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
+import { getSchoolDisplayName } from '../hooks/useSchools';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -1170,7 +1171,7 @@ export default function AssignmentManager() {
                           <option value="">All Schools</option>
                           {schools.map(school => (
                             <option key={school.id} value={school.id}>
-                              {school.name}
+                              {getSchoolDisplayName(school)}
                             </option>
                           ))}
                         </select>

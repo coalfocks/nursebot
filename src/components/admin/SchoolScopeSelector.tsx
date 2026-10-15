@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { hasAdminAccess, isSchoolAdmin, isSuperAdmin, isTestUser } from '../../lib/roles';
-import { useSchools } from '../../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../../hooks/useSchools';
 
 interface SchoolScopeSelectorProps {
   className?: string;
@@ -48,7 +48,7 @@ export default function SchoolScopeSelector({ className = '', label = 'School' }
         <option value="all">All schools</option>
         {schools.map((school) => (
           <option key={school.id} value={school.id}>
-            {school.name}
+            {getSchoolDisplayName(school)}
           </option>
         ))}
       </select>

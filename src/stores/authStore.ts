@@ -19,7 +19,8 @@ interface AuthState {
     caseDesignation: string,
     phoneNumber: string | null,
     smsConsent: boolean,
-    schoolId: string
+    schoolId: string,
+    learnerProgram?: string
   ) => Promise<void>;
   signOut: () => Promise<void>;
   loadUser: () => Promise<void>;
@@ -86,7 +87,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ user: data.user, profile: normalizedProfile, activeSchoolId: normalizedProfile.school_id ?? null });
     }
   },
-  signUp: async (email, password, fullName, studyYear, caseDesignation, phoneNumber, smsConsent, schoolId) => {
+  signUp: async (email, password, fullName, studyYear, caseDesignation, phoneNumber, smsConsent, schoolId, learnerProgram = 'medical') => {
     const { data: { user }, error } = await supabase.auth.signUp({
       email,
       password,
@@ -110,6 +111,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           sms_consent: smsConsent,
           role: 'student',
           school_id: schoolId,
+          learner_program: learnerProgram,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
