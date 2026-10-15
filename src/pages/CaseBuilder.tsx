@@ -7,6 +7,7 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import type { Database, Json } from '../lib/database.types';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { runCaseGeneration } from '../lib/caseGeneration';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -415,54 +416,87 @@ export default function CaseBuilder() {
     setGeneratingId(blueprint.id);
     setGeneratingSection(section ?? 'all');
     setError(null);
+    setBlueprints((prev) =>
+      prev.map((item) =>
+        item.id === blueprint.id
+          ? { ...item, generation_status: 'generating', generation_error: null }
+          : item,
+      ),
+    );
 
     try {
-      const { data, error: functionError } = await supabase.functions.invoke('generate-case-package', {
-        body: {
-          blueprint,
-          section: section ?? null,
-          existingPackage: asGeneratedPackage(blueprint.generation_package),
+      await runCaseGeneration({
+        section: section ? fieldLabel(section) : undefined,
+        invoke: async (signal) => {
+          const response = await supabase.functions.invoke('generate-case-package', {
+            body: {
+              blueprint,
+              section: section ?? null,
+              existingPackage: asGeneratedPackage(blueprint.generation_package),
+            },
+            signal,
+          });
+          return {
+            data: response.data as { package?: Json; generatedAt?: string } | null,
+            error: response.error,
+          };
+        },
+        persistStatus: async (status, generationError) => {
+          if (status === 'generating') {
+            setBlueprints((prev) =>
+              prev.map((item) =>
+                item.id === blueprint.id
+                  ? { ...item, generation_status: status, generation_error: generationError }
+                  : item,
+              ),
+            );
+            return;
+          }
+
+          const { data: updated, error: updateError } = await supabase
+            .from('case_blueprints')
+            .update({
+              generation_status: status,
+              generation_error: generationError,
+            })
+            .eq('id', blueprint.id)
+            .select()
+            .single();
+
+          if (updateError) throw updateError;
+          setBlueprints((prev) =>
+            prev.map((item) => (item.id === blueprint.id ? (updated as CaseBlueprint) : item)),
+          );
+        },
+        persistSuccess: async (packageData, generatedAt) => {
+          const { data: updated, error: updateError } = await supabase
+            .from('case_blueprints')
+            .update({
+              generation_package: packageData,
+              generation_status: 'generated',
+              generation_error: null,
+              generated_at: generatedAt,
+            })
+            .eq('id', blueprint.id)
+            .select()
+            .single();
+
+          if (updateError) throw updateError;
+          setBlueprints((prev) =>
+            prev.map((item) => (item.id === blueprint.id ? (updated as CaseBlueprint) : item)),
+          );
         },
       });
-
-      if (functionError) throw functionError;
-      const packageData = data?.package as Json | undefined;
-      const generatedAt = (data?.generatedAt as string | undefined) ?? new Date().toISOString();
-      if (!packageData) throw new Error('No generated package returned');
-
-      const { data: updated, error: updateError } = await supabase
-        .from('case_blueprints')
-        .update({
-          generation_package: packageData,
-          generation_status: 'generated',
-          generation_error: null,
-          generated_at: generatedAt,
-        })
-        .eq('id', blueprint.id)
-        .select()
-        .single();
-
-      if (updateError) throw updateError;
-      setBlueprints((prev) =>
-        prev.map((item) => (item.id === blueprint.id ? (updated as CaseBlueprint) : item))
-      );
     } catch (err) {
       console.error('Failed to generate case package', err);
       const message = err instanceof Error ? err.message : 'Generation failed';
       setError(message);
-      await supabase
-        .from('case_blueprints')
-        .update({
-          generation_status: 'failed',
-          generation_error: message,
-        })
-        .eq('id', blueprint.id);
       setBlueprints((prev) =>
         prev.map((item) =>
           item.id === blueprint.id
             ? { ...item, generation_status: 'failed', generation_error: message }
-            : item
-        )
+            : item,
+        ),
       );
     } finally {
       setGeneratingId(null);
@@ -1335,6 +1369,8 @@ export default function CaseBuilder() {
                               <span>
                                 {blueprint.generation_status === 'generated' && blueprint.generated_at
                                   ? `Updated ${new Date(blueprint.generated_at).toLocaleString()}`
+                                  : blueprint.generation_status === 'generating'
+                                    ? 'Generating…'
                                   : blueprint.generation_status === 'failed'
                                     ? 'Generation failed'
                                     : 'Not generated'}

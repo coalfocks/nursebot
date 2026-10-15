@@ -1142,7 +1142,7 @@ export type Database = {
           generated_at: string | null
           generation_error: string | null
           generation_package: Json | null
-          generation_status: string
+          generation_status: 'not_generated' | 'generating' | 'generated' | 'failed'
           harmful_actions: string[] | null
           hospital_days: number | null
           id: string
@@ -1176,7 +1176,7 @@ export type Database = {
           generated_at?: string | null
           generation_error?: string | null
           generation_package?: Json | null
-          generation_status?: string
+          generation_status?: 'not_generated' | 'generating' | 'generated' | 'failed'
           harmful_actions?: string[] | null
           hospital_days?: number | null
           id?: string
@@ -1210,7 +1210,7 @@ export type Database = {
           generated_at?: string | null
           generation_error?: string | null
           generation_package?: Json | null
-          generation_status?: string
+          generation_status?: 'not_generated' | 'generating' | 'generated' | 'failed'
           harmful_actions?: string[] | null
           hospital_days?: number | null
           id?: string
