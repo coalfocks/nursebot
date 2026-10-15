@@ -25,6 +25,34 @@ Use the Supabase function HTTPS endpoint with an authenticated service-role requ
 
 ---
 
+## [ERR-20261015-SUPABASE-TARGET] supabase_apply_migration
+
+**Logged**: 2026-10-15T20:30:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+The first migration attempt targeted the shared-context Supabase project instead of the Nurse Althea project.
+
+### Error
+```text
+ERROR: 42P01: relation "public.student_room_assignments" does not exist
+```
+
+### Context
+The migration was attempted with project `pwkyryytprkpxjktgwyv`, but the repository is linked to `lvpbwtfvairspufrashl` in `supabase/.temp/linked-project.json`. The target rejected the DDL before applying it; no schema change was made.
+
+### Suggested Fix
+Read the repository's linked project reference before applying migrations and verify the target schema contains the application tables.
+
+### Metadata
+- Reproducible: yes
+- Related Files: `supabase/.temp/linked-project.json`, `supabase/migrations/20261015203500_fix_test_room_session_launch.sql`
+- Tags: supabase, project-target, migration
+
+---
+
 ## [ERR-20261015-WORKDIR] exec_command
 
 **Logged**: 2026-10-15T16:20:00Z

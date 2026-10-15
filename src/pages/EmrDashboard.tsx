@@ -306,6 +306,7 @@ export default function EmrDashboard() {
         .select('id')
         .eq('student_id', user.id)
         .eq('room_id', selectedPatient.roomId)
+        .eq('is_sandbox', true)
         .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
       if (!isCurrentPatientRequest(request)) return;
       if (error) {
@@ -324,6 +325,7 @@ export default function EmrDashboard() {
             room_id: selectedPatient.roomId,
             assigned_by: user.id,
             status: 'assigned',
+            is_sandbox: true,
             school_id: profile?.school_id ?? undefined,
           })
           .select('id')

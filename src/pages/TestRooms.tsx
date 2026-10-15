@@ -17,6 +17,11 @@ type AssignmentSummary = Pick<
   'id' | 'room_id' | 'status' | 'created_at'
 >;
 
+const describeSupabaseError = (error: { message?: string; details?: string; hint?: string } | null | undefined) => {
+  if (!error) return 'Unknown server error.';
+  return [error.message, error.details, error.hint].filter(Boolean).join(' — ') || 'Unknown server error.';
+};
+
 export default function TestRooms() {
   const { user, profile } = useAuthStore();
   const navigate = useNavigate();
@@ -79,6 +84,7 @@ export default function TestRooms() {
           .from('student_room_assignments')
           .select('id, room_id, status, created_at')
           .eq('student_id', user.id)
+          .eq('is_sandbox', true)
           .order('created_at', { ascending: false });
 
         if (assignmentsError) throw assignmentsError;
@@ -120,6 +126,7 @@ export default function TestRooms() {
         room_id: roomId,
         assigned_by: user.id,
         status: 'assigned',
+        is_sandbox: true,
         school_id: profile?.school_id ?? undefined,
       })
       .select('id, room_id, status, created_at')
@@ -127,7 +134,7 @@ export default function TestRooms() {
 
     if (insertError || !data) {
       console.error('Failed to create test assignment', insertError);
-      setError('Unable to start a test session for this room.');
+      setError(`Unable to start a test session for this room${insertError ? `: ${describeSupabaseError(insertError)}` : '.'}`);
       return null;
     }
 
@@ -198,6 +205,7 @@ export default function TestRooms() {
           room_id: roomId,
           assigned_by: user.id,
           status: 'assigned',
+          is_sandbox: true,
           school_id: profile?.school_id ?? undefined,
         })
         .select('id, room_id, status, created_at')
@@ -205,7 +213,7 @@ export default function TestRooms() {
 
       if (insertError || !newAssignment) {
         console.error('Failed to create fresh test session', insertError);
-        setError('Reset succeeded, but a fresh session could not be created.');
+        setError(`Reset succeeded, but a fresh session could not be created${insertError ? `: ${describeSupabaseError(insertError)}` : '.'}`);
         setAssignmentsByRoom((prev) => {
           const next = new Map(prev);
           next.delete(roomId);
