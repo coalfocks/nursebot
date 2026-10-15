@@ -33,21 +33,56 @@ const asStrings = (value: unknown): string[] => Array.isArray(value)
   ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
   : [];
 
+const goalInstruction = /reveal this goal only in post-case feedback|do not disclose the target diagnosis|do not reveal .*goal|review the evidence-linked strengths|you are evaluating|after the simulation, you should be able to|goals of (?:this )?case|target diagnosis\s*[—:-]/i;
+
+const cleanGoal = (value: string): string => value
+  .replace(/reveal this goal only in post-case feedback\.?/gi, '')
+  .replace(/do not disclose the target diagnosis or goals through nurse or patient conversation before case completion\.?/gi, '')
+  .replace(/review the evidence-linked strengths and next steps below\.?/gi, '')
+  .replace(/\s+/g, ' ')
+  .replace(/^[\s:–—-]+|[\s:–—-]+$/g, '')
+  .trim();
+
+const conciseGoal = (value: string): string | null => {
+  const goal = cleanGoal(value);
+  if (!goal || /^the case does not prescribe/i.test(goal)) return null;
+  if (/^name the target diagnosis and connect it to/i.test(goal)) return 'Connect the diagnosis to the documented case evidence.';
+  if (/^recognize time-critical deterioration and initiate/i.test(goal)) return 'Recognize time-critical deterioration and escalate appropriately.';
+  if (/^select and document a focused evaluation and treatment plan/i.test(goal)) return 'Document a focused evaluation and treatment plan with reassessment.';
+  if (/^give a concise, prioritized team update/i.test(goal)) return 'Use concise closed-loop team communication.';
+  return goal.length <= 180 ? goal : null;
+};
+
 const asGoalStrings = (value: unknown): string[] => {
-  if (Array.isArray(value)) return asStrings(value);
-  if (typeof value !== 'string' || !value.trim()) return [];
-  return value
-    .split(/\r?\n|(?=•)|(?=\u2022)/)
-    .map((item) => item.replace(/^\s*(?:[-*•]|Goals of Case)\s*/i, '').trim())
-    .filter(Boolean);
+  const raw = Array.isArray(value) ? asStrings(value) : typeof value === 'string' && value.trim()
+    ? value.split(/\r?\n|(?=•)|(?=\u2022)/)
+    : [];
+  const goals: string[] = [];
+  for (const item of raw) {
+    const cleaned = cleanGoal(item.replace(/^\s*(?:[-*•]|Goals of Case)\s*/i, ''));
+    if (!cleaned) continue;
+    if (/^ROOM\s+[^—:]+(?:—|:)/i.test(cleaned) || (/^[A-Z0-9\s—:,-]+$/.test(cleaned) && cleaned.length > 12)) continue;
+    // A generated prompt can contain a heading followed by a long prose block.
+    // Keep only concise authored action statements, never the evaluator prompt.
+    if (cleaned.length > 260) {
+      const clauses = cleaned.split(/(?<=[.!?])\s+/).map(conciseGoal).filter((clause): clause is string => Boolean(clause) && !goalInstruction.test(clause));
+      goals.push(...clauses.slice(0, 4));
+      continue;
+    }
+    if (goalInstruction.test(cleaned)) continue;
+    const concise = conciseGoal(cleaned);
+    if (concise) goals.push(concise);
+  }
+  return Array.from(new Set(goals)).slice(0, 5);
 };
 
 const postCompletionGoals = (diagnosis: unknown, goals: string[]) => {
   const diagnosisText = typeof diagnosis === 'string' ? diagnosis.replace(/\s+/g, ' ').trim() : '';
-  const joined = goals.join(' ');
-  if (!diagnosisText || goals.length === 0 || /^do hard things$/i.test(joined)) return goals;
-  if (/persistent pneumonia/i.test(diagnosisText) && /acute cholecystitis/i.test(joined)) return goals;
-  return [`Recognize ${diagnosisText}.`, `Apply the case-specific diagnostic and management priorities: ${joined}`];
+  const conciseGoals = goals.map(cleanGoal).filter((goal) => goal && !goalInstruction.test(goal)).slice(0, 4);
+  const joined = conciseGoals.join(' ');
+  if (!diagnosisText || conciseGoals.length === 0 || /^do hard things$/i.test(joined)) return conciseGoals;
+  if (/persistent pneumonia/i.test(diagnosisText) && /acute cholecystitis/i.test(joined)) return conciseGoals;
+  return [`Recognize ${diagnosisText}.`, ...conciseGoals];
 };
 
 export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEvaluationKey => {

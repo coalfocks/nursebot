@@ -129,8 +129,15 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
       priority: orderDetails.priority as OrderPriority,
       status: 'Active',
+<<<<<<< HEAD
       orderedBy: patient.attendingPhysician,
       orderTime: new Date().toISOString(),
+=======
+      orderedBy: profile?.full_name ? `${profile.full_name} (${profile.role ?? 'student'})` : 'Learner (student)',
+      // Learner orders are attempt events. Baseline/admin authoring keeps the
+      // prior-encounter sentinel; student orders start at the active encounter.
+      orderTime: forceBaseline ? minimumPriorTimestamp(patient.admissionDate) : new Date().toISOString(),
+>>>>>>> 584b5bb (fix: persist sandbox evidence and sanitize feedback goals)
       scheduledTime: orderDetails.scheduledTime || undefined,
       instructions,
     };

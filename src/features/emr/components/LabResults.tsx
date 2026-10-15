@@ -12,6 +12,11 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
+<<<<<<< HEAD
+=======
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
+import { normalizeLabResultForPatient } from '../lib/labIntegrity';
+>>>>>>> 584b5bb (fix: persist sandbox evidence and sanitize feedback goals)
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 
 interface LabResultsProps {
@@ -137,7 +142,127 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
+<<<<<<< HEAD
   }, [assignmentId, patient.id, patient.roomId, capture, isCurrent]);
+=======
+  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, patient.gender, patient.dateOfBirth, capture, isCurrent]);
+
+  // Instant labs are result-producing orders in the simulator. Older orders can
+  // predate the order-placement callback, so reconcile them when the Labs tab
+  // opens instead of leaving an order stranded with no result forever.
+  useEffect(() => {
+    if (!roomMetaLoaded) return;
+    const request = capture();
+    void (async () => {
+      const [orders, existingLabs, clinicalNotes, vitals] = await Promise.all([
+        emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+      if (!isCurrent(request)) return;
+
+      const candidates = orders.filter(
+        (order) => isResultProducingStatLab(order),
+      );
+
+      for (const order of candidates) {
+        if (autoResultingOrderIds.current.has(order.id)) continue;
+        const requestedTests = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+        const hasResult = requestedTests.every((test) =>
+          existingLabs.some((lab) =>
+            lab.testName.toLowerCase() === test.testName.toLowerCase() &&
+            (assignmentId
+              ? lab.assignmentId === assignmentId
+              : lab.assignmentId == null && lab.roomId === patient.roomId),
+          ),
+        );
+        if (hasResult) continue;
+        autoResultingOrderIds.current.add(order.id);
+
+        try {
+          const aiResponse = await supabase.functions.invoke('lab-results', {
+            body: {
+              orderName: order.orderName,
+              priority: order.priority,
+              tests: requestedTests.map((test) => ({
+                testName: test.testName,
+                unit: test.unit,
+                referenceRange: test.referenceRange,
+              })),
+              context: {
+                patient: {
+                  firstName: patient.firstName,
+                  lastName: patient.lastName,
+                  dateOfBirth: patient.dateOfBirth,
+                  gender: patient.gender,
+                  mrn: patient.mrn,
+                  allergies: patient.allergies,
+                  codeStatus: patient.codeStatus,
+                  attendingPhysician: patient.attendingPhysician,
+                  service: patient.service,
+                },
+                room: { id: patient.roomId, number: patient.room },
+                assignmentId: assignmentId ?? null,
+                emrContext: roomMeta?.emr_context ?? null,
+                nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+                clinicalNotes,
+                vitals,
+                previousLabs: existingLabs,
+                orders,
+              },
+            },
+          });
+          if (aiResponse.error) throw aiResponse.error;
+
+          const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+            ? validateGeneratedLabResults(
+                (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+                requestedTests,
+              )
+            : [];
+          const generatedLabs = aiLabs.length === requestedTests.length
+            ? aiLabs
+            : await generateLabResults(patient.id, order.orderName, {
+                patient,
+                assignmentId,
+                roomId: patient.roomId ?? null,
+                orderName: order.orderName,
+                previousLabs: existingLabs,
+                clinicalNotes,
+                vitals,
+              });
+          const runTimestamp = assignmentId
+            ? new Date().toISOString()
+            : minimumPriorTimestamp(patient.admissionDate);
+          const labsWithScope = generatedLabs.map((lab, index) => ({
+            id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
+            patientId: patient.id,
+            assignmentId: assignmentId ?? null,
+            roomId: patient.roomId ?? null,
+            overrideScope: assignmentId ? 'assignment' as const : 'room' as const,
+            testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
+            value: (lab as { value?: string | number }).value ?? '',
+            unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
+            referenceRange: (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
+            status: (lab as { status?: LabResult['status'] }).status ?? 'Normal',
+            collectionTime: runTimestamp,
+            resultTime: runTimestamp,
+            orderedBy: order.orderedBy,
+          }));
+          const writeResult = await emrApi.addLabResults(labsWithScope, patient.roomId ?? null);
+          if (!writeResult.ok) throw new Error(writeResult.error);
+          if (isCurrent(request)) {
+            setLabResults(normalizeForPatient(await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null)));
+          }
+        } catch (error) {
+          autoResultingOrderIds.current.delete(order.id);
+          console.error('Failed to reconcile instant lab order', order.id, error);
+        }
+      }
+    })();
+  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient]);
+>>>>>>> 584b5bb (fix: persist sandbox evidence and sanitize feedback goals)
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;

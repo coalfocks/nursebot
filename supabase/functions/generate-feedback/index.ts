@@ -108,7 +108,21 @@ Deno.serve(async (req) => {
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
         observed_event_ids: sourceEventIds,
-        items: actionReview,
+        // Preserve a deterministic, human-readable record of every actual
+        // post-page order/result even when the model's narrative omits it.
+        items: [
+          ...actionReview,
+          ...scoredEntries
+            .filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind))
+            .filter((entry) => !actionReview.some((item: any) => Array.isArray(item?.evidence_event_ids) && item.evidence_event_ids.includes(entry.id)))
+            .map((entry) => ({
+              label: entry.title,
+              action: entry.title,
+              status: entry.meta?.join(' • ') ?? 'Observed post-page action',
+              explanation: entry.body || 'Persisted post-page evidence observed for this attempt.',
+              evidence_event_ids: [entry.id],
+            })),
+        ],
       };
       const growthEvidence = scoredEntries
         .filter((entry) => ['learner-action', 'order', 'progress-note'].includes(entry.kind))

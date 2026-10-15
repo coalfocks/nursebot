@@ -83,6 +83,16 @@ export type TimelineLearnerActionRow = {
   created_at: string | null;
 };
 
+export type TimelineConsultantMessageRow = {
+  id: string;
+  assignment_id: string;
+  role: 'student' | 'consultant';
+  content: string;
+  specialty: string | null;
+  urgency: string | null;
+  created_at: string | null;
+};
+
 export type TimelineAssignmentSummary = {
   id: string;
   completed_at: string | null;
@@ -91,7 +101,7 @@ export type TimelineAssignmentSummary = {
 
 export type EvaluationTimelineEntry = {
   id: string;
-  kind: 'message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
+  kind: 'message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
   timestamp: string;
   title: string;
   body?: string;
@@ -157,6 +167,8 @@ const getTimelineKindRank = (kind: EvaluationTimelineEntry['kind']) => {
   switch (kind) {
     case 'message':
       return 1;
+    case 'consultant-message':
+      return 1;
     case 'order':
       return 2;
     case 'labs':
@@ -186,6 +198,7 @@ export const buildAssignmentTimelineEntries = ({
   vitals,
   imaging,
   learnerActions,
+  consultantMessages,
 }: {
   assignment: TimelineAssignmentSummary;
   assignmentId: string;
@@ -196,6 +209,7 @@ export const buildAssignmentTimelineEntries = ({
   vitals: TimelineVitalRow[];
   imaging: TimelineImagingRow[];
   learnerActions?: TimelineLearnerActionRow[];
+  consultantMessages?: TimelineConsultantMessageRow[];
 }): EvaluationTimelineEntry[] => {
   const entries: EvaluationTimelineEntry[] = [];
 
@@ -234,6 +248,19 @@ export const buildAssignmentTimelineEntries = ({
     });
   }
 
+  for (const message of consultantMessages ?? []) {
+    const timestamp = normalizeTimelineTimestamp(message.created_at);
+    if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    entries.push({
+      id: `consultant-message-${message.id}`,
+      kind: 'consultant-message',
+      timestamp,
+      title: message.role === 'student' ? `Consult request (${message.specialty ?? 'consultant'})` : 'Consultant response',
+      body: message.content.trim(),
+      meta: [`Urgency: ${message.urgency ?? 'routine'}`, message.role === 'student' ? 'Author: Student' : 'Author: Consultant'],
+    });
+  }
+
   const filteredOrders = orders.filter((row) =>
     timelineScopeMatchesContext(
       deriveTimelineScope(row.override_scope, row.assignment_id, row.room_id),
@@ -245,7 +272,14 @@ export const buildAssignmentTimelineEntries = ({
   );
 
   for (const order of filteredOrders) {
-    const timestamp = normalizeTimelineTimestamp(order.order_time ?? order.created_at);
+    // Assignment-scoped order_time values from older clients were incorrectly
+    // written with the baseline sentinel. created_at is the durable insertion
+    // event for learner actions; keep authored/baseline timestamps unchanged.
+    const timestamp = normalizeTimelineTimestamp(
+      deriveTimelineScope(order.override_scope, order.assignment_id, order.room_id) === 'assignment'
+        ? (order.created_at ?? order.order_time)
+        : (order.order_time ?? order.created_at),
+    );
     if (!timestamp) continue;
     const details = [order.dose, order.route, order.frequency].filter(Boolean).join(' • ');
     entries.push({
@@ -279,7 +313,9 @@ export const buildAssignmentTimelineEntries = ({
   }
 
   groupedLabs.forEach((group, key) => {
-    const timestamp = getLabTimelineTimestamp(group[0]);
+    const timestamp = deriveTimelineScope(group[0].override_scope, group[0].assignment_id, group[0].room_id) === 'assignment'
+      ? normalizeTimelineTimestamp(group[0].created_at ?? group[0].result_time ?? group[0].collection_time)
+      : getLabTimelineTimestamp(group[0]);
     if (!timestamp) return;
     group.sort((a, b) => a.test_name.localeCompare(b.test_name));
     entries.push({

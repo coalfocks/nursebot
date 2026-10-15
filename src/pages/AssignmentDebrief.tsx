@@ -9,7 +9,21 @@ type Evidence = { event_id?: string; id?: string; label?: string; occurred_at?: 
 type GrowthArea = { title?: string; case_goal?: string; practice_example?: string; example?: string; evidence?: Evidence[] };
 
 const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
-const nonEmpty = (value: unknown): string[] => asArray<unknown>(value).filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+const nonEmpty = (value: unknown): string[] => {
+  const raw = asArray<unknown>(value).filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  const blocked = /reveal this goal only in post-case feedback|do not disclose the target diagnosis|do not reveal .*goal|review the evidence-linked strengths|you are evaluating|after the simulation, you should be able to|goals of (?:this )?case|target diagnosis\s*[—:-]/i;
+  const cleaned: string[] = [];
+  for (const entry of raw) {
+    const parts = entry.split(/(?<=[.!?])\s+/).map((part) => part
+      .replace(/reveal this goal only in post-case feedback\.?/gi, '')
+      .replace(/do not disclose the target diagnosis or goals through nurse or patient conversation before case completion\.?/gi, '')
+      .replace(/review the evidence-linked strengths and next steps below\.?/gi, '')
+      .replace(/\s+/g, ' ').trim())
+      .filter((part) => part.length >= 12 && part.length <= 220 && !blocked.test(part));
+    cleaned.push(...parts);
+  }
+  return Array.from(new Set(cleaned)).slice(0, 5);
+};
 const sanitizeSimulationText = (value: string) => value
   .replace(/\bphysical examination\b/gi, 'simulated bedside interaction')
   .replace(/\bphysical exam\b/gi, 'simulated bedside interaction')
