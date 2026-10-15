@@ -16,6 +16,7 @@ import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
 import AssignmentView from './pages/AssignmentView';
+import AssignmentDebrief from './pages/AssignmentDebrief';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
@@ -27,6 +28,7 @@ import DataDownload from './pages/DataDownload';
 import About from './pages/About';
 import AdminWalkthroughVideos, { AdminOnboarding, CourseEditor } from './pages/AdminWalkthroughVideos';
 import StudentWalkthroughVideos from './pages/StudentWalkthroughVideos';
+import StudentLearningGate from './components/StudentLearningGate';
 import AdminAnalytics from './pages/AdminAnalytics';
 import AdminUsers from './pages/AdminUsers';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -92,7 +94,7 @@ function App() {
           path="/dashboard" 
           element={
             user ? (
-              isTester ? <TestRooms /> : <AdminDashboard />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <AdminDashboard />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -148,7 +150,7 @@ function App() {
           path="/cases"
           element={
             user ? (
-              isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
+              <StudentLearningGate>{isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -158,7 +160,7 @@ function App() {
           path="/test-rooms"
           element={
             user ? (
-              isTester ? <TestRooms /> : <Navigate to="/dashboard" replace />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <Navigate to="/dashboard" replace />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -267,15 +269,23 @@ function App() {
           path="/assignments" 
           element={
             user ? (
-              isTester ? <TestRooms /> : <MyCases />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <MyCases />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
           }
         />
+        <Route
+          path="/assignment/:assignmentId/feedback"
+          element={user ? <AssignmentDebrief /> : <Navigate to="/login" replace />}
+        />
         <Route 
           path="/assignment/:assignmentId" 
-          element={user ? <AssignmentView /> : <Navigate to="/login" replace />} 
+          element={user ? <StudentLearningGate><AssignmentView /></StudentLearningGate> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/learning-library"
+          element={user ? <StudentWalkthroughVideos /> : <Navigate to="/login" replace />}
         />
       </Routes>
     </Router>

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Upload, X, Check, AlertCircle, Loader2, Download, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { useSchools } from '../../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../../hooks/useSchools';
+import { LEARNER_PROGRAMS, type LearnerProgram } from '../../lib/programTracks';
 import { useAuthStore } from '../../stores/authStore';
 import { isSuperAdmin, isTestUser } from '../../lib/roles';
 import type { Database } from '../../lib/database.types';
@@ -48,6 +49,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   // School selection state
   const [selectedSchool, setSelectedSchool] = useState<Database['public']['Tables']['schools']['Row'] | null>(null);
   const [schoolSearch, setSchoolSearch] = useState('');
+  const [learnerProgram, setLearnerProgram] = useState<LearnerProgram>('medical');
 
   // Fetch available schools
   const { schools, loading: schoolsLoading } = useSchools();
@@ -55,6 +57,8 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
   const scopedSchoolId = (isSuperAdmin(profile) || isTestUser(profile))
     ? activeSchoolId
     : profile?.school_id ?? null;
+
+  const enabledPrograms = selectedSchool?.enabled_programs?.length ? selectedSchool.enabled_programs : ['medical'];
 
   const SPECIALTIES = [
     'Internal Medicine',
@@ -72,6 +76,10 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
     setSelectedSchool(scopedSchool);
     setSchoolSearch('');
   }, [scopedSchoolId, schools]);
+
+  useEffect(() => {
+    if (!enabledPrograms.includes(learnerProgram)) setLearnerProgram('medical');
+  }, [learnerProgram, enabledPrograms.join('|')]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -204,6 +212,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
       const { data, error } = await supabase.functions.invoke<BulkCreateResponse>('bulk-create-users', {
         body: {
           users,
+          learnerProgram,
         },
       });
 
@@ -238,11 +247,11 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
       return;
     }
 
-    const headers = ['school', 'name', 'email', 'password', 'specialty'];
+    const headers = ['school', 'name', 'email', 'password', 'specialty', 'learner_program'];
     const sampleData = [
-      `${selectedSchool.name},John Doe,john.doe@example.com,Password123,Internal Medicine`,
-      `${selectedSchool.name},Jane Smith,jane.smith@example.com,Password123,Pediatrics`,
-      `${selectedSchool.name},Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine`,
+      `${getSchoolDisplayName(selectedSchool)},John Doe,john.doe@example.com,Password123,Internal Medicine,${learnerProgram}`,
+      `${getSchoolDisplayName(selectedSchool)},Jane Smith,jane.smith@example.com,Password123,Pediatrics,${learnerProgram}`,
+      `${getSchoolDisplayName(selectedSchool)},Bob Johnson,bob.johnson@example.com,Password123,Emergency Medicine,${learnerProgram}`,
     ];
     const csvContent = [headers.join(','), ...sampleData].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -256,7 +265,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
 
   // Filter schools based on search
   const filteredSchools = schools.filter(school =>
-    school.name.toLowerCase().includes(schoolSearch.toLowerCase())
+    getSchoolDisplayName(school).toLowerCase().includes(schoolSearch.toLowerCase())
   );
 
   if (!isOpen) {
@@ -335,7 +344,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
                         selectedSchool?.id === school.id ? 'bg-blue-50 text-blue-900' : 'text-gray-900'
                       }`}
                     >
-                      <div className="font-medium">{school.name}</div>
+                      <div className="font-medium">{getSchoolDisplayName(school)}</div>
                       {school.timezone && (
                         <div className="text-xs text-gray-500">{school.timezone}</div>
                       )}
@@ -346,7 +355,7 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
               {selectedSchool && (
                 <div className="mt-2 flex items-center gap-2 text-sm text-green-700">
                   <Check className="h-4 w-4" />
-                  <span>Selected: {selectedSchool.name}</span>
+                  <span>Selected: {getSchoolDisplayName(selectedSchool)}</span>
                   <button
                     type="button"
                     onClick={() => setSelectedSchool(null)}
@@ -359,6 +368,21 @@ export default function BulkUserUpload({ onSuccess }: BulkUserUploadProps) {
             </div>
 
             {/* Template Download */}
+            <div>
+              <label htmlFor="bulkLearnerProgram" className="block text-sm font-medium text-gray-700">Learner program</label>
+              <select
+                id="bulkLearnerProgram"
+                value={learnerProgram}
+                onChange={(e) => setLearnerProgram(e.target.value as LearnerProgram)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              >
+                {LEARNER_PROGRAMS.filter((program) => enabledPrograms.includes(program.value)).map((program) => (
+                  <option key={program.value} value={program.value}>{program.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">All imported learners receive this program; it does not change their account role or school scope.</p>
+            </div>
+
             <div className="rounded-md bg-blue-50 p-4">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0">

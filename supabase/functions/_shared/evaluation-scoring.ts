@@ -1,200 +1,118 @@
-import { COMMUNICATION_SCORING, MDM_SCORING } from './evaluation-prompts.ts';
-
 export interface EvaluationScoringResponse {
   learning_objectives: string;
   communication_score: number;
   mdm_score: number;
   communication_breakdown: {
-    information_sharing: {
-      score: number;
-      feedback: string;
-    };
-    responsive_communication: {
-      score: number;
-      feedback: string;
-    };
-    efficiency_deduction: {
-      score: number;
-      feedback: string;
-      cau_count: number;
-      case_difficulty: string;
-    };
+    focused_information_gathering: { score: number; feedback: string; evidence_event_ids?: string[] };
+    closed_loop_team_communication: { score: number; feedback: string; evidence_event_ids?: string[] };
   };
   mdm_breakdown: {
-    labs_orders_quality: {
-      score: number;
-      feedback: string;
-    };
-    note_thought_process: {
-      score: number;
-      feedback: string;
-    };
-    safety_deduction: {
-      score: number;
-      feedback: string;
-    };
+    orders_monitoring_quality: { score: number; feedback: string; evidence_event_ids?: string[] };
+    clinical_reasoning_documentation: { score: number; feedback: string; evidence_event_ids?: string[] };
   };
+  safety_result: { level: 'none' | 'concern' | 'critical'; action: string | null; rationale: string | null; evidence_event_ids: string[] };
+  strengths: string[];
+  improvements: string[];
   recommendations: string[];
-}
-
-type CommunicationScoreKey = 0 | 1 | 2 | 3 | -1 | -2;
-type MdmScoreKey = 0 | 1 | 2 | 3 | -1 | -2;
-
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-
-export const normalizeLeniencyMultiplier = (value: number | null | undefined) => {
-  if (typeof value !== 'number' || Number.isNaN(value)) return 1;
-  return clamp(Number(value.toFixed(2)), 0.75, 1.5);
 };
 
-const adjustPositiveScore = (score: number, max: number, multiplier: number) =>
-  clamp(Math.round(score * multiplier), 0, max);
-
-const adjustDeductionScore = (score: number, multiplier: number) => {
-  if (multiplier === 1) {
-    const normalized = clamp(score, -2, 0);
-    return Object.is(normalized, -0) ? 0 : normalized;
-  }
-
-  let adjustedScore = score;
-  if (multiplier > 1) {
-    adjustedScore = Math.ceil(score / multiplier);
-  } else {
-    adjustedScore = Math.floor(score / multiplier);
-  }
-  const normalized = clamp(adjustedScore, -2, 0);
-  return Object.is(normalized, -0) ? 0 : normalized;
+const clamp = (value: unknown, min: number, max: number) => {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  return Math.max(min, Math.min(max, Number.isFinite(numeric) ? Math.round(numeric) : min));
 };
+const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
+const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
-export const getCommunicationFeedback = (
-  section: 'informationSharing' | 'responsiveCommunication' | 'efficiencyDeduction',
-  score: CommunicationScoreKey,
-) => {
-  const scoreKey = String(score) as keyof typeof COMMUNICATION_SCORING.informationSharing.scores;
-  if (section === 'informationSharing') {
-    return COMMUNICATION_SCORING.informationSharing.scores[score as 0 | 1 | 2].feedback;
-  }
-  if (section === 'responsiveCommunication') {
-    return COMMUNICATION_SCORING.responsiveCommunication.scores[score as 0 | 1 | 2 | 3].feedback;
-  }
-  return COMMUNICATION_SCORING.efficiencyDeduction.scores[scoreKey as '-2' | '-1' | 0].feedback;
-};
-
-export const getMdmFeedback = (
-  section: 'labsOrdersQuality' | 'noteThoughtProcess' | 'safetyDeduction',
-  score: MdmScoreKey,
-) => {
-  const scoreKey = String(score) as keyof typeof MDM_SCORING.labsOrdersQuality.scores;
-  if (section === 'labsOrdersQuality') {
-    return MDM_SCORING.labsOrdersQuality.scores[score as 0 | 1 | 2 | 3].feedback;
-  }
-  if (section === 'noteThoughtProcess') {
-    return MDM_SCORING.noteThoughtProcess.scores[score as 0 | 1 | 2].feedback;
-  }
-  return MDM_SCORING.safetyDeduction.scores[scoreKey as '-2' | '-1' | 0].feedback;
-};
-
-export const canonicalizeEvaluation = (
-  evaluation: EvaluationScoringResponse,
-  caseDifficulty: string,
-): EvaluationScoringResponse => {
-  const informationScore = clamp(Math.round(evaluation.communication_breakdown?.information_sharing?.score ?? 0), 0, 2) as 0 | 1 | 2;
-  const responsiveScore = clamp(Math.round(evaluation.communication_breakdown?.responsive_communication?.score ?? 0), 0, 3) as 0 | 1 | 2 | 3;
-  const efficiencyScore = clamp(Math.round(evaluation.communication_breakdown?.efficiency_deduction?.score ?? 0), -2, 0) as -2 | -1 | 0;
-  const labsOrdersScore = clamp(Math.round(evaluation.mdm_breakdown?.labs_orders_quality?.score ?? 0), 0, 3) as 0 | 1 | 2 | 3;
-  const noteThoughtScore = clamp(Math.round(evaluation.mdm_breakdown?.note_thought_process?.score ?? 0), 0, 2) as 0 | 1 | 2;
-  const safetyScore = clamp(Math.round(evaluation.mdm_breakdown?.safety_deduction?.score ?? 0), -2, 0) as -2 | -1 | 0;
-
-  const communicationScore = clamp(informationScore + responsiveScore + efficiencyScore, 0, 5);
-  const mdmScore = clamp(labsOrdersScore + noteThoughtScore + safetyScore, 0, 5);
-
+export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
+  const source = raw as Record<string, any>;
+  const communication = (source.communication_breakdown ?? source.communication ?? {}) as Record<string, any>;
+  const mdm = (source.mdm_breakdown ?? source.medical_decision_making ?? source.mdm ?? {}) as Record<string, any>;
+  const focusedRaw = communication.focused_information_gathering
+    ?? communication.information_gathering
+    ?? communication.information_sharing
+    ?? communication.focused_gathering;
+  const closedLoopRaw = communication.closed_loop_team_communication
+    ?? communication.closed_loop_communication
+    ?? communication.responsive_communication
+    ?? communication.team_communication;
+  const ordersRaw = mdm.orders_monitoring_quality
+    ?? mdm.orders_monitoring
+    ?? mdm.labs_orders_quality
+    ?? mdm.orders_quality;
+  const reasoningRaw = mdm.clinical_reasoning_documentation
+    ?? mdm.reasoning_documentation
+    ?? mdm.note_thought_process
+    ?? mdm.reasoning;
+  const componentScore = (component: Record<string, any> | undefined) => component?.score ?? component?.value ?? component?.points ?? 0;
+  const focused = clamp(componentScore(focusedRaw), 0, 2);
+  const closedLoop = clamp(componentScore(closedLoopRaw), 0, 3);
+  const orders = clamp(componentScore(ordersRaw), 0, 3);
+  const reasoning = clamp(componentScore(reasoningRaw), 0, 2);
+  const safety = raw.safety_result?.level === 'critical' || raw.safety_result?.level === 'concern' ? raw.safety_result.level : 'none';
   return {
-    ...evaluation,
-    communication_score: communicationScore,
-    mdm_score: mdmScore,
+    learning_objectives: text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.'),
+    communication_score: focused + closedLoop,
+    mdm_score: orders + reasoning,
     communication_breakdown: {
-      information_sharing: {
-        score: informationScore,
-        feedback: getCommunicationFeedback('informationSharing', informationScore),
-      },
-      responsive_communication: {
-        score: responsiveScore,
-        feedback: getCommunicationFeedback('responsiveCommunication', responsiveScore),
-      },
-      efficiency_deduction: {
-        score: efficiencyScore,
-        feedback: getCommunicationFeedback('efficiencyDeduction', efficiencyScore),
-        cau_count: Math.max(0, Math.round(evaluation.communication_breakdown?.efficiency_deduction?.cau_count ?? 0)),
-        case_difficulty: caseDifficulty,
-      },
+      focused_information_gathering: { score: focused, feedback: text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
+      closed_loop_team_communication: { score: closedLoop, feedback: text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
     },
     mdm_breakdown: {
-      labs_orders_quality: {
-        score: labsOrdersScore,
-        feedback: getMdmFeedback('labsOrdersQuality', labsOrdersScore),
-      },
-      note_thought_process: {
-        score: noteThoughtScore,
-        feedback: getMdmFeedback('noteThoughtProcess', noteThoughtScore),
-      },
-      safety_deduction: {
-        score: safetyScore,
-        feedback: getMdmFeedback('safetyDeduction', safetyScore),
-      },
+      orders_monitoring_quality: { score: orders, feedback: text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
+      clinical_reasoning_documentation: { score: reasoning, feedback: text(reasoningRaw?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(reasoningRaw?.evidence_event_ids) },
     },
-    recommendations: [
-      getCommunicationFeedback('informationSharing', informationScore),
-      getCommunicationFeedback('responsiveCommunication', responsiveScore),
-      getCommunicationFeedback('efficiencyDeduction', efficiencyScore),
-      getMdmFeedback('labsOrdersQuality', labsOrdersScore),
-      getMdmFeedback('noteThoughtProcess', noteThoughtScore),
-      getMdmFeedback('safetyDeduction', safetyScore),
-    ],
+    safety_result: { level: safety, action: raw.safety_result?.action ?? null, rationale: raw.safety_result?.rationale ?? null, evidence_event_ids: ids(raw.safety_result?.evidence_event_ids) },
+    strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string') : [],
+    improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string') : [],
+    recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string') : [],
   };
 };
 
-export const applyLeniencyToEvaluation = (
-  evaluation: EvaluationScoringResponse,
-  caseDifficulty: string,
-  multiplier: number,
-) => {
-  const normalizedMultiplier = normalizeLeniencyMultiplier(multiplier);
-  if (normalizedMultiplier === 1) {
-    return canonicalizeEvaluation(evaluation, caseDifficulty);
-  }
+export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;
 
-  return canonicalizeEvaluation(
-    {
-      ...evaluation,
-      communication_breakdown: {
-        information_sharing: {
-          ...evaluation.communication_breakdown.information_sharing,
-          score: adjustPositiveScore(evaluation.communication_breakdown.information_sharing.score, 2, normalizedMultiplier),
-        },
-        responsive_communication: {
-          ...evaluation.communication_breakdown.responsive_communication,
-          score: adjustPositiveScore(evaluation.communication_breakdown.responsive_communication.score, 3, normalizedMultiplier),
-        },
-        efficiency_deduction: {
-          ...evaluation.communication_breakdown.efficiency_deduction,
-          score: adjustDeductionScore(evaluation.communication_breakdown.efficiency_deduction.score, normalizedMultiplier),
-        },
-      },
-      mdm_breakdown: {
-        labs_orders_quality: {
-          ...evaluation.mdm_breakdown.labs_orders_quality,
-          score: adjustPositiveScore(evaluation.mdm_breakdown.labs_orders_quality.score, 3, normalizedMultiplier),
-        },
-        note_thought_process: {
-          ...evaluation.mdm_breakdown.note_thought_process,
-          score: adjustPositiveScore(evaluation.mdm_breakdown.note_thought_process.score, 2, normalizedMultiplier),
-        },
-        safety_deduction: {
-          ...evaluation.mdm_breakdown.safety_deduction,
-          score: adjustDeductionScore(evaluation.mdm_breakdown.safety_deduction.score, normalizedMultiplier),
-        },
-      },
+type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
+
+const learnerActionKinds = new Set(['learner-action']);
+const learnerCommunicationKinds = new Set(['learner-action']);
+
+/**
+ * Conservative safety net for a malformed evaluator response. It uses only
+ * learner-authored post-page evidence and never treats the nurse page itself
+ * as learner performance. This is intentionally a small evidence floor, not
+ * a replacement for case-aware model scoring.
+ */
+export const buildEvidenceBackedFallback = (
+  evaluation: EvaluationScoringResponse,
+  entries: EvidenceShape[],
+  progressNote: string | null | undefined,
+): EvaluationScoringResponse | null => {
+  if (evaluation.communication_score !== 0 || evaluation.mdm_score !== 0) return evaluation;
+  const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
+  const clinicalActions = entries.filter((entry) => learnerActionKinds.has(entry.kind));
+  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'imaging');
+  const hasNote = Boolean(progressNote?.trim());
+  if (learnerMessages.length === 0 && clinicalActions.length === 0 && orders.length === 0 && !hasNote) return null;
+  // Vitals, orders, and a generic progress note may support MDM, but they do
+  // not prove that the learner gathered information or communicated. Those
+  // components require a learner-authored interaction/action with a channel.
+  const communicationActions = entries.filter((entry) => learnerCommunicationKinds.has(entry.kind));
+  const focused = learnerMessages.length > 0 || communicationActions.length > 0 ? 1 : 0;
+  const closedLoop = entries.some((entry) => entry.kind === 'learner-action' && entry.meta?.some((value) => /team|escalat/i.test(value)))
+    || (learnerMessages.length > 0 && orders.length > 0) ? 1 : 0;
+  const orderQuality = orders.length > 0 ? 1 : 0;
+  const reasoning = hasNote || learnerMessages.length > 0 ? 1 : 0;
+  return {
+    ...evaluation,
+    learning_objectives: evaluation.learning_objectives,
+    communication_score: focused + closedLoop,
+    mdm_score: orderQuality + reasoning,
+    communication_breakdown: {
+      focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or structured bedside action.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
+      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored team escalation/closed-loop communication.' : 'Not observed: no linked learner team communication was captured.', evidence_event_ids: [] },
     },
-    caseDifficulty,
-  );
+    mdm_breakdown: {
+      orders_monitoring_quality: { score: orderQuality, feedback: orderQuality ? 'Observed post-page order, monitoring, result, or reassessment evidence.' : 'No post-page order, monitoring, result, or reassessment evidence was observed.', evidence_event_ids: [] },
+      clinical_reasoning_documentation: { score: reasoning, feedback: hasNote ? 'Observed a learner progress note after the scoring boundary.' : 'Observed learner-authored post-page reasoning evidence; a progress note was not observed.', evidence_event_ids: [] },
+    },
+  };
 };

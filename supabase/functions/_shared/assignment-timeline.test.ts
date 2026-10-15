@@ -204,4 +204,20 @@ describe('assignment timeline for evaluation', () => {
     expect(rendered).not.toContain('Order: BMP');
     expect(rendered).not.toContain('Order: Vancomycin');
   });
+
+  it('preserves explicit learner bedside and team actions as distinct evidence', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [], orders: [], labs: [], vitals: [], imaging: [],
+      learnerActions: [
+        { id: 'action-1', assignment_id: 'assignment-1', room_id: 7, action_type: 'bedside_finding', channel: 'bedside', content: 'Cool extremities and delayed capillary refill.', occurred_at: '2026-03-12T10:01:00.000Z', created_at: '2026-03-12T10:01:00.000Z' },
+        { id: 'action-2', assignment_id: 'assignment-1', room_id: 7, action_type: 'team_escalation', channel: 'team', content: 'Escalated to senior clinician.', occurred_at: '2026-03-12T10:02:00.000Z', created_at: '2026-03-12T10:02:00.000Z' },
+      ],
+    });
+    expect(entries.map((entry) => entry.id)).toEqual(['learner-action-action-1', 'learner-action-action-2']);
+    expect(entries[0].meta).toContain('Channel: bedside');
+    expect(entries[1].meta).toContain('Channel: team');
+  });
 });

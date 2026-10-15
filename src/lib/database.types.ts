@@ -1096,6 +1096,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      change_learner_program: {
+        Args: { change_reason: string; next_program: string; target_profile_id: string }
+        Returns: Database["public"]["Tables"]["profiles"]["Row"]
+      }
       email: { Args: never; Returns: string }
       jwt: { Args: never; Returns: Json }
       role: { Args: never; Returns: string }
@@ -1807,6 +1811,7 @@ export type Database = {
           full_name: string
           id: string
           is_admin: boolean | null
+          learner_program: string | null
           phone_number: string | null
           role: string
           school_id: string | null
@@ -1821,6 +1826,7 @@ export type Database = {
           full_name: string
           id: string
           is_admin?: boolean | null
+          learner_program?: string | null
           phone_number?: string | null
           role?: string
           school_id?: string | null
@@ -1835,6 +1841,7 @@ export type Database = {
           full_name?: string
           id?: string
           is_admin?: boolean | null
+          learner_program?: string | null
           phone_number?: string | null
           role?: string
           school_id?: string | null
@@ -1934,15 +1941,15 @@ export type Database = {
         ]
       }
       walkthrough_videos: {
-        Row: { id: string; version: number; title: string; description: string; topic: string; audience: 'admin' | 'student' | 'both'; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; version?: number; title: string; description?: string; topic: string; audience?: 'admin' | 'student' | 'both'; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; version?: number; title?: string; description?: string; topic?: string; audience?: 'admin' | 'student' | 'both'; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; version: number; title: string; description: string; learning_objective: string; topic: string; audience: 'admin' | 'student' | 'both'; onboarding_eligible: boolean; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; learning_objective?: string; topic: string; audience?: 'admin' | 'student' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; learning_objective?: string; topic?: string; audience?: 'admin' | 'student' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
         Relationships: []
       }
       walkthrough_courses: {
-        Row: { id: string; version: number; title: string; description: string; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; version?: number; title: string; description?: string; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; version?: number; title?: string; description?: string; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; version: number; title: string; description: string; audience: 'admin' | 'student' | 'both'; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; audience?: 'admin' | 'student' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; audience?: 'admin' | 'student' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
         Relationships: []
       }
       walkthrough_course_items: {
@@ -1958,9 +1965,9 @@ export type Database = {
         Relationships: []
       }
       walkthrough_progress: {
-        Row: { id: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds: number; watched_intervals: Json; completed_at: string | null; last_activity_at: string }
-        Insert: { id?: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds?: number; watched_intervals?: Json; completed_at?: string | null; last_activity_at?: string }
-        Update: { id?: string; enrollment_id?: string; user_id?: string; video_id?: string; video_version?: number; position_seconds?: number; watched_intervals?: Json; completed_at?: string | null; last_activity_at?: string }
+        Row: { id: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds: number; watched_intervals: Json; completion_method: 'acknowledgment' | 'ended'; completed_at: string | null; last_activity_at: string }
+        Insert: { id?: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds?: number; watched_intervals?: Json; completion_method?: 'acknowledgment' | 'ended'; completed_at?: string | null; last_activity_at?: string }
+        Update: { id?: string; enrollment_id?: string; user_id?: string; video_id?: string; video_version?: number; position_seconds?: number; watched_intervals?: Json; completion_method?: 'acknowledgment' | 'ended'; completed_at?: string | null; last_activity_at?: string }
         Relationships: []
       }
       walkthrough_overrides: {
@@ -1989,6 +1996,7 @@ export type Database = {
           expected_treatment: string[] | null
           id: number
           is_active: boolean | null
+          learner_program: string
           nurse_context: string | null
           objective: string | null
           order_categories: Json | null
@@ -2027,6 +2035,7 @@ export type Database = {
           expected_treatment?: string[] | null
           id?: number
           is_active?: boolean | null
+          learner_program?: string
           nurse_context?: string | null
           objective?: string | null
           order_categories?: Json | null
@@ -2065,6 +2074,7 @@ export type Database = {
           expected_treatment?: string[] | null
           id?: number
           is_active?: boolean | null
+          learner_program?: string
           nurse_context?: string | null
           objective?: string | null
           order_categories?: Json | null
@@ -2132,21 +2142,27 @@ export type Database = {
       schools: {
         Row: {
           created_at: string
+          display_name: string | null
           id: string
+          enabled_programs: string[]
           name: string
           slug: string
           timezone: string | null
         }
         Insert: {
           created_at?: string
+          display_name?: string | null
           id?: string
+          enabled_programs?: string[]
           name: string
           slug: string
           timezone?: string | null
         }
         Update: {
           created_at?: string
+          display_name?: string | null
           id?: string
+          enabled_programs?: string[]
           name?: string
           slug?: string
           timezone?: string | null
@@ -2199,13 +2215,22 @@ export type Database = {
           effective_date: string | null
           feedback: string | null
           feedback_error: string | null
+          feedback_debrief: Json | null
           feedback_generated_at: string | null
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
           id: string
           learning_objectives: string | null
+          learner_program: string
           mdm_breakdown: Json | null
           mdm_score: number | null
+          safety_result: Json | null
+          scoring_start_at: string | null
+          rubric_version: string | null
+          case_key_version: string | null
+          assessment_version: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
           notification_sent: boolean | null
           notification_sent_at: string | null
           nurse_feedback: Json | null
@@ -2234,6 +2259,7 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2241,8 +2267,16 @@ export type Database = {
           grade?: number | null
           id?: string
           learning_objectives?: string | null
+          learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2271,6 +2305,7 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2278,8 +2313,16 @@ export type Database = {
           grade?: number | null
           id?: string
           learning_objectives?: string | null
+          learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2325,6 +2368,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      feedback_assessment_runs: {
+        Row: {
+          id: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
+          result: Json | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          assignment_id?: string
+          attempt_id?: string
+          rubric_version?: string
+          case_key_version?: string
+          assessment_version?: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          created_at?: string
+        }
+        Relationships: []
       }
       vital_signs: {
         Row: {

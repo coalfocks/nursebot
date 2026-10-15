@@ -196,6 +196,25 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
     return null;
   }
 
+  // The detailed v2 debrief is a dedicated page. Do not render the retired
+  // overall-grade/efficiency-deduction contract in the completed-case sidebar.
+  return (
+    <div className="bg-white shadow rounded-lg p-6 space-y-3">
+      <div className="flex items-center gap-2">
+        <Award className="h-5 w-5 text-blue-600" />
+        <h2 className="text-lg font-semibold text-gray-900">Feedback ready</h2>
+      </div>
+      <p className="text-sm text-gray-600">Review your evidence-linked formative debrief and separate safety result.</p>
+      <button
+        type="button"
+        onClick={() => { window.location.href = `/assignment/${assignment.id}/feedback`; }}
+        className="w-full rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800"
+      >
+        Review your feedback
+      </button>
+    </div>
+  );
+
   const commScore = assignment.communication_score;
   const mdmScore = assignment.mdm_score;
   const communicationBreakdown = parseCommunicationBreakdown(assignment.communication_breakdown);
