@@ -103,7 +103,9 @@ Deno.serve(async (req) => {
       if (schoolError) throw schoolError;
       if (!school) return json({ error: "Selected school does not exist", code: "SCHOOL_NOT_FOUND" }, 400);
       const users = await listAllAuthUsers();
-      if (users.some((user) => cleanEmail(user.email) === email)) return json({ error: "An auth account with this email already exists", code: "DUPLICATE_EMAIL" }, 409);
+      const { data: matchingProfiles, error: profileLookupError } = await adminClient.from("profiles").select("id").ilike("email", email).limit(1);
+      if (profileLookupError) throw profileLookupError;
+      if (users.some((user) => cleanEmail(user.email) === email) || matchingProfiles?.length) return json({ error: "An account with this email already exists", code: "DUPLICATE_EMAIL" }, 409);
 
       const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email, {
         data: { full_name: fullName, invited_role: role, invited_school_id: schoolId },
