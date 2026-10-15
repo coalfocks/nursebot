@@ -21,6 +21,11 @@ describe('walkthrough audience and publication safety', () => {
     expect(visibleWalkthroughAudiences('school_admin')).toEqual(['student', 'both']);
   });
 
+  it('keeps a student-role account out of Test Room content', () => {
+    expect(visibleWalkthroughAudiences('student')).not.toContain('test_room');
+    expect(canAudienceAccess('test_room', 'student')).toBe(false);
+  });
+
   it('strips display-only numeric prefixes without changing the source title contract', () => {
     expect(displayWalkthroughTitle('02 | Getting an Account')).toBe('Getting an Account');
     expect(displayWalkthroughTitle('204 - Full case walkthrough')).toBe('Full case walkthrough');

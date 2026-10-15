@@ -1529,7 +1529,7 @@ export default function EmrDashboard() {
                     priority: medForm.priority,
                     status: 'Active',
                     orderedBy: selectedPatient.attendingPhysician,
-                    orderTime: minimumPriorTimestamp(selectedPatient.admissionDate),
+                    orderTime: forceBaseline ? minimumPriorTimestamp(selectedPatient.admissionDate) : new Date().toISOString(),
                   };
                   const savedOrder = await emrApi.addOrder(newOrder, forceBaseline ? null : selectedPatient.roomId ?? null);
                   if (!savedOrder) {

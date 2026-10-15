@@ -391,7 +391,9 @@ export function OrdersManagement({
                 vitals,
               });
 
-        const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
+          const runTimestamp = effectiveAssignmentId
+            ? new Date().toISOString()
+            : minimumPriorTimestamp(patient.admissionDate);
         const labsWithScope = generatedLabs.map((lab, index) => ({
           id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
           patientId: patient.id,
@@ -429,8 +431,14 @@ export function OrdersManagement({
     if (updated && 'conflict' in updated) {
       setOrders((prev) => prev.map((order) => (order.id === orderId ? updated.current : order)));
       setOrderSaveError('This order changed elsewhere. The newer server version is now shown.');
-    } else if (updated) {
+  } else if (updated) {
       setOrders((prev) => prev.map((order) => (order.id === orderId ? updated : order)));
+      // LabResults reconciles completed STAT orders on its next refresh. This
+      // matters when the learner completes an order before the async result
+      // callback has finished (or when the original callback failed).
+      if (updated.category === 'Lab' && updated.status === 'Completed') {
+        onLabsGenerated?.();
+      }
     }
   };
 

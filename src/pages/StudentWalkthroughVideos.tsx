@@ -30,12 +30,12 @@ export default function StudentWalkthroughVideos() {
   const [sandboxMessage, setSandboxMessage] = useState('');
 
   const load = async () => {
-    if (!user) return;
+    if (!user || !profile?.role) return;
     setLoading(true); setError('');
     // The library can expose a reviewed/preview course before it becomes a
     // required onboarding gate. StudentLearningGate intentionally checks
     // is_mandatory separately, so publishing a preview cannot lock cases.
-    const visibleAudiences = visibleWalkthroughAudiences(profile?.role);
+    const visibleAudiences = visibleWalkthroughAudiences(profile.role);
     const courseResult = await supabase.from('walkthrough_courses').select('*').eq('status', 'published').in('audience', visibleAudiences).order('updated_at', { ascending: false }).limit(1).maybeSingle();
     if (courseResult.error) { setError(courseResult.error.message); setLoading(false); return; }
     if (!courseResult.data) { setCourse(null); setLoading(false); return; }

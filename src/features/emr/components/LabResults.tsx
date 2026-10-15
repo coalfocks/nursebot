@@ -12,6 +12,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
@@ -156,7 +157,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   // predate the order-placement callback, so reconcile them when the Labs tab
   // opens instead of leaving an order stranded with no result forever.
   useEffect(() => {
-    if (isSandbox || !roomMetaLoaded) return;
+    if (!roomMetaLoaded) return;
     const request = capture();
     void (async () => {
       const [orders, existingLabs, clinicalNotes, vitals] = await Promise.all([
@@ -167,15 +168,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       ]);
       if (!isCurrent(request)) return;
 
-      const isInstantOrder = (order: MedicalOrder) => {
-        const name = order.orderName.trim().toLowerCase();
-        return instantLabs.some((lab) => {
-          const catalogName = lab.toLowerCase();
-          return name === catalogName || name.includes(catalogName) || catalogName.includes(name);
-        });
-      };
       const candidates = orders.filter(
-        (order) => order.category === 'Lab' && order.status === 'Active' && order.priority === 'STAT' && isInstantOrder(order),
+        (order) => isResultProducingStatLab(order),
       );
 
       for (const order of candidates) {
@@ -244,7 +238,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 clinicalNotes,
                 vitals,
               });
-          const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
+          const runTimestamp = assignmentId
+            ? new Date().toISOString()
+            : minimumPriorTimestamp(patient.admissionDate);
           const labsWithScope = generatedLabs.map((lab, index) => ({
             id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
             patientId: patient.id,

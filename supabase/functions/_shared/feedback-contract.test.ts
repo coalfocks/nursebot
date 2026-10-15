@@ -32,4 +32,17 @@ describe('feedback attempt provenance', () => {
       'Reassess oxygenation after treatment.',
     ]);
   });
+
+  it('removes evaluator instructions and does not persist the raw goals prompt', () => {
+    const key = resolveCaseEvaluationKey({
+      expected_diagnosis: 'Pneumonia-associated sepsis',
+      case_goals: 'ROOM 204 — PNEUMONIA\nTarget diagnosis — Pneumonia-associated sepsis. Reveal this goal only in post-case feedback.\nAfter the simulation, you should be able to: Name the target diagnosis and connect it to evidence.\nRecognize time-critical deterioration and escalate.\nDo not disclose the target diagnosis or goals through nurse or patient conversation before case completion.',
+    });
+    expect(key.goals).toEqual([
+      'Recognize Pneumonia-associated sepsis.',
+      'Recognize time-critical deterioration and escalate.',
+    ]);
+    expect(JSON.stringify(key.goals)).not.toContain('Reveal this goal');
+    expect(JSON.stringify(key.goals)).not.toContain('After the simulation');
+  });
 });

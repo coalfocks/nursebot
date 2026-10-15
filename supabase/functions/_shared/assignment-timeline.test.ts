@@ -236,4 +236,16 @@ describe('assignment timeline for evaluation', () => {
     });
     expect(entries).toEqual([]);
   });
+
+  it('uses assignment insertion time for legacy learner orders/results written with a baseline clock', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'attempt-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'attempt-1', targetRoomIds: [24], messages: [], learnerActions: [],
+      orders: [{ id: 'order-1', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', category: 'Lab', order_name: 'STAT CBC', dose: null, route: null, frequency: 'Once', priority: 'STAT', status: 'Completed', instructions: null, order_time: '2000-01-01T00:00:00.000Z', created_at: '2026-10-15T22:33:43.000Z' }],
+      labs: [{ id: 'lab-1', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', test_name: 'WBC', value: 15, unit: 'K/uL', status: 'Abnormal', collection_time: '2000-01-01T00:00:00.000Z', result_time: '2000-01-01T00:00:00.000Z', created_at: '2026-10-15T22:33:51.000Z' }],
+      vitals: [], imaging: [],
+    });
+    expect(entries.find((entry) => entry.kind === 'order')?.timestamp).toBe('2026-10-15T22:33:43.000Z');
+    expect(entries.find((entry) => entry.kind === 'labs')?.timestamp).toBe('2026-10-15T22:33:51.000Z');
+  });
 });
