@@ -23,6 +23,7 @@ type GrowthArea = {
 export default function AssignmentDebrief() {
   const { assignmentId } = useParams<{ assignmentId: string }>(); const { user } = useAuthStore(); const navigate = useNavigate();
   const [assignment, setAssignment] = useState<any>(null); const [loading, setLoading] = useState(true);
+  const [printStatus, setPrintStatus] = useState('');
   useEffect(() => { if (!user || !assignmentId) return; supabase.from('student_room_assignments').select('*').eq('id', assignmentId).single().then(({ data, error }) => { if (error || !data || data.student_id !== user.id) navigate('/assignments'); else setAssignment(data); setLoading(false); }); }, [assignmentId, user, navigate]);
   if (loading) return <><Navbar /><main className="mx-auto max-w-4xl p-8">Loading feedback…</main></>;
   if (!assignment) return null;
@@ -36,13 +37,32 @@ export default function AssignmentDebrief() {
   const handlePrint = () => {
     const previousTitle = document.title;
     document.title = 'Formative feedback';
+    setPrintStatus('Print dialog requested. If it does not appear, use Open print-ready view.');
     window.requestAnimationFrame(() => {
       window.print();
       window.setTimeout(() => { document.title = previousTitle; }, 1000);
     });
   };
+  const openPrintReadyView = () => {
+    const root = document.getElementById('feedback-print-root');
+    if (!root) return;
+    const printable = root.cloneNode(true) as HTMLElement;
+    printable.querySelectorAll('.print-toolbar').forEach((node) => node.remove());
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+      setPrintStatus('The print-ready view was blocked. Allow pop-ups for this site and try again.');
+      return;
+    }
+    printWindow.document.write(`<!doctype html><html><head><title>Formative feedback</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+      :root{color-scheme:light}body{font-family:Arial,sans-serif;background:#fff;color:#111827;margin:0;padding:32px;line-height:1.45}main{max-width:960px;margin:0 auto}section{border:1px solid #d1d5db;border-radius:8px;padding:20px;margin:16px 0;break-inside:avoid;box-shadow:none}h1{font-size:28px;margin:4px 0 12px}h2{font-size:18px;margin:0 0 10px}p{margin:6px 0}ul{padding-left:22px}@media print{body{padding:0}section{break-inside:avoid}}
+    </style></head><body><div class="print-toolbar" style="display:flex;gap:12px;margin:0 auto 20px;max-width:960px"><button onclick="window.print()" style="padding:9px 14px">Print / Save as PDF</button><span style="align-self:center;color:#4b5563">This is a print-ready copy of the formative feedback.</span></div>${printable.outerHTML}</body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    setPrintStatus('Opened a print-ready copy in a new tab. Choose Print / Save as PDF there.');
+  };
   return <div className="min-h-screen bg-gray-50"><Navbar /><main id="feedback-print-root" className="mx-auto max-w-5xl space-y-6 p-6 print:p-0">
-    <div className="flex items-center justify-between print:hidden"><button onClick={() => navigate(`/assignment/${assignmentId}`)} className="inline-flex items-center text-sm text-gray-600"><ArrowLeft className="mr-2 h-4 w-4" />Back to completed case</button><button type="button" aria-label="Print feedback" onClick={handlePrint} className="inline-flex items-center rounded border bg-white px-3 py-2 text-sm"><Printer className="mr-2 h-4 w-4" />Print feedback</button></div>
+    <div className="print-toolbar flex items-center justify-between print:hidden"><button onClick={() => navigate(`/assignment/${assignmentId}`)} className="inline-flex items-center text-sm text-gray-600"><ArrowLeft className="mr-2 h-4 w-4" />Back to completed case</button><div className="flex items-center gap-2"><button type="button" aria-label="Print feedback" onClick={handlePrint} className="inline-flex items-center rounded border bg-white px-3 py-2 text-sm"><Printer className="mr-2 h-4 w-4" />Print feedback</button><button type="button" onClick={openPrintReadyView} className="rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">Open print-ready view</button></div></div>
+    {printStatus && <p role="status" aria-live="polite" className="print:hidden rounded border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">{printStatus}</p>}
     <header><p className="text-sm font-medium text-blue-700">Formative debrief</p><h1 className="mt-1 text-3xl font-bold text-gray-900">Review your feedback</h1><p className="mt-2 text-sm text-gray-600">{debrief.formative_notice || 'Formative feedback for learning only; not an ACGME Milestone, EPA entrustment decision, or validated competence determination.'}</p></header>
     {assignment.technical_incomplete && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">This attempt is technically incomplete because the first nurse page was not recorded. No learner score was assigned.</div>}
     <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Case goals and your approach</h2><ul className="mt-2 list-disc pl-5 text-sm text-gray-700">{(debrief.case_goals ?? []).map((goal: string) => <li key={goal}>{goal}</li>)}</ul><p className="mt-3 text-sm text-gray-700">{debrief.approach_summary || assignment.learning_objectives || 'No approach summary available.'}</p>{assignment.scoring_start_at && <p className="mt-3 text-xs text-gray-500">Scoring begins with the first nurse page at {new Date(assignment.scoring_start_at).toLocaleString()}.</p>}</section>
