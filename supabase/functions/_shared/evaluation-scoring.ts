@@ -21,22 +21,28 @@ const text = (value: unknown, fallback: string) => typeof value === 'string' && 
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
 export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
-  const focused = clamp(raw.communication_breakdown?.focused_information_gathering?.score ?? 0, 0, 2);
-  const closedLoop = clamp(raw.communication_breakdown?.closed_loop_team_communication?.score ?? 0, 0, 3);
-  const orders = clamp(raw.mdm_breakdown?.orders_monitoring_quality?.score ?? 0, 0, 3);
-  const reasoning = clamp(raw.mdm_breakdown?.clinical_reasoning_documentation?.score ?? 0, 0, 2);
+  const communication = (raw.communication_breakdown ?? {}) as Record<string, any>;
+  const mdm = (raw.mdm_breakdown ?? {}) as Record<string, any>;
+  const focusedRaw = communication.focused_information_gathering ?? communication.information_sharing;
+  const closedLoopRaw = communication.closed_loop_team_communication ?? communication.responsive_communication;
+  const ordersRaw = mdm.orders_monitoring_quality ?? mdm.labs_orders_quality;
+  const reasoningRaw = mdm.clinical_reasoning_documentation ?? mdm.note_thought_process;
+  const focused = clamp(focusedRaw?.score ?? 0, 0, 2);
+  const closedLoop = clamp(closedLoopRaw?.score ?? 0, 0, 3);
+  const orders = clamp(ordersRaw?.score ?? 0, 0, 3);
+  const reasoning = clamp(reasoningRaw?.score ?? 0, 0, 2);
   const safety = raw.safety_result?.level === 'critical' || raw.safety_result?.level === 'concern' ? raw.safety_result.level : 'none';
   return {
     learning_objectives: text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.'),
     communication_score: focused + closedLoop,
     mdm_score: orders + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: text(raw.communication_breakdown?.focused_information_gathering?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(raw.communication_breakdown?.focused_information_gathering?.evidence_event_ids) },
-      closed_loop_team_communication: { score: closedLoop, feedback: text(raw.communication_breakdown?.closed_loop_team_communication?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(raw.communication_breakdown?.closed_loop_team_communication?.evidence_event_ids) },
+      focused_information_gathering: { score: focused, feedback: text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
+      closed_loop_team_communication: { score: closedLoop, feedback: text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
     },
     mdm_breakdown: {
-      orders_monitoring_quality: { score: orders, feedback: text(raw.mdm_breakdown?.orders_monitoring_quality?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(raw.mdm_breakdown?.orders_monitoring_quality?.evidence_event_ids) },
-      clinical_reasoning_documentation: { score: reasoning, feedback: text(raw.mdm_breakdown?.clinical_reasoning_documentation?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(raw.mdm_breakdown?.clinical_reasoning_documentation?.evidence_event_ids) },
+      orders_monitoring_quality: { score: orders, feedback: text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
+      clinical_reasoning_documentation: { score: reasoning, feedback: text(reasoningRaw?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(reasoningRaw?.evidence_event_ids) },
     },
     safety_result: { level: safety, action: raw.safety_result?.action ?? null, rationale: raw.safety_result?.rationale ?? null, evidence_event_ids: ids(raw.safety_result?.evidence_event_ids) },
     strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string') : [],

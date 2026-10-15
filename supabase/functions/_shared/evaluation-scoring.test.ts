@@ -44,4 +44,22 @@ describe('feedback v2 canonical contract', () => {
     expect(hasMeaningfulEvidence(['message-1', 'order-1'])).toBe(true);
     expect(hasMeaningfulEvidence([])).toBe(false);
   });
+
+  it('normalizes legacy evaluator breakdown keys into the canonical contract', () => {
+    const result = canonicalizeEvaluation({
+      communication_breakdown: {
+        information_sharing: { score: 2, feedback: 'focused legacy evidence' },
+        responsive_communication: { score: 2, feedback: 'closed-loop legacy evidence' },
+      },
+      mdm_breakdown: {
+        labs_orders_quality: { score: 3, feedback: 'orders legacy evidence' },
+        note_thought_process: { score: 2, feedback: 'reasoning legacy evidence' },
+      },
+      safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
+    });
+    expect(result.communication_score).toBe(4);
+    expect(result.mdm_score).toBe(5);
+    expect(result.communication_breakdown.focused_information_gathering.feedback).toBe('focused legacy evidence');
+    expect(result.mdm_breakdown.clinical_reasoning_documentation.feedback).toBe('reasoning legacy evidence');
+  });
 });
