@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAudienceAccess, displayWalkthroughTitle, getWalkthroughPublicationError } from './walkthrough';
+import { canAudienceAccess, displayWalkthroughTitle, getWalkthroughPublicationError, visibleWalkthroughAudiences } from './walkthrough';
 
 describe('walkthrough audience and publication safety', () => {
   it('allows only the intended role audience', () => {
@@ -13,6 +13,12 @@ describe('walkthrough audience and publication safety', () => {
     expect(canAudienceAccess('test_room', 'test_user')).toBe(true);
     expect(canAudienceAccess('test_room', 'student')).toBe(false);
     expect(canAudienceAccess('test_room', 'school_admin')).toBe(false);
+  });
+
+  it('uses the Test Room audience for test accounts and never mixes it with student media', () => {
+    expect(visibleWalkthroughAudiences('test_user')).toEqual(['test_room']);
+    expect(visibleWalkthroughAudiences('student')).toEqual(['student', 'both']);
+    expect(visibleWalkthroughAudiences('school_admin')).toEqual(['student', 'both']);
   });
 
   it('strips display-only numeric prefixes without changing the source title contract', () => {

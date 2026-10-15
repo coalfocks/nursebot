@@ -1,5 +1,9 @@
 export type WalkthroughAudience = 'admin' | 'student' | 'test_room' | 'both';
 
+export function visibleWalkthroughAudiences(role: string | null | undefined): WalkthroughAudience[] {
+  return role === 'test_user' ? ['test_room'] : ['student', 'both'];
+}
+
 export const unsafeWalkthroughPasswordAdvice = /same\s+(?:initial|default|shared)\s+password|shared\s+password|all\s+students|password\s+for\s+all\s+students|one\s+password\s+for\s+everyone/i;
 
 export function getWalkthroughPublicationError(transcript: string): string | null {

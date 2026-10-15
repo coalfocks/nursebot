@@ -5,7 +5,7 @@ import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import Navbar from '../components/Navbar';
-import { displayWalkthroughTitle } from '../lib/walkthrough';
+import { displayWalkthroughTitle, visibleWalkthroughAudiences } from '../lib/walkthrough';
 import { isTestUser } from '../lib/roles';
 
 type Video = Database['public']['Tables']['walkthrough_videos']['Row'];
@@ -35,13 +35,13 @@ export default function StudentWalkthroughVideos() {
     // The library can expose a reviewed/preview course before it becomes a
     // required onboarding gate. StudentLearningGate intentionally checks
     // is_mandatory separately, so publishing a preview cannot lock cases.
-    const visibleAudiences = isTestUser(profile) ? ['test_room'] : ['student', 'both'];
+    const visibleAudiences = visibleWalkthroughAudiences(profile?.role);
     const courseResult = await supabase.from('walkthrough_courses').select('*').eq('status', 'published').in('audience', visibleAudiences).order('updated_at', { ascending: false }).limit(1).maybeSingle();
     if (courseResult.error) { setError(courseResult.error.message); setLoading(false); return; }
     if (!courseResult.data) { setCourse(null); setLoading(false); return; }
     const [itemResult, videoResult, enrollmentResult] = await Promise.all([
       supabase.from('walkthrough_course_items').select('*').eq('course_id', courseResult.data.id).eq('course_version', courseResult.data.version).order('position'),
-      supabase.from('walkthrough_videos').select('*').in('audience', ['student', 'both']).eq('status', 'published'),
+      supabase.from('walkthrough_videos').select('*').in('audience', visibleAudiences).eq('status', 'published'),
       supabase.from('walkthrough_enrollments').select('id').eq('user_id', user.id).eq('course_id', courseResult.data.id).eq('course_version', courseResult.data.version).maybeSingle(),
     ]);
     if (itemResult.error || videoResult.error || enrollmentResult.error) { setError(itemResult.error?.message || videoResult.error?.message || enrollmentResult.error?.message || 'Learning content could not be loaded.'); setLoading(false); return; }
