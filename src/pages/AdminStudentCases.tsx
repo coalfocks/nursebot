@@ -7,6 +7,7 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import AssignmentFeedback from '../components/AssignmentFeedback';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -24,6 +25,7 @@ export default function AdminStudentCases() {
   const [error, setError] = useState<string | null>(null);
   const [student, setStudent] = useState<ProfileRow | null>(null);
   const [assignments, setAssignments] = useState<AssignmentWithRoom[]>([]);
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
@@ -153,6 +155,8 @@ export default function AdminStudentCases() {
     }
   };
 
+  const selectedFeedback = assignments.find((assignment) => assignment.id === selectedFeedbackId);
+
   return (
     <AdminLayout>
       <div className="px-6 py-6 space-y-6">
@@ -183,6 +187,7 @@ export default function AdminStudentCases() {
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Window</th>
                   <th className="px-4 py-3">Completed</th>
+                  <th className="px-4 py-3">Feedback</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -209,11 +214,27 @@ export default function AdminStudentCases() {
                       <td className="px-4 py-3 text-slate-600">
                         {assignment.completed_at ? new Date(assignment.completed_at).toLocaleString() : '—'}
                       </td>
+                      <td className="px-4 py-3">
+                        {assignment.status === 'completed' ? (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedFeedbackId(assignment.id)}
+                            className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                          >
+                            Review feedback
+                          </button>
+                        ) : '—'}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          {selectedFeedback ? (
+            <div className="border-t border-slate-200 p-4">
+              <AssignmentFeedback assignment={selectedFeedback} />
+            </div>
+          ) : null}
           </div>
         )}
       </div>
