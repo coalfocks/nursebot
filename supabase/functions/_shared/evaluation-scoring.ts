@@ -44,3 +44,5 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
     recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string') : [],
   };
 };
+
+export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;

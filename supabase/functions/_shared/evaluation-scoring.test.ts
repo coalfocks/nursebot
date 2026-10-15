@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalizeEvaluation } from './evaluation-scoring';
+import { canonicalizeEvaluation, hasMeaningfulEvidence } from './evaluation-scoring';
 
 describe('feedback v2 canonical contract', () => {
   it('preserves the two anchored composites and never subtracts safety', () => {
@@ -38,5 +38,10 @@ describe('feedback v2 canonical contract', () => {
     expect(result.mdm_score).toBe(3);
     expect(result.communication_breakdown.closed_loop_team_communication.feedback).toContain('Insufficient evidence');
     expect(result.mdm_breakdown.clinical_reasoning_documentation.feedback).toContain('Insufficient evidence');
+  });
+
+  it('requires a non-empty source manifest before treating an attempt as evidence-bearing', () => {
+    expect(hasMeaningfulEvidence(['message-1', 'order-1'])).toBe(true);
+    expect(hasMeaningfulEvidence([])).toBe(false);
   });
 });
