@@ -113,6 +113,21 @@ export default function AdminDashboard() {
           adminQuery = adminQuery.eq('school_id', scopedSchoolId);
         }
 
+        // Keep the overview's critical counts independent from the heavier
+        // cohort/score payload. In All schools scope, loading every assignment
+        // row before rendering made the entire dashboard appear stuck.
+        let assignmentCountQuery = supabase
+          .from('student_room_assignments')
+          .select('id', { count: 'exact', head: true });
+        let completedCountQuery = supabase
+          .from('student_room_assignments')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'completed');
+        if (scopedSchoolId) {
+          assignmentCountQuery = assignmentCountQuery.eq('school_id', scopedSchoolId);
+          completedCountQuery = completedCountQuery.eq('school_id', scopedSchoolId);
+        }
+
         const loadAssignmentRows = async () => {
           const rows: Array<Pick<AssignmentRow, 'status' | 'feedback_status' | 'student_id' | 'communication_score' | 'mdm_score' | 'grade' | 'nurse_feedback'>> = [];
           const pageSize = 1000;
@@ -160,78 +175,86 @@ export default function AdminDashboard() {
           recentQuery = recentQuery.eq('school_id', scopedSchoolId);
         }
 
-        const [
-          studentResult,
-          adminResult,
-          assignmentRows,
-          roomsResult,
-          recentResult,
-        ] = await withTimeout(Promise.all([
+        const [studentResult, adminResult, assignmentCountResult, completedCountResult, roomsResult] = await withTimeout(Promise.all([
           studentQuery,
           adminQuery,
-          loadAssignmentRows(),
+          assignmentCountQuery,
+          completedCountQuery,
           roomsQuery,
-          recentQuery,
         ]), 'dashboard data load', 30000);
 
         if (!isMounted) return;
 
         if (studentResult.error) throw studentResult.error;
         if (adminResult.error) throw adminResult.error;
+        if (assignmentCountResult.error) throw assignmentCountResult.error;
+        if (completedCountResult.error) throw completedCountResult.error;
         if (roomsResult.error) throw roomsResult.error;
-        if (recentResult.error) throw recentResult.error;
 
-        const cohortAssignments: AnalyticsAssignment[] = assignmentRows.map((row) => ({
-          status: row.status,
-          feedbackStatus: row.feedback_status,
-          studentId: row.student_id,
-          communicationScore: row.communication_score,
-          mdmScore: row.mdm_score,
-          overallScore: row.grade,
-        }));
-        const cohortMetrics = computeCohortMetrics(cohortAssignments, studentResult.count ?? 0);
-        const gradeRows = assignmentRows.filter((row) => row.status === 'completed');
-        const scoreValues = gradeRows
-          .map((row) => {
-            if (typeof row.grade === 'number') return row.grade;
-            const feedback = row.nurse_feedback as AssignmentRow['nurse_feedback'];
-            if (feedback && typeof feedback.overall_score === 'number') return feedback.overall_score;
-            return null;
-          })
-          .filter((value): value is number => value !== null);
-
-        const averageScore = scoreValues.length
-          ? Number((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length).toFixed(1))
-          : null;
-
-        const recentRows = (recentResult.data ?? []) as Array<
-          Pick<AssignmentRow, 'id' | 'status' | 'grade' | 'created_at'> & {
-            room: Pick<RoomRow, 'room_number'> & { specialty: { name: string | null } | null } | null;
-            student: Pick<ProfileRow, 'full_name'> | null;
-          }
-        >;
+        const assignmentCount = assignmentCountResult.count ?? 0;
+        const completedAssignments = completedCountResult.count ?? 0;
 
         setStats({
           studentCount: studentResult.count ?? 0,
           adminCount: adminResult.count ?? 0,
-          assignmentCount: cohortMetrics.eligibleAssignments,
-          completedAssignments: cohortMetrics.completedAssignments,
+          assignmentCount,
+          completedAssignments,
           activeRoomCount: roomsResult.count ?? 0,
-          averageScore,
-          cohortMetrics,
+          averageScore: null,
+          cohortMetrics: computeCohortMetrics([], studentResult.count ?? 0),
         });
 
-        setRecentAssignments(
-          recentRows.map((row) => ({
-            id: row.id,
-            status: row.status,
-            grade: row.grade,
-            createdAt: row.created_at,
-            studentName: row.student?.full_name ?? 'Unassigned',
-            roomNumber: row.room?.room_number ?? '—',
-            specialty: row.room?.specialty?.name ?? null,
-          }))
-        );
+        // The cards and actions are now usable as soon as the exact counts
+        // return. Cohort detail and recent activity are supplemental reads.
+        if (isMounted) setLoading(false);
+
+        void withTimeout(Promise.all([loadAssignmentRows(), recentQuery]), 'dashboard detail load', 30000)
+          .then(([assignmentRows, recentResult]) => {
+            if (!isMounted) return;
+            if (recentResult.error) throw recentResult.error;
+            const cohortAssignments: AnalyticsAssignment[] = assignmentRows.map((row) => ({
+              status: row.status,
+              feedbackStatus: row.feedback_status,
+              studentId: row.student_id,
+              communicationScore: row.communication_score,
+              mdmScore: row.mdm_score,
+              overallScore: row.grade,
+            }));
+            const cohortMetrics = computeCohortMetrics(cohortAssignments, studentResult.count ?? 0);
+            const scoreValues = assignmentRows
+              .filter((row) => row.status === 'completed')
+              .map((row) => {
+                if (typeof row.grade === 'number') return row.grade;
+                const feedback = row.nurse_feedback as AssignmentRow['nurse_feedback'];
+                return feedback && typeof feedback.overall_score === 'number' ? feedback.overall_score : null;
+              })
+              .filter((value): value is number => value !== null);
+            const averageScore = scoreValues.length
+              ? Number((scoreValues.reduce((sum, value) => sum + value, 0) / scoreValues.length).toFixed(1))
+              : null;
+            const recentRows = (recentResult.data ?? []) as Array<
+              Pick<AssignmentRow, 'id' | 'status' | 'grade' | 'created_at'> & {
+                room: Pick<RoomRow, 'room_number'> & { specialty: { name: string | null } | null } | null;
+                student: Pick<ProfileRow, 'full_name'> | null;
+              }
+            >;
+            setStats((current) => ({ ...current, averageScore, cohortMetrics }));
+            setRecentAssignments(recentRows.map((row) => ({
+              id: row.id,
+              status: row.status,
+              grade: row.grade,
+              createdAt: row.created_at,
+              studentName: row.student?.full_name ?? 'Unassigned',
+              roomNumber: row.room?.room_number ?? '—',
+              specialty: row.room?.specialty?.name ?? null,
+            })));
+          })
+          .catch((detailError) => {
+            if (isMounted) {
+              console.error('Failed to load dashboard detail data', detailError);
+              setError(detailError instanceof Error ? detailError.message : 'Dashboard counts loaded, but detail analytics are unavailable.');
+            }
+          });
       } catch (err) {
         console.error('Failed to load admin dashboard', err);
         if (err instanceof Error) {
