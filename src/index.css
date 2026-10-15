@@ -36,6 +36,13 @@
   display: none;
 }
 
+/* The popup-independent feedback route is a normal screen view until the
+ * learner chooses Print. It must not inherit the in-app print sheet's hidden
+ * screen state. */
+.print-mode .print-sheet {
+  display: block;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
