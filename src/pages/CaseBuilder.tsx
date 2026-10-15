@@ -258,6 +258,7 @@ export default function CaseBuilder() {
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [generatingSection, setGeneratingSection] = useState<GenerationSection | 'all' | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [publishedLinks, setPublishedLinks] = useState<Record<string, { roomId: number; patientId: string; notes: number }>>({});
 
   const fetchBlueprints = useCallback(async () => {
     setLoading(true);
@@ -859,6 +860,7 @@ export default function CaseBuilder() {
 
       if (!patientId) throw new Error('[CASE_EMR_LINK_REQUIRED] Publishing completed without a patient/chart link.');
       const linkedIds = `Room ID ${roomRecord.id}; patient/chart ID ${patientId}; ${noteCount} generated note${noteCount === 1 ? '' : 's'}.`;
+      setPublishedLinks((previous) => ({ ...previous, [blueprint.id]: { roomId: roomRecord.id, patientId, notes: noteCount } }));
       const publishVerb = reusedRoom ? 'Reused' : 'Published';
       const details = patientSkippedForMissingDob
         ? ' No patient was created because the generated package has no structured dateOfBirth; regenerate with structured identity data or link a patient manually.'
@@ -1471,6 +1473,13 @@ export default function CaseBuilder() {
                           <p className="mt-2 text-sm text-slate-700">
                             {blueprint.objectives}
                           </p>
+                          {publishedLinks[blueprint.id] && (
+                            <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+                              <p className="font-semibold">Published room linkage verified</p>
+                              <p className="mt-1">Room {publishedLinks[blueprint.id].roomId} → patient/chart {publishedLinks[blueprint.id].patientId}</p>
+                              <p className="mt-1">EMR notes created: {publishedLinks[blueprint.id].notes}. Re-publishing this blueprint reuses the same room/patient linkage.</p>
+                            </div>
+                          )}
                           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
                             <div>
                               <span className="font-semibold text-slate-800">Consults:</span>{' '}
