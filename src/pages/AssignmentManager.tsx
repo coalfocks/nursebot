@@ -71,6 +71,8 @@ export default function AssignmentManager() {
   } | null>(null);
   const [showChatModal, setShowChatModal] = useState(false);
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
@@ -491,6 +493,8 @@ export default function AssignmentManager() {
   };
 
   const fetchChatMessages = async (assignmentId: string) => {
+    setChatLoading(true);
+    setChatError(null);
     try {
       const { data, error } = await supabase
         .from('chat_messages')
@@ -502,7 +506,10 @@ export default function AssignmentManager() {
       return data || [];
     } catch (error) {
       console.error('Error fetching chat messages:', error);
+      setChatError(error instanceof Error ? error.message : 'Unable to read persisted chat events for this attempt.');
       return [];
+    } finally {
+      setChatLoading(false);
     }
   };
 
@@ -1434,7 +1441,10 @@ export default function AssignmentManager() {
                   Chat History - {selectedAssignment.student.full_name} in Room {selectedAssignment.room.room_number}
                 </h3>
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                  {selectedChatMessages.map((message) => (
+                  {chatLoading && <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading persisted chat events…</p>}
+                  {!chatLoading && chatError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Chat history could not be read: {chatError}</p>}
+                  {!chatLoading && !chatError && selectedChatMessages.length === 0 && <p className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No chat events were persisted for this attempt. This is different from an empty loading state; check the assignment event log before interpreting feedback.</p>}
+                  {!chatLoading && selectedChatMessages.map((message) => (
                     <div
                       key={message.id}
                       className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}

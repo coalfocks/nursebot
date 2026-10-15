@@ -286,6 +286,12 @@ export default function AssignmentView() {
                     Open EHR
                   </button>
                 </div>
+                {assignment.status === 'completed' && (assignment as any).feedback_status === 'completed' && (
+                  <div className="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm text-blue-900">Your formative feedback is ready.</p>
+                    <button type="button" onClick={() => navigate(`/assignment/${assignment.id}/feedback`)} className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800">Review your feedback</button>
+                  </div>
+                )}
                 <ChatInterface
                   assignmentId={assignment.id}
                   roomNumber={assignment.room.room_number}
