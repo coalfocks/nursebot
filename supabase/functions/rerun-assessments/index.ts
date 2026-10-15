@@ -127,8 +127,7 @@ Deno.serve(async (req) => {
       .update({
         feedback_status: 'pending',
         feedback_error: null,
-        nurse_feedback: null,
-        feedback_generated_at: null
+        // Preserve the prior result; generate-feedback records a new assessment run.
       })
       .in('id', assignmentIds);
 
