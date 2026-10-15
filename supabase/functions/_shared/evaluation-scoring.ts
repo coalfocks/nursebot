@@ -16,21 +16,38 @@ export interface EvaluationScoringResponse {
   recommendations: string[];
 };
 
-const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, Number.isFinite(value) ? Math.round(value) : min));
+const clamp = (value: unknown, min: number, max: number) => {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN;
+  return Math.max(min, Math.min(max, Number.isFinite(numeric) ? Math.round(numeric) : min));
+};
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
 export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
-  const communication = (raw.communication_breakdown ?? {}) as Record<string, any>;
-  const mdm = (raw.mdm_breakdown ?? {}) as Record<string, any>;
-  const focusedRaw = communication.focused_information_gathering ?? communication.information_sharing;
-  const closedLoopRaw = communication.closed_loop_team_communication ?? communication.responsive_communication;
-  const ordersRaw = mdm.orders_monitoring_quality ?? mdm.labs_orders_quality;
-  const reasoningRaw = mdm.clinical_reasoning_documentation ?? mdm.note_thought_process;
-  const focused = clamp(focusedRaw?.score ?? 0, 0, 2);
-  const closedLoop = clamp(closedLoopRaw?.score ?? 0, 0, 3);
-  const orders = clamp(ordersRaw?.score ?? 0, 0, 3);
-  const reasoning = clamp(reasoningRaw?.score ?? 0, 0, 2);
+  const source = raw as Record<string, any>;
+  const communication = (source.communication_breakdown ?? source.communication ?? {}) as Record<string, any>;
+  const mdm = (source.mdm_breakdown ?? source.medical_decision_making ?? source.mdm ?? {}) as Record<string, any>;
+  const focusedRaw = communication.focused_information_gathering
+    ?? communication.information_gathering
+    ?? communication.information_sharing
+    ?? communication.focused_gathering;
+  const closedLoopRaw = communication.closed_loop_team_communication
+    ?? communication.closed_loop_communication
+    ?? communication.responsive_communication
+    ?? communication.team_communication;
+  const ordersRaw = mdm.orders_monitoring_quality
+    ?? mdm.orders_monitoring
+    ?? mdm.labs_orders_quality
+    ?? mdm.orders_quality;
+  const reasoningRaw = mdm.clinical_reasoning_documentation
+    ?? mdm.reasoning_documentation
+    ?? mdm.note_thought_process
+    ?? mdm.reasoning;
+  const componentScore = (component: Record<string, any> | undefined) => component?.score ?? component?.value ?? component?.points ?? 0;
+  const focused = clamp(componentScore(focusedRaw), 0, 2);
+  const closedLoop = clamp(componentScore(closedLoopRaw), 0, 3);
+  const orders = clamp(componentScore(ordersRaw), 0, 3);
+  const reasoning = clamp(componentScore(reasoningRaw), 0, 2);
   const safety = raw.safety_result?.level === 'critical' || raw.safety_result?.level === 'concern' ? raw.safety_result.level : 'none';
   return {
     learning_objectives: text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.'),

@@ -62,4 +62,19 @@ describe('feedback v2 canonical contract', () => {
     expect(result.communication_breakdown.focused_information_gathering.feedback).toBe('focused legacy evidence');
     expect(result.mdm_breakdown.clinical_reasoning_documentation.feedback).toBe('reasoning legacy evidence');
   });
+
+  it('accepts numeric-string and value-shaped evaluator component scores', () => {
+    const result = canonicalizeEvaluation({
+      communication: {
+        information_gathering: { value: '2', feedback: 'bedside history' },
+        closed_loop_communication: { points: '3', feedback: 'escalation and reassessment' },
+      },
+      medical_decision_making: {
+        orders_monitoring: { score: '3', feedback: 'urgent monitoring' },
+        reasoning_documentation: { value: 2, feedback: 'documented rationale' },
+      },
+    });
+    expect(result.communication_score).toBe(5);
+    expect(result.mdm_score).toBe(5);
+  });
 });
