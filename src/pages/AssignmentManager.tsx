@@ -12,6 +12,7 @@ import {
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
 import { getSchoolDisplayName } from '../hooks/useSchools';
+import { classifyFeedbackScore } from '../lib/feedbackScore';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -75,9 +76,33 @@ export default function AssignmentManager() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
+
+  const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
+    const result = new Set<string>();
+    const pageSize = 1000;
+    for (let from = 0; from < assignmentIds.length; from += pageSize) {
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('assignment_id')
+        .in('assignment_id', assignmentIds)
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      (data ?? []).forEach((message) => result.add(message.assignment_id));
+      if ((data ?? []).length < pageSize) break;
+    }
+    return result;
+  };
+
+  const getOverallScore = (feedback: Database['public']['Tables']['student_room_assignments']['Row']['nurse_feedback']) => {
+    if (feedback && typeof feedback === 'object' && !Array.isArray(feedback) && 'overall_score' in feedback) {
+      return feedback.overall_score;
+    }
+    return undefined;
+  };
 
   useEffect(() => {
     if (!hasAdmin) return;
@@ -149,7 +174,9 @@ export default function AssignmentManager() {
         if (specialtiesResult.error) throw specialtiesResult.error;
         if (schoolsResult.error) throw schoolsResult.error;
 
-        setAssignments(((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null));
+        const loadedAssignments = ((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null);
+        setAssignments(loadedAssignments);
+        setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -194,7 +221,9 @@ export default function AssignmentManager() {
     const { data, error } = await query;
 
     if (error) throw error;
-    setAssignments(((data ?? []) as Assignment[]).filter(a => a.room !== null));
+    const loadedAssignments = ((data ?? []) as Assignment[]).filter(a => a.room !== null);
+    setAssignments(loadedAssignments);
+    setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {
@@ -915,15 +944,36 @@ export default function AssignmentManager() {
                       {assignment.nurse_feedback ? (
                         <div className="text-sm">
                           <div className="font-medium text-gray-900">
-                            Score: {assignment.nurse_feedback.overall_score}/5
+                            {(() => {
+                              const score = classifyFeedbackScore(getOverallScore(assignment.nurse_feedback), 'legacy');
+                              if (score.kind === 'legacy') {
+                                return (
+                                <>
+                                  <div>{score.displayText}</div>
+                                  <div className="mt-1 text-xs font-normal text-gray-500">{score.explanation}</div>
+                                </>
+                                );
+                              }
+                              const canonicalScores = [
+                                typeof assignment.communication_score === 'number' ? `Communication: ${assignment.communication_score}/5` : null,
+                                typeof assignment.mdm_score === 'number' ? `MDM: ${assignment.mdm_score}/5` : null,
+                              ].filter((value): value is string => value !== null);
+                              return canonicalScores.length > 0 ? canonicalScores.join(' · ') : score.displayText;
+                            })()}
                           </div>
                           <div className="text-gray-500">
                             Feedback provided
                           </div>
+                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                            <div className="text-xs text-amber-700">No persisted chat evidence</div>
+                          )}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-500">
                           No feedback yet
+                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                            <span className="block text-xs text-amber-700">No persisted chat evidence</span>
+                          )}
                         </span>
                       )}
                     </td>
