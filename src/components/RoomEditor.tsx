@@ -196,6 +196,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
+  const [patientConversationPrompt, setPatientConversationPrompt] = useState(room?.patient_conversation_prompt || '');
+  const [patientConversationEnabled, setPatientConversationEnabled] = useState(
+    room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
+  );
+  const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(room?.consultant_response_prompt || '');
   const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
     normalizeBedsideRequirement(room?.bedside_requirement),
   );
@@ -522,6 +527,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
         bedside_requirement: bedsideRequirement,
+        patient_conversation_enabled: patientConversationEnabled,
+        patient_conversation_prompt: patientConversationPrompt.trim() || null,
+        consultant_response_prompt: consultantResponsePrompt.trim() || null,
         orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
@@ -848,6 +856,46 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             required
           />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label htmlFor="patientConversationPrompt" className="block text-sm font-medium text-gray-700">
+              Patient Conversation Prompt
+            </label>
+            <textarea
+              id="patientConversationPrompt"
+              value={patientConversationPrompt}
+              onChange={(e) => setPatientConversationPrompt(e.target.value)}
+              rows={4}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="Patient persona, authored history, and answer boundaries. Do not reveal diagnosis or hidden goals. Leave blank to disable patient chat."
+            />
+            <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={patientConversationEnabled}
+                onChange={(e) => setPatientConversationEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              Enable patient conversation for students
+            </label>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by student patient chat.</p>
+          </div>
+          <div>
+            <label htmlFor="consultantResponsePrompt" className="block text-sm font-medium text-gray-700">
+              Consultant Response Behavior
+            </label>
+            <textarea
+              id="consultantResponsePrompt"
+              value={consultantResponsePrompt}
+              onChange={(e) => setConsultantResponsePrompt(e.target.value)}
+              rows={4}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
+            />
+            <p className="mt-1 text-xs text-gray-500">Displayed to the active student Consultant Portal when authored.</p>
+          </div>
         </div>
 
         <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">

@@ -77,3 +77,27 @@ Validate the repository working directory before launching linked Supabase CLI c
 - Related Files: scripts/seed-student-library-preview.sql
 
 ---
+
+## [ERR-20261015-VITEST] unsupported_test_flag
+
+**Logged**: 2026-10-15T21:27:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first verification command passed the Jest-only `--runInBand` flag to Vitest.
+
+### Error
+```text
+CACError: Unknown option `--runInBand`
+```
+
+### Context
+- Command: `npm test -- --runInBand`
+- Repository runner: Vitest
+
+### Resolution
+- Re-ran with `npm run test:run`; all 146 tests passed.
+
+---

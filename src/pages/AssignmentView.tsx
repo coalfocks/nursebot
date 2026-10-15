@@ -6,6 +6,7 @@ import Navbar from '../components/Navbar';
 import { Loader2, ArrowLeft, Clock, ExternalLink, Book, CheckCircle } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
+import { ConsultantPortal } from '../components/ConsultantPortal';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
@@ -23,6 +24,7 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [consultantOpen, setConsultantOpen] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -241,6 +243,15 @@ export default function AssignmentView() {
                     <ExternalLink className="h-4 w-4 mr-1" />
                     Open EMR
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setConsultantOpen(true)}
+                    className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
+                    title="Open Consultant Portal"
+                  >
+                    <Book className="h-4 w-4 mr-1" />
+                    Consultant Portal
+                  </button>
                 </div>
                 {assignment.status === 'completed' && (assignment as any).feedback_status === 'completed' && (
                   <div className="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 p-3">
@@ -266,6 +277,7 @@ export default function AssignmentView() {
           </div>
         </div>
       </div>
+      {assignment && <ConsultantPortal assignmentId={assignment.id} open={consultantOpen} onClose={() => setConsultantOpen(false)} />}
     </div>
   );
 } 

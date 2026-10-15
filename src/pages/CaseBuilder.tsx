@@ -48,7 +48,9 @@ type CaseFormState = {
   initialMessage: string;
   bedsideRequirement: BedsideRequirement;
   patientChatEnabled: boolean;
+  patientConversationPrompt: string;
   consults: string;
+  consultantResponsePrompt: string;
   eventVitals: string;
   nurseExam: string;
   bedsideExam: string;
@@ -261,7 +263,9 @@ const initialForm: CaseFormState = {
   initialMessage: '',
   bedsideRequirement: 'no',
   patientChatEnabled: false,
+  patientConversationPrompt: '',
   consults: '',
+  consultantResponsePrompt: '',
   eventVitals: '',
   nurseExam: '',
   bedsideExam: '',
@@ -389,7 +393,9 @@ export default function CaseBuilder() {
         bedside_requirement: form.bedsideRequirement,
         bedside_required: form.bedsideRequirement === 'yes',
         patient_chat_enabled: form.patientChatEnabled,
+        patient_conversation_prompt: form.patientConversationPrompt.trim() || null,
         consults: form.consults.trim() || null,
+        consultant_response_prompt: form.consultantResponsePrompt.trim() || null,
         event_vitals: form.eventVitals.trim() || null,
         nurse_exam: form.nurseExam.trim() || null,
         bedside_exam: form.bedsideExam.trim() || null,
@@ -603,7 +609,8 @@ export default function CaseBuilder() {
         ) || null,
         bedside_requirement: bedsideRequirement,
         patient_conversation_enabled: Boolean(bedside.patientChatEnabled),
-        patient_conversation_prompt: asString(bedside.patientChatPrompt),
+        patient_conversation_prompt: asString(bedside.patientChatPrompt) ?? blueprint.patient_conversation_prompt,
+        consultant_response_prompt: asString(bedside.consultantResponsePrompt) ?? blueprint.consultant_response_prompt,
         patient_participation_reason: asString(bedside.disableReason),
         patient_speaker_type: 'patient',
         orders_config: {
@@ -1221,6 +1228,14 @@ export default function CaseBuilder() {
                     <p className="mt-1 text-xs text-slate-500">
                       Each specialty/reason becomes a generated consult note in the EMR package.
                     </p>
+                    <label className="mt-3 block text-sm font-medium text-slate-700">Consultant response behavior</label>
+                    <textarea
+                      value={form.consultantResponsePrompt}
+                      onChange={(e) => setForm((prev) => ({ ...prev, consultantResponsePrompt: e.target.value }))}
+                      className="mt-1 h-20 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="How the consultant responds: answer the question asked, state recommendation and rationale, do not reveal hidden goals."
+                    />
+                    <p className="mt-1 text-xs text-slate-500">Stored with the package and used by the student Consultant Portal.</p>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700">Bedside patient chat</label>
@@ -1238,6 +1253,14 @@ export default function CaseBuilder() {
                         participate.
                       </span>
                     </label>
+                    <label className="mt-3 block text-sm font-medium text-slate-700">Patient conversation prompt</label>
+                    <textarea
+                      value={form.patientConversationPrompt}
+                      onChange={(e) => setForm((prev) => ({ ...prev, patientConversationPrompt: e.target.value }))}
+                      className="mt-1 h-20 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                      disabled={!form.patientChatEnabled}
+                      placeholder="Patient persona, authored history, and answer boundaries; no diagnosis or learning-goal leakage."
+                    />
                     <p className="mt-1 text-xs text-slate-500">
                       The generator should auto-disable chat for altered, sedated, intubated, or
                       unconscious patients.

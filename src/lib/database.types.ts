@@ -1151,6 +1151,7 @@ export type Database = {
           bedside_requirement: string
           bedside_required: boolean | null
           consults: string | null
+          consultant_response_prompt: string | null
           created_at: string
           created_by: string | null
           difficulty: string
@@ -1190,6 +1191,7 @@ export type Database = {
           bedside_requirement?: string
           bedside_required?: boolean | null
           consults?: string | null
+          consultant_response_prompt?: string | null
           created_at?: string
           created_by?: string | null
           difficulty: string
@@ -1229,6 +1231,7 @@ export type Database = {
           bedside_requirement?: string
           bedside_required?: boolean | null
           consults?: string | null
+          consultant_response_prompt?: string | null
           created_at?: string
           created_by?: string | null
           difficulty?: string
@@ -1322,6 +1325,38 @@ export type Database = {
             columns: ["school_id"]
             isOneToOne: false
             referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consultant_chat_messages: {
+        Row: {
+          assignment_id: string
+          content: string
+          created_at: string
+          id: string
+          role: string
+        }
+        Insert: {
+          assignment_id: string
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+        }
+        Update: {
+          assignment_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consultant_chat_messages_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "student_room_assignments"
             referencedColumns: ["id"]
           },
         ]
@@ -2046,6 +2081,7 @@ export type Database = {
           patient_id: string | null
           patient_conversation_enabled: boolean
           patient_conversation_prompt: string | null
+          consultant_response_prompt: string | null
           patient_participation_reason: string | null
           patient_speaker_type: string
           pdf_url: string | null
@@ -2088,6 +2124,7 @@ export type Database = {
           patient_id?: string | null
           patient_conversation_enabled?: boolean
           patient_conversation_prompt?: string | null
+          consultant_response_prompt?: string | null
           patient_participation_reason?: string | null
           patient_speaker_type?: string
           pdf_url?: string | null
@@ -2130,6 +2167,7 @@ export type Database = {
           patient_id?: string | null
           patient_conversation_enabled?: boolean
           patient_conversation_prompt?: string | null
+          consultant_response_prompt?: string | null
           patient_participation_reason?: string | null
           patient_speaker_type?: string
           pdf_url?: string | null
