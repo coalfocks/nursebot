@@ -10,6 +10,7 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { getRoomDisplayName, fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { getLearnerProgramLabel, type LearnerProgram } from '../lib/programTracks';
+import { withTimeout } from '../lib/asyncTimeout';
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   patients?: Database['public']['Tables']['patients']['Row'][] | null;
@@ -21,6 +22,7 @@ export default function RoomManagement() {
   const { user, profile, activeSchoolId } = useAuthStore();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | undefined>();
@@ -44,6 +46,7 @@ export default function RoomManagement() {
   const fetchRooms = async (schoolId: string | null = scopedSchoolId) => {
     const requestId = ++fetchRequestId.current;
     setLoading(true);
+    setLoadError(null);
     setRooms([]);
     try {
       let query = supabase
@@ -63,21 +66,24 @@ export default function RoomManagement() {
         query = query.or(`school_id.eq.${schoolId},available_school_ids.cs.{${schoolId}},available_school_ids.cs.{}`);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await withTimeout(query, 'rooms data load', 30000);
 
       if (error) throw error;
 
       // Fetch specialties for each room
-      const roomsWithSpecialties = await Promise.all(
+      const roomsWithSpecialties = await withTimeout(Promise.all(
         (data || []).map(async (room) => ({
           ...room,
           specialties: await fetchSpecialtiesForRoom(room),
         }))
-      );
+      ), 'room specialty load', 30000);
 
       if (requestId === fetchRequestId.current) setRooms(roomsWithSpecialties);
     } catch (error) {
       console.error('Error fetching rooms:', error);
+      if (requestId === fetchRequestId.current) {
+        setLoadError(error instanceof Error ? error.message : 'Unable to load rooms.');
+      }
     } finally {
       if (requestId === fetchRequestId.current) setLoading(false);
     }
@@ -214,6 +220,20 @@ export default function RoomManagement() {
       <AdminLayout>
         <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <AdminLayout>
+        <div className="mx-auto max-w-3xl px-6 py-12">
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+            <h2 className="font-semibold">Rooms could not be loaded</h2>
+            <p className="mt-2">{loadError}</p>
+            <p className="mt-2 text-red-700">Check the selected school scope and try again. No room data was changed.</p>
+          </div>
         </div>
       </AdminLayout>
     );

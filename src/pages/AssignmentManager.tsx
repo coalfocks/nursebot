@@ -13,6 +13,7 @@ import {
 } from '../lib/studentVisibility';
 import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
+import { withTimeout } from '../lib/asyncTimeout';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -72,6 +73,7 @@ export default function AssignmentManager() {
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [students, setStudents] = useState<Profile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
@@ -116,16 +118,20 @@ export default function AssignmentManager() {
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
     const result = new Set<string>();
-    const pageSize = 1000;
+    // Keep the `in` filter bounded. All-school admin views can contain thousands
+    // of assignments, and a 1,000-ID URL can exceed the REST gateway envelope.
+    const pageSize = 200;
     for (let from = 0; from < assignmentIds.length; from += pageSize) {
-      const { data, error } = await supabase
-        .from('chat_messages')
-        .select('assignment_id')
-        .in('assignment_id', assignmentIds)
-        .range(from, from + pageSize - 1);
+      const { data, error } = await withTimeout(
+        supabase
+          .from('chat_messages')
+          .select('assignment_id')
+          .in('assignment_id', assignmentIds.slice(from, from + pageSize))
+          .range(0, pageSize - 1),
+        'chat evidence lookup'
+      );
       if (error) throw error;
       (data ?? []).forEach((message) => result.add(message.assignment_id));
-      if ((data ?? []).length < pageSize) break;
     }
     return result;
   };
@@ -141,6 +147,7 @@ export default function AssignmentManager() {
     if (!hasAdmin) return;
     const loadData = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
         let assignmentsQuery = supabase
           .from('student_room_assignments')
@@ -193,13 +200,13 @@ export default function AssignmentManager() {
           roomsResult,
           specialtiesResult,
           schoolsResult,
-        ] = await Promise.all([
+        ] = await withTimeout(Promise.all([
           assignmentsQuery,
           studentsQuery,
           roomsQuery,
           specialtiesQuery,
           supabase.from('schools').select('*').order('name'),
-        ]);
+        ]), 'case assignments data load', 30000);
 
         if (assignmentsResult.error) throw assignmentsResult.error;
         if (studentsResult.error) throw studentsResult.error;
@@ -216,6 +223,7 @@ export default function AssignmentManager() {
         setSchools(schoolsResult.data || []);
       } catch (error) {
         console.error('Error fetching data:', error);
+        setLoadError(error instanceof Error ? error.message : 'Unable to load case assignments.');
       } finally {
         setLoading(false);
       }
@@ -865,6 +873,20 @@ export default function AssignmentManager() {
       <AdminLayout>
         <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <AdminLayout>
+        <div className="mx-auto max-w-3xl px-6 py-12">
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+            <h2 className="font-semibold">Case Assignments could not be loaded</h2>
+            <p className="mt-2">{loadError}</p>
+            <p className="mt-2 text-red-700">Check the selected school scope and try again. No assignment data was changed.</p>
+          </div>
         </div>
       </AdminLayout>
     );

@@ -10,6 +10,7 @@ import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { computeCohortMetrics, type AnalyticsAssignment, type CohortMetrics } from '../lib/analyticsMetrics';
+import { withTimeout } from '../lib/asyncTimeout';
 
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
 type RoomRow = Database['public']['Tables']['rooms']['Row'];
@@ -165,13 +166,13 @@ export default function AdminDashboard() {
           assignmentRows,
           roomsResult,
           recentResult,
-        ] = await Promise.all([
+        ] = await withTimeout(Promise.all([
           studentQuery,
           adminQuery,
           loadAssignmentRows(),
           roomsQuery,
           recentQuery,
-        ]);
+        ]), 'dashboard data load', 30000);
 
         if (!isMounted) return;
 
