@@ -590,7 +590,7 @@ export default function AssignmentManager() {
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
-      const [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, runResult] = await Promise.all([
+      const [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
         supabase.from('student_room_assignments')
           .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
           .eq('id', assignment.id)
@@ -600,9 +600,10 @@ export default function AssignmentManager() {
         supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('imaging_studies').select('id, study_type, order_name, status, report, order_time, report_generated_at, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
         supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      for (const result of [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, runResult]) {
+      for (const result of [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
         if (result.error) throw result.error;
       }
 
@@ -649,6 +650,11 @@ export default function AssignmentManager() {
         const eventTimestamp = timestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
         if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
         events.push({ id: `imaging-${study.id}`, type: 'imaging_study', timestamp: eventTimestamp, details: [study.order_name || study.study_type, study.status, study.report].filter(Boolean).join(' • ') });
+      });
+      (learnerActionsResult.data ?? []).forEach((action) => {
+        const eventTimestamp = timestamp(action.occurred_at ?? action.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({ id: `learner-action-${action.id}`, type: `learner_${action.action_type} · ${action.channel}`, timestamp: eventTimestamp, details: action.content });
       });
       if (assignment.student_progress_note?.trim() && assignment.completed_at && isPostPage(assignment.completed_at)) {
         events.push({ id: `progress-note-${assignment.id}`, type: 'progress_note', timestamp: new Date(assignment.completed_at).toISOString(), details: assignment.student_progress_note.trim() });

@@ -70,7 +70,10 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
 
 export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;
 
-type EvidenceShape = { kind: string; title: string; body?: string };
+type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
+
+const learnerActionKinds = new Set(['learner-action']);
+const learnerCommunicationKinds = new Set(['learner-action']);
 
 /**
  * Conservative safety net for a malformed evaluator response. It uses only
@@ -85,16 +88,17 @@ export const buildEvidenceBackedFallback = (
 ): EvaluationScoringResponse | null => {
   if (evaluation.communication_score !== 0 || evaluation.mdm_score !== 0) return evaluation;
   const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
-  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging');
+  const clinicalActions = entries.filter((entry) => learnerActionKinds.has(entry.kind));
+  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'imaging');
   const hasNote = Boolean(progressNote?.trim());
-  if (learnerMessages.length === 0 && orders.length === 0 && !hasNote) return null;
-  // Assignment-scoped clinical actions are learner evidence even when the
-  // bedside-first flow produced no persisted chat message. Never count a
-  // nurse-page message here: the fallback only receives post-page entries.
-  const focused = learnerMessages.length > 0 || orders.length > 0 || hasNote ? 1 : 0;
-  // A note/order can support bedside assessment and MDM, but cannot prove
-  // closed-loop team communication without an observed learner message.
-  const closedLoop = learnerMessages.length > 0 && orders.length > 0 ? 1 : 0;
+  if (learnerMessages.length === 0 && clinicalActions.length === 0 && orders.length === 0 && !hasNote) return null;
+  // Vitals, orders, and a generic progress note may support MDM, but they do
+  // not prove that the learner gathered information or communicated. Those
+  // components require a learner-authored interaction/action with a channel.
+  const communicationActions = entries.filter((entry) => learnerCommunicationKinds.has(entry.kind));
+  const focused = learnerMessages.length > 0 || communicationActions.length > 0 ? 1 : 0;
+  const closedLoop = entries.some((entry) => entry.kind === 'learner-action' && entry.meta?.some((value) => /team|escalat/i.test(value)))
+    || (learnerMessages.length > 0 && orders.length > 0) ? 1 : 0;
   const orderQuality = orders.length > 0 ? 1 : 0;
   const reasoning = hasNote || learnerMessages.length > 0 ? 1 : 0;
   return {
@@ -103,8 +107,8 @@ export const buildEvidenceBackedFallback = (
     communication_score: focused + closedLoop,
     mdm_score: orderQuality + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: 'Observed learner-authored post-page bedside or clinical-action evidence; detailed component evidence was recovered conservatively.', evidence_event_ids: [] },
-      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored communication paired with a post-page clinical action.' : 'No linked post-page clinical action was observed for closed-loop communication.', evidence_event_ids: [] },
+      focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or structured bedside action.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
+      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored team escalation/closed-loop communication.' : 'Not observed: no linked learner team communication was captured.', evidence_event_ids: [] },
     },
     mdm_breakdown: {
       orders_monitoring_quality: { score: orderQuality, feedback: orderQuality ? 'Observed post-page order, monitoring, result, or reassessment evidence.' : 'No post-page order, monitoring, result, or reassessment evidence was observed.', evidence_event_ids: [] },
