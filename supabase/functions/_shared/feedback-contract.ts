@@ -75,4 +75,14 @@ export const deriveScoringStart = (messages: Array<{ id?: string | number | null
 export const isPostPageEvent = (timestamp: string, scoringStartAt: string | null) =>
   Boolean(scoringStartAt && new Date(timestamp).getTime() >= new Date(scoringStartAt).getTime());
 
+export const normalizeEvidenceEventIds = (
+  requested: unknown,
+  available: string[],
+): string[] => {
+  const allowed = new Set(available);
+  return Array.isArray(requested)
+    ? requested.filter((id): id is string => typeof id === 'string' && allowed.has(id))
+    : [];
+};
+
 export const formativeNotice = 'Formative feedback for learning only; this is not an ACGME Milestone, EPA entrustment decision, or validated competence determination.';
