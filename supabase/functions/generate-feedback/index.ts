@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { canonicalizeEvaluation, hasMeaningfulEvidence, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineImagingRow, type TimelineLabRow, type TimelineOrderRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -66,7 +66,9 @@ Deno.serve(async (req) => {
         ({ evaluation, actionReview } = await requestEvaluation('\n\nVALIDATION RETRY: This attempt contains a non-empty post-page evidence manifest. Re-evaluate the observed events and do not return both composite scores as zero unless every post-page event is genuinely non-clinical. Preserve the anchored component ranges and cite manifest IDs.'));
       }
       if (evaluation.communication_score === 0 && evaluation.mdm_score === 0) {
-        throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry');
+        const recovered = buildEvidenceBackedFallback(evaluation, scoredEntries, assignment.student_progress_note);
+        if (!recovered) throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry with no learner-authored post-page action to recover');
+        evaluation = recovered;
       }
       const idsForKinds = (kinds: string[]) => scoredEntries.filter((entry) => kinds.includes(entry.kind)).map((entry) => entry.id);
       const evidence = {
