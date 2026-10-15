@@ -23,6 +23,19 @@ const clamp = (value: unknown, min: number, max: number) => {
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
+/** Keep feedback faithful to a computer simulation. The event itself remains
+ * the source of truth; this only prevents generated prose from claiming that
+ * a physical examination occurred. */
+export const sanitizeSimulationText = (value: string): string => value
+  .replace(/\bphysical examination\b/gi, 'simulated bedside interaction')
+  .replace(/\bphysical exam\b/gi, 'simulated bedside interaction')
+  .replace(/\bexamined the patient\b/gi, 'assessed the patient in the simulation')
+  .replace(/\bexamined\b/gi, 'assessed in the simulation')
+  .replace(/\bphysical findings?\b/gi, 'recorded simulated bedside findings')
+  .replace(/documented specific bedside signs/gi, (match) => match[0] === match[0].toUpperCase()
+    ? 'Recorded learner-reported simulated bedside findings'
+    : 'recorded learner-reported simulated bedside findings');
+
 export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
   const source = raw as Record<string, any>;
   const communication = (source.communication_breakdown ?? source.communication ?? {}) as Record<string, any>;
@@ -50,21 +63,21 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   const reasoning = clamp(componentScore(reasoningRaw), 0, 2);
   const safety = raw.safety_result?.level === 'critical' || raw.safety_result?.level === 'concern' ? raw.safety_result.level : 'none';
   return {
-    learning_objectives: text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.'),
+    learning_objectives: sanitizeSimulationText(text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.')),
     communication_score: focused + closedLoop,
     mdm_score: orders + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.'), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
-      closed_loop_team_communication: { score: closedLoop, feedback: text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.'), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
+      focused_information_gathering: { score: focused, feedback: sanitizeSimulationText(text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.')), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
+      closed_loop_team_communication: { score: closedLoop, feedback: sanitizeSimulationText(text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.')), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
     },
     mdm_breakdown: {
-      orders_monitoring_quality: { score: orders, feedback: text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.'), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
-      clinical_reasoning_documentation: { score: reasoning, feedback: text(reasoningRaw?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.'), evidence_event_ids: ids(reasoningRaw?.evidence_event_ids) },
+      orders_monitoring_quality: { score: orders, feedback: sanitizeSimulationText(text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.')), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
+      clinical_reasoning_documentation: { score: reasoning, feedback: sanitizeSimulationText(text(reasoningRaw?.feedback, 'Insufficient evidence to assess clinical reasoning and documentation.')), evidence_event_ids: ids(reasoningRaw?.evidence_event_ids) },
     },
     safety_result: { level: safety, action: raw.safety_result?.action ?? null, rationale: raw.safety_result?.rationale ?? null, evidence_event_ids: ids(raw.safety_result?.evidence_event_ids) },
-    strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string') : [],
-    improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string') : [],
-    recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string') : [],
+    strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
+    improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
+    recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
   };
 };
 
@@ -107,7 +120,7 @@ export const buildEvidenceBackedFallback = (
     communication_score: focused + closedLoop,
     mdm_score: orderQuality + reasoning,
     communication_breakdown: {
-      focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or structured bedside action.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
+      focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or simulated bedside/team action recorded in the attempt.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
       closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored team escalation/closed-loop communication.' : 'Not observed: no linked learner team communication was captured.', evidence_event_ids: [] },
     },
     mdm_breakdown: {

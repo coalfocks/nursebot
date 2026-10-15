@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence } from './evaluation-scoring';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText } from './evaluation-scoring';
 
 describe('feedback v2 canonical contract', () => {
   it('preserves the two anchored composites and never subtracts safety', () => {
@@ -116,5 +116,16 @@ describe('feedback v2 canonical contract', () => {
 
     expect(result?.communication_score).toBe(2);
     expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(1);
+  });
+
+  it('does not claim that a computer simulation included a physical exam', () => {
+    expect(sanitizeSimulationText('Documented specific bedside signs after a physical exam.'))
+      .toBe('Recorded learner-reported simulated bedside findings after a simulated bedside interaction.');
+    const result = canonicalizeEvaluation({
+      strengths: ['The learner examined the patient and escalated.'],
+      communication_breakdown: { focused_information_gathering: { score: 1, feedback: 'physical exam observed' } },
+    });
+    expect(result.strengths[0]).toContain('assessed the patient in the simulation');
+    expect(result.communication_breakdown.focused_information_gathering.feedback).toContain('simulated bedside interaction');
   });
 });

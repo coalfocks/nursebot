@@ -33,6 +33,15 @@ const asStrings = (value: unknown): string[] => Array.isArray(value)
   ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
   : [];
 
+const asGoalStrings = (value: unknown): string[] => {
+  if (Array.isArray(value)) return asStrings(value);
+  if (typeof value !== 'string' || !value.trim()) return [];
+  return value
+    .split(/\r?\n|(?=•)|(?=\u2022)/)
+    .map((item) => item.replace(/^\s*(?:[-*•]|Goals of Case)\s*/i, '').trim())
+    .filter(Boolean);
+};
+
 export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEvaluationKey => {
   let packageEvaluation: Record<string, unknown> = {};
   try {
@@ -46,8 +55,8 @@ export const resolveCaseEvaluationKey = (room: Record<string, unknown>): CaseEva
   const source = { ...packageEvaluation };
   return {
     version: typeof source.version === 'string' ? source.version : CASE_KEY_VERSION,
-    goals: asStrings(source.goals ?? room.case_goals).length
-      ? asStrings(source.goals ?? room.case_goals)
+    goals: asGoalStrings(source.goals ?? room.case_goals).length
+      ? asGoalStrings(source.goals ?? room.case_goals)
       : (typeof room.objective === 'string' && room.objective.trim() ? [room.objective.trim()] : []),
     acuity_urgency_trigger: typeof source.acuityUrgencyTrigger === 'string'
       ? source.acuityUrgencyTrigger : (typeof room.bedside_requirement === 'string' ? room.bedside_requirement : null),

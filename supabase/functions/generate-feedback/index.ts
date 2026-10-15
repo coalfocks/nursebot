@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -9,6 +9,12 @@ import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
+const sanitizeFeedbackTree = (value: unknown): unknown => {
+  if (typeof value === 'string') return sanitizeSimulationText(value);
+  if (Array.isArray(value)) return value.map(sanitizeFeedbackTree);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeFeedbackTree(item)]));
+  return value;
+};
 
 const lineage = async (client: ReturnType<typeof createClient>, roomId: number) => {
   const result: number[] = []; const seen = new Set<number>(); let current: number | null = roomId;
@@ -60,7 +66,7 @@ Deno.serve(async (req) => {
       const requestEvaluation = async (validationNote = '') => {
         const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
-        return { evaluation: canonicalizeEvaluation(parsed), actionReview: parsed.action_review ?? [] };
+        return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
       };
       let { evaluation, actionReview } = await requestEvaluation();
       if (evaluation.communication_score === 0 && evaluation.mdm_score === 0) {
