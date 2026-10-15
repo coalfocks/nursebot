@@ -11,6 +11,8 @@ import {
 const completePackage = Object.fromEntries(
   REQUIRED_GENERATED_SECTIONS.map((section) => [section, {}]),
 );
+completePackage.patient = { demographics: { dateOfBirth: '2000-01-01' } };
+completePackage.bedside = { patientChatEnabled: false };
 
 describe('case builder publish helpers', () => {
   it('requires every generated section with a stable code and field path', () => {
@@ -29,6 +31,22 @@ describe('case builder publish helpers', () => {
 
   it('accepts a package containing all required section objects', () => {
     expect(validateGeneratedCasePackage(completePackage).ok).toBe(true);
+  });
+
+  it('rejects a generated package that cannot create a linked EMR patient', () => {
+    const value = { ...completePackage, patient: {} };
+    expect(validateGeneratedCasePackage(value)).toMatchObject({
+      ok: false,
+      issue: { code: 'CASE_PATIENT_IDENTITY_REQUIRED' },
+    });
+  });
+
+  it('rejects enabled bedside chat without a patient prompt', () => {
+    const value = { ...completePackage, bedside: { patientChatEnabled: true } };
+    expect(validateGeneratedCasePackage(value)).toMatchObject({
+      ok: false,
+      issue: { code: 'CASE_BEDSIDE_PROMPT_REQUIRED' },
+    });
   });
 
   it('allowlists learner EMR fields and excludes evaluator and conversation content', () => {

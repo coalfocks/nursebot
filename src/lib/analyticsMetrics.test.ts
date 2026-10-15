@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { computeCohortMetrics, computeDashboardMetrics, type AnalyticsRow } from './analyticsMetrics';
+import { computeCohortMetrics, computeDashboardMetrics, formatCompletionDuration, type AnalyticsRow } from './analyticsMetrics';
+
+describe('formatCompletionDuration', () => {
+  it('formats minutes and larger durations responsively', () => {
+    expect(formatCompletionDuration(45)).toBe('45 min');
+    expect(formatCompletionDuration(90)).toBe('1 hr 30 min');
+    expect(formatCompletionDuration(125)).toBe('2 hr 5 min');
+  });
+});
 
 const assignment = (overrides: Partial<Parameters<typeof computeCohortMetrics>[0][number]> = {}) => ({
   status: 'completed',

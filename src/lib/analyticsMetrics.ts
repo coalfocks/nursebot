@@ -59,6 +59,15 @@ export type CohortMetrics = {
 
 export const ANALYTICS_METRIC_VERSION = '2026-10-06.1';
 
+export const formatCompletionDuration = (minutes: number | null): string => {
+  if (minutes == null || !Number.isFinite(minutes)) return '—';
+  const rounded = Math.max(0, Math.round(minutes));
+  if (rounded < 60) return `${rounded} min`;
+  const hours = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+};
+
 export const COHORT_METRIC_DEFINITIONS: MetricDefinition[] = [
   {
     metricId: 'completion_rate',

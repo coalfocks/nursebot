@@ -12,8 +12,8 @@ export type GeneratedSectionName = (typeof REQUIRED_GENERATED_SECTIONS)[number];
 export type GeneratedCasePackage = Partial<Record<GeneratedSectionName, Record<string, unknown>>>;
 
 export type CasePublishValidationIssue = {
-  code: 'CASE_PACKAGE_SECTION_REQUIRED';
-  path: `generation_package.${GeneratedSectionName}`;
+  code: 'CASE_PACKAGE_SECTION_REQUIRED' | 'CASE_PATIENT_IDENTITY_REQUIRED' | 'CASE_BEDSIDE_PROMPT_REQUIRED';
+  path: string;
   message: string;
 };
 
@@ -45,6 +45,31 @@ export const validateGeneratedCasePackage = (
         },
       };
     }
+  }
+
+  const patient = value.patient as Record<string, unknown>;
+  const identity = getStructuredPatientIdentity(patient);
+  if (!identity.dateOfBirth) {
+    return {
+      ok: false,
+      issue: {
+        code: 'CASE_PATIENT_IDENTITY_REQUIRED',
+        path: 'generation_package.patient.demographics.dateOfBirth',
+        message: 'Generate a structured patient date of birth before publishing so the EMR patient can be linked.',
+      },
+    };
+  }
+
+  const bedside = value.bedside as Record<string, unknown>;
+  if (bedside.patientChatEnabled === true && optionalString(bedside.patientChatPrompt) == null) {
+    return {
+      ok: false,
+      issue: {
+        code: 'CASE_BEDSIDE_PROMPT_REQUIRED',
+        path: 'generation_package.bedside.patientChatPrompt',
+        message: 'Add a realistic patient conversation prompt or disable bedside patient chat before publishing.',
+      },
+    };
   }
 
   return { ok: true, value: value as GeneratedCasePackage };
