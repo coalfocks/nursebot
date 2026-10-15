@@ -42,6 +42,7 @@ export default function MyCases() {
           )
         `)
         .eq('student_id', user?.id)
+        .eq('is_sandbox', false)
         .or(`effective_date.is.null,effective_date.lte.${now}`)
         .order('created_at', { ascending: false });
 

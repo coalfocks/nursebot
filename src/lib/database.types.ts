@@ -1941,15 +1941,15 @@ export type Database = {
         ]
       }
       walkthrough_videos: {
-        Row: { id: string; version: number; title: string; description: string; learning_objective: string; topic: string; audience: 'admin' | 'student' | 'both'; onboarding_eligible: boolean; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; version?: number; title: string; description?: string; learning_objective?: string; topic: string; audience?: 'admin' | 'student' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; version?: number; title?: string; description?: string; learning_objective?: string; topic?: string; audience?: 'admin' | 'student' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; version: number; title: string; description: string; learning_objective: string; topic: string; audience: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible: boolean; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; learning_objective?: string; topic: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; learning_objective?: string; topic?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
         Relationships: []
       }
       walkthrough_courses: {
-        Row: { id: string; version: number; title: string; description: string; audience: 'admin' | 'student' | 'both'; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; version?: number; title: string; description?: string; audience?: 'admin' | 'student' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
-        Update: { id?: string; version?: number; title?: string; description?: string; audience?: 'admin' | 'student' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Row: { id: string; version: number; title: string; description: string; audience: 'admin' | 'student' | 'test_room' | 'both'; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
         Relationships: []
       }
       walkthrough_course_items: {
@@ -2220,6 +2220,7 @@ export type Database = {
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
           id: string
+          is_sandbox: boolean
           learning_objectives: string | null
           learner_program: string
           mdm_breakdown: Json | null
@@ -2266,6 +2267,7 @@ export type Database = {
             | null
           grade?: number | null
           id?: string
+          is_sandbox?: boolean
           learning_objectives?: string | null
           learner_program?: string
           mdm_breakdown?: Json | null
@@ -2294,6 +2296,7 @@ export type Database = {
         }
         Update: {
           assigned_by?: string
+          is_sandbox?: boolean
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null

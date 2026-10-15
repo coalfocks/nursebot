@@ -2,6 +2,7 @@
 -- access. Empty available_school_ids means all schools; a populated array is an
 -- explicit allow-list. No role is broadened beyond the existing test_user role.
 drop policy if exists "Test users read rooms" on public.rooms;
+drop policy if exists "Test users read eligible rooms" on public.rooms;
 create policy "Test users read eligible rooms" on public.rooms for select
 using (
   exists (
@@ -18,6 +19,7 @@ using (
 );
 
 drop policy if exists "Test users read specialties" on public.specialties;
+drop policy if exists "Test users read eligible specialties" on public.specialties;
 create policy "Test users read eligible specialties" on public.specialties for select
 using (
   exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'test_user'

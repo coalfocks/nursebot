@@ -86,6 +86,7 @@ export default function AdminDashboard() {
             let query = supabase
               .from('student_room_assignments')
               .select('status, feedback_status, student_id, communication_score, mdm_score, grade, nurse_feedback')
+              .eq('is_sandbox', false)
               .range(from, from + pageSize - 1);
             if (scopedSchoolId) {
               query = query.eq('school_id', scopedSchoolId);
@@ -106,6 +107,7 @@ export default function AdminDashboard() {
           let query = supabase
             .from('student_room_assignments')
             .select('id', { count: 'exact', head: true })
+            .eq('is_sandbox', false)
             .neq('status', 'cancelled');
           if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
           return query;
@@ -115,6 +117,7 @@ export default function AdminDashboard() {
           let query = supabase
             .from('student_room_assignments')
             .select('id', { count: 'exact', head: true })
+            .eq('is_sandbox', false)
             .eq('status', 'completed');
           if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
           return query;
@@ -124,6 +127,7 @@ export default function AdminDashboard() {
           let query = supabase
             .from('student_room_assignments')
             .select('id', { count: 'exact', head: true })
+            .eq('is_sandbox', false)
             .eq('status', 'completed')
             .eq('feedback_status', 'completed');
           if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);

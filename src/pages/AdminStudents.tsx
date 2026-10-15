@@ -49,6 +49,7 @@ export default function AdminStudents() {
       let query = supabase
         .from('student_room_assignments')
         .select('id, student_id, status, feedback_status, communication_score, mdm_score, created_at, completed_at, school_id')
+        .eq('is_sandbox', false)
         .range(from, from + pageSize - 1);
       if (schoolId) query = query.eq('school_id', schoolId);
       const { data, error } = await query;

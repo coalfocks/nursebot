@@ -12,6 +12,10 @@ set record_version = 1
 where record_version is null;
 
 alter table public.rooms
+  drop constraint if exists rooms_patient_speaker_type_check,
+  drop constraint if exists rooms_record_version_positive;
+
+alter table public.rooms
   alter column record_version set default 1,
   alter column record_version set not null,
   add constraint rooms_patient_speaker_type_check

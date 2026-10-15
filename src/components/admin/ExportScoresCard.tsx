@@ -151,6 +151,7 @@ export default function ExportScoresCard() {
           room:room_id ( room_number, specialty:specialty_id ( name ) )
         `)
         .eq('status', 'completed')
+        .eq('is_sandbox', false)
         .gte('completed_at', toIsoStart(startDate))
         .lte('completed_at', toIsoEnd(endDate))
         .order('completed_at', { ascending: true })

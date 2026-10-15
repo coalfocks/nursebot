@@ -73,7 +73,7 @@ export default function AdminAnalytics() {
           communication_breakdown, mdm_breakdown, nurse_feedback,
           student:student_id (id, full_name, role),
           room:room_id (id, room_number, specialty_id, specialty_ids)
-        `).order('created_at', { ascending: false }).range(from, from + pageSize - 1);
+        `).eq('is_sandbox', false).order('created_at', { ascending: false }).range(from, from + pageSize - 1);
         if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
         const { data, error: queryError } = await query;
         if (queryError) throw queryError;

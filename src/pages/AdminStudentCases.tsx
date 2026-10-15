@@ -58,6 +58,7 @@ export default function AdminStudentCases() {
             )
           `)
           .eq('student_id', studentId)
+          .eq('is_sandbox', false)
           .order('created_at', { ascending: false });
 
         if (scopedSchoolId) {

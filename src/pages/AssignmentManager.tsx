@@ -151,6 +151,7 @@ export default function AssignmentManager() {
       try {
         let assignmentsQuery = supabase
           .from('student_room_assignments')
+          .eq('is_sandbox', false)
           .select(`
             *,
             student:student_id (

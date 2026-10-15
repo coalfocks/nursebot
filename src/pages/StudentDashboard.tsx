@@ -35,6 +35,7 @@ export default function StudentDashboard() {
           )
         `)
         .eq('student_id', user?.id)
+        .eq('is_sandbox', false)
         .in('status', ['assigned', 'in_progress'])
         .order('created_at', { ascending: false });
 
