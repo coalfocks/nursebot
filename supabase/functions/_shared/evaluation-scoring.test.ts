@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalizeEvaluation, hasMeaningfulEvidence } from './evaluation-scoring';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence } from './evaluation-scoring';
 
 describe('feedback v2 canonical contract', () => {
   it('preserves the two anchored composites and never subtracts safety', () => {
@@ -76,5 +76,17 @@ describe('feedback v2 canonical contract', () => {
     });
     expect(result.communication_score).toBe(5);
     expect(result.mdm_score).toBe(5);
+  });
+
+  it('recovers a conservative anchored score from learner actions when the evaluator returns all zero', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'Nurse message', body: 'unstable' },
+      { kind: 'message', title: 'Student message', body: 'I am at bedside and escalating.' },
+      { kind: 'vital', title: 'Vital reassessment' },
+      { kind: 'order', title: 'Order: monitoring' },
+    ], 'Focused reassessment and escalation documented.')
+    expect(result?.communication_score).toBe(2);
+    expect(result?.mdm_score).toBe(2);
+    expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
 });

@@ -69,3 +69,41 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
 };
 
 export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;
+
+type EvidenceShape = { kind: string; title: string; body?: string };
+
+/**
+ * Conservative safety net for a malformed evaluator response. It uses only
+ * learner-authored post-page evidence and never treats the nurse page itself
+ * as learner performance. This is intentionally a small evidence floor, not
+ * a replacement for case-aware model scoring.
+ */
+export const buildEvidenceBackedFallback = (
+  evaluation: EvaluationScoringResponse,
+  entries: EvidenceShape[],
+  progressNote: string | null | undefined,
+): EvaluationScoringResponse | null => {
+  if (evaluation.communication_score !== 0 || evaluation.mdm_score !== 0) return evaluation;
+  const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
+  const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging');
+  const hasNote = Boolean(progressNote?.trim());
+  if (learnerMessages.length === 0 && orders.length === 0 && !hasNote) return null;
+  const focused = learnerMessages.length > 0 ? 1 : 0;
+  const closedLoop = learnerMessages.length > 0 && orders.length > 0 ? 1 : 0;
+  const orderQuality = orders.length > 0 ? 1 : 0;
+  const reasoning = hasNote || learnerMessages.length > 0 ? 1 : 0;
+  return {
+    ...evaluation,
+    learning_objectives: evaluation.learning_objectives,
+    communication_score: focused + closedLoop,
+    mdm_score: orderQuality + reasoning,
+    communication_breakdown: {
+      focused_information_gathering: { score: focused, feedback: 'Observed learner-authored post-page communication; detailed component evidence was recovered conservatively.', evidence_event_ids: [] },
+      closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored communication paired with a post-page clinical action.' : 'No linked post-page clinical action was observed for closed-loop communication.', evidence_event_ids: [] },
+    },
+    mdm_breakdown: {
+      orders_monitoring_quality: { score: orderQuality, feedback: orderQuality ? 'Observed post-page order, monitoring, result, or reassessment evidence.' : 'No post-page order, monitoring, result, or reassessment evidence was observed.', evidence_event_ids: [] },
+      clinical_reasoning_documentation: { score: reasoning, feedback: hasNote ? 'Observed a learner progress note after the scoring boundary.' : 'Observed learner-authored post-page reasoning evidence; a progress note was not observed.', evidence_event_ids: [] },
+    },
+  };
+};
