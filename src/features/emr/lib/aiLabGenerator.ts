@@ -9,6 +9,10 @@ export type LabGenerationContext = {
   previousLabs?: LabResult[];
   clinicalNotes?: ClinicalNote[];
   vitals?: VitalSigns[];
+  /** Authored room/package instructions for the current case stage. */
+  caseInstructions?: string | null;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
 };
 
 export type LabTemplate = {
@@ -16,6 +20,7 @@ export type LabTemplate = {
   unit: string;
   referenceRange: string;
   normal: [number, number];
+  resultKind?: 'numeric' | 'pending-microbiology';
 };
 
 const canonicalAnalyteKey = (name: string) => name
@@ -37,19 +42,41 @@ export type GeneratedLabPayload = {
   status?: LabResult['status'];
   collectionTime?: string;
   resultTime?: string;
+  valueType?: LabResult['valueType'];
+  narrative?: string | null;
+  specimen?: string | null;
+  lifecycleStatus?: LabResult['lifecycleStatus'];
 };
 
 /** Keep model output inside the explicitly ordered panel contract. */
 export const validateGeneratedLabResults = (
   results: GeneratedLabPayload[],
   requestedTests: LabTemplate[],
+  context?: LabGenerationContext,
 ): GeneratedLabPayload[] => {
   const requestedByKey = new Map(requestedTests.map((test) => [canonicalAnalyteKey(test.testName), test]));
   const seen = new Set<string>();
-  return results.flatMap((result) => {
+  const normalized = results.flatMap((result) => {
     if (!result.testName) return [];
     const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
-    if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
+    if (!template || seen.has(template.testName)) return [];
+    if (template.resultKind === 'pending-microbiology') {
+      const pendingValue = typeof result.value === 'string' ? result.value.trim() : '';
+      if (!pendingValue && !result.narrative?.trim()) return [];
+      seen.add(template.testName);
+      return [{
+        ...result,
+        testName: template.testName,
+        unit: '',
+        referenceRange: 'Pending microbiology: organism/status not yet finalized',
+        value: pendingValue,
+        valueType: 'coded',
+        lifecycleStatus: 'pending',
+        status: 'Pending',
+        specimen: result.specimen ?? 'Peripheral blood',
+      }];
+    }
+    if (!validReferenceRange(result.referenceRange)) return [];
     if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
     seen.add(template.testName);
     return [{
@@ -60,9 +87,80 @@ export const validateGeneratedLabResults = (
       status: classifyLabResult(template.testName, result.value, template.referenceRange).status,
     }];
   });
+  if (normalized.length !== requestedTests.length) return [];
+  return isClinicallyCoherentPanel(normalized, context) ? normalized : [];
+};
+
+const numericResult = (results: GeneratedLabPayload[], names: string[]) => {
+  const wanted = new Set(names.map(canonicalAnalyteKey));
+  const result = results.find((entry) => wanted.has(canonicalAnalyteKey(entry.testName ?? '')));
+  if (!result) return null;
+  const value = typeof result.value === 'number' ? result.value : Number(result.value);
+  return Number.isFinite(value) ? value : null;
+};
+
+const caseText = (context?: LabGenerationContext) => [
+  context?.caseInstructions,
+  context?.caseStage,
+  ...(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`),
+  context?.orderName,
+  ...(context?.clinicalNotes ?? []).map((note) => `${note.title ?? ''} ${note.content ?? ''}`),
+  ...(context?.vitals ?? []).map((vital) => JSON.stringify(vital)),
+].filter(Boolean).join(' ').toLowerCase();
+
+/**
+ * Model output is rejected when it contradicts the authored acute scenario or
+ * violates basic chemistry/acid-base relationships. Returning false is
+ * intentional: callers must surface a recoverable generation error rather than
+ * persist a plausible-looking substitute.
+ */
+export const isClinicallyCoherentPanel = (
+  results: GeneratedLabPayload[],
+  context?: LabGenerationContext,
+): boolean => {
+  const text = caseText(context);
+  const dkaLike = /\bdka\b|diabetic ketoacidosis|kussmaul|deep\s+(?:and\s+)?rapid\s+breath|insulin\s+(?:was\s+)?omitted|glucose\s*[:=]?\s*[2-9]\d\d/.test(text);
+
+  const stageText = `${context?.caseStage ?? ''} ${(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`).join(' ')}`.toLowerCase();
+  const postTreatment = /post[- ]?treatment|after treatment|improv|recheck|euglycemic|insulin given|fluids given|treatment started/.test(stageText);
+  if (dkaLike && !postTreatment) {
+    const glucose = numericResult(results, ['Glucose']);
+    const ketones = numericResult(results, ['Beta-Hydroxybutyrate']);
+    const bicarbonate = numericResult(results, ['CO2 (Bicarbonate)', 'HCO3 (Arterial)', 'HCO3 (Venous)']);
+    const ph = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+    if (glucose !== null && glucose < 250) return false;
+    if (ketones !== null && ketones < 3) return false;
+    if (bicarbonate !== null && bicarbonate > 18) return false;
+    if (ph !== null && ph > 7.3) return false;
+    const sodium = numericResult(results, ['Sodium']);
+    const chloride = numericResult(results, ['Chloride']);
+    if (sodium !== null && chloride !== null && bicarbonate !== null && sodium - chloride - bicarbonate < 12) return false;
+  }
+
+  const acidPh = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+  const acidPco2 = numericResult(results, ['PaCO2', 'pCO2 (Venous)']);
+  const acidBicarb = numericResult(results, ['HCO3 (Arterial)', 'HCO3 (Venous)']);
+  if (acidPh !== null && acidPco2 !== null && acidBicarb !== null && acidPco2 > 0 && acidBicarb > 0) {
+    const expectedPh = 6.1 + Math.log10(acidBicarb / (0.03 * acidPco2));
+    if (Math.abs(expectedPh - acidPh) > 0.15) return false;
+  }
+
+  const glucoseValues = results
+    .filter((entry) => /glucose/i.test(entry.testName ?? ''))
+    .map((entry) => typeof entry.value === 'number' ? entry.value : Number(entry.value))
+    .filter((value) => Number.isFinite(value));
+  if (glucoseValues.length > 1 && Math.max(...glucoseValues) - Math.min(...glucoseValues) > 5) return false;
+  return true;
 };
 
 const labTemplates: LabTemplate[] = [
+  {
+    testName: 'Blood Culture x2 (Peripheral)',
+    unit: '',
+    referenceRange: 'Pending microbiology: organism/status not yet finalized',
+    normal: [0, 0],
+    resultKind: 'pending-microbiology',
+  },
   // Hematology
   { testName: 'Hemoglobin', unit: 'g/dL', referenceRange: '12.0-15.5', normal: [12, 15.5] },
   { testName: 'Hematocrit', unit: '%', referenceRange: '36-46', normal: [36, 46] },
@@ -253,6 +351,8 @@ export const resolveLabTemplates = (
     amylase: ['amylase'],
     'beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
     'ketone beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
+    'blood culture x2': ['blood culture x2 (peripheral)'],
+    'blood culture': ['blood culture x2 (peripheral)'],
     'serum alcohol level': ['serum alcohol level'],
     'acetaminophen level': ['acetaminophen level'],
     'salicylate level': ['salicylate level'],

@@ -351,6 +351,7 @@ export function OrdersManagement({
               previousLabs: previousLabs.slice(0, 10).map((lab) => ({
                 testName: lab.testName,
                 value: lab.value,
+                assignmentId: lab.assignmentId,
                 unit: lab.unit,
                 referenceRange: lab.referenceRange,
                 status: lab.status,
@@ -371,25 +372,33 @@ export function OrdersManagement({
           throw aiResponse.error;
         }
 
+        const generationContext = {
+          assignmentId: effectiveAssignmentId,
+          orderName: adjustedOrder.orderName,
+          previousLabs,
+          clinicalNotes,
+          vitals,
+          caseInstructions: JSON.stringify({
+            expectedDiagnosis: roomMeta?.expected_diagnosis,
+            expectedTreatment: roomMeta?.expected_treatment,
+            caseGoals: roomMeta?.case_goals,
+            objective: roomMeta?.objective,
+            nurseContext: roomMeta?.nurse_context ?? roomMeta?.context,
+            emrContext: roomMeta?.emr_context,
+          }),
+        };
         const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
           ? validateGeneratedLabResults(
               (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
               resolvedTests,
+              generationContext,
             )
           : null;
 
-        const generatedLabs =
-          aiLabs?.length === requestedTests.length
-            ? aiLabs
-            : await generateLabResults(patient.id, adjustedOrder.orderName, {
-                patient,
-                assignmentId: effectiveAssignmentId,
-                roomId: contextualRoomId,
-                orderName: adjustedOrder.orderName,
-                previousLabs,
-                clinicalNotes,
-                vitals,
-              });
+        if (!aiLabs || aiLabs.length !== requestedTests.length) {
+          throw new Error('Generated lab panel failed clinical coherence validation; no result was saved. Refresh and retry.');
+        }
+        const generatedLabs = aiLabs;
 
           const runTimestamp = effectiveAssignmentId
             ? new Date().toISOString()
@@ -417,6 +426,7 @@ export function OrdersManagement({
         }
         onLabsGenerated?.();
       } catch (err) {
+        setOrderSaveError(err instanceof Error ? err.message : 'Unable to generate a coherent result panel. Refresh and retry.');
         console.error('Failed to generate STAT labs', err);
       }
     }

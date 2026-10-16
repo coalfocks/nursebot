@@ -93,6 +93,17 @@ export type TimelineConsultantMessageRow = {
   specialty: string | null;
   urgency: string | null;
   created_at: string | null;
+  request_id?: string | null;
+};
+
+export type TimelinePatientMessageRow = {
+  id: string;
+  assignment_id: string;
+  role: 'student' | 'patient' | 'caregiver' | string;
+  content: string;
+  created_at: string | null;
+  reply_to_client_message_id?: string | null;
+  client_message_id?: string | null;
 };
 
 export type TimelineAssignmentSummary = {
@@ -103,7 +114,7 @@ export type TimelineAssignmentSummary = {
 
 export type EvaluationTimelineEntry = {
   id: string;
-  kind: 'message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
+  kind: 'message' | 'patient-message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
   timestamp: string;
   title: string;
   body?: string;
@@ -201,6 +212,7 @@ export const buildAssignmentTimelineEntries = ({
   imaging,
   learnerActions,
   consultantMessages,
+  patientMessages,
 }: {
   assignment: TimelineAssignmentSummary;
   assignmentId: string;
@@ -212,6 +224,7 @@ export const buildAssignmentTimelineEntries = ({
   imaging: TimelineImagingRow[];
   learnerActions?: TimelineLearnerActionRow[];
   consultantMessages?: TimelineConsultantMessageRow[];
+  patientMessages?: TimelinePatientMessageRow[];
 }): EvaluationTimelineEntry[] => {
   const entries: EvaluationTimelineEntry[] = [];
 
@@ -250,11 +263,35 @@ export const buildAssignmentTimelineEntries = ({
     });
   }
 
+  const seenPatientMessageIds = new Set<string>();
+  for (const message of patientMessages ?? []) {
+    const timestamp = normalizeTimelineTimestamp(message.created_at);
+    if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    const id = String(message.client_message_id ?? message.id);
+    if (seenPatientMessageIds.has(id)) continue;
+    seenPatientMessageIds.add(id);
+    const learnerAuthored = message.role === 'student' || message.role === 'user';
+    entries.push({
+      id: `patient-message-${id}`,
+      kind: 'patient-message',
+      timestamp,
+      title: learnerAuthored ? 'Patient conversation question' : 'Patient conversation response',
+      body: message.content.trim(),
+      meta: [
+        'Channel: patient',
+        learnerAuthored ? 'Author: Student' : `Author: ${message.role === 'caregiver' ? 'Caregiver' : 'Patient'}`,
+        message.reply_to_client_message_id ? `Reply to: ${message.reply_to_client_message_id}` : 'Persisted message',
+      ],
+    });
+  }
+
   for (const message of consultantMessages ?? []) {
     const timestamp = normalizeTimelineTimestamp(message.created_at);
     if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    const identity = message.request_id ? `${message.request_id}:${message.role}` : String(message.id);
+    if (entries.some((entry) => entry.id === `consultant-message-${identity}`)) continue;
     entries.push({
-      id: `consultant-message-${message.id}`,
+      id: `consultant-message-${identity}`,
       kind: 'consultant-message',
       timestamp,
       title: message.role === 'student' ? `Consult request (${message.specialty ?? 'consultant'})` : 'Consultant response',

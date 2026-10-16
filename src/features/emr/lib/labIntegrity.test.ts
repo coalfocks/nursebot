@@ -7,7 +7,8 @@ import {
   parseNumericLabValue,
   parseNumericReferenceRange,
 } from './labIntegrity';
-import { resolveLabTemplates } from './aiLabGenerator';
+import { isClinicallyCoherentPanel, resolveLabTemplates, validateGeneratedLabResults } from './aiLabGenerator';
+import type { LabResult } from './types';
 
 describe('lab integrity', () => {
   it('parses bounded numeric ranges without accepting malformed text', () => {
@@ -121,5 +122,80 @@ describe('lab integrity', () => {
     });
     expect(classifyLabResult('Creatinine', 'not a number', '0.7-1.3').status).toBe('Unknown');
     expect(classifyLabResult('Creatinine', 1, 'broken').status).toBe('Unknown');
+  });
+
+  it('routes culture orders to a pending microbiology schema instead of a default chemistry panel', () => {
+    const tests = resolveLabTemplates('Blood Culture x2 (Peripheral)');
+    expect(tests.map((test) => test.testName)).toEqual(['Blood Culture x2 (Peripheral)']);
+    expect(tests[0]?.resultKind).toBe('pending-microbiology');
+    expect(validateGeneratedLabResults([
+      { testName: 'White Blood Cell Count', value: 15.3, referenceRange: '4-11' },
+    ], tests)).toEqual([]);
+    expect(validateGeneratedLabResults([
+      { testName: 'Blood Culture x2 (Peripheral)', value: '', narrative: 'Pending: organism not finalized' },
+    ], tests)).toMatchObject([{
+      testName: 'Blood Culture x2 (Peripheral)',
+      valueType: 'coded',
+      lifecycleStatus: 'pending',
+      status: 'Pending',
+      specimen: 'Peripheral blood',
+    }]);
+  });
+
+  it('rejects admission-jitter glucose/ketone output for a DKA case', () => {
+    const tests = resolveLabTemplates('BMP');
+    expect(validateGeneratedLabResults([
+      ...tests.map((test) => ({ testName: test.testName, value: test.testName === 'Glucose' ? 97.2 : 140, referenceRange: test.referenceRange })),
+    ], tests, { caseInstructions: 'Opening glucose 570 with Kussmaul breathing after insulin was omitted.' })).toEqual([]);
+  });
+
+  it('rejects incoherent VBG values instead of persisting them', () => {
+    expect(isClinicallyCoherentPanel([
+      { testName: 'pH (Venous)', value: 6.7 },
+      { testName: 'pCO2 (Venous)', value: 44.4 },
+      { testName: 'HCO3 (Venous)', value: 30.7 },
+    ])).toBe(false);
+  });
+
+  it('does not use prior synthetic glucose rows as truth anchors', () => {
+    const tests = resolveLabTemplates('Glucose POC');
+    expect(validateGeneratedLabResults(
+      [{ testName: 'Glucose', value: 97.2, referenceRange: tests[0].referenceRange }],
+      tests,
+      {
+        assignmentId: 'attempt-1',
+        previousLabs: [
+          { testName: 'Glucose', value: 108, assignmentId: null },
+          { testName: 'Glucose', value: 570, assignmentId: 'attempt-1' },
+        ] as unknown as LabResult[],
+      },
+    )).toHaveLength(1);
+  });
+
+  it('allows a coherent post-treatment/euglycemic DKA panel', () => {
+    const tests = resolveLabTemplates('VBG');
+    expect(validateGeneratedLabResults([
+      { testName: 'pH (Venous)', value: 7.25, referenceRange: tests[0].referenceRange },
+      { testName: 'pCO2 (Venous)', value: 29, referenceRange: tests[1].referenceRange },
+      { testName: 'HCO3 (Venous)', value: 16, referenceRange: tests[2].referenceRange },
+      { testName: 'Base Excess', value: -10, referenceRange: tests[3].referenceRange },
+    ], tests, { caseInstructions: 'DKA after treatment; euglycemic stage.', caseStage: 'post-treatment', treatmentActions: [{ name: 'insulin infusion', status: 'given', occurredAt: '2026-10-16T11:10:00Z' }] })).toHaveLength(4);
+  });
+
+  it('requires every ordered CBC differential analyte', () => {
+    const tests = resolveLabTemplates('CBC with Differential');
+    const missingDifferential = tests
+      .filter((test) => test.testName !== 'Neutrophils %')
+      .map((test) => ({ testName: test.testName, value: 10, referenceRange: test.referenceRange }));
+    expect(validateGeneratedLabResults(missingDifferential, tests)).toEqual([]);
+  });
+
+  it.each([
+    ['CBC with Differential', ['White Blood Cell Count', 'Neutrophils %', 'Lymphocytes %', 'Hemoglobin', 'Hematocrit', 'Platelets']],
+    ['Basic Metabolic Panel (BMP)', ['Sodium', 'Potassium', 'Chloride', 'CO2 (Bicarbonate)', 'BUN', 'Creatinine', 'Glucose', 'Calcium']],
+    ['ABG with Co-oximetry', ['pH (Arterial)', 'PaCO2', 'PaO2', 'HCO3 (Arterial)', 'Lactate']],
+    ['Lactate (Serum)', ['Lactate']],
+  ])('keeps %s within its ordered analyte contract', (orderName, expected) => {
+    expect(resolveLabTemplates(orderName).map((test) => test.testName)).toEqual(expected);
   });
 });

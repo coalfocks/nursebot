@@ -11,6 +11,7 @@ import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
+import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -109,27 +110,35 @@ export default function AssignmentManager() {
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
+  const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
-    const result = new Set<string>();
-    // Keep the `in` filter bounded. All-school admin views can contain thousands
-    // of assignments, and a 1,000-ID URL can exceed the REST gateway envelope.
-    const pageSize = 200;
-    for (let from = 0; from < assignmentIds.length; from += pageSize) {
-      const { data, error } = await withTimeout(
-        supabase
-          .from('chat_messages')
-          .select('assignment_id')
-          .in('assignment_id', assignmentIds.slice(from, from + pageSize))
-          .range(0, pageSize - 1),
-        'chat evidence lookup'
+    setChatEvidenceStatus('loading');
+    try {
+      const result = await collectPersistedChatAssignmentIds(
+        assignmentIds,
+        async (batch, from, to) => {
+          const { data, error } = await withTimeout(
+            supabase
+              .from('chat_messages')
+              .select('assignment_id')
+              .in('assignment_id', batch)
+              .order('created_at', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to),
+            'chat evidence lookup'
+          );
+          return { data: data as { assignment_id: string | null }[] | null, error };
+        },
       );
-      if (error) throw error;
-      (data ?? []).forEach((message) => result.add(message.assignment_id));
+      setChatEvidenceStatus('ready');
+      return result;
+    } catch (error) {
+      setChatEvidenceStatus('error');
+      throw error;
     }
-    return result;
   };
 
   const getOverallScore = (feedback: Database['public']['Tables']['student_room_assignments']['Row']['nurse_feedback']) => {
@@ -191,7 +200,13 @@ export default function AssignmentManager() {
 
         const loadedAssignments = ((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null);
         setAssignments(loadedAssignments);
-        setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+        try {
+          setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+        } catch (error) {
+          console.error('Error fetching persisted chat evidence:', error);
+          // The assignment list remains usable, but every badge stays unknown.
+          setAssignmentsWithPersistedChat(new Set());
+        }
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -239,7 +254,12 @@ export default function AssignmentManager() {
     if (error) throw error;
     const loadedAssignments = ((data ?? []) as Assignment[]).filter(a => a.room !== null);
     setAssignments(loadedAssignments);
-    setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+    try {
+      setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+    } catch (error) {
+      console.error('Error fetching persisted chat evidence:', error);
+      setAssignmentsWithPersistedChat(new Set());
+    }
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {
@@ -573,12 +593,14 @@ export default function AssignmentManager() {
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
-      const [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
+      const [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
         supabase.from('student_room_assignments')
           .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
           .eq('id', assignment.id)
           .single(),
         supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        supabase.from('patient_chat_messages').select('id, role, content, created_at, reply_to_client_message_id').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('consultant_chat_messages').select('id, role, content, specialty, urgency, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
         supabase.from('medical_orders').select('id, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
@@ -586,7 +608,7 @@ export default function AssignmentManager() {
         (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
         supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      for (const result of [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
+      for (const result of [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
         if (result.error) throw result.error;
       }
 
@@ -606,6 +628,32 @@ export default function AssignmentManager() {
         events.push({
           id: `message-${message.id}`,
           type: message.role === 'student' || message.role === 'user' ? 'student_chat' : 'nurse_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+
+      const transcriptIds = new Set<string>();
+      (patientMessagesResult.data ?? []).forEach((message) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `patient-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_patient_chat' : 'patient_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+      (consultantMessagesResult.data ?? []).forEach((message: { id: string; role: string; content: string; created_at: string | null }) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `consultant-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_consultant_chat' : 'consultant_chat',
           timestamp: eventTimestamp,
           details: message.content,
         });
@@ -1085,16 +1133,24 @@ export default function AssignmentManager() {
                           <div className="text-gray-500">
                             Feedback provided
                           </div>
-                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                          {chatEvidenceStatus === 'error' ? (
+                            <div className="text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</div>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <div className="text-xs text-gray-500">Checking chat evidence…</div>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
                             <div className="text-xs text-amber-700">No persisted chat evidence</div>
-                          )}
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-500">
                           No feedback yet
-                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                          {chatEvidenceStatus === 'error' ? (
+                            <span className="block text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</span>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <span className="block text-xs text-gray-500">Checking chat evidence…</span>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
                             <span className="block text-xs text-amber-700">No persisted chat evidence</span>
-                          )}
+                          ) : null}
                         </span>
                       )}
                     </td>

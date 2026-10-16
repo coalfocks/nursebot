@@ -11,7 +11,8 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
-import { formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
+import { formatScopedEmrTimestamp, timestampForScope } from '../lib/scenarioTime';
+import { normalizeImagingContrast } from '../lib/imagingContrast';
 
 type PendingUpload = {
   id: string;
@@ -105,8 +106,8 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
-  const formatDate = (value?: string | null, relativeOffsetHours?: number | null) => {
-    return formatScenarioPrior(value, patient.admissionDate, relativeOffsetHours);
+  const formatDate = (value?: string | null, relativeOffsetHours?: number | null, scope?: ImagingStudy['overrideScope']) => {
+    return formatScopedEmrTimestamp(value, scope, patient.admissionDate, relativeOffsetHours);
   };
 
   const handleCreateStudy = async () => {
@@ -140,7 +141,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       priority: createForm.priority ?? 'Routine',
       status: 'Pending',
       orderedBy: profile?.full_name ?? 'Admin',
-      orderTime: minimumPriorTimestamp(patient.admissionDate),
+      orderTime: timestampForScope(forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline', patient.admissionDate),
       images: [],
     };
 
@@ -442,10 +443,11 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       ) : (
         <div className="space-y-6">
           {studies.map((study) => {
+            const normalizedContrast = normalizeImagingContrast(study);
             const contrastLabel =
-              study.contrast === 'with'
+              normalizedContrast.contrast === 'with'
                 ? 'With contrast'
-                : study.contrast === 'without'
+                : normalizedContrast.contrast === 'without'
                 ? 'Without contrast'
                 : null;
             return (
@@ -453,11 +455,12 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <CardTitle>{study.orderName || study.studyType}</CardTitle>
+                      <CardTitle>{normalizedContrast.displayOrderName || study.orderName || study.studyType}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         {study.studyType}
-                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime, study.relativeOffsetHours)}
+                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime, study.relativeOffsetHours, study.overrideScope)}
                       </p>
+                      {normalizedContrast.warning && <p className="mt-1 text-xs text-amber-700">{normalizedContrast.warning}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       {study.priority && <Badge variant="outline">{study.priority}</Badge>}
@@ -474,6 +477,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                 <CardContent className="space-y-4">
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground">Radiology Read</h4>
+                    {contrastLabel && <p className="text-xs text-muted-foreground">Normalized contrast: {contrastLabel}</p>}
                     {study.report ? (
                       <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg">{study.report}</pre>
                     ) : (
@@ -481,7 +485,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                     )}
                     {study.reportGeneratedAt && (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Generated {formatDate(study.reportGeneratedAt, study.relativeOffsetHours)}
+                        Generated {formatDate(study.reportGeneratedAt, study.relativeOffsetHours, study.overrideScope)}
                       </p>
                     )}
                   </div>

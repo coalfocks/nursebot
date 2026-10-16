@@ -1,6 +1,7 @@
 import { OpenAI } from "https://deno.land/x/openai@v4.68.1/mod.ts";
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { validateClinicalLabPanel } from '../_shared/lab-clinical-validation.ts';
 
 type LabTest = {
   testName: string;
@@ -27,6 +28,7 @@ type LabContext = {
   previousLabs?: Array<{
     testName?: string;
     value?: string | number | null;
+    assignmentId?: string | null;
     unit?: string | null;
     referenceRange?: string | null;
     status?: string | null;
@@ -39,6 +41,8 @@ type LabContext = {
     status?: string;
     instructions?: string | null;
   }>;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
   emrContext?: Record<string, unknown> | string | null;
   nurseContext?: string | null;
   expectedDiagnosis?: string | null;
@@ -159,7 +163,7 @@ const buildPrompt = (payload: LabRequestPayload): { system: string; user: string
     const context = summarizeContext(payload.context);
     const requested = payload.tests.map((t) => t.testName).join(', ');
 
-    const system = `You are a clinical lab engine for an EMR simulator. Given patient/room context and an order, you return realistic lab results. Always respond with JSON array only—no prose. Units and reference ranges must be clinically plausible. When the user provides intent/values, honor them explicitly (prefer user-requested values over context defaults unless they are physiologically impossible).`;
+    const system = `You are a clinical lab engine for an EMR simulator. Given the assignment-pinned room context and an explicit order, return realistic results for the current case stage. Always respond with JSON array only—no prose. Use authored current-case instructions and order context as the source of truth; admission values are context only. Never create current results by applying a random or percentage jitter to admission values. Units and reference ranges must be clinically plausible. For acid-base panels, calculate a coherent pH/CO2/bicarbonate relationship. Keep glucose and ketone results consistent with the same case stage. If the authored scenario indicates DKA or severe hyperglycemia, do not return normal glucose/ketones/bicarbonate merely because admission values were normal. If the requested panel cannot be generated coherently, return a recoverable error rather than plausible-looking unrelated analytes.`;
 
     const user = `
 Generate results for these tests: ${requested}.
@@ -217,6 +221,20 @@ const parseJsonFromString = (content: string) => {
   return null;
 };
 
+const isCultureOrder = (name: string) => /blood\s+culture|urine\s+culture|sputum\s+culture|wound\s+culture|fungal\s+culture|anaerobic\s+blood/i.test(name);
+
+const pendingMicrobiologyResult = (testName: string) => ({
+  testName,
+  value: '',
+  valueType: 'coded',
+  narrative: 'Pending: organism and susceptibility status not yet finalized.',
+  specimen: /blood/i.test(testName) ? 'Peripheral blood' : 'Specimen collected per order',
+  lifecycleStatus: 'pending',
+  unit: '',
+  referenceRange: 'Pending microbiology: organism/status not yet finalized',
+  status: 'Pending',
+});
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -233,6 +251,11 @@ Deno.serve(async (req) => {
     }
 
     if (!isBatch && payload.labType === 'pending') {
+      if (isCultureOrder(payload.labName)) {
+        return new Response(JSON.stringify(pendingMicrobiologyResult(payload.labName)), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       return new Response(
         JSON.stringify({
           value: null,
@@ -246,6 +269,11 @@ Deno.serve(async (req) => {
 
     if (!openai) {
       throw new Error('Missing OPENAI_API_KEY');
+    }
+
+    if (isBatch && isCultureOrder(payload.orderName)) {
+      const labs = payload.tests.map((test) => pendingMicrobiologyResult(test.testName));
+      return new Response(JSON.stringify({ labs }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     const prompt = buildPrompt(payload);
@@ -268,7 +296,53 @@ Deno.serve(async (req) => {
       throw new Error('Unable to parse AI response');
     }
 
-    const responseBody = isBatch ? { labs: parsed } : parsed;
+    if (isBatch) {
+      const requestedNames = new Set(payload.tests.map((test) => test.testName.trim().toLowerCase()));
+      const rawLabs = Array.isArray(parsed) ? parsed : [];
+      const seen = new Set<string>();
+      const labs = rawLabs.filter((lab) => {
+        const name = typeof lab?.testName === 'string' ? lab.testName.trim().toLowerCase() : '';
+        if (!name || !requestedNames.has(name) || seen.has(name)) return false;
+        seen.add(name);
+        return true;
+      });
+      // The client owns the deterministic local fallback. Returning an empty
+      // batch on a panel mismatch prevents an AI CBC/chemistry panel from
+      // being stored for a microbiology order.
+      if (labs.length !== requestedNames.size) {
+        return new Response(JSON.stringify({ error: 'Generated panel did not match the ordered analyte set.' }), {
+          status: 422,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const clinicalValidation = validateClinicalLabPanel(labs, {
+        assignmentId: payload.context?.assignmentId,
+        orderName: payload.orderName,
+        nurseContext: payload.context?.nurseContext,
+        expectedDiagnosis: payload.context?.expectedDiagnosis,
+        expectedTreatment: payload.context?.expectedTreatment,
+        caseGoals: payload.context?.caseGoals,
+        objective: payload.context?.objective,
+        emrContext: payload.context?.emrContext,
+        caseInstructions: payload.context?.completionHint,
+        previousLabs: payload.context?.previousLabs,
+        caseStage: payload.context?.caseStage,
+        treatmentActions: payload.context?.treatmentActions,
+        orders: payload.context?.orders?.map((order) => ({ orderName: order.orderName, status: order.status, instructions: order.instructions, orderTime: null })),
+      });
+      if (!clinicalValidation.ok) {
+        return new Response(JSON.stringify({ error: `Generated panel rejected: ${clinicalValidation.reason}` }), {
+          status: 422,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const responseBody = { labs };
+      return new Response(JSON.stringify(responseBody), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const responseBody = parsed;
 
     return new Response(JSON.stringify(responseBody), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
