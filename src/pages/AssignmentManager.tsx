@@ -593,12 +593,14 @@ export default function AssignmentManager() {
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
-      const [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
+      const [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
         supabase.from('student_room_assignments')
           .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
           .eq('id', assignment.id)
           .single(),
         supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        supabase.from('patient_chat_messages').select('id, role, content, created_at, reply_to_client_message_id').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('consultant_chat_messages').select('id, role, content, specialty, urgency, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
         supabase.from('medical_orders').select('id, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
@@ -606,7 +608,7 @@ export default function AssignmentManager() {
         (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
         supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      for (const result of [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
+      for (const result of [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
         if (result.error) throw result.error;
       }
 
@@ -626,6 +628,32 @@ export default function AssignmentManager() {
         events.push({
           id: `message-${message.id}`,
           type: message.role === 'student' || message.role === 'user' ? 'student_chat' : 'nurse_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+
+      const transcriptIds = new Set<string>();
+      (patientMessagesResult.data ?? []).forEach((message) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `patient-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_patient_chat' : 'patient_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+      (consultantMessagesResult.data ?? []).forEach((message: { id: string; role: string; content: string; created_at: string | null }) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `consultant-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_consultant_chat' : 'consultant_chat',
           timestamp: eventTimestamp,
           details: message.content,
         });
