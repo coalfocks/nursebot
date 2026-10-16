@@ -19,9 +19,11 @@ export const compactPrintText = (value: unknown, fallback: string, limit = PRINT
   const normalized = text(value) || fallback;
   return normalized.length > limit ? `${normalized.slice(0, limit - 1).trimEnd()}…` : normalized;
 };
-export const conciseEfficiencyRationale = (value: unknown, _score = 0) => {
+export const conciseEfficiencyRationale = (value: unknown, score = 0) => {
   const normalized = clean(value).replace(/no case-specific efficiency deduction(?: was observed)?[.;:]?\s*/gi, '').trim();
-  return normalized && !/^[\s\W_]+$/.test(normalized) ? normalized : 'No case-specific efficiency deduction.';
+  return normalized && !/^[\s\W_]+$/.test(normalized)
+    ? normalized
+    : score < 0 ? 'Unnecessary or repetitive communication was observed.' : 'No case-specific efficiency deduction.';
 };
 const efficiencyFeedback = (value: unknown) => conciseEfficiencyRationale(value);
 export { efficiencyFeedback };

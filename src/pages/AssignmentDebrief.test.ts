@@ -22,6 +22,8 @@ describe('AssignmentDebrief presentation helpers', () => {
       .toBe('Repeated non-purposeful updates delayed the handoff.');
     expect(conciseEfficiencyRationale('.', 0))
       .toBe('No case-specific efficiency deduction.');
+    expect(conciseEfficiencyRationale('...', -1))
+      .toBe('Unnecessary or repetitive communication was observed.');
   });
 
   it('uses canonical component arithmetic for both screen and print totals', () => {
