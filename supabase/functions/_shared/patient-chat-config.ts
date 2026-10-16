@@ -30,7 +30,7 @@ export const normalizePatientResponseMode = (...values: unknown[]): PatientRespo
   for (const value of values) {
     if (typeof value !== 'string') continue;
     const normalized = value.trim().toLowerCase().replace(/[_-]+/g, ' ');
-    if (normalized === 'unable' || normalized === 'unable to respond' || normalized === 'unable to discuss' || normalized === 'noncommunicative' || normalized === 'unresponsive') return 'unable';
+    if (normalized === 'unable' || normalized === 'unable to respond' || normalized === 'unable to discuss' || normalized === 'patient unable to respond' || normalized === 'patient unable to discuss' || normalized === 'noncommunicative' || normalized === 'unresponsive') return 'unable';
     if (normalized === 'responsive') return 'responsive';
   }
   return 'responsive';
