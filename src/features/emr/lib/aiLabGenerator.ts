@@ -180,8 +180,11 @@ export const resolveLabTemplates = (
       'hematocrit',
       'platelets',
     ],
-    cbc: ['white blood cell count', 'hemoglobin', 'hematocrit', 'platelets'],
-    'complete blood count': ['white blood cell count', 'hemoglobin', 'hematocrit', 'platelets'],
+    // The simulator's CBC order is the CBC-with-differential workflow. Keep
+    // the differential analytes present even when the UI stores the shorthand
+    // order name as "CBC".
+    cbc: ['white blood cell count', 'neutrophils %', 'lymphocytes %', 'hemoglobin', 'hematocrit', 'platelets'],
+    'complete blood count': ['white blood cell count', 'neutrophils %', 'lymphocytes %', 'hemoglobin', 'hematocrit', 'platelets'],
     'basic metabolic panel': ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     bmp: ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     'comprehensive metabolic panel': [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from './scenarioTime';
+import { clampToMinimumPrior, formatScenarioPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from './scenarioTime';
 
 describe('scenario EMR timestamps', () => {
   it('places newly authored records exactly twelve hours before the encounter', () => {
@@ -19,5 +19,15 @@ describe('scenario EMR timestamps', () => {
     expect(formatScenarioPrior('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('Prior to encounter');
     expect(formatScenarioPrior('1900-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('Prior to encounter');
     expect(clampToMinimumPrior('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('2000-01-01T00:00:00.000Z');
+  });
+
+  it('does not relabel an assignment result as baseline history', () => {
+    const label = formatScopedEmrTimestamp(
+      '2026-10-16T18:01:35.000Z',
+      'assignment',
+      '2026-10-16T18:00:00.000Z',
+    );
+    expect(label).not.toContain('12h prior');
+    expect(label).toContain('2026');
   });
 });

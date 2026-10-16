@@ -44,3 +44,18 @@ export const formatScenarioPrior = (
   }
   return `${elapsedHours}h prior • ${new Date(displayTimestamp).toLocaleString()}`;
 };
+
+/** Baseline records are intentionally rendered as relative history. Learner
+ * attempt records must retain their actual collection/encounter time. */
+export const formatScopedEmrTimestamp = (
+  timestamp: string | null | undefined,
+  scope: 'baseline' | 'room' | 'assignment' | null | undefined,
+  admissionDate?: string | null,
+  relativeOffsetHours?: number | null,
+): string => {
+  if (scope === 'assignment' && timestamp) {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+  }
+  return formatScenarioPrior(timestamp, admissionDate, relativeOffsetHours);
+};

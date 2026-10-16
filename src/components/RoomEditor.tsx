@@ -139,6 +139,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     let deliveryNote = '';
     let evaluationLeniencyMultiplier = 1;
     let generatedPatientPrompt = '';
+    let generatedPatientResponseMode: 'responsive' | 'unable' = 'responsive';
     let generatedConsultantPrompt = '';
     if (raw) {
       try {
@@ -173,6 +174,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           if (typeof generated.patient_conversation_prompt === 'string') generatedPatientPrompt = generated.patient_conversation_prompt;
           if (typeof generated.consultantResponsePrompt === 'string') generatedConsultantPrompt = generated.consultantResponsePrompt;
           if (typeof generated.consultant_response_prompt === 'string') generatedConsultantPrompt = generated.consultant_response_prompt;
+          const patientChat = (parsed as { patientChat?: { responseMode?: unknown } }).patientChat;
+          const bedside = parsed as { patientResponseMode?: unknown };
+          if (patientChat?.responseMode === 'unable' || bedside.patientResponseMode === 'unable') {
+            generatedPatientResponseMode = 'unable';
+          }
           const rawLeniency = (parsed as {
             evaluation?: { leniencyMultiplier?: unknown };
           }).evaluation?.leniencyMultiplier;
@@ -187,7 +193,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         contextText = raw;
       }
     }
-    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt };
+    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt, generatedPatientResponseMode };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
@@ -214,6 +220,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [patientConversationEnabled, setPatientConversationEnabled] = useState(
     room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
   );
+  const [patientResponseMode, setPatientResponseMode] = useState<'responsive' | 'unable'>(parsedEmrContext.generatedPatientResponseMode);
   const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(
     room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
   );
@@ -499,6 +506,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (initialVitals) {
         emrContextPayloadObject.initial_vitals = initialVitals;
       }
+      emrContextPayloadObject.patientChat = {
+        responseMode: patientResponseMode,
+      };
       const normalizedLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(
         Number.parseFloat(evaluationLeniencyMultiplier),
       );
@@ -896,6 +906,18 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               />
               Enable patient conversation for students
             </label>
+            <label htmlFor="patientResponseMode" className="mt-3 block text-xs font-medium text-gray-700">
+              Patient response mode
+            </label>
+            <select
+              id="patientResponseMode"
+              value={patientResponseMode}
+              onChange={(e) => setPatientResponseMode(e.target.value as 'responsive' | 'unable')}
+              className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            >
+              <option value="responsive">Respond using the authored patient prompt</option>
+              <option value="unable">Unable to respond — return the fixed learner-facing response</option>
+            </select>
             <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by student patient chat.</p>
           </div>
           <div>
@@ -910,7 +932,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
             />
-            <p className="mt-1 text-xs text-gray-500">Displayed to the active student Consultant Portal when authored.</p>
+            <p className="mt-1 text-xs text-gray-500">Room override used by the consultant model; the authored text is never shown to learners.</p>
+            <p className="mt-1 text-xs text-gray-500">Composition: a saved room override wins. If this is blank, no shared consultant default is currently configured, so the student portal stays unavailable until an educator authors behavior.</p>
+            {!consultantResponsePrompt.trim() && (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                Consultant portal unavailable for this room until an educator authors a room behavior. Shared defaults are not silently substituted.
+              </p>
+            )}
           </div>
         </div>
 

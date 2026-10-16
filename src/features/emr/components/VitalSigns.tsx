@@ -23,6 +23,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { selectLatestVitals } from '../lib/vitalSelection';
 
 interface VitalSignsProps {
   patient: Patient;
@@ -204,7 +205,7 @@ export function VitalSignsComponent({ patient, assignmentId }: VitalSignsProps) 
     }
   };
 
-  const latestVitals = vitals[0];
+  const latestVitals = selectLatestVitals(vitals, assignmentId);
 
   // Convert Fahrenheit to Celsius
   const fahrenheitToCelsius = (f: number | undefined) => {

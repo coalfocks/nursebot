@@ -45,6 +45,7 @@ describe('lab integrity', () => {
     expect(resolveLabTemplates('CBC', 'Male').find((test) => test.testName === 'Hemoglobin')?.referenceRange).toBe('13.5-17.5');
     expect(resolveLabTemplates('CBC', 'Female').find((test) => test.testName === 'Hematocrit')?.referenceRange).toBe('36-46');
     expect(resolveLabTemplates('CBC').find((test) => test.testName === 'Hemoglobin')?.referenceRange).toBe('12.0-15.5');
+    expect(resolveLabTemplates('CBC').map((test) => test.testName)).toEqual(expect.arrayContaining(['Neutrophils %', 'Lymphocytes %']));
   });
 
   it('reclassifies historical sex-dependent rows without changing stored chart data', () => {
