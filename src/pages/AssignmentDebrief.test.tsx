@@ -11,6 +11,7 @@ const component = (score: number, min: number, max: number, feedback: string) =>
 const assignment = {
   id: 'synthetic-assignment', student_id: 'synthetic-student', technical_incomplete: false,
   communication_score: 3, clinical_reasoning_score: 4, mdm_score: 4, scoring_start_at: '2026-10-16T00:00:00Z', learning_objectives: 'Document reassessment.',
+  room: { room_number: '112', patient_id: 'synthetic-patient', expected_diagnosis: 'Synthetic acute instability', case_goals: ['Name the diagnosis.', 'Prioritize monitoring and orders.'] },
   feedback_debrief: {
     canonical_feedback: {
       schema_version: 'feedback-contract-v1', room_label: 'Synthetic Room 112', target_diagnosis: 'Synthetic acute instability',
@@ -28,8 +29,18 @@ const assignment = {
 
 describe('AssignmentDebrief canonical rendered feedback', () => {
   it('renders case identity, goals, six components, evidence, strengths, and next steps without legacy placeholders', async () => {
-    const query = { select: () => query, eq: () => query, single: () => Promise.resolve({ data: assignment, error: null }) };
-    fromMock.mockReturnValue(query);
+    const assignmentQuery = { select: () => assignmentQuery, eq: () => assignmentQuery, single: () => Promise.resolve({ data: assignment, error: null }) };
+    const sourceRows = {
+      chat_messages: [{ id: 'source-chat-1', role: 'nurse', content: 'redacted', created_at: '2026-10-16T00:00:01Z' }, { id: 'source-chat-2', role: 'student', content: 'redacted', created_at: '2026-10-16T00:00:02Z' }],
+      medical_orders: [{ id: 'source-order-1', order_name: 'Complete Blood Count with Differential', priority: 'STAT', frequency: 'Once', status: 'completed', created_at: '2026-10-16T00:00:03Z' }],
+      lab_results: [{ id: 'source-lab-1', test_name: 'WBC', value: '12.1', unit: 'K/uL', status: 'final', created_at: '2026-10-16T00:00:04Z' }],
+      patient_chat_messages: [], consultant_chat_messages: [],
+    };
+    const sourceQuery = (table: keyof typeof sourceRows) => {
+      const query = { select: () => query, eq: () => query, is: () => query, order: () => Promise.resolve({ data: sourceRows[table], error: null }) };
+      return query;
+    };
+    fromMock.mockImplementation((table: keyof typeof sourceRows | 'student_room_assignments') => table === 'student_room_assignments' ? assignmentQuery : sourceQuery(table));
     const { default: AssignmentDebrief } = await import('./AssignmentDebrief');
     render(<AssignmentDebrief />);
     await waitFor(() => expect(screen.getAllByText('Synthetic Room 112').length).toBeGreaterThan(0));
@@ -38,6 +49,10 @@ describe('AssignmentDebrief canonical rendered feedback', () => {
     expect(screen.getAllByText('Prioritize monitoring and orders.').length).toBeGreaterThan(0);
     for (const label of ['Focused Information Gathering (0–2)', 'Closed-Loop Team Communication (0–3)', 'Efficiency Deduction (−2–0)', 'Orders/Monitoring Quality (0–3)', 'Clinical Reasoning/Documentation (0–2)', 'Safety Deduction (0, −1, −2)']) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     expect(screen.getAllByText('STAT CBC').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Order: Complete Blood Count with Differential').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Lab result: WBC').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('No unnecessary repetition observed.').length).toBe(1);
+    expect(screen.queryByText(/No case-specific efficiency deduction; No case-specific efficiency deduction/i)).not.toBeInTheDocument();
     expect(screen.getAllByText('Focused escalation tied to the CBC result.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Document the reassessment result and plan change.').length).toBeGreaterThan(0);
     expect(screen.queryByText(/message count and timing are not scored/i)).not.toBeInTheDocument();
