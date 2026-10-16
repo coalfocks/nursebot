@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveScoringStart, isPostPageEvent, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from './feedback-contract';
+import type { EvaluationScoringResponse } from './evaluation-scoring';
+import { buildCanonicalFeedback, deriveScoringStart, isPostPageEvent, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from './feedback-contract';
 
 describe('feedback attempt provenance', () => {
   it('uses the first nurse page and excludes pre-page events', () => {
@@ -44,5 +45,36 @@ describe('feedback attempt provenance', () => {
     ]);
     expect(JSON.stringify(key.goals)).not.toContain('Reveal this goal');
     expect(JSON.stringify(key.goals)).not.toContain('After the simulation');
+  });
+
+  it('persists one canonical six-component contract with reconciled capped totals', () => {
+    const component = (score: number, feedback: string) => ({ score, feedback, evidence_event_ids: ['order-1'] });
+    const canonical = buildCanonicalFeedback({
+      roomLabel: 'Room Synthetic',
+      targetDiagnosis: 'Acute instability',
+      goals: ['Recognize the diagnosis.', 'Order focused monitoring.'],
+      scoringStartAt: '2026-01-01T01:00:00Z',
+      evidence: [{ id: 'order-1', kind: 'order', title: 'STAT CBC', body: 'Completed', timestamp: '2026-01-01T01:01:00Z' }],
+      evaluation: {
+        communication_score: 9,
+        mdm_score: 9,
+        clinical_reasoning_score: 9,
+        communication_breakdown: {
+          focused_information_gathering: component(2, 'Focused.'),
+          closed_loop_team_communication: component(3, 'Closed loop.'),
+          efficiency_deduction: component(-1, 'Bounded deduction.'),
+        },
+        clinical_reasoning_breakdown: {
+          orders_monitoring_quality: component(3, 'Ordered.'),
+          clinical_reasoning_documentation: component(2, 'Documented.'),
+          safety_deduction: component(-2, 'Safety deduction.'),
+        },
+        safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
+        learning_objectives: 'Learn.', strengths: ['Strength'], improvements: ['Next'], recommendations: [],
+      } as unknown as EvaluationScoringResponse,
+    });
+    expect(canonical.communication.total).toBe(4);
+    expect(canonical.clinical_reasoning.total).toBe(3);
+    expect(canonical.evidence[0]).toMatchObject({ id: 'order-1', kind: 'order' });
   });
 });

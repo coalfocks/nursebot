@@ -11,7 +11,12 @@ import {
 const completePackage = Object.fromEntries(
   REQUIRED_GENERATED_SECTIONS.map((section) => [section, {}]),
 );
-completePackage.patient = { demographics: { dateOfBirth: '2000-01-01' } };
+completePackage.patient = { demographics: { firstName: 'Ada', lastName: 'Lovelace', dateOfBirth: '2000-01-01', gender: 'Female' } };
+completePackage.emr = { hAndP: 'Fictional admission history.' };
+completePackage.event = { trigger: 'Nurse reports change.', nurseObservations: 'Fictional observable finding.' };
+completePackage.orders = { admissionOrders: ['Monitor vitals'] };
+completePackage.nurse_chat = { initialMessage: 'Nurse opening.', behaviorRules: ['No hints'], knownFacts: ['Known fact'], protectedFacts: ['Protected fact'] };
+completePackage.evaluation = { goals: ['Recognize the diagnosis'], expectedWorkup: ['Order CBC'], criticalActions: ['Escalate'], unsafeActions: ['Do not delay'], bedsideVerdict: 'yes' };
 completePackage.bedside = { patientChatEnabled: false };
 
 describe('case builder publish helpers', () => {
@@ -29,12 +34,20 @@ describe('case builder publish helpers', () => {
     });
   });
 
-  it('accepts a package containing all required section objects', () => {
+  it('accepts a complete package with authored identity and evaluation fields', () => {
     expect(validateGeneratedCasePackage(completePackage).ok).toBe(true);
   });
 
+  it('rejects hollow generated sections before publish', () => {
+    const value = { ...completePackage, evaluation: {} };
+    expect(validateGeneratedCasePackage(value)).toMatchObject({
+      ok: false,
+      issue: { code: 'CASE_PACKAGE_FIELD_REQUIRED', path: 'generation_package.evaluation.goals' },
+    });
+  });
+
   it('rejects a generated package that cannot create a linked EMR patient', () => {
-    const value = { ...completePackage, patient: {} };
+    const value = { ...completePackage, patient: { demographics: { dateOfBirth: '2000-01-01' } } };
     expect(validateGeneratedCasePackage(value)).toMatchObject({
       ok: false,
       issue: { code: 'CASE_PATIENT_IDENTITY_REQUIRED' },

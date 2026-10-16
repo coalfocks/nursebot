@@ -12,13 +12,19 @@ export type GeneratedSectionName = (typeof REQUIRED_GENERATED_SECTIONS)[number];
 export type GeneratedCasePackage = Partial<Record<GeneratedSectionName, Record<string, unknown>>>;
 
 export type CasePublishValidationIssue = {
-  code: 'CASE_PACKAGE_SECTION_REQUIRED' | 'CASE_PATIENT_IDENTITY_REQUIRED' | 'CASE_BEDSIDE_PROMPT_REQUIRED';
+  code: 'CASE_PACKAGE_SECTION_REQUIRED' | 'CASE_PACKAGE_FIELD_REQUIRED' | 'CASE_PATIENT_IDENTITY_REQUIRED' | 'CASE_BEDSIDE_PROMPT_REQUIRED';
   path: string;
   message: string;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const fieldLabel = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+const hasContent = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.some(hasContent);
+  return isRecord(value) && Object.values(value).some(hasContent);
+};
 
 export const validateGeneratedCasePackage = (
   value: unknown,
@@ -49,15 +55,38 @@ export const validateGeneratedCasePackage = (
 
   const patient = value.patient as Record<string, unknown>;
   const identity = getStructuredPatientIdentity(patient);
-  if (!identity.dateOfBirth) {
+  if (!identity.firstName || !identity.lastName || !identity.dateOfBirth || !identity.gender) {
     return {
       ok: false,
       issue: {
         code: 'CASE_PATIENT_IDENTITY_REQUIRED',
-        path: 'generation_package.patient.demographics.dateOfBirth',
-        message: 'Generate a structured patient date of birth before publishing so the EMR patient can be linked.',
+        path: 'generation_package.patient.demographics',
+        message: 'Generate structured fictional first name, last name, date of birth, and gender before publishing so the EMR patient can be linked.',
       },
     };
+  }
+
+  const requiredContent: Array<[GeneratedSectionName, string[]]> = [
+    ['emr', ['hAndP', 'admissionExam']],
+    ['event', ['trigger', 'nurseObservations']],
+    ['orders', ['admissionOrders', 'gatedResults', 'imaging']],
+    ['nurse_chat', ['initialMessage', 'behaviorRules', 'knownFacts', 'protectedFacts']],
+    ['evaluation', ['goals', 'expectedWorkup', 'criticalActions', 'unsafeActions', 'bedsideVerdict']],
+  ];
+  for (const [sectionName, fields] of requiredContent) {
+    const section = value[sectionName] as Record<string, unknown>;
+    const complete = fields.some((field) => hasContent(section[field]));
+    if (!complete) {
+      const missing = fields[0];
+      return {
+        ok: false,
+        issue: {
+          code: 'CASE_PACKAGE_FIELD_REQUIRED',
+          path: `generation_package.${sectionName}.${missing}`,
+          message: `Add authored ${fieldLabel(missing)} content before publishing.`,
+        },
+      };
+    }
   }
 
   const bedside = value.bedside as Record<string, unknown>;
@@ -107,15 +136,18 @@ const learnerFieldAllowlist = {
 export const buildLearnerEmrContext = (
   generatedPackage: GeneratedCasePackage,
   blueprintId: string,
-  _generatedAt: string,
-) => ({
-  source: 'case-builder-v2',
-  blueprintId,
-  patient: pickFields(generatedPackage.patient ?? {}, learnerFieldAllowlist.patient),
-  emr: pickFields(generatedPackage.emr ?? {}, learnerFieldAllowlist.emr),
-  event: pickFields(generatedPackage.event ?? {}, learnerFieldAllowlist.event),
-  orders: pickFields(generatedPackage.orders ?? {}, learnerFieldAllowlist.orders),
-});
+  generatedAt: string,
+) => {
+  void generatedAt;
+  return {
+    source: 'case-builder-v2',
+    blueprintId,
+    patient: pickFields(generatedPackage.patient ?? {}, learnerFieldAllowlist.patient),
+    emr: pickFields(generatedPackage.emr ?? {}, learnerFieldAllowlist.emr),
+    event: pickFields(generatedPackage.event ?? {}, learnerFieldAllowlist.event),
+    orders: pickFields(generatedPackage.orders ?? {}, learnerFieldAllowlist.orders),
+  };
+};
 
 const optionalString = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : null;

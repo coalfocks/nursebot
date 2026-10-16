@@ -52,18 +52,20 @@ const isFiniteInteger = (value: unknown): value is number => typeof value === 'n
 
 export const validateCanonicalFeedback = (value: CanonicalFeedback): CanonicalFeedback => {
   if (value.schema_version !== CANONICAL_FEEDBACK_SCHEMA_VERSION || !value.room_label.trim() || !value.scoring_start_at) throw new Error('Invalid canonical feedback identity');
-  const validateDomain = (domain: CanonicalFeedback['communication'] | CanonicalFeedback['clinical_reasoning']) => {
+  const validateDomain = (domain: CanonicalFeedback['communication'] | CanonicalFeedback['clinical_reasoning'], ranges: Array<[number, number]>) => {
     const components = Object.values(domain.components);
     if (components.length !== 3 || !isFiniteInteger(domain.total) || domain.total < 0 || domain.total > 5) throw new Error('Invalid canonical feedback domain');
-    for (const component of components) {
-      if (!isFiniteInteger(component.score) || component.score < component.min || component.score > component.max || !component.feedback.trim() || component.evidence_event_ids.some((id) => !id.trim())) throw new Error('Invalid canonical feedback component');
+    for (const [index, component] of components.entries()) {
+      if (!isFiniteInteger(component.score) || component.score < component.min || component.score > component.max || component.min !== ranges[index][0] || component.max !== ranges[index][1] || !component.feedback.trim() || component.evidence_event_ids.some((id) => !id.trim())) throw new Error('Invalid canonical feedback component');
     }
     const raw = components.reduce((sum, component) => sum + component.score, 0);
     if (domain.total !== Math.max(0, Math.min(5, raw))) throw new Error('Canonical feedback arithmetic does not reconcile');
   };
-  validateDomain(value.communication);
-  validateDomain(value.clinical_reasoning);
+  validateDomain(value.communication, [[0, 2], [0, 3], [-2, 0]]);
+  validateDomain(value.clinical_reasoning, [[0, 3], [0, 2], [-2, 0]]);
   if (value.evidence.some((event) => !event.id.trim() || !event.kind.trim() || !event.title.trim() || !event.timestamp)) throw new Error('Invalid canonical feedback evidence');
+  const evidenceIds = new Set(value.evidence.map((event) => event.id));
+  if ([...Object.values(value.communication.components), ...Object.values(value.clinical_reasoning.components)].some((component) => component.evidence_event_ids.some((id) => !evidenceIds.has(id)))) throw new Error('Canonical feedback cites an unknown evidence ID');
   return value;
 };
 
