@@ -6,11 +6,7 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
-import {
-  ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
-  getAssignableStudentCutoffDate,
-  isAssignableStudentProfile,
-} from '../lib/studentVisibility';
+import { getEligibleAssignmentStudents } from '../lib/assignmentStudentEligibility';
 import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
@@ -114,8 +110,7 @@ export default function AssignmentManager() {
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
-  const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
-  const assignableStudentCutoff = getAssignableStudentCutoffDate();
+  const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
     const result = new Set<string>();
@@ -1308,8 +1303,7 @@ export default function AssignmentManager() {
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Search Students</label>
                       <p className="mt-1 text-xs text-gray-500">
-                        Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                        (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                        Showing current eligible students in the selected school; older active accounts remain assignable.
                       </p>
                       <div className="mt-1">
                         <input
@@ -1393,8 +1387,7 @@ export default function AssignmentManager() {
                           Select Students ({selectedBulkStudents.length} selected)
                         </label>
                         <p className="mt-1 text-xs text-gray-500">
-                          Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                          (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                          Showing current eligible students; use the school and specialty filters to narrow the list.
                         </p>
                         <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
                           {assignableStudents
