@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TestTube, TrendingUp, Sparkles, Trash2, Pencil } from 'lucide-react';
-import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
+import { resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
@@ -242,23 +242,29 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           });
           if (aiResponse.error) throw aiResponse.error;
 
+          const generationContext = {
+            assignmentId,
+            orderName: order.orderName,
+            previousLabs: existingLabs,
+            clinicalNotes,
+            vitals,
+            caseInstructions: JSON.stringify({
+              roomId: patient.roomId,
+              assignmentId,
+              roomMeta,
+            }),
+          };
           const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
             ? validateGeneratedLabResults(
                 (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
                 requestedTests,
+                generationContext,
               )
             : [];
-          const generatedLabs = aiLabs.length === requestedTests.length
-            ? aiLabs
-            : await generateLabResults(patient.id, order.orderName, {
-                patient,
-                assignmentId,
-                roomId: patient.roomId ?? null,
-                orderName: order.orderName,
-                previousLabs: existingLabs,
-                clinicalNotes,
-                vitals,
-              });
+          if (aiLabs.length !== requestedTests.length) {
+            throw new Error('Generated lab panel failed clinical coherence validation; no result was saved. Refresh and retry.');
+          }
+          const generatedLabs = aiLabs;
           const runTimestamp = assignmentId
             ? new Date().toISOString()
             : minimumPriorTimestamp(patient.admissionDate);
@@ -284,6 +290,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           }
         } catch (error) {
           autoResultingOrderIds.current.delete(order.id);
+          if (isCurrent(request)) {
+            setLabSaveError(error instanceof Error ? error.message : 'Unable to generate a coherent result panel. Refresh and retry.');
+          }
           console.error('Failed to reconcile instant lab order', order.id, error);
         }
       }
@@ -356,28 +365,36 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         throw aiResponse.error;
       }
 
+      const generationContext = {
+        assignmentId,
+        orderName,
+        previousLabs: contextLabs,
+        clinicalNotes,
+        vitals,
+        caseInstructions: JSON.stringify({
+          expectedDiagnosis: roomMeta?.expected_diagnosis,
+          expectedTreatment: roomMeta?.expected_treatment,
+          caseGoals: roomMeta?.case_goals,
+          objective: roomMeta?.objective,
+          nurseContext: roomMeta?.nurse_context ?? roomMeta?.context,
+          emrContext: roomMeta?.emr_context,
+        }),
+      };
       const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
         ? validateGeneratedLabResults(
             (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
             requestedTests,
+            generationContext,
           )
         : null;
 
       const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
       const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
 
-      const generatedLabs =
-        aiLabs?.length === requestedTests.length
-          ? aiLabs
-          : await generateLabResults(patient.id, orderName, {
-              patient,
-              assignmentId: assignmentForScope,
-              roomId: roomIdForScope,
-              orderName: requestDetails ? `${orderName} — ${requestDetails}` : orderName,
-              previousLabs: contextLabs,
-              clinicalNotes,
-              vitals,
-            });
+      if (!aiLabs || aiLabs.length !== requestedTests.length) {
+        throw new Error('Generated lab panel failed clinical coherence validation; no result was saved. Refresh and retry.');
+      }
+      const generatedLabs = aiLabs;
 
       const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
@@ -417,6 +434,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       setAiLabName('');
       setAiLabRequest('');
     } catch (error) {
+      setLabSaveError(error instanceof Error ? error.message : 'Unable to generate a coherent result panel. Refresh and retry.');
       console.error('Error generating labs:', error);
     } finally {
       setIsGenerating(false);

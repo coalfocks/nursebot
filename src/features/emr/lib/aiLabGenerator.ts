@@ -9,6 +9,8 @@ export type LabGenerationContext = {
   previousLabs?: LabResult[];
   clinicalNotes?: ClinicalNote[];
   vitals?: VitalSigns[];
+  /** Authored room/package instructions for the current case stage. */
+  caseInstructions?: string | null;
 };
 
 export type LabTemplate = {
@@ -43,10 +45,11 @@ export type GeneratedLabPayload = {
 export const validateGeneratedLabResults = (
   results: GeneratedLabPayload[],
   requestedTests: LabTemplate[],
+  context?: LabGenerationContext,
 ): GeneratedLabPayload[] => {
   const requestedByKey = new Map(requestedTests.map((test) => [canonicalAnalyteKey(test.testName), test]));
   const seen = new Set<string>();
-  return results.flatMap((result) => {
+  const normalized = results.flatMap((result) => {
     if (!result.testName) return [];
     const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
     if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
@@ -60,6 +63,76 @@ export const validateGeneratedLabResults = (
       status: classifyLabResult(template.testName, result.value, template.referenceRange).status,
     }];
   });
+  if (normalized.length !== requestedTests.length) return [];
+  return isClinicallyCoherentPanel(normalized, context) ? normalized : [];
+};
+
+const numericResult = (results: GeneratedLabPayload[], names: string[]) => {
+  const wanted = new Set(names.map(canonicalAnalyteKey));
+  const result = results.find((entry) => wanted.has(canonicalAnalyteKey(entry.testName ?? '')));
+  if (!result) return null;
+  const value = typeof result.value === 'number' ? result.value : Number(result.value);
+  return Number.isFinite(value) ? value : null;
+};
+
+const caseText = (context?: LabGenerationContext) => [
+  context?.caseInstructions,
+  context?.orderName,
+  ...(context?.clinicalNotes ?? []).map((note) => `${note.title ?? ''} ${note.content ?? ''}`),
+  ...(context?.vitals ?? []).map((vital) => JSON.stringify(vital)),
+].filter(Boolean).join(' ').toLowerCase();
+
+/**
+ * Model output is rejected when it contradicts the authored acute scenario or
+ * violates basic chemistry/acid-base relationships. Returning false is
+ * intentional: callers must surface a recoverable generation error rather than
+ * persist a plausible-looking substitute.
+ */
+export const isClinicallyCoherentPanel = (
+  results: GeneratedLabPayload[],
+  context?: LabGenerationContext,
+): boolean => {
+  const text = caseText(context);
+  const dkaLike = /\bdka\b|diabetic ketoacidosis|kussmaul|deep\s+(?:and\s+)?rapid\s+breath|insulin\s+(?:was\s+)?omitted|glucose\s*[:=]?\s*[2-9]\d\d/.test(text);
+
+  if (dkaLike) {
+    const glucose = numericResult(results, ['Glucose']);
+    const ketones = numericResult(results, ['Beta-Hydroxybutyrate']);
+    const bicarbonate = numericResult(results, ['CO2 (Bicarbonate)', 'HCO3 (Arterial)', 'HCO3 (Venous)']);
+    const ph = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+    if (glucose !== null && glucose < 250) return false;
+    if (ketones !== null && ketones < 3) return false;
+    if (bicarbonate !== null && bicarbonate > 18) return false;
+    if (ph !== null && ph > 7.3) return false;
+    const sodium = numericResult(results, ['Sodium']);
+    const chloride = numericResult(results, ['Chloride']);
+    if (sodium !== null && chloride !== null && bicarbonate !== null && sodium - chloride - bicarbonate < 12) return false;
+  }
+
+  const acidPh = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+  const acidPco2 = numericResult(results, ['PaCO2', 'pCO2 (Venous)']);
+  const acidBicarb = numericResult(results, ['HCO3 (Arterial)', 'HCO3 (Venous)']);
+  if (acidPh !== null && acidPco2 !== null && acidBicarb !== null && acidPco2 > 0 && acidBicarb > 0) {
+    const expectedPh = 6.1 + Math.log10(acidBicarb / (0.03 * acidPco2));
+    if (Math.abs(expectedPh - acidPh) > 0.15) return false;
+  }
+
+  const glucoseValues = results
+    .filter((entry) => /glucose/i.test(entry.testName ?? ''))
+    .map((entry) => typeof entry.value === 'number' ? entry.value : Number(entry.value))
+    .filter((value) => Number.isFinite(value));
+  if (glucoseValues.length > 1 && Math.max(...glucoseValues) - Math.min(...glucoseValues) > 5) return false;
+  if (context?.assignmentId) {
+    const priorAssignmentGlucose = (context.previousLabs ?? [])
+      .filter((lab) => lab.assignmentId === context.assignmentId && /glucose/i.test(lab.testName))
+      .map((lab) => normalizeLabValue(lab.value))
+      .filter((value): value is number => value !== null);
+    if (priorAssignmentGlucose.length && glucoseValues.length) {
+      const latest = priorAssignmentGlucose[priorAssignmentGlucose.length - 1];
+      if (glucoseValues.some((value) => Math.abs(value - latest) > 5)) return false;
+    }
+  }
+  return true;
 };
 
 const labTemplates: LabTemplate[] = [
