@@ -139,6 +139,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     let deliveryNote = '';
     let evaluationLeniencyMultiplier = 1;
     let generatedPatientPrompt = '';
+    let generatedPatientResponseMode: 'responsive' | 'unable' = 'responsive';
     let generatedConsultantPrompt = '';
     if (raw) {
       try {
@@ -173,6 +174,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           if (typeof generated.patient_conversation_prompt === 'string') generatedPatientPrompt = generated.patient_conversation_prompt;
           if (typeof generated.consultantResponsePrompt === 'string') generatedConsultantPrompt = generated.consultantResponsePrompt;
           if (typeof generated.consultant_response_prompt === 'string') generatedConsultantPrompt = generated.consultant_response_prompt;
+          const patientChat = (parsed as { patientChat?: { responseMode?: unknown } }).patientChat;
+          if (patientChat?.responseMode === 'unable' || (parsed as { patientResponseMode?: unknown }).patientResponseMode === 'unable') {
+            generatedPatientResponseMode = 'unable';
+          }
           const rawLeniency = (parsed as {
             evaluation?: { leniencyMultiplier?: unknown };
           }).evaluation?.leniencyMultiplier;
@@ -187,7 +192,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         contextText = raw;
       }
     }
-    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt };
+    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt, generatedPatientResponseMode };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
@@ -214,6 +219,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [patientConversationEnabled, setPatientConversationEnabled] = useState(
     room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
   );
+  const [patientResponseMode, setPatientResponseMode] = useState<'responsive' | 'unable'>(parsedEmrContext.generatedPatientResponseMode);
   const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(
     room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
   );
@@ -500,6 +506,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (initialVitals) {
         emrContextPayloadObject.initial_vitals = initialVitals;
       }
+      emrContextPayloadObject.patientChat = { responseMode: patientResponseMode };
       const normalizedLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(
         Number.parseFloat(evaluationLeniencyMultiplier),
       );
@@ -905,6 +912,16 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               />
               Enable patient conversation for students
             </label>
+            <label htmlFor="patientResponseMode" className="mt-3 block text-xs font-medium text-gray-700">Patient response mode</label>
+            <select
+              id="patientResponseMode"
+              value={patientResponseMode}
+              onChange={(e) => setPatientResponseMode(e.target.value as 'responsive' | 'unable')}
+              className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            >
+              <option value="responsive">Respond using the authored patient prompt</option>
+              <option value="unable">Unable to respond — return “Patient unable to respond.”</option>
+            </select>
             <p className="mt-1 text-xs text-gray-500">Saved directly to this room and supplied exactly to patient-chat for its assignments.</p>
           </div>
           <div>

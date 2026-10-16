@@ -45,6 +45,7 @@ const readPatientChatConfig = (room: PatientChatRoom | null) => {
       enabled,
       prompt,
       speaker,
+      responseMode: 'responsive' as const,
       reason: room.patient_participation_reason?.trim() || 'Patient cannot participate in conversation.',
     };
   }
@@ -55,7 +56,7 @@ const readPatientChatConfig = (room: PatientChatRoom | null) => {
     try {
       context = JSON.parse(context);
     } catch {
-      return { enabled: false, prompt: '', speaker: 'patient', reason: 'Patient background is unavailable.' };
+      return { enabled: false, prompt: '', speaker: 'patient', responseMode: 'responsive' as const, reason: 'Patient background is unavailable.' };
     }
   }
   const record = context && typeof context === 'object' ? context as Record<string, unknown> : {};
@@ -67,6 +68,7 @@ const readPatientChatConfig = (room: PatientChatRoom | null) => {
     enabled,
     prompt,
     speaker: patientChat.speaker === 'caregiver' ? 'caregiver' : 'patient',
+    responseMode: patientChat.responseMode === 'unable' || bedside.patientResponseMode === 'unable' ? 'unable' : 'responsive',
     reason: String(patientChat.disableReason ?? bedside.disableReason ?? 'Patient cannot participate in conversation.'),
   };
 };
@@ -275,6 +277,25 @@ Deno.serve(async (req) => {
       if (persistedReply) {
         await completeRequest(requestId, persistedReply);
         return jsonResponse({ message: persistedReply.content, requestId, replayed: true });
+      }
+
+      if (config.responseMode === 'unable') {
+        const reply = { content: 'Patient unable to respond.', role: config.speaker as 'patient' | 'caregiver' };
+        const { error: replySaveError } = await supabaseAdmin.from('patient_chat_messages').insert({
+          assignment_id: payload.assignmentId,
+          role: reply.role,
+          content: reply.content,
+          reply_to_client_message_id: payload.clientMessageId,
+        });
+        if (replySaveError) {
+          if (replySaveError.code !== '23505') throw replySaveError;
+          const existingReply = await findPersistedReply(payload.assignmentId, payload.clientMessageId);
+          if (!existingReply) throw replySaveError;
+          await completeRequest(requestId, existingReply);
+          return jsonResponse({ message: existingReply.content, requestId, replayed: true });
+        }
+        await completeRequest(requestId, reply);
+        return jsonResponse({ message: reply.content, requestId });
       }
 
       const openai = new OpenAI({
