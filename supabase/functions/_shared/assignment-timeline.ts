@@ -304,39 +304,28 @@ export const buildAssignmentTimelineEntries = ({
     ),
   );
 
-  const groupedLabs = new Map<string, TimelineLabRow[]>();
   for (const lab of filteredLabs) {
-    if (lab.timeline_entry_id) continue;
-    const timestamp = getLabTimelineTimestamp(lab);
+    const scope = deriveTimelineScope(lab.override_scope, lab.assignment_id, lab.room_id);
+    // timeline_entry_id identifies authored baseline rows, but must never hide
+    // an assignment-scoped learner result from feedback evidence.
+    if (lab.timeline_entry_id && scope !== 'assignment') continue;
+    const timestamp = scope === 'assignment'
+      ? normalizeTimelineTimestamp(lab.created_at ?? lab.result_time ?? lab.collection_time)
+      : getLabTimelineTimestamp(lab);
     if (!timestamp) continue;
-    const key = `${deriveTimelineScope(lab.override_scope, lab.assignment_id, lab.room_id)}-${timestamp.slice(0, 16)}`;
-    const existing = groupedLabs.get(key) ?? [];
-    existing.push(lab);
-    groupedLabs.set(key, existing);
-  }
-
-  groupedLabs.forEach((group, key) => {
-    const timestamp = deriveTimelineScope(group[0].override_scope, group[0].assignment_id, group[0].room_id) === 'assignment'
-      ? normalizeTimelineTimestamp(group[0].created_at ?? group[0].result_time ?? group[0].collection_time)
-      : getLabTimelineTimestamp(group[0]);
-    if (!timestamp) return;
-    group.sort((a, b) => a.test_name.localeCompare(b.test_name));
+    const unit = lab.unit ? ` ${lab.unit}` : '';
+    const value = lab.status === 'Pending'
+      ? 'pending'
+      : lab.value === null ? 'resulted' : `${lab.value}${unit}`;
     entries.push({
-      id: `labs-${key}`,
+      id: `lab-${lab.id}`,
       kind: 'labs',
       timestamp,
-      title: `Lab results (${group.length})`,
-      body: group
-        .map((lab) => {
-          if (lab.status === 'Pending') return `${lab.test_name}: pending`;
-          const unit = lab.unit ? ` ${lab.unit}` : '';
-          const value = lab.value === null ? 'resulted' : `${lab.value}${unit}`;
-          return `${lab.test_name}: ${value}`;
-        })
-        .join('\n'),
-      meta: Array.from(new Set(group.map((lab) => lab.status ?? 'Unknown'))),
+      title: `Lab result: ${lab.test_name}`,
+      body: `${lab.test_name}: ${value}`,
+      meta: [lab.status ?? 'Unknown', scope === 'assignment' ? 'Assignment result' : 'Chart history'],
     });
-  });
+  }
 
   const filteredVitals = vitals.filter((row) =>
     timelineScopeMatchesContext(

@@ -25,6 +25,7 @@ import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
+import FeedbackStudio from './pages/FeedbackStudio';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -227,6 +228,7 @@ function App() {
             )
           }
         />
+        <Route path="/admin/feedback-studio" element={user?.id && superAdmin ? <FeedbackStudio /> : <Navigate to="/dashboard" replace />} />
         <Route 
           path="/assignments" 
           element={

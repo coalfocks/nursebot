@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     }
     if ([summary, clinicalQuestion, reason].some((value) => value.length > 1200)) return json({ error: 'Consult fields must be 1,200 characters or fewer' }, 400);
 
-    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, emr_context, role, context)').eq('id', payload.assignmentId).maybeSingle();
+    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, consultant_specialties, consultant_expected_disposition, consultant_urgent_exceptions, emr_context, role, context)').eq('id', payload.assignmentId).maybeSingle();
     if (error) throw error;
     if (!assignment || assignment.student_id !== auth.user.id) return json({ error: 'Assignment not found' }, 404);
     const room = Array.isArray(assignment.room) ? assignment.room[0] : assignment.room;
@@ -56,8 +56,9 @@ Deno.serve(async (req) => {
     const patientId = typeof roomRecord.patient_id === 'string' ? roomRecord.patient_id : null;
     const roomId = typeof roomRecord.id === 'number' ? roomRecord.id : null;
     if (!patientId || !roomId) return json({ error: 'This assignment has no linked patient chart' }, 409);
-    const behavior = promptFrom(roomRecord, assignment.scenario_baseline);
-    if (!behavior) return json({ error: 'No consultant behavior is configured for this case' }, 409);
+    const authoredBehavior = promptFrom(roomRecord, assignment.scenario_baseline);
+    if (!authoredBehavior) return json({ error: 'No consultant behavior is configured for this case' }, 409);
+    const behavior = `${authoredBehavior}\n\nExpected disposition: ${roomRecord.consultant_expected_disposition ?? 'routine_review'}.\nUrgent exceptions authored for this case: ${roomRecord.consultant_urgent_exceptions ?? 'None.'}`;
 
     const { data: existingRequest, error: existingError } = await admin.from('consultant_requests').select('id, response, disposition, consult_order_id, status').eq('assignment_id', payload.assignmentId).eq('client_request_id', request.clientRequestId).maybeSingle();
     if (existingError) throw existingError;
@@ -68,7 +69,7 @@ Deno.serve(async (req) => {
     const completion = await openai.chat.completions.create({
       model: getOpenAIModel('chat'), max_completion_tokens: 500, response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: `You are the ${specialty} consultant assigned to this simulated case. Follow this authored case-specific behavior prompt exactly:\n${behavior}\n\nDefault behavior: acknowledge the consult, give only one or two useful recommendations, and state that you will see the patient in the morning. Do not take over the case or reveal the diagnosis, hidden goals, or evaluation criteria. Never invent chart results. Explicit urgent exceptions in the authored case prompt override the default: ICU may accept transfer when ICU disposition is intended; Cardiology may direct the learner to the cath lab when indicated; Surgery may take the patient urgently to the OR when the case calls for it. If the consultant assumes care, mark disposition assumes_care; otherwise mark routine_review. Return JSON only: {"message":"concise response","disposition":"routine_review|assumes_care"}.` },
+        { role: 'system', content: `You are the ${specialty} consultant assigned to this simulated case. Follow this authored case-specific behavior prompt exactly:\n${behavior}\n\nDefault behavior: acknowledge the consult, give only one or two useful recommendations, and state that you will see the patient in the morning. Do not take over the case or reveal the diagnosis, hidden goals, or evaluation criteria. Never invent chart results. Only the case-authored urgent exceptions above may direct ICU, cath-lab, or urgent-OR disposition; never infer an urgent pathway from specialty or urgency alone. If the consultant assumes care, mark disposition assumes_care; otherwise mark routine_review. Return JSON only: {"message":"concise response","disposition":"routine_review|assumes_care"}.` },
         { role: 'user', content: JSON.stringify({ specialty, summary, clinicalQuestion, reason, urgency }) },
       ],
     });

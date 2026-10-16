@@ -51,6 +51,10 @@ type CaseFormState = {
   patientConversationPrompt: string;
   consults: string;
   consultantResponsePrompt: string;
+  consultantSpecialties: string;
+  consultantExpectedDisposition: string;
+  consultantUrgentExceptions: string;
+  targetDiagnosis: string;
   eventVitals: string;
   nurseExam: string;
   bedsideExam: string;
@@ -266,6 +270,10 @@ const initialForm: CaseFormState = {
   patientConversationPrompt: '',
   consults: '',
   consultantResponsePrompt: '',
+  consultantSpecialties: '',
+  consultantExpectedDisposition: 'routine_review',
+  consultantUrgentExceptions: '',
+  targetDiagnosis: '',
   eventVitals: '',
   nurseExam: '',
   bedsideExam: '',
@@ -396,6 +404,10 @@ export default function CaseBuilder() {
         patient_conversation_prompt: form.patientConversationPrompt.trim() || null,
         consults: form.consults.trim() || null,
         consultant_response_prompt: form.consultantResponsePrompt.trim() || null,
+        consultant_specialties: form.consultantSpecialties.split(',').map((value) => value.trim()).filter(Boolean),
+        consultant_expected_disposition: form.consultantExpectedDisposition || null,
+        consultant_urgent_exceptions: form.consultantUrgentExceptions.trim() || null,
+        target_diagnosis: form.targetDiagnosis.trim() || null,
         event_vitals: form.eventVitals.trim() || null,
         nurse_exam: form.nurseExam.trim() || null,
         bedside_exam: form.bedsideExam.trim() || null,
@@ -591,7 +603,7 @@ export default function CaseBuilder() {
           nurseChat.protectedFacts,
         ), parseHospitalTimeline(blueprint.hospital_timeline)),
         emr_context: JSON.stringify(emrContextPayload),
-        expected_diagnosis: asString(evaluation.bedsideVerdict),
+        expected_diagnosis: blueprint.target_diagnosis || asString(evaluation.bedsideVerdict),
         expected_treatment: asStringArray(evaluation.expectedWorkup),
         case_goals: asString(evaluation.goals) ?? blueprint.objectives,
         difficulty_level:
@@ -610,7 +622,10 @@ export default function CaseBuilder() {
         bedside_requirement: bedsideRequirement,
         patient_conversation_enabled: Boolean(bedside.patientChatEnabled),
         patient_conversation_prompt: asString(bedside.patientChatPrompt) ?? blueprint.patient_conversation_prompt,
-        consultant_response_prompt: asString(bedside.consultantResponsePrompt) ?? blueprint.consultant_response_prompt,
+        consultant_response_prompt: blueprint.consultant_response_prompt ?? asString(bedside.consultantResponsePrompt),
+        consultant_specialties: blueprint.consultant_specialties ?? [],
+        consultant_expected_disposition: blueprint.consultant_expected_disposition ?? 'routine_review',
+        consultant_urgent_exceptions: blueprint.consultant_urgent_exceptions ?? null,
         patient_participation_reason: asString(bedside.disableReason),
         patient_speaker_type: 'patient',
         orders_config: {
@@ -1173,6 +1188,25 @@ export default function CaseBuilder() {
                       ))}
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Used by feedback after the case.</p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4">
+                  <h3 className="text-sm font-semibold text-slate-900">Student-facing diagnosis and consultant authoring</h3>
+                  <p className="mt-1 text-xs text-slate-600">These saved fields are the source of truth for room publishing, consultant behavior, and completed-case feedback.</p>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    <label className="text-sm font-medium text-slate-700">Target diagnosis
+                      <input value={form.targetDiagnosis} onChange={(e) => setForm((prev) => ({ ...prev, targetDiagnosis: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Shown only after completion" />
+                    </label>
+                    <label className="text-sm font-medium text-slate-700">Consultant specialties
+                      <input value={form.consultantSpecialties} onChange={(e) => setForm((prev) => ({ ...prev, consultantSpecialties: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Cardiology, ICU" />
+                    </label>
+                    <label className="text-sm font-medium text-slate-700">Expected consultant disposition
+                      <select value={form.consultantExpectedDisposition} onChange={(e) => setForm((prev) => ({ ...prev, consultantExpectedDisposition: e.target.value }))} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"><option value="routine_review">Routine review / morning follow-up</option><option value="assumes_care">Consultant assumes care</option></select>
+                    </label>
+                    <label className="text-sm font-medium text-slate-700">Urgent disposition exceptions
+                      <textarea value={form.consultantUrgentExceptions} onChange={(e) => setForm((prev) => ({ ...prev, consultantUrgentExceptions: e.target.value }))} rows={2} className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm" placeholder="Only authored ICU, cath-lab, or urgent-OR exceptions" />
+                    </label>
                   </div>
                 </div>
 

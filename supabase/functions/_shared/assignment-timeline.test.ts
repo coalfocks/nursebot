@@ -123,14 +123,14 @@ describe('assignment timeline for evaluation', () => {
     const rendered = renderTimelineEntriesForEvaluation(entries);
     expect(rendered).toContain('Student message');
     expect(rendered).toContain('Order: Piperacillin-tazobactam');
-    expect(rendered).toContain('Lab results (1)');
+    expect(rendered).toContain('Lab result: Lactate');
     expect(rendered).toContain('Vitals updated');
     expect(rendered).toContain('Imaging: Portable chest x-ray');
     expect(rendered).toContain('Student progress note');
     expect(rendered).toContain('Likely sepsis from pneumonia');
 
     expect(rendered.indexOf('Student progress note')).toBeGreaterThan(rendered.indexOf('Case completed'));
-    expect(rendered).toContain('[2026-03-12T09:50:00.000Z] Lab results (1)');
+    expect(rendered).toContain('[2026-03-12T09:50:00.000Z] Lab result: Creatinine');
   });
 
   it('filters out unrelated room-scoped and assignment-scoped events', () => {
@@ -247,5 +247,16 @@ describe('assignment timeline for evaluation', () => {
     });
     expect(entries.find((entry) => entry.kind === 'order')?.timestamp).toBe('2026-10-15T22:33:43.000Z');
     expect(entries.find((entry) => entry.kind === 'labs')?.timestamp).toBe('2026-10-15T22:33:51.000Z');
+  });
+
+  it('keeps an assignment result even when the row has an authored timeline id', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'attempt-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'attempt-1', targetRoomIds: [24], messages: [], learnerActions: [], orders: [],
+      labs: [{ id: 'lab-cbc', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', timeline_entry_id: 'generated-cbc', test_name: 'WBC', value: 15.3, unit: 'K/uL', status: 'Abnormal', collection_time: '2000-01-01T00:00:00.000Z', result_time: '2000-01-01T00:00:00.000Z', created_at: '2026-10-15T22:33:51.000Z' }],
+      vitals: [], imaging: [],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id: 'lab-lab-cbc', title: 'Lab result: WBC', body: 'WBC: 15.3 K/uL' });
   });
 });

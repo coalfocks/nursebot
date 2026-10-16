@@ -13,6 +13,11 @@ import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parse
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
+type AuthoredRoom = Room & {
+  consultant_specialties?: string[] | null;
+  consultant_expected_disposition?: string | null;
+  consultant_urgent_exceptions?: string | null;
+};
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type AdmissionLabEntry = {
   labName: string;
@@ -200,7 +205,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [patientConversationEnabled, setPatientConversationEnabled] = useState(
     room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
   );
+  const authoredRoom = room as AuthoredRoom | undefined;
   const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(room?.consultant_response_prompt || '');
+  const [consultantSpecialties, setConsultantSpecialties] = useState((authoredRoom?.consultant_specialties ?? []).join(', '));
+  const [consultantExpectedDisposition, setConsultantExpectedDisposition] = useState(authoredRoom?.consultant_expected_disposition || 'routine_review');
+  const [consultantUrgentExceptions, setConsultantUrgentExceptions] = useState(authoredRoom?.consultant_urgent_exceptions || '');
   const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
     normalizeBedsideRequirement(room?.bedside_requirement),
   );
@@ -530,6 +539,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         patient_conversation_enabled: patientConversationEnabled,
         patient_conversation_prompt: patientConversationPrompt.trim() || null,
         consultant_response_prompt: consultantResponsePrompt.trim() || null,
+        consultant_specialties: consultantSpecialties.split(',').map((value) => value.trim()).filter(Boolean),
+        consultant_expected_disposition: consultantExpectedDisposition || null,
+        consultant_urgent_exceptions: consultantUrgentExceptions.trim() || null,
         orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
@@ -616,6 +628,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             }
           }
         }
+      }
+
+      const savedRoomId = room?.id ?? timelineRoomId;
+      if (savedRoomId) {
+        // The authoring migration is additive and is not in the checked-in generated types yet.
+        // Keep this boundary narrow until the owner refreshes Supabase types after migration.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const authoringClient = supabase as unknown as any;
+        const { error: overrideError } = await authoringClient.from('room_feedback_overrides').upsert({
+          room_id: savedRoomId,
+          config_version: 'feedback-contract-v1',
+          target_diagnosis: expectedDiagnosis || null,
+          goals: caseGoals.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+          consultant_specialties: consultantSpecialties.split(',').map((value) => value.trim()).filter(Boolean),
+          consultant_prompt: consultantResponsePrompt.trim() || null,
+          consultant_expected_disposition: consultantExpectedDisposition || null,
+          consultant_urgent_exceptions: consultantUrgentExceptions.trim() || null,
+          updated_by: profile?.id,
+        });
+        if (overrideError) throw overrideError;
       }
 
       if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
@@ -895,6 +927,15 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
             />
             <p className="mt-1 text-xs text-gray-500">Displayed to the active student Consultant Portal when authored.</p>
+            <label htmlFor="consultantSpecialties" className="mt-3 block text-sm font-medium text-gray-700">Consultant specialties</label>
+            <input id="consultantSpecialties" value={consultantSpecialties} onChange={(e) => setConsultantSpecialties(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm" placeholder="Cardiology, ICU" />
+            <label htmlFor="consultantExpectedDisposition" className="mt-3 block text-sm font-medium text-gray-700">Expected disposition</label>
+            <select id="consultantExpectedDisposition" value={consultantExpectedDisposition} onChange={(e) => setConsultantExpectedDisposition(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm">
+              <option value="routine_review">Routine review / morning follow-up</option>
+              <option value="assumes_care">Consultant assumes care</option>
+            </select>
+            <label htmlFor="consultantUrgentExceptions" className="mt-3 block text-sm font-medium text-gray-700">Urgent disposition exceptions</label>
+            <textarea id="consultantUrgentExceptions" value={consultantUrgentExceptions} onChange={(e) => setConsultantUrgentExceptions(e.target.value)} rows={3} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm" placeholder="Only case-authored ICU, cath-lab, or urgent-OR exceptions belong here." />
           </div>
         </div>
 
