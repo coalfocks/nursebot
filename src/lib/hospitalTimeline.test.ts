@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderHospitalTimelineForNurse, relativeOffsetLabel, validateHospitalTimeline, type HospitalTimeline } from './hospitalTimeline';
+import { DEFAULT_HOSPITAL_TIMELINE, hospitalTimelineChanged, parseHospitalTimeline, renderHospitalTimelineForNurse, relativeOffsetLabel, validateHospitalTimeline, type HospitalTimeline } from './hospitalTimeline';
 
 const timeline = (overrides: Partial<HospitalTimeline> = {}): HospitalTimeline => ({
   encounterType: 'inpatient',
@@ -19,6 +19,25 @@ describe('hospital timeline validation', () => {
     expect(validateHospitalTimeline(timeline())).toEqual([]);
     expect(validateHospitalTimeline(timeline({ entries: timeline().entries.filter((entry) => entry.id !== 'p2') }))).toContain('Hospital day 2 requires one chronological progress note.');
     expect(validateHospitalTimeline(timeline({ entries: timeline().entries.map((entry) => entry.id === 'page' ? { ...entry, offsetHours: 10 } : entry) }))).toContain('The nurse page must remain in the final 12-hour context window.');
+  });
+
+  it('accepts an admission H&P as the first-night clinical record', () => {
+    const firstNight: HospitalTimeline = {
+      encounterType: 'inpatient',
+      stayDays: 1,
+      priorContextHours: 12,
+      entries: [{ id: 'admit', kind: 'admission', hospitalDay: 1, offsetHours: 0, title: 'Admission H&P', content: 'Initial encounter history and exam.' }],
+    };
+    expect(validateHospitalTimeline(firstNight)).toEqual([]);
+  });
+
+  it('allows an unchanged incomplete legacy timeline for context-only save', () => {
+    const source = { encounterType: 'inpatient', stayDays: 1, entries: [] };
+    const original = parseHospitalTimeline(source);
+    const reformatted = parseHospitalTimeline(JSON.parse(JSON.stringify(source)));
+    expect(hospitalTimelineChanged(reformatted, original)).toBe(false);
+    expect(validateHospitalTimeline(original)).toContain('Hospital day 1 requires one chronological progress note.');
+    expect(hospitalTimelineChanged(DEFAULT_HOSPITAL_TIMELINE, DEFAULT_HOSPITAL_TIMELINE)).toBe(false);
   });
 
   it('rejects multi-day ED courses and stays beyond three days', () => {

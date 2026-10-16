@@ -9,7 +9,7 @@ import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
-import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { DEFAULT_HOSPITAL_TIMELINE, hospitalTimelineChanged, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
@@ -119,6 +119,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [timelineWarning, setTimelineWarning] = useState<string>('');
   const advancedSettingsVisible = false;
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
@@ -196,6 +197,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
+  const originalHospitalTimeline = parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE);
+  const originalTimelineWithRoomSettings: HospitalTimeline = {
+    ...originalHospitalTimeline,
+    encounterType: roomWithTimeline?.encounter_type ?? originalHospitalTimeline.encounterType,
+    stayDays: roomWithTimeline?.hospital_stay_days ?? originalHospitalTimeline.stayDays,
+  };
   const [encounterType, setEncounterType] = useState<EncounterType>(roomWithTimeline?.encounter_type ?? 'inpatient');
   const [hospitalStayDays, setHospitalStayDays] = useState(String(roomWithTimeline?.hospital_stay_days ?? 1));
   const [hospitalTimelineText, setHospitalTimelineText] = useState(JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2));
@@ -470,7 +477,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
       hospitalTimeline = { ...hospitalTimeline, encounterType, stayDays: Number(hospitalStayDays) };
       const timelineErrors = validateHospitalTimeline(hospitalTimeline);
-      if (timelineErrors.length) throw new Error(timelineErrors.join(' '));
+      const timelineWasEdited = !room || hospitalTimelineChanged(hospitalTimeline, originalTimelineWithRoomSettings);
+      if (timelineErrors.length && timelineWasEdited) throw new Error(`Pre-page hospital timeline: ${timelineErrors.join(' ')}`);
+      if (timelineErrors.length && !timelineWasEdited) {
+        setTimelineWarning(`Legacy pre-page timeline is incomplete but unchanged; context-only edits can still be saved. ${timelineErrors.join(' ')}`);
+      } else {
+        setTimelineWarning('');
+      }
 
       const initialVitals = vitalEntries.reduce<Record<string, unknown>>((acc, entry) => {
         const key = entry.key.trim();
@@ -642,7 +655,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         }
       }
 
-      if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
+      if (timelineWasEdited && timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
         const { error } = await supabase.rpc('materialize_hospital_timeline', {
           p_room_id: timelineRoomId,
           p_patient_id: timelinePatientId,
@@ -658,7 +671,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       onSave();
     } catch (error) {
       console.error('Error saving room:', error);
-      setError('Failed to save room. Please try again.');
+      setError(error instanceof Error ? error.message : 'Failed to save room. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -964,6 +977,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             </label>
           </div>
           <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} onChange={setHospitalTimelineText} /></div>
+          {timelineWarning && <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">{timelineWarning}</p>}
           {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <p>Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
 
