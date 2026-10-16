@@ -14,6 +14,8 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { minimumPriorTimestamp } from '../lib/scenarioTime';
+import { buildMissingCompletedLabResults } from '../lib/completedLabReconciliation';
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -22,6 +24,7 @@ interface OrdersManagementProps {
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
+  refreshToken?: number;
 }
 
 type RoomMeta = {
@@ -54,6 +57,7 @@ export function OrdersManagement({
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
+  refreshToken,
 }: OrdersManagementProps) {
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
@@ -83,8 +87,23 @@ export function OrdersManagement({
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
       if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
+      // A completed order may predate the result callback (or a prior route
+      // entry may have loaded while that callback was still failing). Repair
+      // only completed, assignment-scoped lab orders on fresh load; the
+      // materializer is idempotent and never touches baseline results.
+      let materialized = false;
+      if (assignmentId) {
+        for (const order of data.filter((item) => item.category === 'Lab' && item.status === 'Completed')) {
+          try {
+            materialized = (await ensureCompletedLabResults(order)) || materialized;
+          } catch (error) {
+            console.error('Failed to reconcile completed lab on chart load', error);
+          }
+        }
+        if (materialized && requestIdentity.isCurrent(request)) onLabsGenerated?.();
+      }
     })();
-  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, requestIdentity]);
 
   useEffect(() => {
     const request = requestIdentity.capture();
@@ -424,6 +443,31 @@ export function OrdersManagement({
     return true;
   };
 
+  const ensureCompletedLabResults = async (order: MedicalOrder): Promise<boolean> => {
+    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return false;
+    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
+    const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+    if (!isResultProducingStatLab(order)) return false;
+    const generated = await generateLabResults(patient.id, order.orderName, {
+      patient,
+      assignmentId,
+      roomId: patient.roomId,
+      orderName: order.orderName,
+    });
+    const results = buildMissingCompletedLabResults({
+      order,
+      patient,
+      assignmentId,
+      existingLabs: existing,
+      generatedLabs: generated,
+      templates,
+    });
+    if (!results.length) return false;
+    const writeResult = await emrApi.addLabResults(results, patient.roomId);
+    if (!writeResult.ok) throw new Error(writeResult.error);
+    return true;
+  };
+
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
     const existing = orders.find((order) => order.id === orderId);
     if (!existing) return;
@@ -437,6 +481,12 @@ export function OrdersManagement({
       // matters when the learner completes an order before the async result
       // callback has finished (or when the original callback failed).
       if (updated.category === 'Lab' && updated.status === 'Completed') {
+        try {
+          await ensureCompletedLabResults(updated);
+        } catch (error) {
+          console.error('Failed to materialize completed lab results', error);
+          setOrderSaveError('The order completed, but its assignment-linked result could not be materialized. Refresh and retry.');
+        }
         onLabsGenerated?.();
       }
     }
