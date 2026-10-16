@@ -12,6 +12,7 @@ import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
+import { buildContextOnlyEmrPayload } from '../lib/roomEditorPersistence';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -197,7 +198,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
   const [encounterType, setEncounterType] = useState<EncounterType>(roomWithTimeline?.encounter_type ?? 'inpatient');
   const [hospitalStayDays, setHospitalStayDays] = useState(String(roomWithTimeline?.hospital_stay_days ?? 1));
-  const [hospitalTimelineText, setHospitalTimelineText] = useState(JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2));
+  const initialHospitalTimelineText = JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2);
+  const [hospitalTimelineText, setHospitalTimelineText] = useState(initialHospitalTimelineText);
   const [deliveryNote, setDeliveryNote] = useState(parsedEmrContext.deliveryNote);
   const [evaluationLeniencyMultiplier, setEvaluationLeniencyMultiplier] = useState(
     String(parsedEmrContext.evaluationLeniencyMultiplier),
@@ -460,6 +462,51 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         return;
       }
       const finalPdfUrl = pdfUrl;
+
+      // EMR context is independently authored. When it is the only dirty
+      // section on an existing room, make a minimal patch and return before
+      // timeline validation/default reconstruction/full-form submission.
+      if (room && emrContext !== parsedEmrContext.contextText) {
+        const unchanged = JSON.stringify({
+          roomNumber, learnerProgram, role, objective, style, nurseContext, caseGoals, progressNote,
+          assessmentHint, diagnosisDifferentiatorHint, planHint, bedsideHint, patientConversationPrompt,
+          patientConversationEnabled, consultantResponsePrompt, bedsideRequirement, specialtyIds,
+          difficultyLevel, expectedDiagnosis, expectedTreatment, ordersConfig, isActive, continuesFrom,
+          patientResponseMode,
+          schoolId, availableSchoolIds, allSchoolsSelected, encounterType, hospitalStayDays,
+          hospitalTimelineText, deliveryNote, evaluationLeniencyMultiplier,
+        }) === JSON.stringify({
+          roomNumber: room.room_number, learnerProgram: room.learner_program === 'nursing' ? 'nursing' : 'medical',
+          role: room.role || '', objective: room.objective || '', style: room.style || '',
+          nurseContext: room.nurse_context || room.context || '', caseGoals: room.case_goals || '',
+          progressNote: room.progress_note || '', assessmentHint: parsedCompletionHints.assessmentHint,
+          diagnosisDifferentiatorHint: parsedCompletionHints.diagnosisDifferentiatorHint,
+          planHint: parsedCompletionHints.planHint, bedsideHint: room.bedside_hint || '',
+          patientConversationPrompt: room.patient_conversation_prompt || parsedEmrContext.generatedPatientPrompt || '',
+          patientConversationEnabled: room.patient_conversation_enabled ?? Boolean(room.patient_conversation_prompt),
+          patientResponseMode: normalizePatientResponseMode(
+            (parsedEmrContext as { generatedPatientResponseMode?: unknown }).generatedPatientResponseMode,
+          ),
+          consultantResponsePrompt: room.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
+          bedsideRequirement: normalizeBedsideRequirement(room.bedside_requirement), specialtyIds: initialSpecialtyIds,
+          difficultyLevel: room.difficulty_level || null, expectedDiagnosis: room.expected_diagnosis || '',
+          expectedTreatment: room.expected_treatment || [], ordersConfig: initialOrdersConfig,
+          isActive: room.is_active ?? true, continuesFrom: room.continues_from ? String(room.continues_from) : '',
+          schoolId: scopedSchoolId ?? '', availableSchoolIds: initialAvailableSchoolIds, allSchoolsSelected: isAllSchools,
+          encounterType: roomWithTimeline?.encounter_type ?? 'inpatient',
+          hospitalStayDays: String(roomWithTimeline?.hospital_stay_days ?? 1), hospitalTimelineText: initialHospitalTimelineText,
+          deliveryNote: parsedEmrContext.deliveryNote, evaluationLeniencyMultiplier: String(parsedEmrContext.evaluationLeniencyMultiplier),
+        });
+        if (unchanged) {
+          const { error: contextError } = await supabase
+            .from('rooms')
+            .update({ emr_context: buildContextOnlyEmrPayload(room.emr_context, emrContext) })
+            .eq('id', room.id);
+          if (contextError) throw contextError;
+          onSave();
+          return;
+        }
+      }
 
       let hospitalTimeline: HospitalTimeline;
       try {
