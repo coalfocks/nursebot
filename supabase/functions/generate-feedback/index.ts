@@ -33,6 +33,19 @@ Deno.serve(async (req) => {
       const { data: assignment, error: assignmentError } = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', assignmentId).single();
       if (assignmentError) throw assignmentError;
       if (!isFeedbackEligibleStatus(assignment.status)) throw new Error('Cannot generate feedback for incomplete assignment');
+      // Claim exactly once. Feedback generation may be retried by the UI or a
+      // worker, but it must never race four model runs or change assignment
+      // status as a side effect.
+      const { data: claim, error: claimError } = await client
+        .from('student_room_assignments')
+        .update({ feedback_status: 'processing', feedback_error: null })
+        .eq('id', assignmentId)
+        .eq('status', 'completed')
+        .in('feedback_status', ['pending', 'failed'])
+        .select('id')
+        .maybeSingle();
+      if (claimError) throw claimError;
+      if (!claim) return;
       const room = (assignment.room ?? {}) as Record<string, unknown>;
       const { data: messages, error: messageError } = await client.from('chat_messages').select('id, assignment_id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true });
       if (messageError) throw messageError;

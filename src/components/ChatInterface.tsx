@@ -671,21 +671,16 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     setIsCompleting(true);
     setIsSavingProgressNote(true);
     try {
-      // Persist completion metadata first so we never land in a completed-without-note state.
-      const { error: updateError } = await supabase
-        .from('student_room_assignments')
-        .update({
-          status: 'completed',
-          feedback_status: 'pending',
-          completed_at: completedAt,
-          student_progress_note: progressNote,
-          diagnosis: null,
-          treatment_plan: null,
-          feedback_error: null,
-        })
-        .eq('id', assignmentId);
-
-      if (updateError) throw updateError;
+      // Completion is a server-authoritative, audited transition. Never write
+      // status directly and never ask the nurse model to infer completion.
+      const clientRequestId = crypto.randomUUID();
+      const { error: completionError } = await (supabase as any).rpc('complete_student_room_assignment', {
+        p_assignment_id: assignmentId,
+        p_client_request_id: clientRequestId,
+        p_completion_source: 'voluntary_finish',
+        p_progress_note: progressNote,
+      });
+      if (completionError) throw completionError;
 
       setStatus('completed');
       setAssignmentTimeline({
@@ -694,23 +689,6 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
         completed_at: completedAt,
         completion_hint_views: completionHintViews,
       });
-
-      // Add completion marker message after assignment update succeeds.
-      const { data: completionResponse, error: completionError } = await supabase.functions.invoke<ChatFunctionResponse>('chat', {
-        body: {
-          assignmentId,
-          contentOverride: '<completed>',
-          triggeredCompletion: true
-        }
-      });
-
-      if (completionError) {
-        console.error('Error inserting completion marker message:', completionError);
-      } else if (!completionResponse?.chatMessage) {
-        console.error('Assistant completion message missing from response');
-      } else {
-        queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
-      }
 
       // Do not hold the completion control open while the evaluator calls the
       // model. The assignment is already durably completed; feedback status is
