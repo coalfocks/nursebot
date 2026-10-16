@@ -29,7 +29,7 @@ describe('clinical lab panel validation', () => {
     ])).toEqual({ ok: false, reason: 'glucose values disagree across the ordered panel' });
   });
 
-  it('compares a new panel with the active assignment result, not baseline history', () => {
+  it('does not use prior synthetic rows as truth anchors', () => {
     expect(validateClinicalLabPanel(
       [{ testName: 'Glucose', value: 97.2 }],
       {
@@ -39,7 +39,18 @@ describe('clinical lab panel validation', () => {
           { testName: 'Glucose', value: 570, assignmentId: 'attempt-1' },
         ],
       },
-    )).toEqual({ ok: false, reason: 'glucose disagrees with the active assignment result' });
+    )).toEqual({ ok: true });
+  });
+
+  it('allows a coherent post-treatment improvement and euglycemic DKA stage', () => {
+    expect(validateClinicalLabPanel([
+      { testName: 'Glucose', value: 180 },
+      { testName: 'Beta-Hydroxybutyrate', value: 3.8 },
+      { testName: 'CO2 (Bicarbonate)', value: 16 },
+      { testName: 'pH (Venous)', value: 7.25 },
+      { testName: 'pCO2 (Venous)', value: 29 },
+      { testName: 'HCO3 (Venous)', value: 16 },
+    ], { nurseContext: 'DKA with omitted insulin.', caseStage: 'post-treatment', treatmentActions: [{ name: 'insulin infusion', occurredAt: '2026-10-16T11:10:00Z', status: 'given' }] })).toEqual({ ok: true });
   });
 
   it('accepts a coherent authored DKA panel', () => {

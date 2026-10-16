@@ -11,6 +11,8 @@ export type LabGenerationContext = {
   vitals?: VitalSigns[];
   /** Authored room/package instructions for the current case stage. */
   caseInstructions?: string | null;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
 };
 
 export type LabTemplate = {
@@ -77,6 +79,8 @@ const numericResult = (results: GeneratedLabPayload[], names: string[]) => {
 
 const caseText = (context?: LabGenerationContext) => [
   context?.caseInstructions,
+  context?.caseStage,
+  ...(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`),
   context?.orderName,
   ...(context?.clinicalNotes ?? []).map((note) => `${note.title ?? ''} ${note.content ?? ''}`),
   ...(context?.vitals ?? []).map((vital) => JSON.stringify(vital)),
@@ -95,7 +99,9 @@ export const isClinicallyCoherentPanel = (
   const text = caseText(context);
   const dkaLike = /\bdka\b|diabetic ketoacidosis|kussmaul|deep\s+(?:and\s+)?rapid\s+breath|insulin\s+(?:was\s+)?omitted|glucose\s*[:=]?\s*[2-9]\d\d/.test(text);
 
-  if (dkaLike) {
+  const stageText = `${context?.caseStage ?? ''} ${(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`).join(' ')}`.toLowerCase();
+  const postTreatment = /post[- ]?treatment|after treatment|improv|recheck|euglycemic|insulin given|fluids given|treatment started/.test(stageText);
+  if (dkaLike && !postTreatment) {
     const glucose = numericResult(results, ['Glucose']);
     const ketones = numericResult(results, ['Beta-Hydroxybutyrate']);
     const bicarbonate = numericResult(results, ['CO2 (Bicarbonate)', 'HCO3 (Arterial)', 'HCO3 (Venous)']);
@@ -122,16 +128,6 @@ export const isClinicallyCoherentPanel = (
     .map((entry) => typeof entry.value === 'number' ? entry.value : Number(entry.value))
     .filter((value) => Number.isFinite(value));
   if (glucoseValues.length > 1 && Math.max(...glucoseValues) - Math.min(...glucoseValues) > 5) return false;
-  if (context?.assignmentId) {
-    const priorAssignmentGlucose = (context.previousLabs ?? [])
-      .filter((lab) => lab.assignmentId === context.assignmentId && /glucose/i.test(lab.testName))
-      .map((lab) => normalizeLabValue(lab.value))
-      .filter((value): value is number => value !== null);
-    if (priorAssignmentGlucose.length && glucoseValues.length) {
-      const latest = priorAssignmentGlucose[priorAssignmentGlucose.length - 1];
-      if (glucoseValues.some((value) => Math.abs(value - latest) > 5)) return false;
-    }
-  }
   return true;
 };
 

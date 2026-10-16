@@ -41,6 +41,8 @@ type LabContext = {
     status?: string;
     instructions?: string | null;
   }>;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
   emrContext?: Record<string, unknown> | string | null;
   nurseContext?: string | null;
   expectedDiagnosis?: string | null;
@@ -269,6 +271,11 @@ Deno.serve(async (req) => {
       throw new Error('Missing OPENAI_API_KEY');
     }
 
+    if (isBatch && isCultureOrder(payload.orderName)) {
+      const labs = payload.tests.map((test) => pendingMicrobiologyResult(test.testName));
+      return new Response(JSON.stringify({ labs }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     const prompt = buildPrompt(payload);
 
     const completion = await openai.chat.completions.create({
@@ -319,6 +326,9 @@ Deno.serve(async (req) => {
         emrContext: payload.context?.emrContext,
         caseInstructions: payload.context?.completionHint,
         previousLabs: payload.context?.previousLabs,
+        caseStage: payload.context?.caseStage,
+        treatmentActions: payload.context?.treatmentActions,
+        orders: payload.context?.orders?.map((order) => ({ orderName: order.orderName, status: order.status, instructions: order.instructions, orderTime: null })),
       });
       if (!clinicalValidation.ok) {
         return new Response(JSON.stringify({ error: `Generated panel rejected: ${clinicalValidation.reason}` }), {
