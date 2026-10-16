@@ -115,9 +115,10 @@ interface RoomEditorProps {
   room?: Room;
   onSave: () => void;
   onCancel: () => void;
+  onRoomPatch?: (patch: Partial<Room>) => void;
 }
 
-export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) {
+export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: RoomEditorProps) {
   const { profile, activeSchoolId } = useAuthStore();
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
@@ -508,6 +509,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const saved = resolveAuthoredConversationPrompt(data as Record<string, unknown>, kind);
       if (kind === 'patient') setPatientConversationPrompt(saved);
       else setConsultantResponsePrompt(saved);
+      // Keep the parent list and selected-room props coherent without turning
+      // this one-column save into a full room refresh or write.
+      onRoomPatch?.({
+        [column]: saved || null,
+      } as Partial<Room>);
       setStatus(`Saved and read back${room.updated_at ? ` · room revision ${new Date(room.updated_at).toLocaleString()}` : ''}`);
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : 'Unable to save this conversation prompt.';

@@ -13,7 +13,13 @@ type ConsultantRequest = {
   clientRequestId?: string;
 };
 type Payload = { assignmentId?: string; request?: ConsultantRequest };
-const SPECIALTIES = new Set(['Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Attending']);
+const SPECIALTIES = new Set([
+  'Attending', 'Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology',
+  'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Orthopedics', 'ENT',
+  'Anesthesiology', 'Endocrinology', 'Hematology', 'Toxicology',
+  'Pediatric Hepatology', 'Pediatric Cardiology', 'Pediatric Surgery',
+  'Pediatric Emergency Medicine', 'Oncology', 'Pulmonology', 'Gastroenterology',
+]);
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!url || !serviceKey) throw new Error('Missing Supabase service credentials');
