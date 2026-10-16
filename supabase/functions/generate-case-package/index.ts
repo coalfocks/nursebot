@@ -60,7 +60,7 @@ const sectionKeys: GenerationSection[] = [
 
 const packageSkeleton = {
   patient: {
-    demographics: '',
+    demographics: { firstName: '', lastName: '', dateOfBirth: 'YYYY-MM-DD', gender: '', age: 0, background: '' },
     allergies: '',
     codeStatus: '',
     medicationList: [] as string[],
@@ -119,7 +119,7 @@ const stringifyBlueprint = (blueprint: CaseBlueprintPayload) => JSON.stringify(b
 const schemaInstruction = `Return compact JSON only. Use this exact top-level shape:
 {
   "patient": {
-    "demographics": "age/sex and brief background, no real PHI",
+    "demographics": {"firstName":"Fictional","lastName":"Patient","dateOfBirth":"YYYY-MM-DD","gender":"Female|Male|Nonbinary|Unknown","age":0,"background":"brief fictional background, no real PHI"},
     "allergies": "string",
     "codeStatus": "string",
     "medicationList": ["medication, dose, route, standard frequency"],

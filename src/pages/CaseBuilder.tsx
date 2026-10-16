@@ -165,12 +165,12 @@ const createClinicalNotePayloads = (
   roomId: number,
   blueprintId: string,
   generatedPackage: GeneratedCasePackage,
+  generatedAt: string,
 ) => {
   const emr = getGeneratedSection(generatedPackage, 'emr');
-  const now = new Date().toISOString();
   const notePayloads: Array<Record<string, unknown>> = [];
 
-  const addNote = (noteType: string, title: string, content: unknown, offsetMinutes = 0) => {
+  const addNote = (noteType: string, title: string, content: unknown, relativeOffsetHours: number) => {
     const noteContent = asString(content);
     if (!noteContent) return;
     notePayloads.push({
@@ -184,20 +184,23 @@ const createClinicalNotePayloads = (
       title,
       content: noteContent,
       author: 'Nurse Althea Generator',
-      timestamp: new Date(new Date(now).getTime() + offsetMinutes * 60_000).toISOString(),
+      // This timestamp is internal sort metadata only. Learner-facing baseline
+      // labels use relative_offset_hours and never expose the calendar value.
+      timestamp: new Date(new Date(generatedAt).getTime() + relativeOffsetHours * 3_600_000).toISOString(),
+      relative_offset_hours: relativeOffsetHours,
       signed: true,
     });
   };
 
-  addNote('H&P', 'Admission H&P', emr.hAndP ?? emr.admissionExam);
+  addNote('H&P', 'Admission H&P', emr.hAndP ?? emr.admissionExam, -48);
   asStringArray(emr.dailyProgressNotes).forEach((note, index) =>
-    addNote('Progress', `Daily Progress Note ${index + 1}`, note, index + 1),
+    addNote('Progress', `Daily Progress Note ${index + 1}`, note, -36 + index * 12),
   );
   asStringArray(emr.consultNotes).forEach((note, index) =>
-    addNote('Consult', `Consult Note ${index + 1}`, note, index + 10),
+    addNote('Consult', `Consult Note ${index + 1}`, note, -24 + index * 6),
   );
   asStringArray(emr.nursingNotes).forEach((note, index) =>
-    addNote('Nurse', `Nursing Note ${index + 1}`, note, index + 20),
+    addNote('Nurse', `Nursing Note ${index + 1}`, note, -12 + index * 3),
   );
 
   return notePayloads;
@@ -812,6 +815,8 @@ export default function CaseBuilder() {
           generatedAt,
         );
         const generatedImagingOrders = asStringArray(orders.imaging);
+        const generatedBaselineImagingOffset = -24;
+        const generatedBaselineImagingAt = new Date(new Date(generatedAt).getTime() + generatedBaselineImagingOffset * 3_600_000).toISOString();
 
         for (const orderName of generatedImagingOrders) {
           const { studyType, contrast } = deriveImagingDetails(orderName);
@@ -845,7 +850,8 @@ export default function CaseBuilder() {
               priority: 'Routine',
               status: 'Pending',
               ordered_by: 'Case Builder',
-              order_time: generatedAt,
+              order_time: generatedBaselineImagingAt,
+              relative_offset_hours: generatedBaselineImagingOffset,
               images: [],
             });
             if (studyError) throw studyError;
@@ -887,7 +893,8 @@ export default function CaseBuilder() {
               .from('imaging_studies')
               .update({
                 report,
-                report_generated_at: new Date().toISOString(),
+                report_generated_at: generatedBaselineImagingAt,
+                relative_offset_hours: generatedBaselineImagingOffset,
                 status: 'Completed',
               })
               .eq('id', studyId);
@@ -922,6 +929,7 @@ export default function CaseBuilder() {
             roomRecord.id,
             blueprint.id,
             generatedPackage,
+            generatedAt,
           );
           noteCount = notePayloads.length;
           if (notePayloads.length) {
