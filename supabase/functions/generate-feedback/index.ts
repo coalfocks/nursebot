@@ -3,7 +3,7 @@ import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
 import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
+import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientChatMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
@@ -40,15 +40,17 @@ Deno.serve(async (req) => {
       const start = deriveScoringStart(messages ?? []);
       const roomId = Number(assignment.room_id);
       const patientId = typeof room.patient_id === 'string' ? room.patient_id : null;
-      const [ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes] = await Promise.all([
+      const [patientMessagesRes, consultantMessagesRes, ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes] = await Promise.all([
+        client.from('patient_chat_messages').select('id, assignment_id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true }),
+        client.from('consultant_chat_messages').select('id, assignment_id, role, content, specialty, urgency, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true }),
         patientId ? client.from('medical_orders').select('id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
         patientId ? client.from('lab_results').select('id, assignment_id, room_id, override_scope, test_name, value, unit, status, collection_time, result_time, created_at, deleted_at, timeline_entry_id').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
         patientId ? client.from('vital_signs').select('id, assignment_id, room_id, override_scope, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain, deleted_at, timeline_entry_id').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
         patientId ? client.from('imaging_studies').select('id, assignment_id, room_id, override_scope, order_name, study_type, status, report, order_time, report_generated_at, created_at, deleted_at').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
         client.from('learner_action_events').select('id, assignment_id, room_id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignmentId).order('occurred_at', { ascending: true }),
       ]);
-      for (const result of [ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes]) if (result.error) throw result.error;
-      const entries = buildAssignmentTimelineEntries({ assignment: { id: assignment.id, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note }, assignmentId, targetRoomIds: await lineage(client, roomId), messages: messages ?? [], orders: (ordersRes.data ?? []) as TimelineOrderRow[], labs: (labsRes.data ?? []) as TimelineLabRow[], vitals: (vitalsRes.data ?? []) as TimelineVitalRow[], imaging: (imagingRes.data ?? []) as TimelineImagingRow[], learnerActions: (learnerActionsRes.data ?? []) as TimelineLearnerActionRow[] });
+      for (const result of [patientMessagesRes, consultantMessagesRes, ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes]) if (result.error) throw result.error;
+      const entries = buildAssignmentTimelineEntries({ assignment: { id: assignment.id, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note }, assignmentId, targetRoomIds: await lineage(client, roomId), messages: messages ?? [], patientMessages: (patientMessagesRes.data ?? []) as TimelinePatientChatMessageRow[], consultantMessages: (consultantMessagesRes.data ?? []) as TimelineConsultantMessageRow[], orders: (ordersRes.data ?? []) as TimelineOrderRow[], labs: (labsRes.data ?? []) as TimelineLabRow[], vitals: (vitalsRes.data ?? []) as TimelineVitalRow[], imaging: (imagingRes.data ?? []) as TimelineImagingRow[], learnerActions: (learnerActionsRes.data ?? []) as TimelineLearnerActionRow[] });
       const scoredEntries = start ? entries.filter((entry) => new Date(entry.timestamp).getTime() >= new Date(start.scoring_start_at).getTime()) : [];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
       const key = resolveCaseEvaluationKey(room);
@@ -80,9 +82,9 @@ Deno.serve(async (req) => {
       }
       const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
         .filter((entry) => kinds.includes(entry.kind))
-        .filter((entry) => !learnerMessagesOnly || entry.kind !== 'message' || entry.meta?.includes('Author: Student'))
+        .filter((entry) => !learnerMessagesOnly || !['message', 'consultant-message', 'learner-action'].includes(entry.kind) || entry.meta?.includes('Author: Student'))
         .map((entry) => entry.id);
-      const learnerCommunicationIds = idsForKinds(['message', 'learner-action'], true);
+      const learnerCommunicationIds = idsForKinds(['message', 'consultant-message', 'learner-action'], true);
       const learnerClosedLoopIds = idsForKinds(['learner-action'], true).filter((id) => scoredEntries.find((entry) => entry.id === id)?.meta?.some((value) => /team|escalat/i.test(value)));
       const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'order', 'labs', 'vital', 'imaging'], true);
       const evidence = {

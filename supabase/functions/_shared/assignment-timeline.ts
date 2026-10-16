@@ -8,6 +8,8 @@ export type TimelineChatMessageRow = {
   created_at: string | null;
 };
 
+export type TimelinePatientChatMessageRow = TimelineChatMessageRow;
+
 export type TimelineOrderRow = {
   id: string;
   assignment_id: string | null;
@@ -195,6 +197,7 @@ export const buildAssignmentTimelineEntries = ({
   assignmentId,
   targetRoomIds,
   messages,
+  patientMessages,
   orders,
   labs,
   vitals,
@@ -206,6 +209,7 @@ export const buildAssignmentTimelineEntries = ({
   assignmentId: string;
   targetRoomIds: number[] | null;
   messages: TimelineChatMessageRow[];
+  patientMessages?: TimelinePatientChatMessageRow[];
   orders: TimelineOrderRow[];
   labs: TimelineLabRow[];
   vitals: TimelineVitalRow[];
@@ -247,6 +251,20 @@ export const buildAssignmentTimelineEntries = ({
       title: message.role === 'student' || message.role === 'user' ? 'Student message' : 'Nurse message',
       body: message.content,
       meta: [message.role === 'student' || message.role === 'user' ? 'Author: Student' : 'Author: Nurse'],
+    });
+  }
+
+  for (const message of patientMessages ?? []) {
+    const timestamp = normalizeTimelineTimestamp(message.created_at);
+    if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    const learnerAuthored = message.role === 'student' || message.role === 'user' || message.role === 'learner';
+    entries.push({
+      id: `patient-message-${message.id ?? `${message.assignment_id ?? assignmentId}-${timestamp}`}`,
+      kind: 'message',
+      timestamp,
+      title: learnerAuthored ? 'Student to patient' : 'Patient response',
+      body: message.content.trim(),
+      meta: ['Channel: Patient', learnerAuthored ? 'Author: Student' : 'Author: Patient'],
     });
   }
 

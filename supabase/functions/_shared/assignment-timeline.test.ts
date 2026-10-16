@@ -205,6 +205,34 @@ describe('assignment timeline for evaluation', () => {
     expect(rendered).not.toContain('Order: Vancomycin');
   });
 
+  it('labels patient and consultant directions and keeps pre-page conversation out of scored evidence', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [],
+      patientMessages: [
+        { id: 'patient-pre', assignment_id: 'assignment-1', role: 'student', content: 'before page', created_at: '2026-03-12T09:59:00.000Z' },
+        { id: 'patient-question', assignment_id: 'assignment-1', role: 'student', content: 'post-page question', created_at: '2026-03-12T10:01:00.000Z' },
+        { id: 'patient-reply', assignment_id: 'assignment-1', role: 'patient', content: 'simulated reply', created_at: '2026-03-12T10:02:00.000Z' },
+      ],
+      consultantMessages: [
+        { id: 'consult-pre', assignment_id: 'assignment-1', role: 'student', content: 'before page consult', specialty: 'Cardiology', urgency: 'routine', created_at: '2026-03-12T09:59:30.000Z' },
+        { id: 'consult-request', assignment_id: 'assignment-1', role: 'student', content: 'post-page consult request', specialty: 'Cardiology', urgency: 'urgent', created_at: '2026-03-12T10:03:00.000Z' },
+        { id: 'consult-reply', assignment_id: 'assignment-1', role: 'consultant', content: 'simulated consultant reply', specialty: 'Cardiology', urgency: 'urgent', created_at: '2026-03-12T10:04:00.000Z' },
+      ],
+      orders: [], labs: [], vitals: [], imaging: [],
+    });
+    const scored = entries.filter((entry) => new Date(entry.timestamp).getTime() >= new Date('2026-03-12T10:00:00.000Z').getTime());
+    expect(scored.map((entry) => [entry.id, entry.title, entry.meta?.find((value) => value.startsWith('Author:'))])).toEqual([
+      ['patient-message-patient-question', 'Student to patient', 'Author: Student'],
+      ['patient-message-patient-reply', 'Patient response', 'Author: Patient'],
+      ['consultant-message-consult-request', 'Consult request (Cardiology)', 'Author: Student'],
+      ['consultant-message-consult-reply', 'Consultant response', 'Author: Consultant'],
+    ]);
+    expect(scored.some((entry) => entry.id.includes('pre'))).toBe(false);
+  });
+
   it('preserves explicit learner bedside and team actions as distinct evidence', () => {
     const entries = buildAssignmentTimelineEntries({
       assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },

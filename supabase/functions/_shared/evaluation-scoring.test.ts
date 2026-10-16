@@ -90,6 +90,16 @@ describe('feedback v2 canonical contract', () => {
     expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
 
+  it('recovers learner patient and consultant requests as communication evidence, not replies', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'Student to patient', meta: ['Author: Student'] },
+      { kind: 'message', title: 'Patient response', meta: ['Author: Patient'] },
+      { kind: 'consultant-message', title: 'Consult request (Cardiology)', meta: ['Author: Student'] },
+      { kind: 'consultant-message', title: 'Consultant response', meta: ['Author: Consultant'] },
+    ], null);
+    expect(result?.communication_score).toBeGreaterThan(0);
+  });
+
   it('does not treat vitals or a generic progress note as Communication evidence', () => {
     const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
       { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },

@@ -88,7 +88,10 @@ const learnerCommunicationKinds = new Set(['learner-action']);
 
 export const buildEvidenceBackedFallback = (evaluation: EvaluationScoringResponse, entries: EvidenceShape[], progressNote: string | null | undefined): EvaluationScoringResponse | null => {
   if (evaluation.communication_score !== 0 || evaluation.clinical_reasoning_score !== 0) return evaluation;
-  const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
+  const learnerMessages = entries.filter((entry) =>
+    (entry.kind === 'message' && ['Student message', 'Student to patient'].includes(entry.title))
+    || (entry.kind === 'consultant-message' && entry.title.startsWith('Consult request')),
+  );
   const clinicalActions = entries.filter((entry) => learnerActionKinds.has(entry.kind));
   const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'imaging');
   const hasNote = Boolean(progressNote?.trim());

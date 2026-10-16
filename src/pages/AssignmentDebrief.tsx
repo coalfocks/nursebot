@@ -116,6 +116,7 @@ export default function AssignmentDebrief() {
     setSourceEvidence(buildAttemptEvidence({
       chat,
       patientChat: patientChatResult.data ?? [],
+      consultantChat: consultantResult.data ?? [],
       orders: orderResult.data ?? [],
       labs: labResult.data ?? [],
       imaging: imagingResult.data ?? [],

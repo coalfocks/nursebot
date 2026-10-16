@@ -7,6 +7,7 @@ export type AttemptEvidence = {
 };
 
 type ChatRow = { id: string | number; role: string; content: string; created_at: string | null };
+type ConsultantChatRow = ChatRow & { specialty?: string | null; urgency?: string | null };
 type OrderRow = { id: string | number; order_name: string; status?: string | null; priority?: string | null; frequency?: string | null; created_at: string | null; order_time?: string | null };
 type LabRow = { id: string | number; test_name: string; value?: number | string | null; unit?: string | null; status?: string | null; created_at: string | null; result_time?: string | null; collection_time?: string | null };
 type ImagingRow = { id: string | number; order_name?: string | null; study_type: string; status?: string | null; report?: string | null; created_at: string | null; report_generated_at?: string | null; order_time?: string | null };
@@ -17,6 +18,7 @@ const isAfterBoundary = (timestamp: string | null, boundary: number) => Boolean(
 export const buildAttemptEvidence = ({
   chat,
   patientChat,
+  consultantChat,
   orders,
   labs,
   imaging,
@@ -27,6 +29,7 @@ export const buildAttemptEvidence = ({
 }: {
   chat: ChatRow[];
   patientChat: ChatRow[];
+  consultantChat?: ConsultantChatRow[];
   orders: OrderRow[];
   labs: LabRow[];
   imaging: ImagingRow[];
@@ -36,13 +39,14 @@ export const buildAttemptEvidence = ({
   boundary: number;
 }): AttemptEvidence[] => {
   const evidence: AttemptEvidence[] = [];
-  const addMessage = (row: ChatRow, title: string) => {
+  const addMessage = (row: ChatRow, title: string, idPrefix = 'message') => {
     if (!row.content || row.content === '<completed>' || !isAfterBoundary(row.created_at, boundary)) return;
-    evidence.push({ id: `message-${row.id}`, kind: 'message', title, body: row.content, timestamp: row.created_at! });
+    evidence.push({ id: `${idPrefix}-${row.id}`, kind: idPrefix === 'consultant-message' ? 'consultant-message' : 'message', title, body: row.content, timestamp: row.created_at! });
   };
 
   chat.forEach((row) => addMessage(row, row.role === 'student' || row.role === 'user' ? 'Student message' : 'Nurse message'));
-  patientChat.forEach((row) => addMessage(row, 'Patient response'));
+  patientChat.forEach((row) => addMessage(row, row.role === 'student' || row.role === 'user' || row.role === 'learner' ? 'Student to patient' : 'Patient response', 'patient-message'));
+  (consultantChat ?? []).forEach((row) => addMessage(row, row.role === 'student' || row.role === 'user' || row.role === 'learner' ? 'Student consultant request' : 'Consultant response', 'consultant-message'));
   orders.forEach((row) => {
     const timestamp = row.created_at ?? row.order_time ?? null;
     if (!isAfterBoundary(timestamp, boundary)) return;

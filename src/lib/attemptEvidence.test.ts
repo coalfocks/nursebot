@@ -10,10 +10,17 @@ describe('attempt evidence fallback', () => {
         { id: 'nurse-1', role: 'assistant', content: 'page', created_at: '2026-10-16T05:01:00.000Z' },
         { id: 'done-1', role: 'assistant', content: '<completed>', created_at: '2026-10-16T05:02:00.000Z' },
       ],
-      patientChat: [{ id: 'patient-1', role: 'patient', content: 'response', created_at: '2026-10-16T05:03:00.000Z' }],
+      patientChat: [
+        { id: 'patient-question-1', role: 'student', content: 'question', created_at: '2026-10-16T05:02:30.000Z' },
+        { id: 'patient-1', role: 'patient', content: 'response', created_at: '2026-10-16T05:03:00.000Z' },
+      ],
+      consultantChat: [
+        { id: 'consult-request-1', role: 'student', content: 'consult request', specialty: 'Cardiology', urgency: 'urgent', created_at: '2026-10-16T05:03:30.000Z' },
+        { id: 'consult-reply-1', role: 'consultant', content: 'consult reply', specialty: 'Cardiology', urgency: 'urgent', created_at: '2026-10-16T05:04:00.000Z' },
+      ],
       orders: [], labs: [], imaging: [], vitals: [], progressNote: null, completedAt: null, boundary,
     });
-    expect(evidence.map(({ title }) => title)).toEqual(['Nurse message', 'Patient response']);
+    expect(evidence.map(({ title }) => title)).toEqual(['Nurse message', 'Student to patient', 'Patient response', 'Student consultant request', 'Consultant response']);
     expect(evidence.some(({ body }) => body === '<completed>')).toBe(false);
   });
 
