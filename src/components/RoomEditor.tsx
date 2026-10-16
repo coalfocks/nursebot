@@ -961,7 +961,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <section className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-4" aria-labelledby="conversation-prompts-heading">
+          <div className="mb-3">
+            <h3 id="conversation-prompts-heading" className="text-base font-semibold text-gray-900">Conversation Prompts</h3>
+            <p className="mt-1 text-xs text-gray-600">These are the complete authored instructions for each channel. They are private to authorized staff and pinned for new assignments; existing attempts keep their pinned version. No nurse context, goals, or shared clinical defaults are added.</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
           <div>
             <label htmlFor="patientConversationPrompt" className="block text-sm font-medium text-gray-700">
               Patient Conversation Prompt
