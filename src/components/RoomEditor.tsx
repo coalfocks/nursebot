@@ -995,7 +995,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-4">
           <h3 className="text-sm font-semibold text-gray-900">Conversation Prompts</h3>
           <p className="mt-1 text-xs text-gray-600">
-            These are room-level overrides. A saved room prompt composes over the platform default; blank means the platform default is used.
+            These are the complete authored instructions for each channel. Blank means that channel is unavailable; no platform clinical default is substituted.
             Prompt text is server-only and is never shown as learner chat content.
           </p>
         </div>
@@ -1032,6 +1032,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               <option value="responsive">Respond using the authored patient prompt</option>
               <option value="unable">Unable to respond — return “Patient unable to respond.”</option>
             </select>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => void saveConversationPrompt('patient')} className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Save patient prompt</button>
+              <button type="button" onClick={() => setPromptPreview(promptPreview === 'patient' ? null : 'patient')} className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700">{promptPreview === 'patient' ? 'Hide preview' : 'Preview'}</button>
+              {patientPromptStatus && <span role="status" className="text-xs text-gray-600">{patientPromptStatus}</span>}
+            </div>
+            {promptPreview === 'patient' && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-white p-2 text-xs text-gray-700">{patientConversationPrompt.trim() || 'Prompt not configured'}</pre>}
             <p className="mt-1 text-xs text-gray-500">Saved directly to this room and supplied exactly to patient-chat for its assignments.</p>
           </div>
           <div>
@@ -1067,7 +1073,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           <p className="mt-1 text-xs text-gray-700">
             {consultantPromptReady
               ? 'Ready: this room override will be used by the consultant model. A failed platform consultation must preserve the learner draft and is not a learner scoring event.'
-              : 'Not ready: no room override is saved, so consultant-chat will use the platform default if configured; otherwise it will refuse the request and preserve the draft.'}
+              : 'Not ready: no authored consultant prompt is saved. Consultant Portal will refuse the request and preserve the learner draft.'}
           </p>
           <p className="mt-2 text-xs text-gray-600">Preview input: synthetic summary → specialty selection → concise question. The saved prompt is not returned to learners.</p>
         </div>
