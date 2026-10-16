@@ -26,6 +26,7 @@ import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
 import FeedbackStudio from './pages/FeedbackStudio';
+import SyntheticActiveCaseFixture from './pages/SyntheticActiveCaseFixture';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -34,6 +35,8 @@ function App() {
   const hasAdmin = hasAdminAccess(profile);
   const isTester = isTestUser(profile);
   const superAdmin = isSuperAdmin(profile);
+  const syntheticFixtureEnabled = import.meta.env.VITE_SYNTHETIC_ACTIVE_CASE_FIXTURE === 'true'
+    && window.location.hostname.endsWith('.netlify.app');
 
   useEffect(() => {
     loadUser();
@@ -55,6 +58,7 @@ function App() {
     <Router>
       <FeedbackProcessor />
       <Routes>
+        <Route path="/synthetic-active-case" element={syntheticFixtureEnabled ? <SyntheticActiveCaseFixture /> : <Navigate to="/" replace />} />
         <Route 
           path="/" 
           element={
