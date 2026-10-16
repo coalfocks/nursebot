@@ -16,6 +16,7 @@ export type LabTemplate = {
   unit: string;
   referenceRange: string;
   normal: [number, number];
+  resultKind?: 'numeric' | 'pending-microbiology';
 };
 
 const canonicalAnalyteKey = (name: string) => name
@@ -37,6 +38,10 @@ export type GeneratedLabPayload = {
   status?: LabResult['status'];
   collectionTime?: string;
   resultTime?: string;
+  valueType?: LabResult['valueType'];
+  narrative?: string | null;
+  specimen?: string | null;
+  lifecycleStatus?: LabResult['lifecycleStatus'];
 };
 
 /** Keep model output inside the explicitly ordered panel contract. */
@@ -49,7 +54,24 @@ export const validateGeneratedLabResults = (
   return results.flatMap((result) => {
     if (!result.testName) return [];
     const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
-    if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
+    if (!template || seen.has(template.testName)) return [];
+    if (template.resultKind === 'pending-microbiology') {
+      const pendingValue = typeof result.value === 'string' ? result.value.trim() : '';
+      if (!pendingValue && !result.narrative?.trim()) return [];
+      seen.add(template.testName);
+      return [{
+        ...result,
+        testName: template.testName,
+        unit: '',
+        referenceRange: 'Pending microbiology: organism/status not yet finalized',
+        value: pendingValue,
+        valueType: 'coded',
+        lifecycleStatus: 'pending',
+        status: 'Pending',
+        specimen: result.specimen ?? 'Peripheral blood',
+      }];
+    }
+    if (!validReferenceRange(result.referenceRange)) return [];
     if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
     seen.add(template.testName);
     return [{
@@ -63,6 +85,13 @@ export const validateGeneratedLabResults = (
 };
 
 const labTemplates: LabTemplate[] = [
+  {
+    testName: 'Blood Culture x2 (Peripheral)',
+    unit: '',
+    referenceRange: 'Pending microbiology: organism/status not yet finalized',
+    normal: [0, 0],
+    resultKind: 'pending-microbiology',
+  },
   // Hematology
   { testName: 'Hemoglobin', unit: 'g/dL', referenceRange: '12.0-15.5', normal: [12, 15.5] },
   { testName: 'Hematocrit', unit: '%', referenceRange: '36-46', normal: [36, 46] },
@@ -262,6 +291,8 @@ export const resolveLabTemplates = (
     'vancomycin peak': ['vancomycin peak'],
     'aminoglycoside level': ['aminoglycoside level'],
     'bnp/nt-probnp': ['bnp/nt-probnp'],
+    'blood culture x2': ['blood culture x2 (peripheral)'],
+    'blood culture': ['blood culture x2 (peripheral)'],
   };
 
   const matchedPanelKey = Object.keys(panelMatches).find((key) => normalized.includes(key));
@@ -427,6 +458,26 @@ export async function generateLabResults(
     const variance = signals.emphasis === 'Critical' ? 0.3 : signals.emphasis === 'Abnormal' ? 0.18 : 0.08;
     const drifted = base * (1 + randomInRange(-variance, variance));
     const biasedValue = applyClinicalBias(template, drifted, signals);
+    if (template.resultKind === 'pending-microbiology') {
+      return {
+        id: `generated-lab-${Date.now()}-${index}`,
+        patientId,
+        assignmentId: context?.assignmentId ?? undefined,
+        roomId: context?.roomId ?? undefined,
+        testName: template.testName,
+        value: '',
+        valueType: 'coded',
+        narrative: 'Pending: organism and susceptibility status not yet finalized.',
+        specimen: 'Peripheral blood',
+        lifecycleStatus: 'pending',
+        unit: '',
+        referenceRange: template.referenceRange,
+        status: 'Pending',
+        collectionTime: new Date().toISOString(),
+        resultTime: new Date().toISOString(),
+        orderedBy: 'Automated Suggestion',
+      } as LabResult;
+    }
     const status = classifyLabResult(template.testName, biasedValue, template.referenceRange).status;
 
     return {

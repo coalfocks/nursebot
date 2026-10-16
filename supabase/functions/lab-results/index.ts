@@ -217,6 +217,20 @@ const parseJsonFromString = (content: string) => {
   return null;
 };
 
+const isCultureOrder = (name: string) => /blood\s+culture|urine\s+culture|sputum\s+culture|wound\s+culture|fungal\s+culture|anaerobic\s+blood/i.test(name);
+
+const pendingMicrobiologyResult = (testName: string) => ({
+  testName,
+  value: '',
+  valueType: 'coded',
+  narrative: 'Pending: organism and susceptibility status not yet finalized.',
+  specimen: /blood/i.test(testName) ? 'Peripheral blood' : 'Specimen collected per order',
+  lifecycleStatus: 'pending',
+  unit: '',
+  referenceRange: 'Pending microbiology: organism/status not yet finalized',
+  status: 'Pending',
+});
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -233,6 +247,11 @@ Deno.serve(async (req) => {
     }
 
     if (!isBatch && payload.labType === 'pending') {
+      if (isCultureOrder(payload.labName)) {
+        return new Response(JSON.stringify(pendingMicrobiologyResult(payload.labName)), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       return new Response(
         JSON.stringify({
           value: null,
@@ -268,7 +287,26 @@ Deno.serve(async (req) => {
       throw new Error('Unable to parse AI response');
     }
 
-    const responseBody = isBatch ? { labs: parsed } : parsed;
+    if (isBatch) {
+      const requestedNames = new Set(payload.tests.map((test) => test.testName.trim().toLowerCase()));
+      const rawLabs = Array.isArray(parsed) ? parsed : [];
+      const seen = new Set<string>();
+      const labs = rawLabs.filter((lab) => {
+        const name = typeof lab?.testName === 'string' ? lab.testName.trim().toLowerCase() : '';
+        if (!name || !requestedNames.has(name) || seen.has(name)) return false;
+        seen.add(name);
+        return true;
+      });
+      // The client owns the deterministic local fallback. Returning an empty
+      // batch on a panel mismatch prevents an AI CBC/chemistry panel from
+      // being stored for a microbiology order.
+      const responseBody = { labs: labs.length === requestedNames.size ? labs : [] };
+      return new Response(JSON.stringify(responseBody), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const responseBody = parsed;
 
     return new Response(JSON.stringify(responseBody), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

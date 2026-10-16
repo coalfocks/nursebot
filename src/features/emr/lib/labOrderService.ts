@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { labTypeByName } from './labCatalog';
-import { minimumPriorTimestamp } from './scenarioTime';
+import { timestampForScope } from './scenarioTime';
 import type { LabResult, LabOrderSetting, RoomOrdersConfig } from './types';
 
 type LabPriority = 'Routine' | 'STAT' | 'Timed';
@@ -36,7 +36,7 @@ const buildFallbackLabResult = ({
   valueOverride?: string | null;
   assignmentId?: string | null;
 }): LabResult => {
-  const now = minimumPriorTimestamp();
+  const now = timestampForScope(assignmentId ? 'assignment' : 'baseline');
   const numericValue = extractNumericValue(valueOverride) ?? Number((Math.random() * 3 + 10).toFixed(1));
   const status =
     typeof valueOverride === 'string' && /critical|high|low|abnormal|elevated|decreased|up|down/i.test(valueOverride)
@@ -117,7 +117,7 @@ export const generateLabResultForOrder = async ({
       assignmentId: assignmentId ?? null,
     });
     if (aiLab) {
-      const now = minimumPriorTimestamp();
+      const now = timestampForScope(assignmentId ? 'assignment' : 'baseline');
       const rawValue = aiLab.value ?? '';
       const numericValue = typeof rawValue === 'number' ? rawValue : extractNumericValue(String(rawValue));
       return {

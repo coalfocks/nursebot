@@ -7,7 +7,7 @@ import {
   parseNumericLabValue,
   parseNumericReferenceRange,
 } from './labIntegrity';
-import { resolveLabTemplates } from './aiLabGenerator';
+import { resolveLabTemplates, validateGeneratedLabResults } from './aiLabGenerator';
 
 describe('lab integrity', () => {
   it('parses bounded numeric ranges without accepting malformed text', () => {
@@ -121,5 +121,32 @@ describe('lab integrity', () => {
     });
     expect(classifyLabResult('Creatinine', 'not a number', '0.7-1.3').status).toBe('Unknown');
     expect(classifyLabResult('Creatinine', 1, 'broken').status).toBe('Unknown');
+  });
+
+  it('routes culture orders to a pending microbiology schema instead of a default chemistry panel', () => {
+    const tests = resolveLabTemplates('Blood Culture x2 (Peripheral)');
+    expect(tests.map((test) => test.testName)).toEqual(['Blood Culture x2 (Peripheral)']);
+    expect(tests[0]?.resultKind).toBe('pending-microbiology');
+    expect(validateGeneratedLabResults([
+      { testName: 'White Blood Cell Count', value: 15.3, referenceRange: '4-11' },
+    ], tests)).toEqual([]);
+    expect(validateGeneratedLabResults([
+      { testName: 'Blood Culture x2 (Peripheral)', value: '', narrative: 'Pending: organism not finalized' },
+    ], tests)).toMatchObject([{
+      testName: 'Blood Culture x2 (Peripheral)',
+      valueType: 'coded',
+      lifecycleStatus: 'pending',
+      status: 'Pending',
+      specimen: 'Peripheral blood',
+    }]);
+  });
+
+  it.each([
+    ['CBC with Differential', ['White Blood Cell Count', 'Neutrophils %', 'Lymphocytes %', 'Hemoglobin', 'Hematocrit', 'Platelets']],
+    ['Basic Metabolic Panel (BMP)', ['Sodium', 'Potassium', 'Chloride', 'CO2 (Bicarbonate)', 'BUN', 'Creatinine', 'Glucose', 'Calcium']],
+    ['ABG with Co-oximetry', ['pH (Arterial)', 'PaCO2', 'PaO2', 'HCO3 (Arterial)', 'Lactate']],
+    ['Lactate (Serum)', ['Lactate']],
+  ])('keeps %s within its ordered analyte contract', (orderName, expected) => {
+    expect(resolveLabTemplates(orderName).map((test) => test.testName)).toEqual(expected);
   });
 });

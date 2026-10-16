@@ -217,6 +217,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(
     room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
   );
+  const consultantPromptReady = consultantResponsePrompt.trim().length > 0;
   const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
     normalizeBedsideRequirement(room?.bedside_requirement),
   );
@@ -874,10 +875,18 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           />
         </div>
 
+        <div className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-4">
+          <h3 className="text-sm font-semibold text-gray-900">Conversation Prompts</h3>
+          <p className="mt-1 text-xs text-gray-600">
+            These are room-level overrides. A saved room prompt composes over the platform default; blank means the platform default is used.
+            Prompt text is server-only and is never shown as learner chat content.
+          </p>
+        </div>
+
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <label htmlFor="patientConversationPrompt" className="block text-sm font-medium text-gray-700">
-              Patient Conversation Prompt
+              Patient conversation prompt
             </label>
             <textarea
               id="patientConversationPrompt"
@@ -885,7 +894,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               onChange={(e) => setPatientConversationPrompt(e.target.value)}
               rows={4}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Patient persona, authored history, and answer boundaries. Do not reveal diagnosis or hidden goals. Leave blank to disable patient chat."
+              placeholder="History, voice/affect, knowledge boundaries, response rules, and what the patient may or may not disclose."
             />
             <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
               <input
@@ -896,11 +905,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               />
               Enable patient conversation for students
             </label>
-            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and supplied to the patient-chat model; the prompt text is never shown to learners.</p>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to this room and supplied exactly to patient-chat for its assignments.</p>
           </div>
           <div>
             <label htmlFor="consultantResponsePrompt" className="block text-sm font-medium text-gray-700">
-              Consultant Response Behavior
+              Consultant conversation prompt (room override)
             </label>
             <textarea
               id="consultantResponsePrompt"
@@ -908,10 +917,20 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               onChange={(e) => setConsultantResponsePrompt(e.target.value)}
               rows={4}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
+              placeholder="Default acknowledgment/overnight plan, specialty behavior, and explicit ICU/cath-lab/urgent-OR exceptions."
             />
-            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and supplied server-side to the consultant model; the prompt text is never shown to learners.</p>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to this room and supplied exactly to consultant-chat for its assignments.</p>
           </div>
+        </div>
+
+        <div className={`rounded-lg border p-4 ${consultantPromptReady ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+          <h3 className="text-sm font-semibold text-gray-900">Consultant readiness preview</h3>
+          <p className="mt-1 text-xs text-gray-700">
+            {consultantPromptReady
+              ? 'Ready: this room override will be used by the consultant model. A failed platform consultation must preserve the learner draft and is not a learner scoring event.'
+              : 'Not ready: no room override is saved, so consultant-chat will use the platform default if configured; otherwise it will refuse the request and preserve the draft.'}
+          </p>
+          <p className="mt-2 text-xs text-gray-600">Preview input: synthetic summary → specialty selection → concise question. The saved prompt is not returned to learners.</p>
         </div>
 
         <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">

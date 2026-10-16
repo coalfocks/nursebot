@@ -14,6 +14,29 @@ export const resolveEncounterTime = (admissionDate?: string | null, fallback = n
 export const minimumPriorTimestamp = (admissionDate?: string | null, now = new Date()): string =>
   new Date(resolveEncounterTime(admissionDate, now).getTime() - MINIMUM_EMR_PRIOR_HOURS * HOUR_MS).toISOString();
 
+/**
+ * Learner actions belong to the active encounter. Only authored baseline
+ * records use the relative prior-hour sentinel.
+ */
+export const timestampForScope = (
+  scope: 'baseline' | 'room' | 'assignment' | null | undefined,
+  admissionDate?: string | null,
+  now = new Date(),
+): string => scope === 'assignment' ? now.toISOString() : minimumPriorTimestamp(admissionDate, now);
+
+export const formatScopedEmrTimestamp = (
+  timestamp: string | null | undefined,
+  scope: 'baseline' | 'room' | 'assignment' | null | undefined,
+  admissionDate?: string | null,
+  relativeOffsetHours?: number | null,
+): string => {
+  if (scope === 'assignment' && timestamp) {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+  }
+  return formatScenarioPrior(timestamp, admissionDate, relativeOffsetHours);
+};
+
 export const clampToMinimumPrior = (
   timestamp: string | null | undefined,
   admissionDate?: string | null,

@@ -15,7 +15,7 @@ import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
-import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
+import { clampToMinimumPrior, formatScopedEmrTimestamp, timestampForScope } from '../lib/scenarioTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -261,7 +261,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               });
           const runTimestamp = assignmentId
             ? new Date().toISOString()
-            : minimumPriorTimestamp(patient.admissionDate);
+            : timestampForScope(assignmentId ? 'assignment' : 'baseline', patient.admissionDate);
           const labsWithScope = generatedLabs.map((lab, index) => ({
             id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
             patientId: patient.id,
@@ -379,7 +379,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               vitals,
             });
 
-      const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
+      const runTimestamp = timestampForScope(assignmentForScope ? 'assignment' : forceBaseline ? 'baseline' : 'room', patient.admissionDate);
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
@@ -572,7 +572,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (value: string) => formatScenarioPrior(value, patient.admissionDate, labResults.find((lab) => lab.collectionTime === value)?.relativeOffsetHours);
+  const formatCollectionLabel = (value: string) => {
+    const lab = labResults.find((entry) => entry.collectionTime === value);
+    return formatScopedEmrTimestamp(value, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours);
+  };
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -596,7 +599,13 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       key,
       [...data]
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-        .map((entry) => ({ ...entry, time: formatScenarioPrior(entry.time, patient.admissionDate, labResults.find((lab) => lab.collectionTime === entry.time)?.relativeOffsetHours) })),
+        .map((entry) => {
+          const lab = labResults.find((candidate) => candidate.collectionTime === entry.time);
+          return {
+            ...entry,
+            time: formatScopedEmrTimestamp(entry.time, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours),
+          };
+        }),
     ]),
   );
 
@@ -1022,8 +1031,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     unit: manualLabForm.unit.trim(),
                     referenceRange: manualLabForm.referenceRange.trim(),
                     status: manualLabForm.status,
-                    collectionTime: minimumPriorTimestamp(patient.admissionDate),
-                    resultTime: minimumPriorTimestamp(patient.admissionDate),
+                    collectionTime: timestampForScope(forceBaseline ? 'baseline' : assignmentId ? 'assignment' : 'room', patient.admissionDate),
+                    resultTime: timestampForScope(forceBaseline ? 'baseline' : assignmentId ? 'assignment' : 'room', patient.admissionDate),
                     orderedBy: patient.attendingPhysician ?? 'Manual Entry',
                   };
 

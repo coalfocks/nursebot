@@ -11,6 +11,7 @@ import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 import { generateFeedback } from '../lib/feedbackService';
+import { isAssignmentWindowOpen } from '../lib/assignmentWindow';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -112,7 +113,7 @@ export default function AssignmentView() {
       setAssignment(assignmentWithSpecialties);
 
       // If status is 'assigned', update it to 'in_progress'
-      if (data.status === 'assigned') {
+      if (data.status === 'assigned' && isAssignmentWindowOpen(data)) {
         const { error: updateError } = await supabase
           .from('student_room_assignments')
           .update({ status: 'in_progress' })
@@ -209,6 +210,29 @@ export default function AssignmentView() {
                 Back to Assignments
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const assignmentUpcoming = ['assigned', 'in_progress', 'bedside'].includes(assignment.status)
+    && !isAssignmentWindowOpen(assignment);
+  if (assignmentUpcoming) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Navbar />
+        <div className="mx-auto max-w-3xl px-4 py-12">
+          <div className="rounded-lg bg-white p-8 text-center shadow">
+            <Clock className="mx-auto mb-4 h-10 w-10 text-blue-600" />
+            <h1 className="text-2xl font-bold text-gray-900">Room {assignment.room.room_number} is scheduled</h1>
+            <p className="mt-2 text-gray-600">This case will be available at the scheduled start time.</p>
+            {assignment.window_start && (
+              <p className="mt-1 text-sm text-gray-500">Available {new Date(assignment.window_start).toLocaleString()}</p>
+            )}
+            <button onClick={() => navigate('/assignments')} className="mt-6 inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Assignments
+            </button>
           </div>
         </div>
       </div>

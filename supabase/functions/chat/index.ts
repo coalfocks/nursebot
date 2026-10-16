@@ -24,6 +24,9 @@ interface NurseRoomContext {
   patient_id?: string | null;
 }
 
+const assignmentWindowOpen = (assignment: { is_sandbox?: boolean | null; window_start?: string | null }) =>
+  Boolean(assignment.is_sandbox) || !assignment.window_start || new Date(assignment.window_start).getTime() <= Date.now();
+
 const resolvePinnedRoom = (room: NurseRoomContext | null, baseline: unknown) => {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) return room;
   return { ...room, ...(baseline as Partial<NurseRoomContext>) };
@@ -117,10 +120,16 @@ Deno.serve(async (req) => {
 
       const { data: assignment, error: assignmentError } = await supabaseAdmin
         .from('student_room_assignments')
-        .select('scenario_baseline, room:room_id(role, context, nurse_context, style, patient_id)')
+        .select('scenario_baseline, is_sandbox, window_start, status, room:room_id(role, context, nurse_context, style, patient_id)')
         .eq('id', resolvedAssignmentId)
         .maybeSingle();
       if (assignmentError) throw assignmentError;
+      if (!assignment || !assignmentWindowOpen(assignment)) {
+        return new Response(JSON.stringify({ error: 'This assignment is not available yet.', code: 'ASSIGNMENT_NOT_ACTIVE' }), {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
       const room = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
       const pinnedRoom = resolvePinnedRoom(room as NurseRoomContext | null, assignment?.scenario_baseline);
