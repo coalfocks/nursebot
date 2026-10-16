@@ -13,7 +13,13 @@ type ConsultantRequest = {
   clientRequestId?: string;
 };
 type Payload = { assignmentId?: string; request?: ConsultantRequest };
-const SPECIALTIES = new Set(['Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Attending']);
+const SPECIALTIES = new Set([
+  'Attending', 'Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease',
+  'Orthopedics', 'ENT', 'Anesthesiology', 'Endocrinology', 'Hematology', 'Toxicology', 'Pediatric Hepatology', 'Gastroenterology',
+  'Pulmonology', 'Psychiatry', 'Dermatology', 'Urology', 'Oncology', 'Hospitalist', 'Pediatric Cardiology', 'Pediatric Neurology',
+  'Pediatric Surgery', 'Pediatric Infectious Disease', 'Pediatric Pulmonology', 'Pediatric Nephrology', 'Pediatric Gastroenterology',
+  'Pediatric Hematology/Oncology', 'Pediatric Critical Care', 'Pediatric Emergency Medicine',
+]);
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!url || !serviceKey) throw new Error('Missing Supabase service credentials');
@@ -66,6 +72,7 @@ Deno.serve(async (req) => {
       model: getOpenAIModel('chat'), max_completion_tokens: 500, response_format: { type: 'json_object' },
       messages: [
           { role: 'system', content: behavior },
+        { role: 'system', content: 'Technical transport contract: return a JSON object with message (string) and disposition (routine_review or assumes_care). Do not add any other fields.' },
         { role: 'user', content: JSON.stringify({ specialty, summary, clinicalQuestion, reason, urgency }) },
       ],
     });

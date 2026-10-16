@@ -5,7 +5,13 @@ import { supabase } from '../lib/supabase';
 type Props = { assignmentId: string; open: boolean; onClose: () => void };
 type Message = { role: 'student' | 'consultant'; content: string; specialty?: string; urgency?: string };
 
-const SPECIALTIES = ['Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Attending'];
+const SPECIALTIES = [
+  'Attending', 'Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease',
+  'Orthopedics', 'ENT', 'Anesthesiology', 'Endocrinology', 'Hematology', 'Toxicology', 'Pediatric Hepatology', 'Gastroenterology',
+  'Pulmonology', 'Psychiatry', 'Dermatology', 'Urology', 'Oncology', 'Hospitalist', 'Pediatric Cardiology', 'Pediatric Neurology',
+  'Pediatric Surgery', 'Pediatric Infectious Disease', 'Pediatric Pulmonology', 'Pediatric Nephrology', 'Pediatric Gastroenterology',
+  'Pediatric Hematology/Oncology', 'Pediatric Critical Care', 'Pediatric Emergency Medicine',
+];
 const urgencyOptions = [
   { value: 'routine', label: 'Routine — see the patient in the morning' },
   { value: 'urgent', label: 'Urgent — needs attention today' },
