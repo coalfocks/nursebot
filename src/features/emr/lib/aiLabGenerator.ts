@@ -20,6 +20,7 @@ export type LabTemplate = {
   unit: string;
   referenceRange: string;
   normal: [number, number];
+  resultKind?: 'numeric' | 'pending-microbiology';
 };
 
 const canonicalAnalyteKey = (name: string) => name
@@ -41,6 +42,10 @@ export type GeneratedLabPayload = {
   status?: LabResult['status'];
   collectionTime?: string;
   resultTime?: string;
+  valueType?: LabResult['valueType'];
+  narrative?: string | null;
+  specimen?: string | null;
+  lifecycleStatus?: LabResult['lifecycleStatus'];
 };
 
 /** Keep model output inside the explicitly ordered panel contract. */
@@ -54,7 +59,24 @@ export const validateGeneratedLabResults = (
   const normalized = results.flatMap((result) => {
     if (!result.testName) return [];
     const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
-    if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
+    if (!template || seen.has(template.testName)) return [];
+    if (template.resultKind === 'pending-microbiology') {
+      const pendingValue = typeof result.value === 'string' ? result.value.trim() : '';
+      if (!pendingValue && !result.narrative?.trim()) return [];
+      seen.add(template.testName);
+      return [{
+        ...result,
+        testName: template.testName,
+        unit: '',
+        referenceRange: 'Pending microbiology: organism/status not yet finalized',
+        value: pendingValue,
+        valueType: 'coded',
+        lifecycleStatus: 'pending',
+        status: 'Pending',
+        specimen: result.specimen ?? 'Peripheral blood',
+      }];
+    }
+    if (!validReferenceRange(result.referenceRange)) return [];
     if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
     seen.add(template.testName);
     return [{
@@ -132,6 +154,13 @@ export const isClinicallyCoherentPanel = (
 };
 
 const labTemplates: LabTemplate[] = [
+  {
+    testName: 'Blood Culture x2 (Peripheral)',
+    unit: '',
+    referenceRange: 'Pending microbiology: organism/status not yet finalized',
+    normal: [0, 0],
+    resultKind: 'pending-microbiology',
+  },
   // Hematology
   { testName: 'Hemoglobin', unit: 'g/dL', referenceRange: '12.0-15.5', normal: [12, 15.5] },
   { testName: 'Hematocrit', unit: '%', referenceRange: '36-46', normal: [36, 46] },
@@ -322,6 +351,8 @@ export const resolveLabTemplates = (
     amylase: ['amylase'],
     'beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
     'ketone beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
+    'blood culture x2': ['blood culture x2 (peripheral)'],
+    'blood culture': ['blood culture x2 (peripheral)'],
     'serum alcohol level': ['serum alcohol level'],
     'acetaminophen level': ['acetaminophen level'],
     'salicylate level': ['salicylate level'],
