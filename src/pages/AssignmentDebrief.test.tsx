@@ -44,6 +44,8 @@ describe('AssignmentDebrief canonical rendered feedback', () => {
     const { default: AssignmentDebrief } = await import('./AssignmentDebrief');
     render(<AssignmentDebrief />);
     await waitFor(() => expect(screen.getAllByText('Synthetic Room 112').length).toBeGreaterThan(0));
+    expect(document.querySelector('#feedback-print-root')).toBeInTheDocument();
+    expect(document.querySelector('#feedback-print-root > .print-sheet')).toBeInTheDocument();
     expect(screen.getAllByText('Target diagnosis: Synthetic acute instability').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Name the diagnosis.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Prioritize monitoring and orders.').length).toBeGreaterThan(0);
@@ -57,5 +59,11 @@ describe('AssignmentDebrief canonical rendered feedback', () => {
     expect(screen.getAllByText('Document the reassessment result and plan change.').length).toBeGreaterThan(0);
     expect(screen.queryByText(/message count and timing are not scored/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Observed action Evidence-linked review')).not.toBeInTheDocument();
+  });
+
+  it('normalizes punctuation-only efficiency rationale for screen and print output', async () => {
+    const { efficiencyFeedback } = await import('./AssignmentDebrief');
+    expect(efficiencyFeedback('...')).toBe('No case-specific efficiency deduction was observed.');
+    expect(efficiencyFeedback('No case-specific efficiency deduction; No case-specific efficiency deduction was observed..')).toBe('No case-specific efficiency deduction was observed.');
   });
 });
