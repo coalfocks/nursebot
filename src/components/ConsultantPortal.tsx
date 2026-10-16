@@ -23,6 +23,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<string | null>(null);
+  const [clientRequestId, setClientRequestId] = useState<string | null>(null);
 
   const filteredSpecialties = useMemo(() => SPECIALTIES.filter((item) => item.toLowerCase().includes(search.trim().toLowerCase())), [search]);
 
@@ -39,8 +40,9 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
     event.preventDefault();
     if (loading || !summary.trim() || !question.trim() || !reason.trim()) return;
     setLoading(true); setError(null);
-    const clientRequestId = crypto.randomUUID();
-    const request = { specialty, summary: summary.trim(), clinicalQuestion: question.trim(), reason: reason.trim(), urgency, clientRequestId };
+    const requestId = clientRequestId ?? crypto.randomUUID();
+    setClientRequestId(requestId);
+    const request = { specialty, summary: summary.trim(), clinicalQuestion: question.trim(), reason: reason.trim(), urgency, clientRequestId: requestId };
     try {
       const { data, error: invokeError } = await supabase.functions.invoke<{ message: string; disposition?: string; orderId?: string }>('consultant-chat', { body: { assignmentId, request } });
       if (invokeError) throw invokeError;
@@ -51,6 +53,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
       ]);
       setDisposition(data.disposition ?? null);
       setSummary(''); setQuestion(''); setReason('');
+      setClientRequestId(null);
     } catch (cause) {
       // Supabase wraps non-2xx Edge Function responses. Prefer the server's
       // JSON error so the learner sees the actionable validation/database
