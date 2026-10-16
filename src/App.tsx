@@ -12,6 +12,7 @@ import MyCases from './pages/MyCases';
 import AdminStudents from './pages/AdminStudents';
 import AdminStudentCases from './pages/AdminStudentCases';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminAnalytics from './pages/AdminAnalytics';
 import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
@@ -142,6 +143,16 @@ function App() {
               isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
             ) : (
               <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            user?.id && hasAdmin ? (
+              <AdminAnalytics />
+            ) : (
+              <Navigate to="/dashboard" replace />
             )
           }
         />
