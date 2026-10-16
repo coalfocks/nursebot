@@ -63,7 +63,7 @@ describe('AssignmentDebrief canonical rendered feedback', () => {
 
   it('normalizes punctuation-only efficiency rationale for screen and print output', async () => {
     const { efficiencyFeedback } = await import('./AssignmentDebrief');
-    expect(efficiencyFeedback('...')).toBe('No case-specific efficiency deduction was observed.');
-    expect(efficiencyFeedback('No case-specific efficiency deduction; No case-specific efficiency deduction was observed..')).toBe('No case-specific efficiency deduction was observed.');
+    expect(efficiencyFeedback('...')).toBe('No case-specific efficiency deduction.');
+    expect(efficiencyFeedback('No case-specific efficiency deduction; No case-specific efficiency deduction was observed..')).toBe('No case-specific efficiency deduction.');
   });
 });

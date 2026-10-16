@@ -6,17 +6,22 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../stores/authStore';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { feedbackDomainArithmetic, parseCanonicalFeedback, type CanonicalFeedback } from '../lib/feedbackContract';
+import { buildAttemptEvidence, evidenceQueryErrorMessage, type AttemptEvidence } from '../lib/attemptEvidence';
 
 const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 const clean = (value: unknown) => typeof value === 'string' ? value.replace(/message count and timing are not scored/gi, 'No case-specific efficiency deduction was observed.').replace(/review the evidence-linked strengths and next steps below\.?/gi, '').replace(/\s+/g, ' ').trim() : '';
 const goalsOnly = (value: unknown): string[] => Array.from(new Set(asArray<unknown>(value).flatMap((item) => clean(item).split(/\r?\n/)).map((item) => item.replace(/^[-*•]\s*/, '').trim()).filter((item) => item.length >= 8 && item.length <= 220 && !/reveal this goal|do not disclose|after the simulation|target diagnosis\s*[—:-]/i.test(item)))).slice(0, 5);
 const text = (...values: unknown[]) => clean(values.find((value) => typeof value === 'string' && value.trim()));
-type RenderEvidence = { id: string; kind: string; title: string; body: string; timestamp: string };
-export const efficiencyFeedback = (value: unknown) => {
+export const conciseEfficiencyRationale = (value: unknown, _score = 0) => {
   const normalized = clean(value).replace(/no case-specific efficiency deduction(?: was observed)?[.;:]?\s*/gi, '').trim();
-  return /[^\p{L}\p{N}]/u.test(normalized) && !/[\p{L}\p{N}]/u.test(normalized)
-    ? 'No case-specific efficiency deduction was observed.'
-    : normalized || 'No case-specific efficiency deduction was observed.';
+  return normalized && !/^[\s\W_]+$/.test(normalized) ? normalized : 'No case-specific efficiency deduction.';
+};
+const efficiencyFeedback = (value: unknown) => conciseEfficiencyRationale(value);
+export { efficiencyFeedback };
+export const removeDiagnosisGoal = (goal: string, diagnosis: string | null) => {
+  const normalizedGoal = goal.trim().replace(/[.!?]+$/, '').toLowerCase();
+  const normalizedDiagnosis = diagnosis?.trim().replace(/[.!?]+$/, '').toLowerCase();
+  return normalizedDiagnosis && (normalizedGoal === normalizedDiagnosis || normalizedGoal === `recognize ${normalizedDiagnosis}`) ? null : goal;
 };
 
 const ScoreCard = ({ label, total, components }: { label: string; total: number | null; components: Array<{ label: string; score?: number; feedback?: string }> }) => {
@@ -39,7 +44,7 @@ const PrintSummary = ({ assignment, diagnosis, goals, comm, reasoning, strengths
     <div className="print-score-grid"><section><h2>Communication <strong>{assignment.communication_score ?? '—'}/5</strong></h2>{components.slice(0, 3).map(([label, component]) => <p key={label}><b>{label}:</b> {component?.score ?? 'Not observed'} — {label.startsWith('Efficiency') ? efficiencyFeedback(component?.feedback) : text(component?.feedback) || 'Insufficient evidence.'}</p>)}</section><section><h2>Clinical reasoning <strong>{(assignment.clinical_reasoning_score ?? assignment.mdm_score ?? '—')}/5</strong></h2>{components.slice(3).map(([label, component]) => <p key={label}><b>{label}:</b> {component?.score ?? 'Not observed'} — {text(component?.feedback) || 'Insufficient evidence.'}</p>)}</section></div>
     {strengths.length > 0 && <section><h2>Strengths</h2><ul>{strengths.slice(0, 2).map((item: string) => <li key={item}>{item}</li>)}</ul></section>}
     {nextSteps.length > 0 && <section><h2>Next steps</h2><ul>{nextSteps.slice(0, 2).map((item: string) => <li key={item}>{item}</li>)}</ul></section>}
-    {evidence.length > 0 && <section><h2>Attempt evidence</h2>{evidence.slice(0, 3).map((event: RenderEvidence) => <p key={event.id}><b>{event.title}:</b> {event.body || event.kind}</p>)}</section>}
+    {evidence.length > 0 && <section><h2>Attempt evidence</h2>{evidence.slice(0, 3).map((event: AttemptEvidence) => <p key={event.id}><b>{event.title}:</b> {event.body || event.kind}</p>)}</section>}
   </article>;
 };
 
@@ -48,30 +53,46 @@ export default function AssignmentDebrief() {
   const { user } = useAuthStore();
   const navigate = useNavigate();
   const [assignment, setAssignment] = useState<any>(null);
-  const [sourceEvidence, setSourceEvidence] = useState<RenderEvidence[]>([]);
+  const [sourceEvidence, setSourceEvidence] = useState<AttemptEvidence[]>([]);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => { if (!user || !assignmentId) return; void (async () => {
     const { data, error } = await supabase.from('student_room_assignments').select('*, room:room_id(room_number, patient_id, expected_diagnosis, case_goals)').eq('id', assignmentId).single();
     if (error || !data || data.student_id !== user.id) { navigate('/assignments'); setLoading(false); return; }
     setAssignment(data);
-    const [chatResult, patientChatResult, orderResult, labResult, consultantResult] = await Promise.all([
+    const [chatResult, patientChatResult, orderResult, labResult, imagingResult, vitalsResult, consultantResult] = await Promise.all([
       supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true }),
       supabase.from('patient_chat_messages').select('id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true }),
       data.room?.patient_id ? supabase.from('medical_orders').select('id, order_name, status, priority, frequency, created_at, order_time').eq('assignment_id', assignmentId).eq('patient_id', data.room.patient_id).is('deleted_at', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [], error: null }),
       data.room?.patient_id ? supabase.from('lab_results').select('id, test_name, value, unit, status, created_at, result_time, collection_time').eq('assignment_id', assignmentId).eq('patient_id', data.room.patient_id).is('deleted_at', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [], error: null }),
+      data.room?.patient_id ? supabase.from('imaging_studies').select('id, order_name, study_type, status, report, created_at, report_generated_at, order_time').eq('assignment_id', assignmentId).eq('patient_id', data.room.patient_id).is('deleted_at', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [], error: null }),
+      data.room?.patient_id ? supabase.from('vital_signs').select('id, timestamp, temperature, heart_rate, respiratory_rate, oxygen_saturation, blood_pressure_systolic, blood_pressure_diastolic').eq('assignment_id', assignmentId).eq('patient_id', data.room.patient_id).order('timestamp', { ascending: true }) : Promise.resolve({ data: [], error: null }),
       supabase.from('consultant_chat_messages').select('id, role, content, created_at, specialty, urgency').eq('assignment_id', assignmentId).order('created_at', { ascending: true }),
     ]);
-    const chat = [...(chatResult.data ?? []), ...(patientChatResult.data ?? [])].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-    const firstPage = chat.filter((row) => ['assistant', 'nurse'].includes(row.role) && row.content !== '<completed>').sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0];
+    const queryError = evidenceQueryErrorMessage([
+      { label: 'chat', error: chatResult.error },
+      { label: 'patient chat', error: patientChatResult.error },
+      { label: 'orders', error: orderResult.error },
+      { label: 'labs', error: labResult.error },
+      { label: 'imaging', error: imagingResult.error },
+      { label: 'vitals', error: vitalsResult.error },
+      { label: 'consultant messages', error: consultantResult.error },
+    ]);
+    setEvidenceError(queryError);
+    const chat = [...(chatResult.data ?? [])].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const firstPage = chat.find((row) => ['assistant', 'nurse'].includes(row.role) && row.content !== '<completed>');
     const boundary = firstPage ? new Date(firstPage.created_at).getTime() : Number.POSITIVE_INFINITY;
-    const afterBoundary = (timestamp: string | null) => Boolean(timestamp && new Date(timestamp).getTime() >= boundary);
-    const next: RenderEvidence[] = [
-      ...chat.filter((row) => afterBoundary(row.created_at)).map((row) => ({ id: `message-${row.id}`, kind: 'message', title: row.role === 'student' || row.role === 'user' ? 'Student message' : 'Nurse message', body: row.content, timestamp: row.created_at })),
-      ...((orderResult.data ?? []) as any[]).filter((row) => afterBoundary(row.created_at ?? row.order_time)).map((row) => ({ id: `order-${row.id}`, kind: 'order', title: `Order: ${row.order_name}`, body: [row.priority, row.frequency, row.status].filter(Boolean).join(' · '), timestamp: row.created_at ?? row.order_time })),
-      ...((labResult.data ?? []) as any[]).filter((row) => afterBoundary(row.created_at ?? row.result_time ?? row.collection_time)).map((row) => ({ id: `lab-${row.id}`, kind: 'lab-result', title: `Lab result: ${row.test_name}`, body: `${row.test_name}: ${row.value ?? 'resulted'}${row.unit ? ` ${row.unit}` : ''} · ${row.status ?? 'Unknown'}`, timestamp: row.created_at ?? row.result_time ?? row.collection_time })),
-      ...((consultantResult.data ?? []) as any[]).filter((row) => afterBoundary(row.created_at)).map((row) => ({ id: `consultant-message-${row.id}`, kind: 'consultant-message', title: row.role === 'student' ? `Consult request (${row.specialty ?? 'consultant'})` : 'Consultant response', body: row.content, timestamp: row.created_at })),
-    ].filter((row) => Boolean(row.timestamp));
-    setSourceEvidence(Array.from(new Map(next.map((row) => [row.id, row])).values()));
+    setSourceEvidence(buildAttemptEvidence({
+      chat,
+      patientChat: patientChatResult.data ?? [],
+      orders: orderResult.data ?? [],
+      labs: labResult.data ?? [],
+      imaging: imagingResult.data ?? [],
+      vitals: vitalsResult.data ?? [],
+      progressNote: data.student_progress_note,
+      completedAt: data.completed_at,
+      boundary,
+    }));
     setLoading(false);
   })(); }, [assignmentId, user, navigate]);
   if (loading) return <><Navbar /><main className="mx-auto max-w-4xl p-8">Loading feedback…</main></>;
@@ -81,7 +102,7 @@ export default function AssignmentDebrief() {
   const comm = canonical?.communication.components ?? assignment.communication_breakdown ?? {};
   const reasoning = canonical?.clinical_reasoning.components ?? assignment.clinical_reasoning_breakdown ?? assignment.mdm_breakdown ?? {};
   const diagnosis = canonical?.target_diagnosis ?? assignment.room?.expected_diagnosis ?? null;
-  const goals = canonical?.goals ?? goalsOnly(debrief.case_goals ?? assignment.room?.case_goals);
+  const goals = (canonical?.goals ?? goalsOnly(debrief.case_goals ?? assignment.room?.case_goals)).map((goal) => removeDiagnosisGoal(goal, diagnosis)).filter((goal): goal is string => Boolean(goal));
   const strengths = canonical?.strengths ?? goalsOnly(debrief.strengths);
   const nextSteps = canonical?.next_steps ?? goalsOnly(debrief.improvements ?? debrief.recommendations);
   const evidence = Array.from(new Map([...(canonical?.evidence ?? []), ...sourceEvidence].map((event) => [event.id, event])).values());
@@ -91,7 +112,8 @@ export default function AssignmentDebrief() {
     {assignment.technical_incomplete && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">This attempt is technically incomplete because the first nurse page was not recorded. No learner score was assigned.</div>}
     <section className="feedback-screen rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Case goals</h2>{goals.length > 0 && <ul className="mt-2 list-disc pl-5 text-sm text-gray-700">{goals.map((goal) => <li key={goal}>{goal}</li>)}</ul>}</section>
     <div className="feedback-screen grid gap-6 md:grid-cols-2"><ScoreCard label="Communication" total={canonical?.communication.total ?? assignment.communication_score} components={[{ label: 'Focused Information Gathering (0–2)', ...comm.focused_information_gathering }, { label: 'Closed-Loop Team Communication (0–3)', ...comm.closed_loop_team_communication }, { label: 'Efficiency Deduction (−2–0)', ...comm.efficiency_deduction }]} /><ScoreCard label="Clinical Reasoning" total={canonical?.clinical_reasoning.total ?? assignment.clinical_reasoning_score ?? assignment.mdm_score} components={[{ label: 'Orders/Monitoring Quality (0–3)', ...reasoning.orders_monitoring_quality }, { label: 'Clinical Reasoning/Documentation (0–2)', ...reasoning.clinical_reasoning_documentation }, { label: 'Safety Deduction (0, −1, −2)', ...reasoning.safety_deduction }]} /></div>
-    <details className="feedback-screen rounded-lg border bg-white p-5 shadow-sm" open><summary className="cursor-pointer font-semibold">Observed attempt evidence</summary><div className="mt-3 space-y-3 text-sm">{evidence.length ? evidence.map((event) => <div key={event.id} className="border-l-2 border-blue-200 pl-3"><p className="font-medium">{event.title}</p><p className="text-xs text-slate-500">{event.kind} · {new Date(event.timestamp).toLocaleString()}</p>{event.body && <p className="mt-1 text-slate-600">{event.body}</p>}</div>) : <p className="text-slate-600">No attempt-scoped evidence recorded.</p>}</div></details>
+    {evidenceError && <div role="alert" className="feedback-screen rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">{evidenceError}</div>}
+    <details className="feedback-screen rounded-lg border bg-white p-5 shadow-sm" open><summary className="cursor-pointer font-semibold">Observed attempt evidence</summary><div className="mt-3 space-y-3 text-sm">{evidence.length ? evidence.map((event) => <div key={event.id} className="border-l-2 border-blue-200 pl-3"><p className="font-medium">{event.title}</p><p className="text-xs text-slate-500">{event.kind} · {new Date(event.timestamp).toLocaleString()}</p>{event.body && <p className="mt-1 text-slate-600">{event.body}</p>}</div>) : evidenceError ? <p className="text-slate-600">Evidence could not be loaded.</p> : <p className="text-slate-600">No attempt-scoped evidence recorded.</p>}</div></details>
     <div className="feedback-screen">{assignment.safety_result?.level && assignment.safety_result.level !== 'none' && <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="flex items-center font-semibold"><ShieldAlert className="mr-2 h-5 w-5 text-amber-600" />Safety result</h2><p className="mt-2 text-sm">{assignment.safety_result.rationale || assignment.safety_result.action}</p></section>}{strengths.length > 0 && <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Evidence-linked strengths</h2><ul className="mt-2 list-disc pl-5 text-sm">{strengths.map((item) => <li key={item}>{item}</li>)}</ul></section>}{nextSteps.length > 0 && <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 shadow-sm"><h2 className="font-semibold text-amber-950">Next steps</h2><ul className="mt-2 list-disc pl-5 text-sm text-amber-950">{nextSteps.map((item) => <li key={item}>{item}</li>)}</ul></section>}</div>
     <PrintSummary assignment={assignment} diagnosis={diagnosis} goals={goals} comm={comm} reasoning={reasoning} strengths={strengths} nextSteps={nextSteps} evidence={evidence} />
   </main></div>;
