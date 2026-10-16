@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYTICS_QUERY_CONTRACT, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, type AnalyticsRow } from './analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, buildAnalyticsCsv, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, selectAssessedRows, SYNTHETIC_ANALYTICS_FIXTURE, type AnalyticsRow } from './analyticsMetrics';
 
 describe('formatCompletionDuration', () => {
   it('formats minutes and larger durations responsively', () => {
@@ -138,5 +138,25 @@ describe('computeDashboardMetrics', () => {
     expect(metrics.trend).toHaveLength(2);
     expect(metrics.domainPerformance[0].scored).toBe(1);
     expect(metrics.caseHeatmap).toHaveLength(2);
+  });
+
+  it('uses the unique assessed assignment set for domain samples and themes', () => {
+    const rows = [
+      { ...assignment({ id: 'assessed', communicationScore: 4, mdmScore: 3 }), id: 'assessed', schoolId: 's', studentName: 'A', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: null, completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: { strengths: [{ text: 'Cited strength', evidence_event_ids: ['event-1'] }] } },
+      { ...assignment({ id: 'pending', feedbackStatus: 'pending', communicationScore: 5, mdmScore: 5 }), id: 'pending', schoolId: 's', studentName: 'B', studentRole: 'student', roomId: 2, roomNumber: '102', specialty: 'Medicine', createdAt: null, completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: { strengths: [{ text: 'Should not appear', evidence_event_ids: ['event-2'] }] } },
+      { ...assignment({ id: 'progress', status: 'in_progress', feedbackStatus: null, communicationScore: null, mdmScore: null }), id: 'progress', schoolId: 's', studentName: 'C', studentRole: 'student', roomId: 3, roomNumber: '103', specialty: 'Medicine', createdAt: null, completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: { strengths: [{ text: 'Should not appear', evidence_event_ids: ['event-3'] }] } },
+      { ...assignment({ id: 'assessed', communicationScore: 2 }), id: 'assessed', schoolId: 's', studentName: 'A duplicate', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: null, completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: null },
+    ] as AnalyticsRow[];
+    const metrics = computeDashboardMetrics(rows, 3);
+    expect(selectAssessedRows(rows).map((row) => row.id)).toEqual(['assessed']);
+    expect(metrics.domainPerformance.map((item) => item.scored)).toEqual([1, 1]);
+    expect(extractEvidenceBackedThemes(selectAssessedRows(rows)).strengths).toEqual([{ text: 'Cited strength', count: 1 }]);
+  });
+
+  it('builds filtered CSV content from exactly the rows supplied', () => {
+    const csv = buildAnalyticsCsv(SYNTHETIC_ANALYTICS_FIXTURE.slice(0, 2), false);
+    expect(csv.split('\n')).toHaveLength(3);
+    expect(csv).toContain('fixture-assignment-1');
+    expect(csv).not.toContain('fixture-assignment-sandbox');
   });
 });

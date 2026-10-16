@@ -46,6 +46,12 @@ export const SYNTHETIC_ANALYTICS_FIXTURE: AnalyticsRow[] = [
   {
     id: 'fixture-assignment-sandbox', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-test', studentName: 'Synthetic Test Learner', studentRole: 'test_user', roomId: 999, roomNumber: 'SYN-TEST', specialty: 'Medicine', status: 'completed', feedbackStatus: 'completed', communicationScore: 2, mdmScore: 2, overallScore: 2, createdAt: '2026-10-05T10:00:00Z', completedAt: '2026-10-05T11:00:00Z', feedbackGeneratedAt: '2026-10-05T11:05:00Z', caseDifficulty: 'fixture', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: { strengths: [{ text: 'Sandbox-only practice', evidence_event_ids: ['fixture-message-test'] }] },
   },
+  {
+    id: 'fixture-assignment-sandbox-pending', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-test-pending', studentName: 'Synthetic Pending Learner', studentRole: 'test_user', roomId: 998, roomNumber: 'SYN-TEST-PENDING', specialty: 'Medicine', status: 'completed', feedbackStatus: 'pending', communicationScore: 5, mdmScore: 4, overallScore: 4.5, createdAt: '2026-10-06T10:00:00Z', completedAt: '2026-10-06T11:00:00Z', feedbackGeneratedAt: null, caseDifficulty: 'fixture', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: null,
+  },
+  {
+    id: 'fixture-assignment-sandbox-progress', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-test-progress', studentName: 'Synthetic In-Progress Learner', studentRole: 'test_user', roomId: 997, roomNumber: 'SYN-TEST-PROGRESS', specialty: 'Surgery', status: 'in_progress', feedbackStatus: null, communicationScore: null, mdmScore: null, overallScore: null, createdAt: '2026-10-07T10:00:00Z', completedAt: null, feedbackGeneratedAt: null, caseDifficulty: 'fixture', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null,
+  },
 ];
 
 export type DashboardMetrics = CohortMetrics & {
@@ -189,6 +195,24 @@ const uniqueByAssignmentId = <T extends AnalyticsAssignment>(assignments: T[]): 
   });
 };
 
+const hasFiniteDomainScore = (row: AnalyticsAssignment) =>
+  (typeof row.communicationScore === 'number' && Number.isFinite(row.communicationScore))
+  || (typeof row.mdmScore === 'number' && Number.isFinite(row.mdmScore));
+
+export const selectAssessedRows = <T extends AnalyticsAssignment>(rows: T[]): T[] =>
+  uniqueByAssignmentId(rows).filter((row) =>
+    row.status === 'completed' && row.feedbackStatus === 'completed' && hasFiniteDomainScore(row),
+  );
+
+export const buildAnalyticsCsv = (rows: AnalyticsRow[], includeTest: boolean): string => {
+  const headers = ['assignment_id', 'learner', 'school_id', 'case', 'specialty', 'status', 'created_at', 'completed_at', 'feedback_status', 'communication_score', 'mdm_score', 'overall_score', 'test_data_included'];
+  const lines = [headers.join(','), ...rows.map((row) => [row.id, row.studentName, row.schoolId, row.roomNumber, row.specialty, row.status, row.createdAt, row.completedAt, row.feedbackStatus, row.communicationScore, row.mdmScore, row.overallScore, includeTest].map((value) => {
+    const text = value == null ? '' : String(value).replace(/"/g, '""');
+    return /[",\n]/.test(text) ? `"${text}"` : text;
+  }).join(','))];
+  return lines.join('\n');
+};
+
 export type GroupedAnalytics = {
   attempts: number;
   completed: number;
@@ -288,9 +312,10 @@ export const computeDashboardMetrics = (rows: AnalyticsRow[], eligibleLearners: 
     trendMap.set(date, current);
   });
 
+  const assessedRows = selectAssessedRows(rows);
   const domainDefinitions = [
-    { domain: 'Communication', values: rows.map((row) => row.communicationScore) },
-    { domain: 'Medical decision-making', values: rows.map((row) => row.mdmScore) },
+    { domain: 'Communication', values: assessedRows.map((row) => row.communicationScore) },
+    { domain: 'Medical decision-making', values: assessedRows.map((row) => row.mdmScore) },
   ];
 
   const caseMap = new Map<string, { attempts: number; completed: number; scores: number[] }>();

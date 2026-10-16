@@ -6,7 +6,7 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { supabase } from '../lib/supabase';
-import { ANALYTICS_QUERY_CONTRACT, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, SYNTHETIC_ANALYTICS_FIXTURE, type AnalyticsRow } from '../lib/analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, buildAnalyticsCsv, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, selectAssessedRows, SYNTHETIC_ANALYTICS_FIXTURE, type AnalyticsRow } from '../lib/analyticsMetrics';
 import { isSyntheticAnalyticsPreview } from '../lib/analyticsPreview';
 
 type RawAnalyticsRecord = {
@@ -33,11 +33,6 @@ type RawAnalyticsRecord = {
   room: { id: number; room_number: string | null; specialty_id: string | null; specialty_ids: string[] | null } | null;
 };
 
-const csvEscape = (value: unknown) => {
-  const text = value == null ? '' : String(value).replace(/"/g, '""');
-  return /[",\n]/.test(text) ? `"${text}"` : text;
-};
-
 const pct = (value: number | null) => value == null ? '—' : `${value}%`;
 
 export default function AdminAnalytics() {
@@ -55,6 +50,8 @@ export default function AdminAnalytics() {
   const [includeTest, setIncludeTest] = useState(false);
   const [timeScope, setTimeScope] = useState<'all' | '3m' | '6m' | '1y' | 'custom'>('all');
   const [feedbackScope, setFeedbackScope] = useState<'cohort' | 'learner'>('cohort');
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [showPrintPreview, setShowPrintPreview] = useState(false);
   const syntheticPreview = isSyntheticAnalyticsPreview();
 
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
@@ -156,15 +153,16 @@ export default function AdminAnalytics() {
   const metrics = useMemo(() => computeDashboardMetrics(filteredRows, eligibleLearners), [filteredRows, eligibleLearners]);
   const reviewQueue = filteredRows.filter((row) => row.status === 'completed' && row.feedbackStatus !== 'completed').slice(0, 12);
   const maxTrend = Math.max(1, ...metrics.trend.map((point) => point.attempts));
-  const feedbackRows = feedbackScope === 'learner' && learnerId !== 'all' ? filteredRows.filter((row) => row.studentId === learnerId) : feedbackScope === 'learner' ? [] : filteredRows;
+  const assessedRows = useMemo(() => selectAssessedRows(filteredRows), [filteredRows]);
+  const feedbackRows = feedbackScope === 'learner' && learnerId !== 'all' ? assessedRows.filter((row) => row.studentId === learnerId) : feedbackScope === 'learner' ? [] : assessedRows;
   const feedbackHighlights = useMemo(() => extractEvidenceBackedThemes(feedbackRows), [feedbackRows]);
 
   const exportCsv = () => {
-    const headers = ['assignment_id', 'learner', 'school_id', 'case', 'specialty', 'status', 'created_at', 'completed_at', 'feedback_status', 'communication_score', 'mdm_score', 'overall_score', 'test_data_included'];
-    const lines = [headers.join(','), ...filteredRows.map((row) => [row.id, row.studentName, row.schoolId, row.roomNumber, row.specialty, row.status, row.createdAt, row.completedAt, row.feedbackStatus, row.communicationScore, row.mdmScore, row.overallScore, includeTest].map(csvEscape).join(','))];
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const csv = buildAnalyticsCsv(filteredRows, includeTest);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `nurse-althea-analytics-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
+    setActionNotice(`CSV prepared with ${filteredRows.length} filtered assignment rows.`);
   };
 
   if (!syntheticPreview && (!user || !hasAdminAccess(profile))) return null;
@@ -182,7 +180,9 @@ export default function AdminAnalytics() {
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3"><span className="mr-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Time scope</span>{[['3m', 'Last 3 months'], ['6m', 'Last 6 months'], ['1y', 'Last year'], ['all', 'All time'], ['custom', 'Custom']].map(([value, label]) => <button key={value} type="button" onClick={() => setTimeScope(value as typeof timeScope)} className={`rounded-md px-3 py-2 text-sm ${timeScope === value ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>{label}</button>)}<span className="ml-auto text-xs text-slate-600">{timeScope === 'all' ? 'All historical activity' : timeScope === 'custom' ? `${fromDate || '—'} to ${toDate || '—'}` : `Since ${effectiveFromDate}`}</span></div>
       </section>
 
-      <div className="flex justify-end print:hidden"><button type="button" onClick={() => window.print()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">Print current view</button></div>
+      {actionNotice && <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{actionNotice}</div>}
+      <div className="flex justify-end gap-2 print:hidden"><button type="button" onClick={() => { setShowPrintPreview(true); setActionNotice(`Print preview prepared for ${filteredRows.length} filtered assignment rows.`); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">Preview print</button>{showPrintPreview && <button type="button" onClick={() => window.print()} className="rounded-lg bg-slate-800 px-3 py-2 text-sm text-white">Open print dialog</button>}</div>
+      {showPrintPreview && <PrintPreview rows={filteredRows} assessedRows={assessedRows} onClose={() => setShowPrintPreview(false)} />}
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-600"><Loader2 className="mx-auto h-6 w-6 animate-spin" /><p className="mt-2">Loading authorized analytics…</p></div> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">{error}</div> : !filteredRows.length ? <EmptyState /> : <>
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">{[['Eligible attempts', metrics.eligibleAssignments, `denominator: ${metrics.eligibleAssignments}`], ['Completed', `${metrics.completedAssignments} / ${metrics.eligibleAssignments}`, pct(metrics.completionRate)], ['Assessment coverage', `${metrics.assessedAssignments} / ${metrics.completedAssignments}`, pct(metrics.assessmentCoverageRate)], ['Learners participating', `${metrics.participatingLearners} / ${metrics.eligibleLearners}`, pct(metrics.participationRate)], ['Median completion time', formatCompletionDuration(metrics.medianCompletionMinutes), `${metrics.completionTimeSampleSize} created/completed timestamp pairs`]].map(([label, value, detail]) => <div key={String(label)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>)}</section>
         <div className="grid gap-6 xl:grid-cols-2"><Panel title="Attempts over time" subtitle="Counts use assignment timestamps; this is not time-on-task."><div className="space-y-3">{metrics.trend.map((point) => <div key={point.label} className="grid grid-cols-[7rem_1fr_8rem] items-center gap-3 text-sm"><span>{point.label}</span><div className="h-5 rounded bg-slate-100"><div className="h-5 rounded bg-blue-500" style={{ width: `${(point.attempts / maxTrend) * 100}%` }} title={`${point.attempts} attempts`} /></div><span className="text-right text-xs text-slate-600">{point.completed}/{point.attempts} complete</span></div>)}</div></Panel><Panel title="Domain performance" subtitle="AI-generated rubric scores; coverage shows how much data is available."><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Domain</th><th>Average</th><th>Scored</th><th>Eligible</th></tr></thead><tbody>{metrics.domainPerformance.map((item) => <tr key={item.domain} className="border-b last:border-0"><td className="py-3">{item.domain}</td><td>{item.average ?? '—'} / 5</td><td>{item.scored}</td><td>{item.eligible}</td></tr>)}</tbody></table></Panel><Panel title="Case × performance" subtitle="Distribution-friendly table alternative; averages are not used alone."><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Case</th><th>Attempts</th><th>Completed</th><th>Overall score</th></tr></thead><tbody>{metrics.caseHeatmap.map((item) => <tr key={item.caseLabel} className="border-b last:border-0"><td className="py-3">{item.caseLabel}</td><td>{item.attempts}</td><td>{item.completed}</td><td>{item.average ?? '—'}</td></tr>)}</tbody></table></Panel><Panel title="Review queue" subtitle="Only explicit missing/pending/failed feedback is flagged; no risk labels.">{reviewQueue.length ? <div className="space-y-2">{reviewQueue.map((row) => <button key={row.id} onClick={() => navigate(`/assignment/${row.id}`)} className="flex w-full items-center justify-between rounded-lg border border-slate-200 p-3 text-left hover:bg-slate-50"><span><span className="block text-sm font-medium">{row.studentName} · Room {row.roomNumber}</span><span className="block text-xs text-slate-500">Completed, feedback {row.feedbackStatus ?? 'missing'} · evidence review needed</span></span><ExternalLink className="h-4 w-4 text-slate-400" /></button>)}</div> : <p className="text-sm text-slate-600">No completed attempts currently need feedback review.</p>}</Panel></div>
@@ -212,6 +212,13 @@ export default function AdminAnalytics() {
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{subtitle}</p><div className="mt-4">{children}</div></section>; }
 function EmptyState() { return <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center"><FileText className="mx-auto h-8 w-8 text-slate-400" /><h2 className="mt-3 font-semibold text-slate-900">No authorized attempts match these filters</h2><p className="mt-1 text-sm text-slate-600">Try widening the date or case filters. Missing data is shown as unavailable, not as zero.</p></div>; }
+function PrintPreview({ rows, assessedRows, onClose }: { rows: AnalyticsRow[]; assessedRows: AnalyticsRow[]; onClose: () => void }) {
+  return <section aria-label="Printable analytics preview" className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-sm">
+    <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Print preview</p><h2 className="mt-1 text-lg font-semibold text-slate-900">Filtered analytics snapshot</h2><p className="mt-1 text-sm text-slate-600">{rows.length} assignment rows · {assessedRows.length} assessed rows · no records outside the current filters</p></div><button type="button" onClick={onClose} className="print:hidden rounded-md border border-slate-200 px-3 py-1.5 text-sm">Close preview</button></div>
+    <div className="mt-4 grid gap-4 sm:grid-cols-3"><div><p className="text-xs uppercase text-slate-500">Eligible</p><p className="text-xl font-semibold">{rows.filter((row) => row.status !== 'cancelled').length}</p></div><div><p className="text-xs uppercase text-slate-500">Completed</p><p className="text-xl font-semibold">{rows.filter((row) => row.status === 'completed').length}</p></div><div><p className="text-xs uppercase text-slate-500">Assessed</p><p className="text-xl font-semibold">{assessedRows.length}</p></div></div>
+    <table className="mt-4 w-full text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Assignment</th><th>Learner</th><th>Status</th><th>Feedback</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-b last:border-0"><td className="py-2">{row.id}</td><td>{row.studentName}</td><td>{row.status}</td><td>{row.feedbackStatus ?? '—'}</td></tr>)}</tbody></table>
+  </section>;
+}
 function LearnerTable({ rows, navigate }: { rows: AnalyticsRow[]; navigate: ReturnType<typeof useNavigate> }) { return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Learner attempts and evidence links</h2><p className="mt-1 text-xs text-slate-500">Open the source assignment for transcript, EMR activity, note, completion, and feedback evidence captured for that attempt.</p><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500"><th className="py-2">Learner</th><th>Case</th><th>Status</th><th>Feedback</th><th>Domains</th><th>Source</th></tr></thead><tbody>{rows.slice(0, 100).map((row) => <tr key={row.id} className="border-b last:border-0"><td className="py-3 font-medium">{row.studentName}</td><td>Room {row.roomNumber}<span className="block text-xs text-slate-500">{row.specialty}</span></td><td>{row.status ?? 'unknown'}</td><td>{row.feedbackStatus ?? 'missing'}</td><td>{row.communicationScore ?? '—'} / {row.mdmScore ?? '—'}</td><td><button onClick={() => navigate(`/assignment/${row.id}`)} className="inline-flex items-center gap-1 text-blue-700 hover:underline"><ExternalLink className="h-3 w-3" />Open evidence</button></td></tr>)}</tbody></table></div></section>; }
 function GroupedTable({ rows, groupBy }: { rows: AnalyticsRow[]; groupBy: 'school' | 'specialty' }) {
   const groups = [...computeGroupedAnalytics(rows, groupBy).entries()];
