@@ -10,6 +10,7 @@ import { ConsultantPortal } from '../components/ConsultantPortal';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
+import { generateFeedback } from '../lib/feedbackService';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -25,6 +26,7 @@ export default function AssignmentView() {
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [consultantOpen, setConsultantOpen] = useState(false);
+  const [retryingFeedback, setRetryingFeedback] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -125,6 +127,20 @@ export default function AssignmentView() {
       navigate('/assignments');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const retryFeedback = async () => {
+    if (!assignmentId || retryingFeedback) return;
+    setRetryingFeedback(true);
+    try {
+      await generateFeedback(assignmentId);
+      await fetchAssignment();
+    } catch (error) {
+      console.error('Feedback retry failed', error);
+      await fetchAssignment();
+    } finally {
+      setRetryingFeedback(false);
     }
   };
 
@@ -271,7 +287,7 @@ export default function AssignmentView() {
 
             <div className="space-y-4">
               {/* Show feedback sidebar when completed */}
-              <FeedbackSidebar assignment={assignment} />
+              <FeedbackSidebar assignment={assignment} onRetryFeedback={retryFeedback} retryingFeedback={retryingFeedback} />
               
             </div>
           </div>

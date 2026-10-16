@@ -319,8 +319,8 @@ export const emrApi = {
     });
   },
 
-  async listPatientsForStudent(studentId: string): Promise<Patient[]> {
-    const { data, error } = await supabase
+  async listPatientsForStudent(studentId: string, sandboxOnly = false): Promise<Patient[]> {
+    let query = supabase
       .from('student_room_assignments')
       .select(
         `
@@ -335,6 +335,8 @@ export const emrApi = {
       )
       .eq('student_id', studentId)
       .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
+    if (sandboxOnly) query = query.eq('is_sandbox', true);
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching student patients', error);
@@ -482,7 +484,12 @@ export const emrApi = {
     }
   },
 
-  async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
+  async listLabResults(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+    onError?: (message: string) => void,
+  ): Promise<LabResult[]> {
     const targetRooms = await getRoomLineage(roomId);
     const queries = [
       supabase
@@ -521,6 +528,7 @@ export const emrApi = {
     const errors = results.map(({ error }) => error).filter(Boolean);
     if (errors.length) {
       errors.forEach((error) => console.error('Error fetching labs', error));
+      onError?.('Unable to load saved lab results. Refresh the chart and try again.');
     }
 
     return results

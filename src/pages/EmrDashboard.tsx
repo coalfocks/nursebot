@@ -36,6 +36,7 @@ export default function EmrDashboard() {
   const assignmentId = searchParams.get('assignmentId') || undefined;
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientLoadError, setPatientLoadError] = useState<string | null>(null);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
@@ -131,24 +132,44 @@ export default function EmrDashboard() {
   useEffect(() => {
     void (async () => {
       if (!user) return;
+      setPatientLoadError(null);
+      const routeRoomId = searchParams.get('roomId');
+      // Assignment routes carry immutable room and assignment IDs. Prefer
+      // that linked patient over the broad student list, which may contain a
+      // previous sandbox session for the same room.
+      if (assignmentId && routeRoomId) {
+        const patient = await emrApi.getPatientByRoomId(Number.parseInt(routeRoomId, 10));
+        if (patient) {
+          setPatients([patient]);
+          setSelectedPatient(patient);
+        } else {
+          setPatients([]);
+          setSelectedPatient(null);
+          setPatientLoadError('The patient linked to this assignment could not be loaded. Refresh and try again.');
+        }
+        return;
+      }
       if (hasAdminAccess(profile)) {
         const data = await emrApi.listPatients();
         if (data.length) {
           setPatients(data);
           setSelectedPatient(data[0]);
+        } else {
+          setPatientLoadError('No patient chart is available in this scope.');
         }
         return;
       }
 
-      const data = await emrApi.listPatientsForStudent(user.id);
+      const data = await emrApi.listPatientsForStudent(user.id, profile?.role === 'test_user');
       setPatients(data);
       if (data.length) {
         setSelectedPatient(data[0]);
       } else {
         setSelectedPatient(null);
+        setPatientLoadError('No patient chart is available for this assignment.');
       }
     })();
-  }, [profile, user]);
+  }, [assignmentId, profile, searchParams, user]);
 
   useEffect(() => {
     const patientIdParam = searchParams.get('patientId');
@@ -551,6 +572,11 @@ export default function EmrDashboard() {
 
         {/* Main Content Tabs */}
         <div className="p-6">
+          {patientLoadError && (
+            <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {patientLoadError}
+            </div>
+          )}
           {testAssignmentPending ? (
             <div className="flex items-center justify-center p-8">
               <div className="text-center">

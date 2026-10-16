@@ -7,7 +7,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { TestTube, TrendingUp, Sparkles, Trash2, Pencil } from 'lucide-react';
 import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
-import type { MedicalOrder, Patient, LabResult } from '../lib/types';
+import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
@@ -38,6 +38,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     [patient.gender, patient.dateOfBirth],
   );
   const [labResults, setLabResults] = useState<LabResult[]>(normalizeForPatient(sandboxLabs ?? []));
+  const [isLoadingLabs, setIsLoadingLabs] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
   const { profile } = useAuthStore();
@@ -88,19 +89,35 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   useEffect(() => {
     const request = capture();
+    setIsLoadingLabs(true);
+    setLabSaveError(null);
     setLabResults([]);
     // A sandbox assignment still has durable, assignment-scoped chart rows.
     // Only the pre-assignment/local preview path should use the in-memory
     // callback; otherwise a completed order can appear in Orders while Labs
     // incorrectly reports an empty chart.
     if (isSandbox && !assignmentId) {
-      if (isCurrent(request)) setLabResults(normalizeForPatient(sandboxLabs ?? []));
+      if (isCurrent(request)) {
+        setLabResults(normalizeForPatient(sandboxLabs ?? []));
+        setIsLoadingLabs(false);
+      }
       return;
     }
     void (async () => {
-      const data = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-      if (!isCurrent(request)) return;
-      setLabResults(normalizeForPatient(data));
+      try {
+        const data = await emrApi.listLabResults(
+          patient.id,
+          assignmentId,
+          patient.roomId ?? null,
+          (message) => {
+            if (isCurrent(request)) setLabSaveError(message);
+          },
+        );
+        if (!isCurrent(request)) return;
+        setLabResults(normalizeForPatient(data));
+      } finally {
+        if (isCurrent(request)) setIsLoadingLabs(false);
+      }
     })();
   }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent, normalizeForPatient]);
 
@@ -747,7 +764,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {labResults.length === 0 ? (
+              {labSaveError && !isLoadingLabs ? (
+                <p role="alert" className="text-sm text-red-700">{labSaveError}</p>
+              ) : isLoadingLabs ? (
+                <p className="text-sm text-muted-foreground">Loading saved lab results…</p>
+              ) : labResults.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
               ) : (
                 <div className="rounded-md border overflow-x-auto">

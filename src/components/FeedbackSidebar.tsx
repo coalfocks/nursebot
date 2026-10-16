@@ -18,6 +18,8 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 
 interface FeedbackSidebarProps {
   assignment: Assignment;
+  onRetryFeedback?: () => void;
+  retryingFeedback?: boolean;
 }
 
 type BreakdownItem = {
@@ -153,7 +155,7 @@ function BreakdownRow({
   );
 }
 
-export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
+export function FeedbackSidebar({ assignment, onRetryFeedback, retryingFeedback }: FeedbackSidebarProps) {
   const [expandedSection, setExpandedSection] = useState<'communication' | 'mdm' | null>(null);
 
   // Only show after explicit completion
@@ -173,6 +175,11 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
               : 'Processing feedback...'}
           </p>
         </div>
+        {onRetryFeedback && (
+          <button type="button" onClick={onRetryFeedback} disabled={retryingFeedback} className="mt-4 w-full rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+            {retryingFeedback ? 'Retrying feedback…' : 'Retry feedback generation'}
+          </button>
+        )}
       </div>
     );
   }

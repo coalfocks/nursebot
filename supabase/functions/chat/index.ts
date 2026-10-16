@@ -21,6 +21,7 @@ interface NurseRoomContext {
   style?: string | null;
   context?: string | null;
   nurse_context?: string | null;
+  patient_id?: string | null;
 }
 
 const resolvePinnedRoom = (room: NurseRoomContext | null, baseline: unknown) => {
@@ -37,7 +38,7 @@ if (!supabaseUrl || !serviceRoleKey) {
 
 const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-const buildNurseSystemPrompt = (room: NurseRoomContext | null) => {
+const buildNurseSystemPrompt = (room: NurseRoomContext | null, verifiedVitals = '') => {
   const nurseContext = room?.nurse_context || room?.context || '';
   return `You are a night-shift nurse in a hospital. ${room?.role ?? ''}
 
@@ -46,10 +47,14 @@ Your communication style should be ${room?.style ?? 'short, direct, and professi
 Nurse-observable context:
 ${nurseContext}
 
+Verified chart facts available to the nurse (use only these for quantitative or qualitative vital claims):
+${verifiedVitals || 'No vital-sign facts are available in this assignment chart. Do not claim that blood pressure is low, heart rate is elevated, or provide any other vital interpretation; direct the learner to the EMR.'}
+
 Hard rules:
 1. Send 1-3 short sentences. Never use bullet points, lists, or long paragraphs.
 2. Answer only the specific question asked. Do not attach unrequested vitals, history, labs, imaging, or treatment ideas.
 3. Never reveal, name, or hint at a diagnosis or hidden evaluation facts. Report observations, not interpretations.
+3a. If the authored context conflicts with the verified chart facts above, do not repeat the unsupported claim. Tell the learner to check the EMR for the exact current values.
 4. Never suggest a test, medication, dose, consult, disposition, or plan the doctor has not already raised.
 5. Exact lab values, imaging reads, full medication lists, and detailed history live in the EMR.
 6. Results are gated behind orders and clinical events. Asking about a result does not create one.
@@ -112,13 +117,27 @@ Deno.serve(async (req) => {
 
       const { data: assignment, error: assignmentError } = await supabaseAdmin
         .from('student_room_assignments')
-        .select('scenario_baseline, room:room_id(role, context, nurse_context, style)')
+        .select('scenario_baseline, room:room_id(role, context, nurse_context, style, patient_id)')
         .eq('id', resolvedAssignmentId)
         .maybeSingle();
       if (assignmentError) throw assignmentError;
 
       const room = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
       const pinnedRoom = resolvePinnedRoom(room as NurseRoomContext | null, assignment?.scenario_baseline);
+      const patientId = (room as NurseRoomContext | null)?.patient_id;
+      let verifiedVitals = '';
+      if (patientId) {
+        const { data: vitals } = await supabaseAdmin
+          .from('vital_signs')
+          .select('timestamp, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation')
+          .eq('patient_id', patientId)
+          .eq('assignment_id', resolvedAssignmentId)
+          .is('deleted_at', null)
+          .order('timestamp', { ascending: false })
+          .limit(1);
+        const latest = vitals?.[0];
+        if (latest) verifiedVitals = `BP ${latest.blood_pressure_systolic ?? 'not recorded'}/${latest.blood_pressure_diastolic ?? 'not recorded'}, HR ${latest.heart_rate ?? 'not recorded'}, RR ${latest.respiratory_rate ?? 'not recorded'}, SpO2 ${latest.oxygen_saturation ?? 'not recorded'}`;
+      }
       const learnerMessages = messages
         .filter((message) => message.role !== 'system')
         .map((message) => ({ role: message.role, content: message.content }));
@@ -126,7 +145,7 @@ Deno.serve(async (req) => {
       const completion = await openai.chat.completions.create({
         model: getOpenAIModel('chat'),
         messages: [
-          { role: 'system', content: buildNurseSystemPrompt(pinnedRoom) },
+          { role: 'system', content: buildNurseSystemPrompt(pinnedRoom, verifiedVitals) },
           ...learnerMessages,
         ],
         max_completion_tokens: 10000,

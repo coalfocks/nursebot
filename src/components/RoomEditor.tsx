@@ -138,6 +138,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     let admissionLabs: AdmissionLabEntry[] = [];
     let deliveryNote = '';
     let evaluationLeniencyMultiplier = 1;
+    let generatedPatientPrompt = '';
+    let generatedConsultantPrompt = '';
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
@@ -161,6 +163,16 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           if (typeof (parsed as { delivery_note?: unknown }).delivery_note === 'string') {
             deliveryNote = (parsed as { delivery_note: string }).delivery_note;
           }
+          const generated = parsed as {
+            patientChat?: { prompt?: unknown };
+            patient_conversation_prompt?: unknown;
+            consultantResponsePrompt?: unknown;
+            consultant_response_prompt?: unknown;
+          };
+          if (typeof generated.patientChat?.prompt === 'string') generatedPatientPrompt = generated.patientChat.prompt;
+          if (typeof generated.patient_conversation_prompt === 'string') generatedPatientPrompt = generated.patient_conversation_prompt;
+          if (typeof generated.consultantResponsePrompt === 'string') generatedConsultantPrompt = generated.consultantResponsePrompt;
+          if (typeof generated.consultant_response_prompt === 'string') generatedConsultantPrompt = generated.consultant_response_prompt;
           const rawLeniency = (parsed as {
             evaluation?: { leniencyMultiplier?: unknown };
           }).evaluation?.leniencyMultiplier;
@@ -175,7 +187,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         contextText = raw;
       }
     }
-    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier };
+    return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
@@ -196,11 +208,15 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
-  const [patientConversationPrompt, setPatientConversationPrompt] = useState(room?.patient_conversation_prompt || '');
+  const [patientConversationPrompt, setPatientConversationPrompt] = useState(
+    room?.patient_conversation_prompt || parsedEmrContext.generatedPatientPrompt || '',
+  );
   const [patientConversationEnabled, setPatientConversationEnabled] = useState(
     room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
   );
-  const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(room?.consultant_response_prompt || '');
+  const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(
+    room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
+  );
   const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
     normalizeBedsideRequirement(room?.bedside_requirement),
   );

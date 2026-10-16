@@ -424,6 +424,43 @@ export function OrdersManagement({
     return true;
   };
 
+  const ensureCompletedLabResults = async (order: MedicalOrder) => {
+    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return;
+    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
+    const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+    const existingNames = new Set(existing.filter((lab) => lab.assignmentId === assignmentId).map((lab) => lab.testName.toLowerCase()));
+    const missing = templates.filter((template) => !existingNames.has(template.testName.toLowerCase()));
+    if (!missing.length) return;
+    const generated = await generateLabResults(patient.id, order.orderName, {
+      patient,
+      assignmentId,
+      roomId: patient.roomId,
+      orderName: order.orderName,
+    });
+    const byName = new Map(generated.map((lab) => [lab.testName.toLowerCase(), lab]));
+    const now = new Date().toISOString();
+    const results = missing.map((template, index) => {
+      const generatedLab = byName.get(template.testName.toLowerCase());
+      return {
+        id: generatedLab?.id ?? `completed-lab-${order.id}-${index}`,
+        patientId: patient.id,
+        assignmentId,
+        roomId: patient.roomId,
+        overrideScope: 'assignment' as const,
+        testName: template.testName,
+        value: generatedLab?.value ?? 0,
+        unit: template.unit,
+        referenceRange: template.referenceRange,
+        status: generatedLab?.status ?? 'Normal',
+        collectionTime: now,
+        resultTime: now,
+        orderedBy: order.orderedBy,
+      };
+    });
+    const writeResult = await emrApi.addLabResults(results, patient.roomId);
+    if (!writeResult.ok) throw new Error(writeResult.error);
+  };
+
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
     const existing = orders.find((order) => order.id === orderId);
     if (!existing) return;
@@ -437,6 +474,12 @@ export function OrdersManagement({
       // matters when the learner completes an order before the async result
       // callback has finished (or when the original callback failed).
       if (updated.category === 'Lab' && updated.status === 'Completed') {
+        try {
+          await ensureCompletedLabResults(updated);
+        } catch (error) {
+          console.error('Failed to materialize completed lab results', error);
+          setOrderSaveError('The order completed, but its assignment-linked result could not be materialized. Refresh and retry.');
+        }
         onLabsGenerated?.();
       }
     }

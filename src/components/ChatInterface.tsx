@@ -712,14 +712,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
         queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
       }
 
-      // Trigger feedback generation (non-blocking for completion UX/state).
-      const { error: feedbackError } = await supabase.functions.invoke('generate-feedback', {
-        body: { assignmentId }
-      });
-
-      if (feedbackError) {
+      // Do not hold the completion control open while the evaluator calls the
+      // model. The assignment is already durably completed; feedback status is
+      // persisted as pending and the assignment/debrief surfaces can show
+      // progress or retry. Keeping this request fire-and-forget also prevents
+      // a slow evaluator from making a learner believe completion failed.
+      void supabase.functions.invoke('generate-feedback', {
+        body: { assignmentId },
+      }).then(({ error: feedbackError }) => {
+        if (feedbackError) console.error('Error triggering feedback generation:', feedbackError);
+      }).catch((feedbackError) => {
         console.error('Error triggering feedback generation:', feedbackError);
-      }
+      });
 
       setShowCompletionConfirm(false);
       setProgressNoteDraft('');
