@@ -205,6 +205,28 @@ describe('assignment timeline for evaluation', () => {
     expect(rendered).not.toContain('Order: Vancomycin');
   });
 
+  it('keeps bedside-first patient teach-back as learner-authored evidence without a nurse message', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [],
+      orders: [],
+      labs: [],
+      vitals: [],
+      imaging: [],
+      patientMessages: [
+        { id: 'patient-q', assignment_id: 'assignment-1', role: 'student', content: 'I explained the risks and asked whether you agree to one gentle attempt.', created_at: '2026-03-12T10:01:00.000Z' },
+        { id: 'patient-a', assignment_id: 'assignment-1', role: 'patient', content: 'I understand and agree.', created_at: '2026-03-12T10:01:05.000Z', reply_to_client_message_id: 'patient-q' },
+      ],
+    });
+
+    expect(entries.map((entry) => entry.id)).toEqual(['patient-message-patient-q', 'patient-message-patient-a']);
+    expect(entries[0].meta).toContain('Author: Student');
+    expect(entries[1].meta).toContain('Author: Patient');
+    expect(entries[1].meta).not.toContain('Author: Student');
+  });
+
   it('preserves explicit learner bedside and team actions as distinct evidence', () => {
     const entries = buildAssignmentTimelineEntries({
       assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
