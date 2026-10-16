@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "migrate:case-blueprints": "node scripts/migrate-rooms-to-case-blueprints.mjs",
+    "qa:consultant-idempotency": "node scripts/qa-consultant-idempotency.mjs",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
