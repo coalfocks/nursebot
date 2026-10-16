@@ -1066,7 +1066,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             )}
           </div>
           </div>
-        </section>
 
         <div className={`rounded-lg border p-4 ${consultantPromptReady ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
           <h3 className="text-sm font-semibold text-gray-900">Consultant readiness preview</h3>
