@@ -31,8 +31,6 @@ const promptFrom = (room: Record<string, unknown>, baseline: unknown) => {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  let createdRequestId: string | null = null;
-  let createdOrderId: string | null = null;
   try {
     const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim();
     if (!token) return json({ error: 'Authentication required' }, 401);
@@ -63,12 +61,9 @@ Deno.serve(async (req) => {
 
     const { data: existingRequest, error: existingError } = await admin.from('consultant_requests').select('id, response, disposition, consult_order_id, status').eq('assignment_id', payload.assignmentId).eq('client_request_id', request.clientRequestId).maybeSingle();
     if (existingError) throw existingError;
-    if (existingRequest?.status === 'answered' || existingRequest?.status === 'assumes_care') return json({ message: existingRequest.response, disposition: existingRequest.disposition, orderId: existingRequest.consult_order_id, requestId: existingRequest.id, idempotent: true });
-
-    const { data: consultRequest, error: requestError } = await admin.from('consultant_requests').upsert({ assignment_id: payload.assignmentId, patient_id: patientId, room_id: roomId, specialty, summary, clinical_question: clinicalQuestion, reason, urgency, client_request_id: request.clientRequestId, status: 'requested' }, { onConflict: 'assignment_id,client_request_id' }).select('id').single();
-    if (requestError) throw requestError;
-    createdRequestId = consultRequest.id;
-
+    if (existingRequest?.status === 'answered' || existingRequest?.status === 'assumes_care') {
+      return json({ message: existingRequest.response, disposition: existingRequest.disposition, orderId: existingRequest.consult_order_id, requestId: existingRequest.id, status: existingRequest.status, idempotent: true });
+    }
     const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
     const completion = await openai.chat.completions.create({
       model: getOpenAIModel('chat'), max_completion_tokens: 500, response_format: { type: 'json_object' },
@@ -81,29 +76,25 @@ Deno.serve(async (req) => {
     const answer = typeof parsed.message === 'string' ? parsed.message.trim() : '';
     if (!answer) throw new Error('Consultant response was empty');
     const disposition = parsed.disposition === 'assumes_care' ? 'assumes_care' : 'routine_review';
-    const { data: order, error: orderError } = await admin.from('medical_orders').insert({ patient_id: patientId, assignment_id: payload.assignmentId, room_id: roomId, school_id: roomRecord.school_id ?? null, override_scope: 'assignment', category: 'Consult', order_name: `Consult: ${specialty}`, priority: urgency === 'emergent' ? 'STAT' : urgency === 'urgent' ? 'Urgent' : 'Routine', status: 'Active', ordered_by: 'Student', order_time: new Date().toISOString(), instructions: `Summary: ${summary}\nQuestion: ${clinicalQuestion}\nReason: ${reason}` }).select('id').single();
-    if (orderError) throw orderError;
-    createdOrderId = order.id;
-    const { error: messageError } = await admin.from('consultant_chat_messages').insert([
-      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'student', content: `${specialty} consult (${urgency}): ${summary} Question: ${clinicalQuestion} Reason: ${reason}`, specialty, urgency, consult_order_id: order.id },
-      { assignment_id: payload.assignmentId, request_id: consultRequest.id, role: 'consultant', content: answer, specialty, urgency, consult_order_id: order.id },
-    ]);
-    if (messageError) throw messageError;
-    // `routine_review` is a disposition, not a persistence status. The
-    // status constraint uses `answered` for the routine path.
-    const persistedStatus = disposition === 'assumes_care' ? 'assumes_care' : 'answered';
-    const { error: updateError } = await admin.from('consultant_requests').update({ response: answer, disposition, consult_order_id: order.id, status: persistedStatus, answered_at: new Date().toISOString() }).eq('id', consultRequest.id);
-    if (updateError) throw updateError;
-    return json({ message: answer, disposition, orderId: order.id, requestId: consultRequest.id });
+    const { data: persistedRows, error: persistenceError } = await admin.rpc('persist_consultant_response', {
+      p_student_id: auth.user.id,
+      p_assignment_id: payload.assignmentId,
+      p_client_request_id: request.clientRequestId,
+      p_patient_id: patientId,
+      p_room_id: roomId,
+      p_specialty: specialty,
+      p_summary: summary,
+      p_clinical_question: clinicalQuestion,
+      p_reason: reason,
+      p_urgency: urgency,
+      p_response: answer,
+      p_disposition: disposition,
+    });
+    if (persistenceError) throw persistenceError;
+    const persisted = Array.isArray(persistedRows) ? persistedRows[0] : persistedRows;
+    if (!persisted?.request_id || !persisted.response) throw new Error('Consultant persistence returned no saved response');
+    return json({ message: persisted.response, disposition: persisted.disposition, orderId: persisted.order_id, requestId: persisted.request_id, status: persisted.status, idempotent: persisted.idempotent });
   } catch (error) {
-    // Keep retries exact-once even if a downstream insert/update fails after
-    // the idempotency row has been created. Service-role cleanup is scoped to
-    // only artifacts created by this invocation.
-    if (createdRequestId) {
-      await admin.from('consultant_chat_messages').delete().eq('request_id', createdRequestId);
-      if (createdOrderId) await admin.from('medical_orders').delete().eq('id', createdOrderId);
-      await admin.from('consultant_requests').update({ status: 'failed' }).eq('id', createdRequestId);
-    }
     return json({ error: error instanceof Error ? error.message : 'Consultant response failed' }, 500);
   }
 });
