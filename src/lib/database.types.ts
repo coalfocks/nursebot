@@ -1108,6 +1108,23 @@ export type Database = {
         }
         Returns: Json
       }
+      persist_consultant_response: {
+        Args: {
+          p_student_id: string
+          p_assignment_id: string
+          p_client_request_id: string
+          p_patient_id: string
+          p_room_id: number
+          p_specialty: string
+          p_summary: string
+          p_clinical_question: string
+          p_reason: string
+          p_urgency: string
+          p_response: string
+          p_disposition: string
+        }
+        Returns: { request_id: string; order_id: string; status: string; disposition: string; response: string; idempotent: boolean }[]
+      }
       change_learner_program: {
         Args: { change_reason: string; next_program: string; target_profile_id: string }
         Returns: Database["public"]["Tables"]["profiles"]["Row"]
@@ -1336,6 +1353,10 @@ export type Database = {
           created_at: string
           id: string
           role: string
+          request_id: string | null
+          specialty: string | null
+          urgency: string | null
+          consult_order_id: string | null
         }
         Insert: {
           assignment_id: string
@@ -1343,6 +1364,10 @@ export type Database = {
           created_at?: string
           id?: string
           role: string
+          request_id?: string | null
+          specialty?: string | null
+          urgency?: string | null
+          consult_order_id?: string | null
         }
         Update: {
           assignment_id?: string
@@ -1350,6 +1375,10 @@ export type Database = {
           created_at?: string
           id?: string
           role?: string
+          request_id?: string | null
+          specialty?: string | null
+          urgency?: string | null
+          consult_order_id?: string | null
         }
         Relationships: [
           {
@@ -1360,6 +1389,29 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      consultant_requests: {
+        Row: {
+          id: string
+          assignment_id: string
+          patient_id: string | null
+          room_id: number | null
+          specialty: string
+          summary: string
+          clinical_question: string
+          reason: string
+          urgency: string
+          client_request_id: string
+          consult_order_id: string | null
+          response: string | null
+          disposition: string
+          status: string
+          created_at: string
+          answered_at: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
       }
       clinical_notes: {
         Row: {
@@ -2302,6 +2354,7 @@ export type Database = {
           feedback: string | null
           feedback_error: string | null
           feedback_debrief: Json | null
+          feedback_schema_version: string | null
           feedback_generated_at: string | null
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
@@ -2347,6 +2400,7 @@ export type Database = {
           feedback?: string | null
           feedback_error?: string | null
           feedback_debrief?: Json | null
+          feedback_schema_version?: string | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2395,6 +2449,7 @@ export type Database = {
           feedback?: string | null
           feedback_error?: string | null
           feedback_debrief?: Json | null
+          feedback_schema_version?: string | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2470,6 +2525,7 @@ export type Database = {
           source_event_ids: Json
           technical_incomplete: boolean
           result: Json | null
+          feedback_schema_version: string | null
           created_at: string
         }
         Insert: {
@@ -2483,6 +2539,7 @@ export type Database = {
           source_event_ids?: Json
           technical_incomplete?: boolean
           result?: Json | null
+          feedback_schema_version?: string | null
           created_at?: string
         }
         Update: {
@@ -2496,6 +2553,7 @@ export type Database = {
           source_event_ids?: Json
           technical_incomplete?: boolean
           result?: Json | null
+          feedback_schema_version?: string | null
           created_at?: string
         }
         Relationships: []

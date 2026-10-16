@@ -3,7 +3,8 @@ import { Loader2, Send, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 type Props = { assignmentId: string; open: boolean; onClose: () => void };
-type Message = { role: 'student' | 'consultant'; content: string; specialty?: string; urgency?: string };
+type Message = { id?: string; request_id?: string; role: 'student' | 'consultant'; content: string; specialty?: string; urgency?: string; created_at?: string };
+type RequestStatus = { id: string; status: 'requested' | 'answered' | 'assumes_care' | 'failed'; response?: string | null; disposition?: string | null; client_request_id?: string };
 
 const SPECIALTIES = ['Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Attending'];
 const urgencyOptions = [
@@ -24,15 +25,20 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<string | null>(null);
   const [clientRequestId, setClientRequestId] = useState<string | null>(null);
+  const [requestStatus, setRequestStatus] = useState<RequestStatus | null>(null);
 
   const filteredSpecialties = useMemo(() => SPECIALTIES.filter((item) => item.toLowerCase().includes(search.trim().toLowerCase())), [search]);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
-    void (supabase as any).from('consultant_chat_messages').select('role, content, specialty, urgency').eq('assignment_id', assignmentId).order('created_at').then(({ data, error: loadError }: { data: Message[] | null; error: Error | null }) => {
-      if (loadError) setError(loadError.message);
-      if (data) setMessages(data);
+    void Promise.all([
+      supabase.from('consultant_chat_messages').select('id, request_id, role, content, specialty, urgency, created_at').eq('assignment_id', assignmentId).order('created_at'),
+      supabase.from('consultant_requests').select('id, status, response, disposition, client_request_id').eq('assignment_id', assignmentId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    ]).then(([messageResult, requestResult]) => {
+      if (messageResult.error || requestResult.error) setError((messageResult.error || requestResult.error).message);
+      if (messageResult.data) setMessages(messageResult.data as Message[]);
+      if (requestResult.data) { setRequestStatus(requestResult.data as RequestStatus); if (requestResult.data.status === 'answered' || requestResult.data.status === 'assumes_care') setDisposition(requestResult.data.disposition); }
     });
   }, [assignmentId, open]);
 
@@ -52,6 +58,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
         { role: 'consultant', content: data.message, specialty, urgency },
       ]);
       setDisposition(data.disposition ?? null);
+      setRequestStatus({ id: (data as { requestId?: string }).requestId ?? requestId, status: ((data as { status?: RequestStatus['status'] }).status ?? 'answered'), response: data.message, disposition: data.disposition, client_request_id: requestId });
       setSummary(''); setQuestion(''); setReason('');
       setClientRequestId(null);
     } catch (cause) {
@@ -68,6 +75,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
           // Keep the original client error when the function did not return JSON.
         }
       }
+      setRequestStatus((current) => current ? { ...current, status: 'failed' } : { id: requestId, status: 'failed', client_request_id: requestId });
       setError(message);
     } finally { setLoading(false); }
   };
@@ -86,7 +94,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
         <label className="text-sm font-medium">Clinical question<textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={2} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" placeholder="What do you need the consultant to advise?" required /></label>
         <label className="text-sm font-medium">Reason for consult<textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" placeholder="Why this specialty is needed" required /></label>
       </div>
-      <div className="min-h-[180px] flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">{messages.length === 0 && <p className="text-sm text-slate-500">No consultant requests yet.</p>}{messages.map((message, index) => <div key={`${index}-${message.content}`} className={`rounded-lg p-3 text-sm ${message.role === 'student' ? 'ml-8 bg-blue-50' : 'mr-8 bg-white shadow-sm'}`}><span className="mb-1 block text-xs font-semibold uppercase text-slate-500">{message.role === 'student' ? 'Consult request' : 'Consultant response'}</span>{message.content}</div>)}</div>
+      <div className="min-h-[180px] flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">{requestStatus && <p role="status" className="rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Request status: <b>{requestStatus.status}</b>{requestStatus.status === 'failed' ? ' — retry is available with the same request ID.' : ''}</p>}{messages.length === 0 && <p className="text-sm text-slate-500">No consultant requests yet.</p>}{messages.map((message, index) => <div key={message.id ?? `${index}-${message.content}`} className={`rounded-lg p-3 text-sm ${message.role === 'student' ? 'ml-8 bg-blue-50' : 'mr-8 bg-white shadow-sm'}`}><span className="mb-1 block text-xs font-semibold uppercase text-slate-500">{message.role === 'student' ? 'Consult request' : 'Consultant response'}</span>{message.content}</div>)}</div>
       {disposition === 'assumes_care' && <p className="border-t bg-amber-50 px-4 py-2 text-sm text-amber-900">The consultant has assumed care. Follow the case-ending instructions in the encounter.</p>}
       {error && <p role="alert" className="border-t bg-red-50 px-4 py-2 text-sm text-red-800">{error}</p>}
       <form onSubmit={send} className="flex justify-end gap-2 border-t p-4"><button type="button" onClick={onClose} className="rounded-md border px-3 py-2 text-sm">Close</button><button type="submit" disabled={loading || !summary.trim() || !question.trim() || !reason.trim()} className="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}Send consult request</button></form>
