@@ -6,7 +6,8 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { supabase } from '../lib/supabase';
-import { ANALYTICS_QUERY_CONTRACT, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, type AnalyticsRow } from '../lib/analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, SYNTHETIC_ANALYTICS_FIXTURE, type AnalyticsRow } from '../lib/analyticsMetrics';
+import { isSyntheticAnalyticsPreview } from '../lib/analyticsPreview';
 
 type RawAnalyticsRecord = {
   id: string;
@@ -54,10 +55,16 @@ export default function AdminAnalytics() {
   const [includeTest, setIncludeTest] = useState(false);
   const [timeScope, setTimeScope] = useState<'all' | '3m' | '6m' | '1y' | 'custom'>('all');
   const [feedbackScope, setFeedbackScope] = useState<'cohort' | 'learner'>('cohort');
+  const syntheticPreview = isSyntheticAnalyticsPreview();
 
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
 
   useEffect(() => {
+    if (syntheticPreview) {
+      setRows(SYNTHETIC_ANALYTICS_FIXTURE);
+      setLoading(false);
+      return;
+    }
     if (!user || !hasAdminAccess(profile)) {
       navigate('/dashboard');
       return;
@@ -122,7 +129,7 @@ export default function AdminAnalytics() {
     };
     load();
     return () => { cancelled = true; };
-  }, [user, profile, navigate, scopedSchoolId, includeTest]);
+  }, [user, profile, navigate, scopedSchoolId, includeTest, syntheticPreview]);
 
   const specialties = useMemo(() => [...new Set(rows.map((row) => row.specialty))].sort(), [rows]);
   const learners = useMemo(() => [...new Map(rows.map((row) => [row.studentId, { id: row.studentId, name: row.studentName }])).values()].filter((row) => row.id), [rows]);
@@ -160,9 +167,10 @@ export default function AdminAnalytics() {
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = `nurse-althea-analytics-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
   };
 
-  if (!user || !hasAdminAccess(profile)) return null;
+  if (!syntheticPreview && (!user || !hasAdminAccess(profile))) return null;
 
-  return <AdminLayout>
+  const workspace = <>
+    {syntheticPreview && <div className="border-b border-amber-300 bg-amber-100 px-6 py-3 text-sm font-medium text-amber-950">Synthetic preview fixture only. No authentication, Supabase, or production records are used.</div>}
     <div className="space-y-6 px-6 py-6">
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -197,7 +205,9 @@ export default function AdminAnalytics() {
         {isSuperAdmin(profile) && <GroupedTable rows={filteredRows} groupBy="school" />}
       </>}
     </div>
-  </AdminLayout>;
+  </>;
+
+  return syntheticPreview ? <div className="min-h-screen bg-slate-50">{workspace}</div> : <AdminLayout>{workspace}</AdminLayout>;
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">{title}</h2><p className="mt-1 text-xs text-slate-500">{subtitle}</p><div className="mt-4">{children}</div></section>; }

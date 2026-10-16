@@ -28,6 +28,26 @@ export type AnalyticsRow = AnalyticsAssignment & {
   feedbackDebrief: Record<string, unknown> | null;
 };
 
+export const SYNTHETIC_ANALYTICS_FIXTURE: AnalyticsRow[] = [
+  {
+    id: 'fixture-assignment-1', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-a', studentName: 'Synthetic Learner A', studentRole: 'student', roomId: 101, roomNumber: 'SYN-101', specialty: 'Medicine', status: 'completed', feedbackStatus: 'completed', communicationScore: 4, mdmScore: 3, overallScore: 3.5, createdAt: '2026-10-01T10:00:00Z', completedAt: '2026-10-01T11:00:00Z', feedbackGeneratedAt: '2026-10-01T11:05:00Z', caseDifficulty: 'moderate', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null,
+    feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['fixture-message-1'] }], growth_areas: [{ title: 'Reassess after the order', evidence_event_ids: ['fixture-order-1'] }] },
+  },
+  {
+    id: 'fixture-assignment-2', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-b', studentName: 'Synthetic Learner B', studentRole: 'student', roomId: 102, roomNumber: 'SYN-102', specialty: 'Medicine', status: 'completed', feedbackStatus: 'completed', communicationScore: 5, mdmScore: 4, overallScore: 4.5, createdAt: '2026-10-02T10:00:00Z', completedAt: '2026-10-02T11:30:00Z', feedbackGeneratedAt: '2026-10-02T11:35:00Z', caseDifficulty: 'moderate', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null,
+    feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['fixture-message-2'] }], growth_areas: [{ title: 'Reassess after the order', evidence_event_ids: ['fixture-order-2'] }] },
+  },
+  {
+    id: 'fixture-assignment-3', schoolId: 'fixture-school-b', schoolName: 'Synthetic South', studentId: 'fixture-learner-c', studentName: 'Synthetic Learner C', studentRole: 'student', roomId: 201, roomNumber: 'SYN-201', specialty: 'Surgery', status: 'completed', feedbackStatus: 'pending', communicationScore: 5, mdmScore: 5, overallScore: 5, createdAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T12:00:00Z', feedbackGeneratedAt: null, caseDifficulty: 'hard', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: null,
+  },
+  {
+    id: 'fixture-assignment-4', schoolId: 'fixture-school-b', schoolName: 'Synthetic South', studentId: 'fixture-learner-d', studentName: 'Synthetic Learner D', studentRole: 'student', roomId: 202, roomNumber: 'SYN-202', specialty: 'Surgery', status: 'in_progress', feedbackStatus: null, communicationScore: null, mdmScore: null, overallScore: null, createdAt: '2026-10-04T10:00:00Z', completedAt: null, feedbackGeneratedAt: null, caseDifficulty: 'hard', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: null,
+  },
+  {
+    id: 'fixture-assignment-sandbox', schoolId: 'fixture-school-a', schoolName: 'Synthetic North', studentId: 'fixture-learner-test', studentName: 'Synthetic Test Learner', studentRole: 'test_user', roomId: 999, roomNumber: 'SYN-TEST', specialty: 'Medicine', status: 'completed', feedbackStatus: 'completed', communicationScore: 2, mdmScore: 2, overallScore: 2, createdAt: '2026-10-05T10:00:00Z', completedAt: '2026-10-05T11:00:00Z', feedbackGeneratedAt: '2026-10-05T11:05:00Z', caseDifficulty: 'fixture', communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null, feedbackDebrief: { strengths: [{ text: 'Sandbox-only practice', evidence_event_ids: ['fixture-message-test'] }] },
+  },
+];
+
 export type DashboardMetrics = CohortMetrics & {
   medianCompletionMinutes: number | null;
   completionTimeSampleSize: number;

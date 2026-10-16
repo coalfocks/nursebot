@@ -27,6 +27,7 @@ import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
+import { isSyntheticAnalyticsPreview } from './lib/analyticsPreview';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -149,7 +150,7 @@ function App() {
         <Route
           path="/admin/analytics"
           element={
-            user?.id && hasAdmin ? (
+            (user?.id && hasAdmin) || isSyntheticAnalyticsPreview() ? (
               <AdminAnalytics />
             ) : (
               <Navigate to="/dashboard" replace />
