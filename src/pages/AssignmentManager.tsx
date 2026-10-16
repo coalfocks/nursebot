@@ -6,7 +6,14 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
-import { getEligibleAssignmentStudents } from '../lib/assignmentStudentEligibility';
+import { filterEligibleAssignmentStudents, getEligibleAssignmentStudents } from '../lib/assignmentStudentEligibility';
+import {
+  formatAcademicYear,
+  getAcademicYearOptions,
+  getStudentDateFilterLabel,
+  matchesStudentDateFilter,
+  type StudentDateFilter,
+} from '../lib/studentVisibility';
 import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
@@ -86,6 +93,7 @@ export default function AssignmentManager() {
   const [targetingMode, setTargetingMode] = useState<'individual' | 'bulk'>('individual');
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState('');
+  const [studentDateFilter, setStudentDateFilter] = useState<StudentDateFilter>({ mode: 'all' });
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [windowStart, setWindowStart] = useState<string>('');
   const [windowEnd, setWindowEnd] = useState<string>('');
@@ -111,6 +119,7 @@ export default function AssignmentManager() {
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
+  const academicYearOptions = getAcademicYearOptions();
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
     const result = new Set<string>();
@@ -701,13 +710,75 @@ export default function AssignmentManager() {
     }
   };
 
-  const filteredStudents = assignableStudents.filter((student) => {
-    const term = studentSearch.toLowerCase();
-    return (
-      student.full_name.toLowerCase().includes(term) ||
-      (student.email?.toLowerCase().includes(term) ?? false)
-    );
+  const dateFilteredStudents = assignableStudents.filter((student) => matchesStudentDateFilter(student, studentDateFilter));
+  const filteredStudents = filterEligibleAssignmentStudents(students, scopedSchoolId, studentSearch, studentDateFilter);
+
+  const selectedPickerSchoolId = targetingMode === 'bulk' && bulkTargetSchoolId
+    ? bulkTargetSchoolId
+    : scopedSchoolId;
+  const selectedPickerSchoolName = selectedPickerSchoolId
+    ? schools.find((school) => school.id === selectedPickerSchoolId)?.name ?? selectedPickerSchoolId
+    : 'All Schools';
+  const pickerStudents = dateFilteredStudents.filter((student) => {
+    if (targetingMode === 'bulk' && bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
+    if (targetingMode === 'bulk' && bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
+    return true;
   });
+
+  const renderStudentDateFilters = (matchingCount: number) => (
+    <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700">Account added date</label>
+          <select
+            value={studentDateFilter.mode}
+            onChange={(event) => {
+              const mode = event.target.value as StudentDateFilter['mode'];
+              setStudentDateFilter(mode === 'academic_year'
+                ? { mode, startYear: academicYearOptions[1] }
+                : mode === 'custom'
+                  ? { mode, startDate: '', endDate: '' }
+                  : { mode: 'all' });
+            }}
+            className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          >
+            <option value="all">Added: All time</option>
+            <option value="academic_year">Added during academic year</option>
+            <option value="custom">Custom date range</option>
+          </select>
+        </div>
+        {studentDateFilter.mode === 'academic_year' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700">Academic year</label>
+            <select
+              value={studentDateFilter.startYear}
+              onChange={(event) => setStudentDateFilter({ mode: 'academic_year', startYear: Number(event.target.value) })}
+              className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            >
+              {academicYearOptions.map((year) => <option key={year} value={year}>{formatAcademicYear(year)}</option>)}
+            </select>
+          </div>
+        )}
+        {studentDateFilter.mode === 'custom' && (
+          <div className="md:col-span-2 grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs font-medium text-gray-700">Start date (UTC)</label>
+              <input type="date" value={studentDateFilter.startDate} onChange={(event) => setStudentDateFilter({ ...studentDateFilter, startDate: event.target.value })} className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700">End date (UTC)</label>
+              <input type="date" value={studentDateFilter.endDate} onChange={(event) => setStudentDateFilter({ ...studentDateFilter, endDate: event.target.value })} className="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm" />
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+        <span>School: {selectedPickerSchoolName} · {getStudentDateFilterLabel(studentDateFilter)} · {matchingCount} matching eligible student{matchingCount === 1 ? '' : 's'}</span>
+        {studentDateFilter.mode !== 'all' && <button type="button" onClick={() => setStudentDateFilter({ mode: 'all' })} className="font-medium text-blue-700 hover:text-blue-900">Clear filters</button>}
+      </div>
+      <p className="mt-1 text-[11px] text-gray-500">This filters account-added date only; it does not infer Year of Study or enrollment cohort. Academic years use an August 1–July 31 UTC boundary.</p>
+    </div>
+  );
 
   const filteredAssignments = assignments.filter((assignment) => {
     if (filters.status && assignment.status !== filters.status) return false;
@@ -1299,12 +1370,10 @@ export default function AssignmentManager() {
                   </div>
 
                   {/* Individual Student Selection */}
+                  {renderStudentDateFilters(pickerStudents.length)}
                   {targetingMode === 'individual' ? (
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Search Students</label>
-                      <p className="mt-1 text-xs text-gray-500">
-                        Showing current eligible students in the selected school; older active accounts remain assignable.
-                      </p>
                       <div className="mt-1">
                         <input
                           type="text"
@@ -1390,7 +1459,7 @@ export default function AssignmentManager() {
                           Showing current eligible students; use the school and specialty filters to narrow the list.
                         </p>
                         <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
-                          {assignableStudents
+                          {dateFilteredStudents
                             .filter(student => {
                               if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
                               if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
@@ -1425,7 +1494,7 @@ export default function AssignmentManager() {
                                 </div>
                               </label>
                             ))}
-                          {assignableStudents.filter(student => {
+                          {dateFilteredStudents.filter(student => {
                             if (bulkTargetSchoolId && student.school_id !== bulkTargetSchoolId) return false;
                             if (bulkTargetSpecialty && student.specialization_interest !== bulkTargetSpecialty) return false;
                             return true;

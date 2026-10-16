@@ -8,6 +8,13 @@ import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import BulkUserUpload from '../components/admin/BulkUserUpload';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import {
+  formatAcademicYear,
+  getAcademicYearOptions,
+  getStudentDateFilterLabel,
+  matchesStudentDateFilter,
+  type StudentDateFilter,
+} from '../lib/studentVisibility';
 
 type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 type AssignmentRow = Database['public']['Tables']['student_room_assignments']['Row'];
@@ -38,7 +45,9 @@ export default function AdminStudents() {
   const [yearFilter, setYearFilter] = useState<'all' | number>('all');
   const [performanceFilter, setPerformanceFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
   const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'test_user'>('all');
+  const [studentDateFilter, setStudentDateFilter] = useState<StudentDateFilter>({ mode: 'all' });
   const [roleUpdating, setRoleUpdating] = useState<Set<string>>(new Set());
+  const academicYearOptions = getAcademicYearOptions();
 
   const loadAllAssignments = async (schoolId: string | null) => {
     const rows: AssignmentRow[] = [];
@@ -167,10 +176,11 @@ export default function AdminStudents() {
 
       const matchesRole =
         roleFilter === 'all' || profile.role === roleFilter;
+      const matchesAddedDate = matchesStudentDateFilter(profile, studentDateFilter);
 
-      return matchesSearch && matchesYear && matchesPerformance && (!isSuper || matchesRole);
+      return matchesSearch && matchesYear && matchesPerformance && matchesAddedDate && (!isSuper || matchesRole);
     });
-  }, [students, searchTerm, yearFilter, performanceFilter, roleFilter, isSuper]);
+  }, [students, searchTerm, yearFilter, performanceFilter, roleFilter, isSuper, studentDateFilter]);
 
   const stats = useMemo(() => {
     if (students.length === 0) {
@@ -414,6 +424,47 @@ export default function AdminStudents() {
                 <option value="test_user">Test Users</option>
               </select>
             )}
+          </div>
+
+          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700">Account added date</label>
+                <select
+                  value={studentDateFilter.mode}
+                  onChange={(event) => {
+                    const mode = event.target.value as StudentDateFilter['mode'];
+                    setStudentDateFilter(mode === 'academic_year'
+                      ? { mode, startYear: academicYearOptions[1] }
+                      : mode === 'custom'
+                        ? { mode, startDate: '', endDate: '' }
+                        : { mode: 'all' });
+                  }}
+                  className="mt-1 rounded-md border border-slate-200 px-3 py-2 text-sm"
+                >
+                  <option value="all">Added: All time</option>
+                  <option value="academic_year">Added during academic year</option>
+                  <option value="custom">Custom date range</option>
+                </select>
+              </div>
+              {studentDateFilter.mode === 'academic_year' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-700">Academic year</label>
+                  <select value={studentDateFilter.startYear} onChange={(event) => setStudentDateFilter({ mode: 'academic_year', startYear: Number(event.target.value) })} className="mt-1 rounded-md border border-slate-200 px-3 py-2 text-sm">
+                    {academicYearOptions.map((year) => <option key={year} value={year}>{formatAcademicYear(year)}</option>)}
+                  </select>
+                </div>
+              )}
+              {studentDateFilter.mode === 'custom' && (
+                <>
+                  <div><label className="block text-xs font-medium text-slate-700">Start date (UTC)</label><input type="date" value={studentDateFilter.startDate} onChange={(event) => setStudentDateFilter({ ...studentDateFilter, startDate: event.target.value })} className="mt-1 rounded-md border border-slate-200 px-3 py-2 text-sm" /></div>
+                  <div><label className="block text-xs font-medium text-slate-700">End date (UTC)</label><input type="date" value={studentDateFilter.endDate} onChange={(event) => setStudentDateFilter({ ...studentDateFilter, endDate: event.target.value })} className="mt-1 rounded-md border border-slate-200 px-3 py-2 text-sm" /></div>
+                </>
+              )}
+              {studentDateFilter.mode !== 'all' && <button type="button" onClick={() => setStudentDateFilter({ mode: 'all' })} className="px-2 py-2 text-sm font-medium text-blue-700">Clear filters</button>}
+            </div>
+            <p className="mt-2 text-xs text-slate-600">School: {scopedSchoolId ?? 'All Schools'} · {getStudentDateFilterLabel(studentDateFilter)} · {filteredStudents.length} matching accounts</p>
+            <p className="mt-1 text-[11px] text-slate-500">Account-added date only; distinct from Year of Study. Academic years use an August 1–July 31 UTC boundary.</p>
           </div>
 
           {roleMessage && (
