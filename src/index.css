@@ -3,6 +3,11 @@
 @tailwind utilities;
 
 @media print {
+  @page {
+    size: Letter;
+    margin: .35in;
+  }
+
   nav,
   aside,
   .print\:hidden {
@@ -41,6 +46,9 @@
   #feedback-print-root .print-sheet h2 { font-size: 10pt; margin: 0 0 3pt; }
   #feedback-print-root .print-sheet p { margin: 2pt 0; }
   #feedback-print-root .print-sheet ul { margin: 2pt 0; padding-left: 14pt; }
+  #feedback-print-root .print-sheet .print-component-feedback,
+  #feedback-print-root .print-sheet .print-event-body,
+  #feedback-print-root .print-sheet .print-safety-text { overflow-wrap: anywhere; }
 }
 
 .print-sheet {

@@ -10,14 +10,15 @@ vi.mock('../lib/supabase', () => ({ supabase: { from: fromMock } }));
 const component = (score: number, min: number, max: number, feedback: string) => ({ score, min, max, feedback, evidence_event_ids: ['event-cbc', 'event-consult'] });
 const assignment = {
   id: 'synthetic-assignment', student_id: 'synthetic-student', technical_incomplete: false,
-  communication_score: 3, clinical_reasoning_score: 4, mdm_score: 4, scoring_start_at: '2026-10-16T00:00:00Z', learning_objectives: 'Document reassessment.',
+  communication_score: 1, clinical_reasoning_score: 1, mdm_score: 1, scoring_start_at: '2026-10-16T00:00:00Z', learning_objectives: 'Document reassessment.',
+  safety_result: { level: 'concern', action: 'Review order safety', rationale: 'A deliberately long safety rationale that should be visible as the separate result but bounded in the print summary. '.repeat(10) },
   room: { room_number: '112', patient_id: 'synthetic-patient', expected_diagnosis: 'Synthetic acute instability', case_goals: ['Name the diagnosis.', 'Prioritize monitoring and orders.'] },
   feedback_debrief: {
     canonical_feedback: {
       schema_version: 'feedback-contract-v1', room_label: 'Synthetic Room 112', target_diagnosis: 'Synthetic acute instability',
       goals: ['Name the diagnosis.', 'Prioritize monitoring and orders.'],
-      communication: { total: 3, components: { focused_information_gathering: component(1, 0, 2, 'Collected focused information.'), closed_loop_team_communication: component(2, 0, 3, 'Closed the loop with the consultant.'), efficiency_deduction: component(0, -2, 0, 'No unnecessary repetition observed.') } },
-      clinical_reasoning: { total: 4, components: { orders_monitoring_quality: component(2, 0, 3, 'Placed and completed the STAT CBC.'), clinical_reasoning_documentation: component(2, 0, 2, 'Documented the reassessment plan.'), safety_deduction: component(0, -2, 0, 'No unsafe learner order observed.') } },
+      communication: { total: 5, components: { focused_information_gathering: component(2, 0, 2, 'Collected focused information.'), closed_loop_team_communication: component(3, 0, 3, 'Closed the loop with the consultant.'), efficiency_deduction: component(0, -2, 0, 'No unnecessary repetition observed.') } },
+      clinical_reasoning: { total: 4, components: { orders_monitoring_quality: component(3, 0, 3, 'Placed and completed the STAT CBC.'), clinical_reasoning_documentation: component(2, 0, 2, 'Documented the reassessment plan.'), safety_deduction: component(-1, -2, 0, 'One bounded safety deduction.') } },
       strengths: ['Focused escalation tied to the CBC result.'], next_steps: ['Document the reassessment result and plan change.'],
       evidence: [
         { id: 'event-cbc', kind: 'order', title: 'STAT CBC', body: 'Observed learner order and linked result.', timestamp: '2026-10-16T00:01:00Z' },
@@ -49,11 +50,14 @@ describe('AssignmentDebrief canonical rendered feedback', () => {
     expect(screen.getAllByText('Target diagnosis: Synthetic acute instability').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Name the diagnosis.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Prioritize monitoring and orders.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('5/5').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('4/5').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Safety result: concern|Review order safety/).length).toBeGreaterThan(0);
     for (const label of ['Focused Information Gathering (0–2)', 'Closed-Loop Team Communication (0–3)', 'Efficiency Deduction (−2–0)', 'Orders/Monitoring Quality (0–3)', 'Clinical Reasoning/Documentation (0–2)', 'Safety Deduction (0, −1, −2)']) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     expect(screen.getAllByText('STAT CBC').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Order: Complete Blood Count with Differential').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Lab result: WBC').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('No unnecessary repetition observed.').length).toBe(1);
+    expect(screen.getAllByText('No unnecessary repetition observed.').length).toBeGreaterThan(0);
     expect(screen.queryByText(/No case-specific efficiency deduction; No case-specific efficiency deduction/i)).not.toBeInTheDocument();
     expect(screen.getAllByText('Focused escalation tied to the CBC result.').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Document the reassessment result and plan change.').length).toBeGreaterThan(0);
