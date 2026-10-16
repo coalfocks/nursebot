@@ -896,7 +896,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               />
               Enable patient conversation for students
             </label>
-            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by student patient chat.</p>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and supplied to the patient-chat model; the prompt text is never shown to learners.</p>
           </div>
           <div>
             <label htmlFor="consultantResponsePrompt" className="block text-sm font-medium text-gray-700">
@@ -910,7 +910,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
               placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
             />
-            <p className="mt-1 text-xs text-gray-500">Displayed to the active student Consultant Portal when authored.</p>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and supplied server-side to the consultant model; the prompt text is never shown to learners.</p>
           </div>
         </div>
 
