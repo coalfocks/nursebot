@@ -12,9 +12,15 @@ const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[]
 const clean = (value: unknown) => typeof value === 'string' ? value.replace(/message count and timing are not scored/gi, 'No case-specific efficiency deduction was observed.').replace(/review the evidence-linked strengths and next steps below\.?/gi, '').replace(/\s+/g, ' ').trim() : '';
 const goalsOnly = (value: unknown): string[] => Array.from(new Set(asArray<unknown>(value).flatMap((item) => clean(item).split(/\r?\n/)).map((item) => item.replace(/^[-*•]\s*/, '').trim()).filter((item) => item.length >= 8 && item.length <= 220 && !/reveal this goal|do not disclose|after the simulation|target diagnosis\s*[—:-]/i.test(item)))).slice(0, 5);
 const text = (...values: unknown[]) => clean(values.find((value) => typeof value === 'string' && value.trim()));
-const efficiencyFeedback = (value: unknown) => {
+export const conciseEfficiencyRationale = (value: unknown, _score = 0) => {
   const normalized = clean(value).replace(/no case-specific efficiency deduction(?: was observed)?[.;:]?\s*/gi, '').trim();
-  return normalized || 'No case-specific efficiency deduction was observed.';
+  return normalized && !/^[\s\W_]+$/.test(normalized) ? normalized : 'No case-specific efficiency deduction.';
+};
+const efficiencyFeedback = (value: unknown) => conciseEfficiencyRationale(value);
+export const removeDiagnosisGoal = (goal: string, diagnosis: string | null) => {
+  const normalizedGoal = goal.trim().replace(/[.!?]+$/, '').toLowerCase();
+  const normalizedDiagnosis = diagnosis?.trim().replace(/[.!?]+$/, '').toLowerCase();
+  return normalizedDiagnosis && (normalizedGoal === normalizedDiagnosis || normalizedGoal === `recognize ${normalizedDiagnosis}`) ? null : goal;
 };
 
 const ScoreCard = ({ label, total, components }: { label: string; total: number | null; components: Array<{ label: string; score?: number; feedback?: string }> }) => {
@@ -76,7 +82,7 @@ export default function AssignmentDebrief() {
   const comm = canonical?.communication.components ?? assignment.communication_breakdown ?? {};
   const reasoning = canonical?.clinical_reasoning.components ?? assignment.clinical_reasoning_breakdown ?? assignment.mdm_breakdown ?? {};
   const diagnosis = canonical?.target_diagnosis ?? assignment.room?.expected_diagnosis ?? null;
-  const goals = canonical?.goals ?? goalsOnly(debrief.case_goals ?? assignment.room?.case_goals);
+  const goals = (canonical?.goals ?? goalsOnly(debrief.case_goals ?? assignment.room?.case_goals)).map((goal) => removeDiagnosisGoal(goal, diagnosis)).filter((goal): goal is string => Boolean(goal));
   const strengths = canonical?.strengths ?? goalsOnly(debrief.strengths);
   const nextSteps = canonical?.next_steps ?? goalsOnly(debrief.improvements ?? debrief.recommendations);
   const evidence = Array.from(new Map([...(canonical?.evidence ?? []), ...sourceEvidence].map((event) => [event.id, event])).values());

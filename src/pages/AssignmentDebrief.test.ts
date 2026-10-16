@@ -12,5 +12,7 @@ describe('AssignmentDebrief presentation helpers', () => {
       .toBe('No case-specific efficiency deduction.');
     expect(conciseEfficiencyRationale('Repeated non-purposeful updates delayed the handoff.', -1))
       .toBe('Repeated non-purposeful updates delayed the handoff.');
+    expect(conciseEfficiencyRationale('.', 0))
+      .toBe('No case-specific efficiency deduction.');
   });
 });
