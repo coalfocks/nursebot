@@ -28,6 +28,7 @@ import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
 import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
 import { useRequestIdentity } from '../hooks/useRequestIdentity';
+import { calculateAgeAtEncounter, calculateBmi, validateChartMeasurements } from '../features/emr/lib/chartValidation';
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -49,6 +50,7 @@ export default function EmrDashboard() {
   const [modalContent, setModalContent] = useState<{ type: 'image' | 'text'; content: string; title: string } | null>(null);
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
+  const [vitalsError, setVitalsError] = useState<string | null>(null);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
   const [activeTab, setActiveTab] = useState('overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
@@ -107,27 +109,12 @@ export default function EmrDashboard() {
   const patientAge = useMemo(() => {
     if (roomMeta?.scenarioAge !== undefined && roomMeta.scenarioAge !== null) return roomMeta.scenarioAge;
     if (!selectedPatient?.dateOfBirth) return null;
-    const dob = new Date(selectedPatient.dateOfBirth);
-    if (Number.isNaN(dob.getTime())) return null;
-    const today = new Date();
-    let age = today.getFullYear() - dob.getFullYear();
-    const hasHadBirthdayThisYear =
-      today.getMonth() > dob.getMonth() ||
-      (today.getMonth() === dob.getMonth() && today.getDate() >= dob.getDate());
-    if (!hasHadBirthdayThisYear) {
-      age -= 1;
-    }
-    return Math.max(age, 0);
-  }, [selectedPatient?.dateOfBirth, roomMeta?.scenarioAge]);
+    return calculateAgeAtEncounter(selectedPatient.dateOfBirth, roomMeta?.encounterDate ?? new Date().toISOString());
+  }, [selectedPatient?.dateOfBirth, roomMeta?.scenarioAge, roomMeta?.encounterDate]);
 
   const patientBMI = useMemo(() => {
-    if (!selectedPatient?.weightKg || !selectedPatient?.gender) return null;
-    
-    // Estimate height based on gender (average adult heights)
-    const avgHeightM = selectedPatient.gender === 'Male' ? 1.75 : 1.62;
-    const bmi = selectedPatient.weightKg / (avgHeightM * avgHeightM);
-    return Math.round(bmi * 10) / 10;
-  }, [selectedPatient?.weightKg, selectedPatient?.gender]);
+    return calculateBmi(overviewVitals?.weight ?? selectedPatient?.weightKg, overviewVitals?.height);
+  }, [overviewVitals?.weight, overviewVitals?.height, selectedPatient?.weightKg]);
 
   useEffect(() => {
     void (async () => {
@@ -286,6 +273,8 @@ export default function EmrDashboard() {
           respiratoryRate: vitals[0].respiratoryRate,
           oxygenSaturation: vitals[0].oxygenSaturation,
           pain: vitals[0].pain,
+          weight: vitals[0].weight,
+          height: vitals[0].height,
         });
       } else {
         setOverviewVitals(null);
@@ -496,8 +485,19 @@ export default function EmrDashboard() {
 
   const handleSaveVitals = async () => {
     if (!selectedPatient) return;
+    setVitalsError(null);
     const roomIdForScope =
       !forceBaseline && typeof selectedPatient.roomId === 'number' ? selectedPatient.roomId : null;
+    const numericMeasurements = {
+      temperatureF: vitalsForm.temperature,
+      heightCm: vitalsForm.height,
+      weightKg: vitalsForm.weight,
+    };
+    const measurementErrors = validateChartMeasurements(numericMeasurements);
+    if (measurementErrors.length) {
+      setVitalsError(measurementErrors.join(' '));
+      return;
+    }
     const basePayload: VitalSigns = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: selectedPatient.id,
@@ -512,6 +512,8 @@ export default function EmrDashboard() {
       respiratoryRate: vitalsForm.respiratoryRate ? Number(vitalsForm.respiratoryRate) : undefined,
       oxygenSaturation: vitalsForm.oxygenSaturation ? Number(vitalsForm.oxygenSaturation) : undefined,
       pain: vitalsForm.pain ? Number(vitalsForm.pain) : undefined,
+      weight: vitalsForm.weight ? Number(vitalsForm.weight) : undefined,
+      height: vitalsForm.height ? Number(vitalsForm.height) : undefined,
     };
     await emrApi.addVitals([basePayload], forceBaseline ? null : roomIdForScope);
     // Refresh vitals using the same parameters as initial load
@@ -526,6 +528,8 @@ export default function EmrDashboard() {
         respiratoryRate: vitals[0].respiratoryRate,
         oxygenSaturation: vitals[0].oxygenSaturation,
         pain: vitals[0].pain,
+        weight: vitals[0].weight,
+        height: vitals[0].height,
       });
     } else {
       setOverviewVitals(null);
@@ -1301,6 +1305,7 @@ export default function EmrDashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md space-y-4">
             <h3 className="text-lg font-semibold">Edit vitals</h3>
+            {vitalsError && <p className="rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{vitalsError}</p>}
             <div className="grid grid-cols-2 gap-3">
               <label className="text-sm text-muted-foreground">
                 Temp (°C)
@@ -1348,6 +1353,14 @@ export default function EmrDashboard() {
                   value={vitalsForm.respiratoryRate ?? ''}
                   onChange={(e) => setVitalsForm((prev) => ({ ...prev, respiratoryRate: e.target.value }))}
                 />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                Height (cm)
+                <input type="number" min="20" max="250" step="0.1" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={vitalsForm.height ?? ''} onChange={(e) => setVitalsForm((prev) => ({ ...prev, height: e.target.value ? Number(e.target.value) : undefined }))} />
+              </label>
+              <label className="text-sm text-muted-foreground">
+                Weight (kg)
+                <input type="number" min="0.1" max="400" step="0.1" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={vitalsForm.weight ?? ''} onChange={(e) => setVitalsForm((prev) => ({ ...prev, weight: e.target.value ? Number(e.target.value) : undefined }))} />
               </label>
               <label className="text-sm text-muted-foreground">
                 O2 Sat
