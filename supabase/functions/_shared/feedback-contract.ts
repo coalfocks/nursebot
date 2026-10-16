@@ -1,6 +1,124 @@
+import type { EvaluationScoringResponse } from './evaluation-scoring.ts';
+
 export const FEEDBACK_RUBRIC_VERSION = 'feedback-v3-2026-10-15';
 export const CASE_KEY_VERSION = 'case-key-v2';
 export const ASSESSMENT_VERSION = 'assessment-v2-2026-10-15';
+export const CANONICAL_FEEDBACK_SCHEMA_VERSION = 'feedback-contract-v1';
+
+export type CanonicalFeedbackComponent = {
+  score: number;
+  min: number;
+  max: number;
+  feedback: string;
+  evidence_event_ids: string[];
+};
+
+export type CanonicalFeedbackEvidence = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  timestamp: string;
+};
+
+export type CanonicalFeedback = {
+  schema_version: string;
+  room_label: string;
+  target_diagnosis: string | null;
+  goals: string[];
+  communication: {
+    total: number;
+    components: {
+      focused_information_gathering: CanonicalFeedbackComponent;
+      closed_loop_team_communication: CanonicalFeedbackComponent;
+      efficiency_deduction: CanonicalFeedbackComponent;
+    };
+  };
+  clinical_reasoning: {
+    total: number;
+    components: {
+      orders_monitoring_quality: CanonicalFeedbackComponent;
+      clinical_reasoning_documentation: CanonicalFeedbackComponent;
+      safety_deduction: CanonicalFeedbackComponent;
+    };
+  };
+  strengths: string[];
+  next_steps: string[];
+  evidence: CanonicalFeedbackEvidence[];
+  scoring_start_at: string;
+};
+
+const isFiniteInteger = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && Number.isFinite(value);
+
+export const validateCanonicalFeedback = (value: CanonicalFeedback): CanonicalFeedback => {
+  if (value.schema_version !== CANONICAL_FEEDBACK_SCHEMA_VERSION || !value.room_label.trim() || !value.scoring_start_at) throw new Error('Invalid canonical feedback identity');
+  const validateDomain = (domain: CanonicalFeedback['communication'] | CanonicalFeedback['clinical_reasoning']) => {
+    const components = Object.values(domain.components);
+    if (components.length !== 3 || !isFiniteInteger(domain.total) || domain.total < 0 || domain.total > 5) throw new Error('Invalid canonical feedback domain');
+    for (const component of components) {
+      if (!isFiniteInteger(component.score) || component.score < component.min || component.score > component.max || !component.feedback.trim() || component.evidence_event_ids.some((id) => !id.trim())) throw new Error('Invalid canonical feedback component');
+    }
+    const raw = components.reduce((sum, component) => sum + component.score, 0);
+    if (domain.total !== Math.max(0, Math.min(5, raw))) throw new Error('Canonical feedback arithmetic does not reconcile');
+  };
+  validateDomain(value.communication);
+  validateDomain(value.clinical_reasoning);
+  if (value.evidence.some((event) => !event.id.trim() || !event.kind.trim() || !event.title.trim() || !event.timestamp)) throw new Error('Invalid canonical feedback evidence');
+  return value;
+};
+
+const canonicalComponent = (component: { score: number; feedback: string; evidence_event_ids?: string[] }, min: number, max: number): CanonicalFeedbackComponent => ({
+  score: Math.max(min, Math.min(max, Math.round(component.score))),
+  min,
+  max,
+  feedback: component.feedback,
+  evidence_event_ids: component.evidence_event_ids ?? [],
+});
+
+export const buildCanonicalFeedback = ({
+  roomLabel,
+  targetDiagnosis,
+  goals,
+  evaluation,
+  evidence,
+  scoringStartAt,
+}: {
+  roomLabel: string;
+  targetDiagnosis: string | null;
+  goals: string[];
+  evaluation: EvaluationScoringResponse;
+  evidence: Array<{ id: string; kind: string; title: string; body?: string; timestamp: string }>;
+  scoringStartAt: string;
+}): CanonicalFeedback => {
+  const communicationComponents = {
+    focused_information_gathering: canonicalComponent(evaluation.communication_breakdown.focused_information_gathering, 0, 2),
+    closed_loop_team_communication: canonicalComponent(evaluation.communication_breakdown.closed_loop_team_communication, 0, 3),
+    efficiency_deduction: canonicalComponent(evaluation.communication_breakdown.efficiency_deduction, -2, 0),
+  };
+  const reasoningComponents = {
+    orders_monitoring_quality: canonicalComponent(evaluation.clinical_reasoning_breakdown.orders_monitoring_quality, 0, 3),
+    clinical_reasoning_documentation: canonicalComponent(evaluation.clinical_reasoning_breakdown.clinical_reasoning_documentation, 0, 2),
+    safety_deduction: canonicalComponent(evaluation.clinical_reasoning_breakdown.safety_deduction, -2, 0),
+  };
+  return validateCanonicalFeedback({
+    schema_version: CANONICAL_FEEDBACK_SCHEMA_VERSION,
+    room_label: roomLabel,
+    target_diagnosis: targetDiagnosis,
+    goals: Array.from(new Set(goals)).slice(0, 5),
+    communication: {
+      total: Math.max(0, Math.min(5, communicationComponents.focused_information_gathering.score + communicationComponents.closed_loop_team_communication.score + communicationComponents.efficiency_deduction.score)),
+      components: communicationComponents,
+    },
+    clinical_reasoning: {
+      total: Math.max(0, Math.min(5, reasoningComponents.orders_monitoring_quality.score + reasoningComponents.clinical_reasoning_documentation.score + reasoningComponents.safety_deduction.score)),
+      components: reasoningComponents,
+    },
+    strengths: evaluation.strengths.slice(0, 3),
+    next_steps: [...evaluation.improvements, ...evaluation.recommendations].slice(0, 3),
+    evidence: evidence.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, body: entry.body ?? '', timestamp: entry.timestamp })),
+    scoring_start_at: scoringStartAt,
+  });
+};
 
 export type SafetyLevel = 'none' | 'concern' | 'critical';
 

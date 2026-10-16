@@ -58,7 +58,7 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   const communicationBreakdown = {
     focused_information_gathering: { score: focused, feedback: sanitizeSimulationText(text(focusedRaw?.feedback, 'Insufficient evidence to assess focused information gathering.')), evidence_event_ids: ids(focusedRaw?.evidence_event_ids) },
     closed_loop_team_communication: { score: closedLoop, feedback: sanitizeSimulationText(text(closedLoopRaw?.feedback, 'Insufficient evidence to assess closed-loop team communication.')), evidence_event_ids: ids(closedLoopRaw?.evidence_event_ids) },
-    efficiency_deduction: { score: efficiency, feedback: sanitizeSimulationText(text(efficiencyRaw?.feedback, 'No case-specific efficiency deduction; message count and timing are not scored.')), evidence_event_ids: ids(efficiencyRaw?.evidence_event_ids) },
+    efficiency_deduction: { score: efficiency, feedback: sanitizeSimulationText(text(efficiencyRaw?.feedback, 'No case-specific efficiency deduction was observed.')), evidence_event_ids: ids(efficiencyRaw?.evidence_event_ids) },
   };
   const clinicalReasoningBreakdown = {
     orders_monitoring_quality: { score: orders, feedback: sanitizeSimulationText(text(ordersRaw?.feedback, 'Insufficient evidence to assess orders and monitoring.')), evidence_event_ids: ids(ordersRaw?.evidence_event_ids) },
@@ -67,7 +67,7 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   };
   const clinicalReasoningScore = Math.max(0, Math.min(5, orders + reasoning + safetyDeduction));
   return {
-    learning_objectives: sanitizeSimulationText(text(raw.learning_objectives, 'Review the evidence-linked strengths and next steps below.')),
+    learning_objectives: sanitizeSimulationText(text(raw.learning_objectives, 'No learner-authored approach summary was recorded.')),
     communication_score: Math.max(0, Math.min(5, focused + closedLoop + efficiency)),
     mdm_score: clinicalReasoningScore,
     clinical_reasoning_score: clinicalReasoningScore,
@@ -101,7 +101,7 @@ export const buildEvidenceBackedFallback = (evaluation: EvaluationScoringRespons
   const communicationBreakdown = {
     focused_information_gathering: { score: focused, feedback: focused ? 'Observed a learner-authored interaction or simulated bedside/team action recorded in the attempt.' : 'Not observed: vitals and clinical orders alone do not establish learner information gathering.', evidence_event_ids: [] },
     closed_loop_team_communication: { score: closedLoop, feedback: closedLoop ? 'Observed learner-authored team escalation/closed-loop communication.' : 'Not observed: no linked learner team communication was captured.', evidence_event_ids: [] },
-    efficiency_deduction: { score: 0, feedback: 'No case-specific efficiency deduction; message count and timing are not scored.', evidence_event_ids: [] },
+    efficiency_deduction: { score: 0, feedback: 'No case-specific efficiency deduction was observed.', evidence_event_ids: [] },
   };
   const clinicalReasoningBreakdown = {
     orders_monitoring_quality: { score: orderQuality, feedback: orderQuality ? 'Observed post-page order, monitoring, result, or reassessment evidence.' : 'No post-page order, monitoring, result, or reassessment evidence was observed.', evidence_event_ids: [] },
