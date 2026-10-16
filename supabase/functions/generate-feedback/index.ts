@@ -6,6 +6,7 @@ import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveSc
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -105,24 +106,13 @@ Deno.serve(async (req) => {
       evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids = evidence.mdm.reasoning;
       evaluation.mdm_breakdown.safety_deduction.evidence_event_ids = normalizeEvidenceEventIds(evaluation.mdm_breakdown.safety_deduction.evidence_event_ids, sourceEventIds);
       evaluation.safety_result.evidence_event_ids = normalizeEvidenceEventIds(evaluation.safety_result.evidence_event_ids, sourceEventIds);
+      const deterministicEntries = scoredEntries.filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind));
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
         observed_event_ids: sourceEventIds,
         // Preserve a deterministic, human-readable record of every actual
         // post-page order/result even when the model's narrative omits it.
-        items: [
-          ...actionReview,
-          ...scoredEntries
-            .filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind))
-            .filter((entry) => !actionReview.some((item: any) => Array.isArray(item?.evidence_event_ids) && item.evidence_event_ids.includes(entry.id)))
-            .map((entry) => ({
-              label: entry.title,
-              action: entry.title,
-              status: entry.meta?.join(' • ') ?? 'Observed post-page action',
-              explanation: entry.body || 'Persisted post-page evidence observed for this attempt.',
-              evidence_event_ids: [entry.id],
-            })),
-        ],
+        items: appendUncitedDeterministicActions(actionReview, deterministicEntries).slice(0, 20),
       };
       const growthEvidence = scoredEntries
         .filter((entry) => ['learner-action', 'order', 'progress-note'].includes(entry.kind))
