@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { resolvePinnedConversationPrompt } from '../_shared/conversation-prompt-config.ts';
+import { CONSULTANT_DIRECTORY } from '../_shared/consultant-directory.ts';
 
 type ConsultantRequest = {
   specialty?: string;
@@ -13,13 +14,7 @@ type ConsultantRequest = {
   clientRequestId?: string;
 };
 type Payload = { assignmentId?: string; request?: ConsultantRequest };
-const SPECIALTIES = new Set([
-  'Attending', 'Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology', 'ICU', 'Neurology', 'Nephrology', 'Infectious Disease',
-  'Orthopedics', 'ENT', 'Anesthesiology', 'Endocrinology', 'Hematology', 'Toxicology', 'Pediatric Hepatology', 'Gastroenterology',
-  'Pulmonology', 'Psychiatry', 'Dermatology', 'Urology', 'Oncology', 'Hospitalist', 'Pediatric Cardiology', 'Pediatric Neurology',
-  'Pediatric Surgery', 'Pediatric Infectious Disease', 'Pediatric Pulmonology', 'Pediatric Nephrology', 'Pediatric Gastroenterology',
-  'Pediatric Hematology/Oncology', 'Pediatric Critical Care', 'Pediatric Emergency Medicine',
-]);
+const SPECIALTIES = new Set(CONSULTANT_DIRECTORY.map(({ value }) => value));
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!url || !serviceKey) throw new Error('Missing Supabase service credentials');

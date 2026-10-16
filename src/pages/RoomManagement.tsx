@@ -107,6 +107,12 @@ export default function RoomManagement() {
     fetchRooms();
   };
 
+  const handleRoomPatch = (patch: Partial<Room>) => {
+    if (!selectedRoom) return;
+    setSelectedRoom((current) => current ? { ...current, ...patch } : current);
+    setRooms((current) => current.map((item) => item.id === selectedRoom.id ? { ...item, ...patch } : item));
+  };
+
   const handleDeleteRoom = async (room: Room) => {
     if (!isSuperAdmin(profile)) return;
     if (!window.confirm(`Delete room ${room.room_number}? This will remove assignments and unlink any patient.`)) return;
@@ -253,6 +259,7 @@ export default function RoomManagement() {
               room={selectedRoom}
               onSave={handleSave}
               onCancel={() => setIsEditing(false)}
+              onRoomPatch={handleRoomPatch}
             />
           </div>
         </div>
