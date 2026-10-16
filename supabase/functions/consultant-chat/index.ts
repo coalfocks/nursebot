@@ -2,6 +2,7 @@ import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { resolvePinnedConversationPrompt } from '../_shared/conversation-prompt-config.ts';
 
 type ConsultantRequest = {
   specialty?: string;
@@ -19,15 +20,6 @@ if (!url || !serviceKey) throw new Error('Missing Supabase service credentials')
 const admin = createClient(url, serviceKey);
 const json = (body: Record<string, unknown>, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 const record = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-
-const promptFrom = (room: Record<string, unknown>, baseline: unknown) => {
-  const pinned = { ...room, ...(record(baseline)) };
-  const direct = typeof pinned.consultant_response_prompt === 'string' ? pinned.consultant_response_prompt.trim() : '';
-  const context = record(pinned.emr_context);
-  const packageBedside = record(record(context.package).bedside);
-  const packagePrompt = typeof packageBedside.consultantResponsePrompt === 'string' ? packageBedside.consultantResponsePrompt.trim() : '';
-  return direct || packagePrompt;
-};
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -58,8 +50,8 @@ Deno.serve(async (req) => {
     const patientId = typeof roomRecord.patient_id === 'string' ? roomRecord.patient_id : null;
     const roomId = typeof roomRecord.id === 'number' ? roomRecord.id : null;
     if (!patientId || !roomId) return json({ error: 'This assignment has no linked patient chart' }, 409);
-    const behavior = promptFrom(roomRecord, assignment.scenario_baseline);
-    if (!behavior) return json({ error: 'No consultant behavior is configured for this case' }, 409);
+    const behavior = resolvePinnedConversationPrompt(roomRecord, assignment.scenario_baseline, 'consultant');
+    if (!behavior) return json({ error: 'Consultant Conversation Prompt not configured. Ask an administrator to configure this room.' }, 409);
 
     const { data: existingRequest, error: existingError } = await admin.from('consultant_requests').select('id, response, disposition, consult_order_id, status').eq('assignment_id', payload.assignmentId).eq('client_request_id', request.clientRequestId).maybeSingle();
     if (existingError) throw existingError;
@@ -73,7 +65,7 @@ Deno.serve(async (req) => {
     const completion = await openai.chat.completions.create({
       model: getOpenAIModel('chat'), max_completion_tokens: 500, response_format: { type: 'json_object' },
       messages: [
-        { role: 'system', content: `You are the ${specialty} consultant assigned to this simulated case. Follow this authored case-specific behavior prompt exactly:\n${behavior}\n\nDefault behavior: acknowledge the consult, give only one or two useful recommendations, and state that you will see the patient in the morning. Do not take over the case or reveal the diagnosis, hidden goals, or evaluation criteria. Never invent chart results. Explicit urgent exceptions in the authored case prompt override the default: ICU may accept transfer when ICU disposition is intended; Cardiology may direct the learner to the cath lab when indicated; Surgery may take the patient urgently to the OR when the case calls for it. If the consultant assumes care, mark disposition assumes_care; otherwise mark routine_review. Return JSON only: {"message":"concise response","disposition":"routine_review|assumes_care"}.` },
+          { role: 'system', content: behavior },
         { role: 'user', content: JSON.stringify({ specialty, summary, clinicalQuestion, reason, urgency }) },
       ],
     });

@@ -9,10 +9,11 @@ import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
-import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { DEFAULT_HOSPITAL_TIMELINE, hospitalTimelineChanged, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
 import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
+import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -121,6 +122,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [patientPromptStatus, setPatientPromptStatus] = useState('');
+  const [consultantPromptStatus, setConsultantPromptStatus] = useState('');
+  const [promptPreview, setPromptPreview] = useState<ConversationPromptKind | null>(null);
+  const [timelineWarning, setTimelineWarning] = useState<string>('');
   const advancedSettingsVisible = false;
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
@@ -189,6 +194,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
   const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
+  const originalHospitalTimeline = parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE);
+  const originalTimelineWithRoomSettings: HospitalTimeline = {
+    ...originalHospitalTimeline,
+    encounterType: roomWithTimeline?.encounter_type ?? originalHospitalTimeline.encounterType,
+    stayDays: roomWithTimeline?.hospital_stay_days ?? originalHospitalTimeline.stayDays,
+  };
   const [encounterType, setEncounterType] = useState<EncounterType>(roomWithTimeline?.encounter_type ?? 'inpatient');
   const [hospitalStayDays, setHospitalStayDays] = useState(String(roomWithTimeline?.hospital_stay_days ?? 1));
   const initialHospitalTimelineText = JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2);
@@ -468,6 +479,35 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     }
   };
 
+  const saveConversationPrompt = async (kind: ConversationPromptKind) => {
+    if (!room?.id) {
+      const message = 'Save the room once before saving a conversation prompt independently.';
+      if (kind === 'patient') setPatientPromptStatus(message); else setConsultantPromptStatus(message);
+      return;
+    }
+    const setStatus = kind === 'patient' ? setPatientPromptStatus : setConsultantPromptStatus;
+    const value = kind === 'patient' ? patientConversationPrompt : consultantResponsePrompt;
+    setStatus('Saving…');
+    setError('');
+    try {
+      const patch = buildConversationPromptPatch(kind, value);
+      const column = kind === 'patient' ? 'patient_conversation_prompt' : 'consultant_response_prompt';
+      const { data, error: saveError } = await supabase
+        .from('rooms')
+        .update(patch)
+        .eq('id', room.id)
+        .select(column)
+        .single();
+      if (saveError) throw saveError;
+      const saved = resolveAuthoredConversationPrompt(data as Record<string, unknown>, kind);
+      if (kind === 'patient') setPatientConversationPrompt(saved);
+      else setConsultantResponsePrompt(saved);
+      setStatus(`Saved and read back${room.updated_at ? ` · room revision ${new Date(room.updated_at).toLocaleString()}` : ''}`);
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : 'Unable to save this conversation prompt.';
+      setStatus(`Save failed: ${message}`);
+    }
+  };
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -1004,11 +1044,23 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
               onChange={(e) => setConsultantResponsePrompt(e.target.value)}
               rows={4}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-              placeholder="Default acknowledgment/overnight plan, specialty behavior, and explicit ICU/cath-lab/urgent-OR exceptions."
+              placeholder="Complete consultant behavior, acknowledgment, recommendations, and any authored urgent exceptions."
             />
-            <p className="mt-1 text-xs text-gray-500">Saved directly to this room and supplied exactly to consultant-chat for its assignments.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => void saveConversationPrompt('consultant')} className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Save consultant prompt</button>
+              <button type="button" onClick={() => setPromptPreview(promptPreview === 'consultant' ? null : 'consultant')} className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700">{promptPreview === 'consultant' ? 'Hide preview' : 'Preview'}</button>
+              {consultantPromptStatus && <span role="status" className="text-xs text-gray-600">{consultantPromptStatus}</span>}
+            </div>
+            {promptPreview === 'consultant' && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded border bg-white p-2 text-xs text-gray-700">{consultantResponsePrompt.trim() || 'Prompt not configured'}</pre>}
+            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by the pinned consultant-chat runtime; authored instructions are never shown to learners.</p>
+            {!consultantResponsePrompt.trim() && (
+              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                Prompt not configured. Consultant Portal is unavailable until an administrator authors this room prompt; no shared default is substituted.
+              </p>
+            )}
           </div>
-        </div>
+          </div>
+        </section>
 
         <div className={`rounded-lg border p-4 ${consultantPromptReady ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
           <h3 className="text-sm font-semibold text-gray-900">Consultant readiness preview</h3>
@@ -1034,6 +1086,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             </label>
           </div>
           <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} onChange={setHospitalTimelineText} /></div>
+          {timelineWarning && <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">{timelineWarning}</p>}
           {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <p>Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
 
