@@ -89,7 +89,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   useEffect(() => {
     const request = capture();
     setLabResults([]);
-    if (isSandbox) {
+    // A sandbox assignment still has durable, assignment-scoped chart rows.
+    // Only the pre-assignment/local preview path should use the in-memory
+    // callback; otherwise a completed order can appear in Orders while Labs
+    // incorrectly reports an empty chart.
+    if (isSandbox && !assignmentId) {
       if (isCurrent(request)) setLabResults(normalizeForPatient(sandboxLabs ?? []));
       return;
     }
@@ -375,7 +379,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         resultTime: runTimestamp,
         orderedBy: patient.attendingPhysician ?? 'Attending',
       }));
-      if (isSandbox) {
+      if (isSandbox && !assignmentId) {
         setLabResults((prev) => {
           const updated = [...labsWithAssignment, ...prev];
           onSandboxLabsChange?.(updated);
