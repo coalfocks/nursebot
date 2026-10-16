@@ -83,6 +83,20 @@ export function OrdersManagement({
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
       if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
+      // A completed order may predate the result callback (or a prior route
+      // entry may have loaded while that callback was still failing). Repair
+      // only completed, assignment-scoped lab orders on fresh load; the
+      // materializer is idempotent and never touches baseline results.
+      if (assignmentId) {
+        for (const order of data.filter((item) => item.category === 'Lab' && item.status === 'Completed')) {
+          try {
+            await ensureCompletedLabResults(order);
+          } catch (error) {
+            console.error('Failed to reconcile completed lab on chart load', error);
+          }
+        }
+        if (requestIdentity.isCurrent(request)) onLabsGenerated?.();
+      }
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
