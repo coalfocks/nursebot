@@ -16,6 +16,7 @@ import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
 import AssignmentView from './pages/AssignmentView';
+import AssignmentDebrief from './pages/AssignmentDebrief';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
@@ -24,6 +25,7 @@ import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
+import FeedbackStudio from './pages/FeedbackStudio';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -226,6 +228,7 @@ function App() {
             )
           }
         />
+        <Route path="/admin/feedback-studio" element={user?.id && superAdmin ? <FeedbackStudio /> : <Navigate to="/dashboard" replace />} />
         <Route 
           path="/assignments" 
           element={
@@ -235,6 +238,10 @@ function App() {
               <Navigate to="/login" replace />
             )
           }
+        />
+        <Route
+          path="/assignment/:assignmentId/feedback"
+          element={user ? <AssignmentDebrief /> : <Navigate to="/login" replace />}
         />
         <Route 
           path="/assignment/:assignmentId" 

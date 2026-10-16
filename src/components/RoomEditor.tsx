@@ -3,13 +3,21 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
-import { useSchools } from '../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
+import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
+import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
+type AuthoredRoom = Room & {
+  consultant_specialties?: string[] | null;
+  consultant_expected_disposition?: string | null;
+  consultant_urgent_exceptions?: string | null;
+};
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type AdmissionLabEntry = {
   labName: string;
@@ -121,6 +129,9 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   
   // Form state
   const [roomNumber, setRoomNumber] = useState(room?.room_number || '');
+  const [learnerProgram, setLearnerProgram] = useState<LearnerProgram>(
+    room?.learner_program === 'nursing' ? 'nursing' : 'medical',
+  );
   const [role, setRole] = useState(room?.role || '');
   const [objective, setObjective] = useState(room?.objective || '');
   const [style, setStyle] = useState(room?.style || '');
@@ -172,6 +183,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier };
   })();
   const [emrContext, setEmrContext] = useState(parsedEmrContext.contextText);
+  const roomWithTimeline = room as (Room & { encounter_type?: EncounterType; hospital_stay_days?: number; hospital_timeline?: unknown }) | undefined;
+  const [encounterType, setEncounterType] = useState<EncounterType>(roomWithTimeline?.encounter_type ?? 'inpatient');
+  const [hospitalStayDays, setHospitalStayDays] = useState(String(roomWithTimeline?.hospital_stay_days ?? 1));
+  const [hospitalTimelineText, setHospitalTimelineText] = useState(JSON.stringify(parseHospitalTimeline(roomWithTimeline?.hospital_timeline ?? DEFAULT_HOSPITAL_TIMELINE), null, 2));
   const [deliveryNote, setDeliveryNote] = useState(parsedEmrContext.deliveryNote);
   const [evaluationLeniencyMultiplier, setEvaluationLeniencyMultiplier] = useState(
     String(parsedEmrContext.evaluationLeniencyMultiplier),
@@ -186,6 +201,15 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   );
   const [planHint, setPlanHint] = useState(parsedCompletionHints.planHint);
   const [bedsideHint, setBedsideHint] = useState(room?.bedside_hint || '');
+  const [patientConversationPrompt, setPatientConversationPrompt] = useState(room?.patient_conversation_prompt || '');
+  const [patientConversationEnabled, setPatientConversationEnabled] = useState(
+    room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
+  );
+  const authoredRoom = room as AuthoredRoom | undefined;
+  const [consultantResponsePrompt, setConsultantResponsePrompt] = useState(room?.consultant_response_prompt || '');
+  const [consultantSpecialties, setConsultantSpecialties] = useState((authoredRoom?.consultant_specialties ?? []).join(', '));
+  const [consultantExpectedDisposition, setConsultantExpectedDisposition] = useState(authoredRoom?.consultant_expected_disposition || 'routine_review');
+  const [consultantUrgentExceptions, setConsultantUrgentExceptions] = useState(authoredRoom?.consultant_urgent_exceptions || '');
   const [bedsideRequirement, setBedsideRequirement] = useState<BedsideRequirement>(
     normalizeBedsideRequirement(room?.bedside_requirement),
   );
@@ -424,6 +448,16 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
       const finalPdfUrl = pdfUrl;
 
+      let hospitalTimeline: HospitalTimeline;
+      try {
+        hospitalTimeline = parseHospitalTimeline(JSON.parse(hospitalTimelineText));
+      } catch {
+        throw new Error('Hospital timeline must be valid JSON.');
+      }
+      hospitalTimeline = { ...hospitalTimeline, encounterType, stayDays: Number(hospitalStayDays) };
+      const timelineErrors = validateHospitalTimeline(hospitalTimeline);
+      if (timelineErrors.length) throw new Error(timelineErrors.join(' '));
+
       const initialVitals = vitalEntries.reduce<Record<string, unknown>>((acc, entry) => {
         const key = entry.key.trim();
         if (!key) return acc;
@@ -485,10 +519,11 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
 
       const roomData = {
         room_number: roomNumber,
+        learner_program: learnerProgram,
         role,
         objective,
-        context: nurseContext,
-        nurse_context: nurseContext,
+        context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
+        nurse_context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
         emr_context: emrContextPayload,
         style,
         specialty_id: specialtyIds[0] ?? null,
@@ -501,6 +536,12 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         completion_hint: completionHintPayload,
         bedside_hint: bedsideHint || null,
         bedside_requirement: bedsideRequirement,
+        patient_conversation_enabled: patientConversationEnabled,
+        patient_conversation_prompt: patientConversationPrompt.trim() || null,
+        consultant_response_prompt: consultantResponsePrompt.trim() || null,
+        consultant_specialties: consultantSpecialties.split(',').map((value) => value.trim()).filter(Boolean),
+        consultant_expected_disposition: consultantExpectedDisposition || null,
+        consultant_urgent_exceptions: consultantUrgentExceptions.trim() || null,
         orders_config: ordersConfig,
         is_active: isActive,
         pdf_url: finalPdfUrl,
@@ -508,7 +549,13 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         // Preserve empty array for "all schools" - only set to null if truly undefined
         available_school_ids: normalizedSchoolIds ?? null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
+        encounter_type: encounterType,
+        hospital_stay_days: hospitalTimeline.stayDays,
+        hospital_timeline: hospitalTimeline,
       };
+
+      let timelinePatientId: string | null = room?.patient_id ?? null;
+      let timelineRoomId: number | null = room?.id ?? null;
 
       if (room) {
         const { error } = await supabase
@@ -564,6 +611,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             console.error('Failed to create patient for room', patientError);
             setError('Room saved, but failed to create EMR patient. Please link manually in Room Management.');
           } else {
+            timelinePatientId = patientRecord.id;
+            timelineRoomId = inserted.id;
             await supabase.from('rooms').update({ patient_id: patientRecord.id }).eq('id', inserted.id);
             try {
               const initialLabs = buildInitialLabResults(
@@ -579,6 +628,39 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             }
           }
         }
+      }
+
+      const savedRoomId = room?.id ?? timelineRoomId;
+      if (savedRoomId) {
+        // The authoring migration is additive and is not in the checked-in generated types yet.
+        // Keep this boundary narrow until the owner refreshes Supabase types after migration.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const authoringClient = supabase as unknown as any;
+        const { error: overrideError } = await authoringClient.from('room_feedback_overrides').upsert({
+          room_id: savedRoomId,
+          config_version: 'feedback-contract-v1',
+          target_diagnosis: expectedDiagnosis || null,
+          goals: caseGoals.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+          consultant_specialties: consultantSpecialties.split(',').map((value) => value.trim()).filter(Boolean),
+          consultant_prompt: consultantResponsePrompt.trim() || null,
+          consultant_expected_disposition: consultantExpectedDisposition || null,
+          consultant_urgent_exceptions: consultantUrgentExceptions.trim() || null,
+          updated_by: profile?.id,
+        });
+        if (overrideError) throw overrideError;
+      }
+
+      if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
+        const { error } = await supabase.rpc('materialize_hospital_timeline', {
+          p_room_id: timelineRoomId,
+          p_patient_id: timelinePatientId,
+          p_school_id: finalSchoolId,
+          p_case_blueprint_id: room?.case_blueprint_id ?? null,
+          p_timeline: hospitalTimeline,
+          p_nurse_context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
+          p_generated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
       }
 
       onSave();
@@ -626,7 +708,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                 </option>
                 {schools.map((school) => (
                   <option key={school.id} value={school.id}>
-                    {school.name}
+                    {getSchoolDisplayName(school)}
                   </option>
                 ))}
               </select>
@@ -670,7 +752,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
                   >
                     {(schoolId ? schools.filter((school) => school.id !== schoolId) : schools).map((school) => (
                       <option key={school.id} value={school.id}>
-                        {school.name}
+                        {getSchoolDisplayName(school)}
                       </option>
                     ))}
                   </select>
@@ -688,6 +770,26 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             </p>
           </div>
         )}
+        <div>
+          <label htmlFor="learnerProgram" className="block text-sm font-medium text-gray-700">
+            Learner program
+          </label>
+          <select
+            id="learnerProgram"
+            value={learnerProgram}
+            onChange={(e) => setLearnerProgram(e.target.value as LearnerProgram)}
+            disabled={Boolean(room)}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100"
+          >
+            {LEARNER_PROGRAMS.map((program) => (
+              <option key={program.value} value={program.value}>{program.label}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            {room ? 'Existing rooms remain in their current track.' : 'Choose the track for this future room; no room is created until you save.'}
+          </p>
+        </div>
+
         <div>
           <label htmlFor="specialty" className="block text-sm font-medium text-gray-700">
             Specialties
@@ -786,6 +888,72 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             required
           />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label htmlFor="patientConversationPrompt" className="block text-sm font-medium text-gray-700">
+              Patient Conversation Prompt
+            </label>
+            <textarea
+              id="patientConversationPrompt"
+              value={patientConversationPrompt}
+              onChange={(e) => setPatientConversationPrompt(e.target.value)}
+              rows={4}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="Patient persona, authored history, and answer boundaries. Do not reveal diagnosis or hidden goals. Leave blank to disable patient chat."
+            />
+            <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={patientConversationEnabled}
+                onChange={(e) => setPatientConversationEnabled(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              Enable patient conversation for students
+            </label>
+            <p className="mt-1 text-xs text-gray-500">Saved directly to the room and used by student patient chat.</p>
+          </div>
+          <div>
+            <label htmlFor="consultantResponsePrompt" className="block text-sm font-medium text-gray-700">
+              Consultant Response Behavior
+            </label>
+            <textarea
+              id="consultantResponsePrompt"
+              value={consultantResponsePrompt}
+              onChange={(e) => setConsultantResponsePrompt(e.target.value)}
+              rows={4}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              placeholder="How the consultant responds: answer the question asked, give recommendation and rationale, and do not reveal hidden evaluation goals."
+            />
+            <p className="mt-1 text-xs text-gray-500">Displayed to the active student Consultant Portal when authored.</p>
+            <label htmlFor="consultantSpecialties" className="mt-3 block text-sm font-medium text-gray-700">Consultant specialties</label>
+            <input id="consultantSpecialties" value={consultantSpecialties} onChange={(e) => setConsultantSpecialties(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm" placeholder="Cardiology, ICU" />
+            <label htmlFor="consultantExpectedDisposition" className="mt-3 block text-sm font-medium text-gray-700">Expected disposition</label>
+            <select id="consultantExpectedDisposition" value={consultantExpectedDisposition} onChange={(e) => setConsultantExpectedDisposition(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm">
+              <option value="routine_review">Routine review / morning follow-up</option>
+              <option value="assumes_care">Consultant assumes care</option>
+            </select>
+            <label htmlFor="consultantUrgentExceptions" className="mt-3 block text-sm font-medium text-gray-700">Urgent disposition exceptions</label>
+            <textarea id="consultantUrgentExceptions" value={consultantUrgentExceptions} onChange={(e) => setConsultantUrgentExceptions(e.target.value)} rows={3} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm" placeholder="Only case-authored ICU, cath-lab, or urgent-OR exceptions belong here." />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+          <h3 className="text-sm font-semibold text-gray-900">Pre-page hospital timeline</h3>
+          <p className="mt-1 text-xs text-gray-600">Chart history is visible before the overnight encounter but is never treated as learner action evidence.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="text-sm font-medium text-gray-700">Encounter type
+              <select value={encounterType} onChange={(e) => setEncounterType(e.target.value as EncounterType)} className="mt-1 block w-full rounded-md border-gray-300 text-sm">
+                <option value="inpatient">Inpatient</option><option value="ed">ED visit (single encounter)</option><option value="ld">L&amp;D / postpartum</option>
+              </select>
+            </label>
+            <label className="text-sm font-medium text-gray-700">Hospital stay days (1–3)
+              <input type="number" min="1" max="3" value={hospitalStayDays} onChange={(e) => setHospitalStayDays(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 text-sm" />
+            </label>
+          </div>
+          <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} onChange={setHospitalTimelineText} /></div>
+          {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <p>Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
 
         <div>

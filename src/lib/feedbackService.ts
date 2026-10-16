@@ -32,14 +32,13 @@ export async function generateFeedback(assignmentId: string): Promise<void> {
       throw new Error('Cannot generate feedback until the assignment is completed');
     }
 
-    // First, reset the status to pending and clear any previous errors
+    // Preserve the prior assessment while a new versioned run is generated.
     const { error: resetError } = await supabase
       .from('student_room_assignments')
       .update({ 
         feedback_status: 'pending',
         feedback_error: null,
-        nurse_feedback: null,
-        feedback_generated_at: null
+        // Do not clear the prior feedback: reruns must not erase audit history or leave a blank shell.
       })
       .eq('id', assignmentId);
 

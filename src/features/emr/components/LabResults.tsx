@@ -1,18 +1,21 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TestTube, TrendingUp, Sparkles, Trash2, Pencil } from 'lucide-react';
-import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { emrApi } from '../lib/api';
 import type { Patient, LabResult } from '../lib/types';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
+import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { clampToMinimumPrior, formatScenarioPrior, minimumPriorTimestamp } from '../lib/scenarioTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -29,10 +32,13 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1 - index) * 24}h prior`;
-
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
-  const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
+  const normalizeForPatient = useCallback(
+    (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender, patient.dateOfBirth)),
+    [patient.gender, patient.dateOfBirth],
+  );
+  const [labResults, setLabResults] = useState<LabResult[]>(normalizeForPatient(sandboxLabs ?? []));
+  const [isLoadingLabs, setIsLoadingLabs] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
   const { profile } = useAuthStore();
@@ -72,6 +78,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     progress_note?: string | null;
     completion_hint?: string | null;
   } | null>(null);
+  const [roomMetaLoaded, setRoomMetaLoaded] = useState(!patient.roomId);
+  const autoResultingOrderIds = useRef(new Set<string>());
   const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
   const { capture, isCurrent } = requestIdentity;
   const labOptions = useMemo(
@@ -81,21 +89,42 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   useEffect(() => {
     const request = capture();
+    setIsLoadingLabs(true);
+    setLabSaveError(null);
     setLabResults([]);
-    if (isSandbox) {
-      if (isCurrent(request)) setLabResults(sandboxLabs ?? []);
+    // A sandbox assignment still has durable, assignment-scoped chart rows.
+    // Only the pre-assignment/local preview path should use the in-memory
+    // callback; otherwise a completed order can appear in Orders while Labs
+    // incorrectly reports an empty chart.
+    if (isSandbox && !assignmentId) {
+      if (isCurrent(request)) {
+        setLabResults(normalizeForPatient(sandboxLabs ?? []));
+        setIsLoadingLabs(false);
+      }
       return;
     }
     void (async () => {
-      const data = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-      if (!isCurrent(request)) return;
-      setLabResults(data);
+      try {
+        const data = await emrApi.listLabResults(
+          patient.id,
+          assignmentId,
+          patient.roomId ?? null,
+          (message) => {
+            if (isCurrent(request)) setLabSaveError(message);
+          },
+        );
+        if (!isCurrent(request)) return;
+        setLabResults(normalizeForPatient(data));
+      } finally {
+        if (isCurrent(request)) setIsLoadingLabs(false);
+      }
     })();
-  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent, normalizeForPatient]);
 
   useEffect(() => {
     const request = capture();
     setRoomMeta(null);
+    setRoomMetaLoaded(!patient.roomId);
     if (!patient.roomId) {
       return;
     }
@@ -104,8 +133,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!isCurrent(request)) return;
       if (error) {
         console.error('Failed to load room context for labs', error);
+        setRoomMetaLoaded(true);
         return;
       }
+      setRoomMetaLoaded(true);
       if (data) {
         let emrContext = data.emr_context ?? null;
         if (typeof emrContext === 'string') {
@@ -121,23 +152,143 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           if (labs?.labs && labs.labs.length) {
             const admissionLabs = labs.labs
               .filter((lab) => lab.testName && lab.value !== undefined)
-              .map((lab, idx) => ({
+              .map((lab, idx) => normalizeLabResultForPatient({
                 ...lab,
                 id: lab.id ?? `admission-${data.id}-${idx}`,
                 patientId: patient.id,
                 assignmentId: assignmentId ?? null,
                 roomId: patient.roomId ?? null,
-                collectionTime: lab.collectionTime ?? new Date().toISOString(),
-                resultTime: lab.resultTime ?? new Date().toISOString(),
+                collectionTime: clampToMinimumPrior(lab.collectionTime, patient.admissionDate),
+                resultTime: clampToMinimumPrior(lab.resultTime ?? lab.collectionTime, patient.admissionDate),
                 orderedBy: lab.orderedBy ?? 'Admission',
                 status: lab.status ?? 'Normal',
-              }));
-            setLabResults((prev) => [...admissionLabs, ...prev]);
+              }, patient.gender, patient.dateOfBirth));
+            const admissionIds = new Set(admissionLabs.map((lab) => lab.id));
+            setLabResults((prev) => [
+              ...admissionLabs,
+              ...prev.filter((lab) => !admissionIds.has(lab.id)),
+            ]);
           }
         }
       }
     })();
-  }, [assignmentId, patient.id, patient.roomId, capture, isCurrent]);
+  }, [assignmentId, patient.id, patient.roomId, patient.admissionDate, patient.gender, patient.dateOfBirth, capture, isCurrent]);
+
+  // Instant labs are result-producing orders in the simulator. Older orders can
+  // predate the order-placement callback, so reconcile them when the Labs tab
+  // opens instead of leaving an order stranded with no result forever.
+  useEffect(() => {
+    if (!roomMetaLoaded) return;
+    const request = capture();
+    void (async () => {
+      const [orders, existingLabs, clinicalNotes, vitals] = await Promise.all([
+        emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
+      ]);
+      if (!isCurrent(request)) return;
+
+      const candidates = orders.filter(
+        (order) => isResultProducingStatLab(order) && order.status !== 'Completed',
+      );
+
+      for (const order of candidates) {
+        if (autoResultingOrderIds.current.has(order.id)) continue;
+        const requestedTests = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+        const hasResult = requestedTests.every((test) =>
+          existingLabs.some((lab) =>
+            lab.testName.toLowerCase() === test.testName.toLowerCase() &&
+            (assignmentId
+              ? lab.assignmentId === assignmentId
+              : lab.assignmentId == null && lab.roomId === patient.roomId),
+          ),
+        );
+        if (hasResult) continue;
+        autoResultingOrderIds.current.add(order.id);
+
+        try {
+          const aiResponse = await supabase.functions.invoke('lab-results', {
+            body: {
+              orderName: order.orderName,
+              priority: order.priority,
+              tests: requestedTests.map((test) => ({
+                testName: test.testName,
+                unit: test.unit,
+                referenceRange: test.referenceRange,
+              })),
+              context: {
+                patient: {
+                  firstName: patient.firstName,
+                  lastName: patient.lastName,
+                  dateOfBirth: patient.dateOfBirth,
+                  gender: patient.gender,
+                  mrn: patient.mrn,
+                  allergies: patient.allergies,
+                  codeStatus: patient.codeStatus,
+                  attendingPhysician: patient.attendingPhysician,
+                  service: patient.service,
+                },
+                room: { id: patient.roomId, number: patient.room },
+                assignmentId: assignmentId ?? null,
+                emrContext: roomMeta?.emr_context ?? null,
+                nurseContext: roomMeta?.nurse_context ?? roomMeta?.context ?? null,
+                clinicalNotes,
+                vitals,
+                previousLabs: existingLabs,
+                orders,
+              },
+            },
+          });
+          if (aiResponse.error) throw aiResponse.error;
+
+          const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+            ? validateGeneratedLabResults(
+                (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+                requestedTests,
+              )
+            : [];
+          const generatedLabs = aiLabs.length === requestedTests.length
+            ? aiLabs
+            : await generateLabResults(patient.id, order.orderName, {
+                patient,
+                assignmentId,
+                roomId: patient.roomId ?? null,
+                orderName: order.orderName,
+                previousLabs: existingLabs,
+                clinicalNotes,
+                vitals,
+              });
+          const runTimestamp = assignmentId
+            ? order.orderTime
+            : minimumPriorTimestamp(patient.admissionDate);
+          const labsWithScope = generatedLabs.map((lab, index) => ({
+            id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
+            patientId: patient.id,
+            assignmentId: assignmentId ?? null,
+            roomId: patient.roomId ?? null,
+            overrideScope: assignmentId ? 'assignment' as const : 'room' as const,
+            testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
+            value: (lab as { value?: string | number }).value ?? '',
+            unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
+            referenceRange: (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
+            status: (lab as { status?: LabResult['status'] }).status ?? 'Normal',
+            collectionTime: runTimestamp,
+            resultTime: runTimestamp,
+            orderedBy: order.orderedBy,
+          }));
+          const writeResult = await emrApi.addLabResults(labsWithScope, patient.roomId ?? null);
+          if (!writeResult.ok) throw new Error(writeResult.error);
+          if (isCurrent(request)) {
+            setLabResults(normalizeForPatient(await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null)));
+          }
+        } catch (error) {
+          autoResultingOrderIds.current.delete(order.id);
+          console.error('Failed to reconcile instant lab order', order.id, error);
+        }
+      }
+    })();
+  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient]);
 
   const handleGenerateLabResults = async () => {
     if (!aiLabName.trim()) return;
@@ -153,8 +304,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
       ]);
 
-      const tests = resolveLabTemplates(orderName);
-      const requestedTests = tests.length ? tests : resolveLabTemplates('default');
+      const tests = resolveLabTemplates(orderName, patient.gender, patient.dateOfBirth);
+      const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender, patient.dateOfBirth);
 
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
@@ -206,22 +357,17 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       }
 
       const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
-        ? ((aiResponse.data as { labs: unknown }).labs as Array<{
-            testName?: string;
-            value?: string | number;
-            unit?: string;
-            referenceRange?: string;
-            status?: LabResult['status'];
-            collectionTime?: string;
-            resultTime?: string;
-          }>)
+        ? validateGeneratedLabResults(
+            (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+            requestedTests,
+          )
         : null;
 
       const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
       const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
 
       const generatedLabs =
-        aiLabs?.length && requestedTests.length
+        aiLabs?.length === requestedTests.length
           ? aiLabs
           : await generateLabResults(patient.id, orderName, {
               patient,
@@ -233,7 +379,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               vitals,
             });
 
-      const runTimestamp = new Date().toISOString();
+      const runTimestamp = minimumPriorTimestamp(patient.admissionDate);
       const labsWithAssignment = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
@@ -250,7 +396,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         resultTime: runTimestamp,
         orderedBy: patient.attendingPhysician ?? 'Attending',
       }));
-      if (isSandbox) {
+      if (isSandbox && !assignmentId) {
         setLabResults((prev) => {
           const updated = [...labsWithAssignment, ...prev];
           onSandboxLabsChange?.(updated);
@@ -266,7 +412,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         
         // Refresh labs from database to get merged results
         const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-        setLabResults(refreshedLabs);
+        setLabResults(normalizeForPatient(refreshedLabs));
       }
       setAiLabName('');
       setAiLabRequest('');
@@ -426,7 +572,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (_value: string, index: number) => formatPriorLabLabel(index, sortedCollectionTimes.length);
+  const formatCollectionLabel = (value: string) => formatScenarioPrior(value, patient.admissionDate, labResults.find((lab) => lab.collectionTime === value)?.relativeOffsetHours);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -450,11 +596,15 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       key,
       [...data]
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-        .map((entry, index) => ({ ...entry, time: formatPriorLabLabel(index, data.length) })),
+        .map((entry) => ({ ...entry, time: formatScenarioPrior(entry.time, patient.admissionDate, labResults.find((lab) => lab.collectionTime === entry.time)?.relativeOffsetHours) })),
     ]),
   );
 
-  const abnormalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Abnormal'), [labResults]);
+  const nonNormalLabs = useMemo(
+    () => labResults.filter((lab) => lab.status === 'Abnormal' || lab.status === 'Critical'),
+    [labResults],
+  );
+  const criticalLabs = useMemo(() => labResults.filter((lab) => lab.status === 'Critical'), [labResults]);
 
   const startLabEdit = (lab: LabResult) => {
     setEditingLab(lab);
@@ -479,6 +629,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const updated = await emrApi.updateLabResult(
         editingLab.id,
         {
+          testName: editingLab.testName,
           value: valueType === 'numeric' ? numericValue : labEditForm.value,
           valueType,
           unit: labEditForm.unit,
@@ -493,11 +644,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!updated) {
         setLabSaveError('Could not save this correction. Please try again.');
       } else if ('conflict' in updated) {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated.current : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated.current, patient.gender, patient.dateOfBirth) : lab)));
         setLabSaveError('This result changed elsewhere. The newer server version is now shown.');
         setEditingLab(null);
       } else {
-        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? updated : lab)));
+        setLabResults((prev) => prev.map((lab) => (lab.id === editingLab.id ? normalizeLabResultForPatient(updated, patient.gender, patient.dateOfBirth) : lab)));
         setEditingLab(null);
       }
     } finally {
@@ -534,7 +685,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             <div>
               <h2 className="text-2xl font-bold">Laboratory Results</h2>
               <p className="text-muted-foreground">
-                {abnormalLabs.length} Abnormal • {labResults.length} Total
+                {nonNormalLabs.length} Non-normal • {criticalLabs.length} Critical • {labResults.length} Total
               </p>
             </div>
             <Button
@@ -592,7 +743,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           <div>
             <h2 className="text-2xl font-bold">Laboratory Results</h2>
             <p className="text-muted-foreground">
-              {abnormalLabs.length} Abnormal • {labResults.length} Total
+              {nonNormalLabs.length} Non-normal • {criticalLabs.length} Critical • {labResults.length} Total
             </p>
           </div>
         </div>
@@ -613,7 +764,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {labResults.length === 0 ? (
+              {labSaveError && !isLoadingLabs ? (
+                <p role="alert" className="text-sm text-red-700">{labSaveError}</p>
+              ) : isLoadingLabs ? (
+                <p className="text-sm text-muted-foreground">Loading saved lab results…</p>
+              ) : labResults.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
               ) : (
                 <div className="rounded-md border overflow-x-auto">
@@ -867,8 +1022,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     unit: manualLabForm.unit.trim(),
                     referenceRange: manualLabForm.referenceRange.trim(),
                     status: manualLabForm.status,
-                    collectionTime: new Date().toISOString(),
-                    resultTime: new Date().toISOString(),
+                    collectionTime: minimumPriorTimestamp(patient.admissionDate),
+                    resultTime: minimumPriorTimestamp(patient.admissionDate),
                     orderedBy: patient.attendingPhysician ?? 'Manual Entry',
                   };
 
@@ -889,7 +1044,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     
                     // Refresh labs from database to get merged results
                     const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-                    setLabResults(refreshedLabs);
+                    setLabResults(normalizeForPatient(refreshedLabs));
                   }
 
                   setShowManualLabModal(false);

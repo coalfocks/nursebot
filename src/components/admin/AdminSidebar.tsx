@@ -37,6 +37,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
     { label: 'EHR', to: '/ehr', icon: Activity },
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
+    { label: 'Feedback Studio', to: '/admin/feedback-studio', icon: FileText },
     { label: 'Students', to: '/cases', icon: GraduationCap },
     { label: 'Data Download', to: '/admin/data-download', icon: Download },
     { label: 'Patients', to: '/admin/patients', icon: UserPlus },

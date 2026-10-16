@@ -1096,6 +1096,39 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      materialize_hospital_timeline: {
+        Args: {
+          p_case_blueprint_id?: string | null
+          p_generated_at?: string
+          p_nurse_context: string
+          p_patient_id: string
+          p_room_id: number
+          p_school_id: string
+          p_timeline: Json
+        }
+        Returns: Json
+      }
+      persist_consultant_response: {
+        Args: {
+          p_student_id: string
+          p_assignment_id: string
+          p_client_request_id: string
+          p_patient_id: string
+          p_room_id: number
+          p_specialty: string
+          p_summary: string
+          p_clinical_question: string
+          p_reason: string
+          p_urgency: string
+          p_response: string
+          p_disposition: string
+        }
+        Returns: { request_id: string; order_id: string; status: string; disposition: string; response: string; idempotent: boolean }[]
+      }
+      change_learner_program: {
+        Args: { change_reason: string; next_program: string; target_profile_id: string }
+        Returns: Database["public"]["Tables"]["profiles"]["Row"]
+      }
       email: { Args: never; Returns: string }
       jwt: { Args: never; Returns: Json }
       role: { Args: never; Returns: string }
@@ -1135,6 +1168,7 @@ export type Database = {
           bedside_requirement: string
           bedside_required: boolean | null
           consults: string | null
+          consultant_response_prompt: string | null
           created_at: string
           created_by: string | null
           difficulty: string
@@ -1145,6 +1179,9 @@ export type Database = {
           generation_status: string
           harmful_actions: string[] | null
           hospital_days: number | null
+          encounter_type: string
+          hospital_stay_days: number
+          hospital_timeline: Json
           id: string
           imaging_and_orders: string | null
           initial_message: string | null
@@ -1154,6 +1191,8 @@ export type Database = {
           progress_note: string | null
           room_number: string | null
           school_id: string
+          source_patient_id: string | null
+          continues_from_room_id: number | null
           specialty: string
           title: string
           typical_questions: string[] | null
@@ -1169,6 +1208,7 @@ export type Database = {
           bedside_requirement?: string
           bedside_required?: boolean | null
           consults?: string | null
+          consultant_response_prompt?: string | null
           created_at?: string
           created_by?: string | null
           difficulty: string
@@ -1179,6 +1219,9 @@ export type Database = {
           generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           id?: string
           imaging_and_orders?: string | null
           initial_message?: string | null
@@ -1188,6 +1231,8 @@ export type Database = {
           progress_note?: string | null
           room_number?: string | null
           school_id: string
+          source_patient_id?: string | null
+          continues_from_room_id?: number | null
           specialty: string
           title: string
           typical_questions?: string[] | null
@@ -1203,6 +1248,7 @@ export type Database = {
           bedside_requirement?: string
           bedside_required?: boolean | null
           consults?: string | null
+          consultant_response_prompt?: string | null
           created_at?: string
           created_by?: string | null
           difficulty?: string
@@ -1213,6 +1259,9 @@ export type Database = {
           generation_status?: string
           harmful_actions?: string[] | null
           hospital_days?: number | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           id?: string
           imaging_and_orders?: string | null
           initial_message?: string | null
@@ -1222,6 +1271,8 @@ export type Database = {
           progress_note?: string | null
           room_number?: string | null
           school_id?: string
+          source_patient_id?: string | null
+          continues_from_room_id?: number | null
           specialty?: string
           title?: string
           typical_questions?: string[] | null
@@ -1247,6 +1298,7 @@ export type Database = {
       chat_messages: {
         Row: {
           assignment_id: string
+          client_message_id: string | null
           content: string
           created_at: string
           id: string
@@ -1257,6 +1309,7 @@ export type Database = {
         }
         Insert: {
           assignment_id: string
+          client_message_id?: string | null
           content: string
           created_at?: string
           id?: string
@@ -1267,6 +1320,7 @@ export type Database = {
         }
         Update: {
           assignment_id?: string
+          client_message_id?: string | null
           content?: string
           created_at?: string
           id?: string
@@ -1292,10 +1346,79 @@ export type Database = {
           },
         ]
       }
+      consultant_chat_messages: {
+        Row: {
+          assignment_id: string
+          content: string
+          created_at: string
+          id: string
+          role: string
+          request_id: string | null
+          specialty: string | null
+          urgency: string | null
+          consult_order_id: string | null
+        }
+        Insert: {
+          assignment_id: string
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+          request_id?: string | null
+          specialty?: string | null
+          urgency?: string | null
+          consult_order_id?: string | null
+        }
+        Update: {
+          assignment_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          request_id?: string | null
+          specialty?: string | null
+          urgency?: string | null
+          consult_order_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consultant_chat_messages_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "student_room_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consultant_requests: {
+        Row: {
+          id: string
+          assignment_id: string
+          patient_id: string | null
+          room_id: number | null
+          specialty: string
+          summary: string
+          clinical_question: string
+          reason: string
+          urgency: string
+          client_request_id: string
+          consult_order_id: string | null
+          response: string | null
+          disposition: string
+          status: string
+          created_at: string
+          answered_at: string | null
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
       clinical_notes: {
         Row: {
           assignment_id: string | null
           author: string | null
+          case_blueprint_id: string | null
+          case_publish_key: string | null
           content: string
           created_at: string | null
           deleted_at: string | null
@@ -1305,15 +1428,19 @@ export type Database = {
           patient_id: string | null
           room_id: number | null
           record_version: number
+          relative_offset_hours: number | null
           school_id: string | null
           signed: boolean | null
           timestamp: string | null
           title: string
+          timeline_entry_id: string | null
           updated_at: string | null
         }
         Insert: {
           assignment_id?: string | null
           author?: string | null
+          case_blueprint_id?: string | null
+          case_publish_key?: string | null
           content: string
           created_at?: string | null
           deleted_at?: string | null
@@ -1323,15 +1450,19 @@ export type Database = {
           patient_id?: string | null
           room_id?: number | null
           record_version?: number
+          relative_offset_hours?: number | null
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
           title: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Update: {
           assignment_id?: string | null
           author?: string | null
+          case_blueprint_id?: string | null
+          case_publish_key?: string | null
           content?: string
           created_at?: string | null
           deleted_at?: string | null
@@ -1341,10 +1472,12 @@ export type Database = {
           patient_id?: string | null
           room_id?: number | null
           record_version?: number
+          relative_offset_hours?: number | null
           school_id?: string | null
           signed?: boolean | null
           timestamp?: string | null
           title?: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1374,11 +1507,18 @@ export type Database = {
       imaging_studies: {
         Row: {
           assignment_id: string | null
+          body_site: string | null
+          case_blueprint_id: string | null
           contrast: string | null
           created_at: string | null
           deleted_at: string | null
+          encounter_time: string | null
+          findings: string | null
           id: string
           images: Json | null
+          indication: string | null
+          impression: string | null
+          laterality: string | null
           order_name: string | null
           order_time: string | null
           ordered_by: string | null
@@ -1387,19 +1527,29 @@ export type Database = {
           priority: string | null
           report: string | null
           report_generated_at: string | null
+          record_version: number
+          relative_offset_hours: number | null
           room_id: number | null
           school_id: string | null
           status: string | null
           study_type: string
+          timeline_entry_id: string | null
           updated_at: string | null
         }
         Insert: {
           assignment_id?: string | null
+          body_site?: string | null
+          case_blueprint_id?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
+          encounter_time?: string | null
+          findings?: string | null
           id?: string
           images?: Json | null
+          indication?: string | null
+          impression?: string | null
+          laterality?: string | null
           order_name?: string | null
           order_time?: string | null
           ordered_by?: string | null
@@ -1408,19 +1558,29 @@ export type Database = {
           priority?: string | null
           report?: string | null
           report_generated_at?: string | null
+          record_version?: number
+          relative_offset_hours?: number | null
           room_id?: number | null
           school_id?: string | null
           status?: string | null
           study_type: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Update: {
           assignment_id?: string | null
+          body_site?: string | null
+          case_blueprint_id?: string | null
           contrast?: string | null
           created_at?: string | null
           deleted_at?: string | null
+          encounter_time?: string | null
+          findings?: string | null
           id?: string
           images?: Json | null
+          indication?: string | null
+          impression?: string | null
+          laterality?: string | null
           order_name?: string | null
           order_time?: string | null
           ordered_by?: string | null
@@ -1429,10 +1589,13 @@ export type Database = {
           priority?: string | null
           report?: string | null
           report_generated_at?: string | null
+          record_version?: number
+          relative_offset_hours?: number | null
           room_id?: number | null
           school_id?: string | null
           status?: string | null
           study_type?: string
+          timeline_entry_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1481,6 +1644,7 @@ export type Database = {
           override_scope: string
           patient_id: string | null
           record_version: number
+          relative_offset_hours: number | null
           reference_range: string | null
           result_time: string | null
           room_id: number | null
@@ -1488,6 +1652,7 @@ export type Database = {
           status: string | null
           specimen: string | null
           test_name: string
+          timeline_entry_id: string | null
           text_value: string | null
           unit: string | null
           updated_at: string | null
@@ -1508,6 +1673,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null
@@ -1515,6 +1681,7 @@ export type Database = {
           status?: string | null
           specimen?: string | null
           test_name: string
+          timeline_entry_id?: string | null
           text_value?: string | null
           unit?: string | null
           updated_at?: string | null
@@ -1535,6 +1702,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
           room_id?: number | null
@@ -1542,6 +1710,7 @@ export type Database = {
           status?: string | null
           specimen?: string | null
           test_name?: string
+          timeline_entry_id?: string | null
           text_value?: string | null
           unit?: string | null
           updated_at?: string | null
@@ -1768,6 +1937,7 @@ export type Database = {
           full_name: string
           id: string
           is_admin: boolean | null
+          learner_program: string | null
           phone_number: string | null
           role: string
           school_id: string | null
@@ -1782,6 +1952,7 @@ export type Database = {
           full_name: string
           id: string
           is_admin?: boolean | null
+          learner_program?: string | null
           phone_number?: string | null
           role?: string
           school_id?: string | null
@@ -1796,6 +1967,7 @@ export type Database = {
           full_name?: string
           id?: string
           is_admin?: boolean | null
+          learner_program?: string | null
           phone_number?: string | null
           role?: string
           school_id?: string | null
@@ -1859,11 +2031,83 @@ export type Database = {
           },
         ]
       }
+      patient_chat_messages: {
+        Row: {
+          assignment_id: string
+          content: string
+          created_at: string
+          id: string
+          role: string
+          reply_to_client_message_id: string | null
+        }
+        Insert: {
+          assignment_id: string
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+          reply_to_client_message_id?: string | null
+        }
+        Update: {
+          assignment_id?: string
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          reply_to_client_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_chat_messages_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "student_room_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      walkthrough_videos: {
+        Row: { id: string; version: number; title: string; description: string; learning_objective: string; topic: string; audience: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible: boolean; thumbnail_path: string | null; video_path: string | null; duration_seconds: number | null; captions_path: string | null; transcript: string; status: string; processing_status: string; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; learning_objective?: string; topic: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; learning_objective?: string; topic?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; onboarding_eligible?: boolean; thumbnail_path?: string | null; video_path?: string | null; duration_seconds?: number | null; captions_path?: string | null; transcript?: string; status?: string; processing_status?: string; created_by?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_courses: {
+        Row: { id: string; version: number; title: string; description: string; audience: 'admin' | 'student' | 'test_room' | 'both'; status: string; is_mandatory: boolean; created_by: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; version?: number; title: string; description?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; version?: number; title?: string; description?: string; audience?: 'admin' | 'student' | 'test_room' | 'both'; status?: string; is_mandatory?: boolean; created_by?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_course_items: {
+        Row: { id: string; course_id: string; course_version: number; video_id: string; video_version: number; position: number; required: boolean }
+        Insert: { id?: string; course_id: string; course_version: number; video_id: string; video_version: number; position: number; required?: boolean }
+        Update: { id?: string; course_id?: string; course_version?: number; video_id?: string; video_version?: number; position?: number; required?: boolean }
+        Relationships: []
+      }
+      walkthrough_enrollments: {
+        Row: { id: string; user_id: string; course_id: string; course_version: number; completed_at: string | null; last_video_id: string | null; last_position_seconds: number; created_at: string; updated_at: string }
+        Insert: { id?: string; user_id: string; course_id: string; course_version: number; completed_at?: string | null; last_video_id?: string | null; last_position_seconds?: number; created_at?: string; updated_at?: string }
+        Update: { id?: string; user_id?: string; course_id?: string; course_version?: number; completed_at?: string | null; last_video_id?: string | null; last_position_seconds?: number; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      walkthrough_progress: {
+        Row: { id: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds: number; watched_intervals: Json; completion_method: 'acknowledgment' | 'ended'; completed_at: string | null; last_activity_at: string }
+        Insert: { id?: string; enrollment_id: string; user_id: string; video_id: string; video_version: number; position_seconds?: number; watched_intervals?: Json; completion_method?: 'acknowledgment' | 'ended'; completed_at?: string | null; last_activity_at?: string }
+        Update: { id?: string; enrollment_id?: string; user_id?: string; video_id?: string; video_version?: number; position_seconds?: number; watched_intervals?: Json; completion_method?: 'acknowledgment' | 'ended'; completed_at?: string | null; last_activity_at?: string }
+        Relationships: []
+      }
+      walkthrough_overrides: {
+        Row: { id: string; user_id: string; enrollment_id: string | null; reason: string; created_by: string; created_at: string }
+        Insert: { id?: string; user_id: string; enrollment_id?: string | null; reason: string; created_by: string; created_at?: string }
+        Update: { id?: string; user_id?: string; enrollment_id?: string | null; reason?: string; created_by?: string; created_at?: string }
+        Relationships: []
+      }
       rooms: {
         Row: {
           available_school_ids: string[] | null
           bedside_hint: string | null
           bedside_requirement: string
+          case_blueprint_id: string | null
           case_goals: string | null
           completion_hint: string | null
           completion_token: string
@@ -1873,16 +2117,25 @@ export type Database = {
           created_by: string | null
           difficulty_level: string | null
           emr_context: string | null
+          encounter_type: string
+          hospital_stay_days: number
+          hospital_timeline: Json
           example_progress_note: string | null
           expected_diagnosis: string | null
           expected_treatment: string[] | null
           id: number
           is_active: boolean | null
+          learner_program: string
           nurse_context: string | null
           objective: string | null
           order_categories: Json | null
           orders_config: Json | null
           patient_id: string | null
+          patient_conversation_enabled: boolean
+          patient_conversation_prompt: string | null
+          consultant_response_prompt: string | null
+          patient_participation_reason: string | null
+          patient_speaker_type: string
           pdf_url: string | null
           progress_note: string | null
           role: string | null
@@ -1897,6 +2150,7 @@ export type Database = {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
           bedside_requirement?: string
+          case_blueprint_id?: string | null
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string
@@ -1906,16 +2160,25 @@ export type Database = {
           created_by?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           example_progress_note?: string | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
           id?: number
           is_active?: boolean | null
+          learner_program?: string
           nurse_context?: string | null
           objective?: string | null
           order_categories?: Json | null
           orders_config?: Json | null
           patient_id?: string | null
+          patient_conversation_enabled?: boolean
+          patient_conversation_prompt?: string | null
+          consultant_response_prompt?: string | null
+          patient_participation_reason?: string | null
+          patient_speaker_type?: string
           pdf_url?: string | null
           progress_note?: string | null
           role?: string | null
@@ -1930,6 +2193,7 @@ export type Database = {
           available_school_ids?: string[] | null
           bedside_hint?: string | null
           bedside_requirement?: string
+          case_blueprint_id?: string | null
           case_goals?: string | null
           completion_hint?: string | null
           completion_token?: string
@@ -1939,16 +2203,25 @@ export type Database = {
           created_by?: string | null
           difficulty_level?: string | null
           emr_context?: string | null
+          encounter_type?: string
+          hospital_stay_days?: number
+          hospital_timeline?: Json
           example_progress_note?: string | null
           expected_diagnosis?: string | null
           expected_treatment?: string[] | null
           id?: number
           is_active?: boolean | null
+          learner_program?: string
           nurse_context?: string | null
           objective?: string | null
           order_categories?: Json | null
           orders_config?: Json | null
           patient_id?: string | null
+          patient_conversation_enabled?: boolean
+          patient_conversation_prompt?: string | null
+          consultant_response_prompt?: string | null
+          patient_participation_reason?: string | null
+          patient_speaker_type?: string
           pdf_url?: string | null
           progress_note?: string | null
           role?: string | null
@@ -1960,6 +2233,13 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "rooms_case_blueprint_id_fkey"
+            columns: ["case_blueprint_id"]
+            isOneToOne: false
+            referencedRelation: "case_blueprints"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "rooms_continues_from_fkey"
             columns: ["continues_from"]
@@ -2000,21 +2280,27 @@ export type Database = {
       schools: {
         Row: {
           created_at: string
+          display_name: string | null
           id: string
+          enabled_programs: string[]
           name: string
           slug: string
           timezone: string | null
         }
         Insert: {
           created_at?: string
+          display_name?: string | null
           id?: string
+          enabled_programs?: string[]
           name: string
           slug: string
           timezone?: string | null
         }
         Update: {
           created_at?: string
+          display_name?: string | null
           id?: string
+          enabled_programs?: string[]
           name?: string
           slug?: string
           timezone?: string | null
@@ -2067,13 +2353,24 @@ export type Database = {
           effective_date: string | null
           feedback: string | null
           feedback_error: string | null
+          feedback_debrief: Json | null
+          feedback_schema_version: string | null
           feedback_generated_at: string | null
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
           id: string
+          is_sandbox: boolean
           learning_objectives: string | null
+          learner_program: string
           mdm_breakdown: Json | null
           mdm_score: number | null
+          safety_result: Json | null
+          scoring_start_at: string | null
+          rubric_version: string | null
+          case_key_version: string | null
+          assessment_version: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
           notification_sent: boolean | null
           notification_sent_at: string | null
           nurse_feedback: Json | null
@@ -2102,15 +2399,26 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
+          feedback_schema_version?: string | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
             | null
           grade?: number | null
           id?: string
+          is_sandbox?: boolean
           learning_objectives?: string | null
+          learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2128,6 +2436,7 @@ export type Database = {
         }
         Update: {
           assigned_by?: string
+          is_sandbox?: boolean
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null
@@ -2139,6 +2448,8 @@ export type Database = {
           effective_date?: string | null
           feedback?: string | null
           feedback_error?: string | null
+          feedback_debrief?: Json | null
+          feedback_schema_version?: string | null
           feedback_generated_at?: string | null
           feedback_status?:
             | Database["public"]["Enums"]["feedback_status"]
@@ -2146,8 +2457,16 @@ export type Database = {
           grade?: number | null
           id?: string
           learning_objectives?: string | null
+          learner_program?: string
           mdm_breakdown?: Json | null
           mdm_score?: number | null
+          safety_result?: Json | null
+          scoring_start_at?: string | null
+          rubric_version?: string | null
+          case_key_version?: string | null
+          assessment_version?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
           notification_sent?: boolean | null
           notification_sent_at?: string | null
           nurse_feedback?: Json | null
@@ -2194,6 +2513,51 @@ export type Database = {
           },
         ]
       }
+      feedback_assessment_runs: {
+        Row: {
+          id: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at: string | null
+          source_event_ids: Json
+          technical_incomplete: boolean
+          result: Json | null
+          feedback_schema_version: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          assignment_id: string
+          attempt_id: string
+          rubric_version: string
+          case_key_version: string
+          assessment_version: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          feedback_schema_version?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          assignment_id?: string
+          attempt_id?: string
+          rubric_version?: string
+          case_key_version?: string
+          assessment_version?: string
+          scoring_start_at?: string | null
+          source_event_ids?: Json
+          technical_incomplete?: boolean
+          result?: Json | null
+          feedback_schema_version?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       vital_signs: {
         Row: {
           assignment_id: string | null
@@ -2213,6 +2577,8 @@ export type Database = {
           school_id: string | null
           temperature: number | null
           timestamp: string
+          timeline_entry_id: string | null
+          relative_offset_hours: number | null
           updated_at: string | null
           weight: number | null
         }
@@ -2234,6 +2600,8 @@ export type Database = {
           school_id?: string | null
           temperature?: number | null
           timestamp: string
+          timeline_entry_id?: string | null
+          relative_offset_hours?: number | null
           updated_at?: string | null
           weight?: number | null
         }
@@ -2255,6 +2623,8 @@ export type Database = {
           school_id?: string | null
           temperature?: number | null
           timestamp?: string
+          timeline_entry_id?: string | null
+          relative_offset_hours?: number | null
           updated_at?: string | null
           weight?: number | null
         }

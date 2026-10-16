@@ -8,11 +8,14 @@ import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
 import { emrApi } from '../lib/api';
-import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates, validateGeneratedLabResults, type GeneratedLabPayload } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { minimumPriorTimestamp } from '../lib/scenarioTime';
+import { buildMissingCompletedLabResults } from '../lib/completedLabReconciliation';
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -21,6 +24,7 @@ interface OrdersManagementProps {
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
+  refreshToken?: number;
 }
 
 type RoomMeta = {
@@ -53,12 +57,15 @@ export function OrdersManagement({
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
+  refreshToken,
 }: OrdersManagementProps) {
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
+  const [isPlacingIv, setIsPlacingIv] = useState(false);
+  const [ivSuccess, setIvSuccess] = useState<string | null>(null);
   const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
   const [editingOrder, setEditingOrder] = useState<MedicalOrder | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'Lab' | 'Medication' | 'Imaging' | 'Other'>('all');
@@ -80,8 +87,23 @@ export function OrdersManagement({
       const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
       if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
+      // A completed order may predate the result callback (or a prior route
+      // entry may have loaded while that callback was still failing). Repair
+      // only completed, assignment-scoped lab orders on fresh load; the
+      // materializer is idempotent and never touches baseline results.
+      let materialized = false;
+      if (assignmentId) {
+        for (const order of data.filter((item) => item.category === 'Lab' && item.status === 'Completed')) {
+          try {
+            materialized = (await ensureCompletedLabResults(order)) || materialized;
+          } catch (error) {
+            console.error('Failed to reconcile completed lab on chart load', error);
+          }
+        }
+        if (materialized && requestIdentity.isCurrent(request)) onLabsGenerated?.();
+      }
     })();
-  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, requestIdentity]);
 
   useEffect(() => {
     const request = requestIdentity.capture();
@@ -145,7 +167,7 @@ export function OrdersManagement({
     effectiveAssignmentId: string | null,
   ) => {
     const { studyType, contrast } = deriveImagingDetails(order.orderName);
-    const now = order.orderTime || new Date().toISOString();
+    const now = order.orderTime || minimumPriorTimestamp(patient.admissionDate);
     const overrideScope = forceBaseline
       ? 'baseline'
       : order.overrideScope ?? (effectiveAssignmentId ? 'assignment' : effectiveRoomId ? 'room' : 'baseline');
@@ -257,7 +279,7 @@ export function OrdersManagement({
     }
   };
 
-  const handleOrderPlaced = async (newOrder: MedicalOrder) => {
+  const handleOrderPlaced = async (newOrder: MedicalOrder): Promise<boolean> => {
     const adjustedOrder: MedicalOrder = {
       ...newOrder,
       assignmentId: forceBaseline ? null : newOrder.assignmentId,
@@ -280,7 +302,7 @@ export function OrdersManagement({
     );
     if (!saved) {
       setOrderSaveError('Could not save this order. Please try again.');
-      return;
+      return false;
     }
     setOrders((prev) => [saved, ...prev]);
     setShowOrderEntry(false);
@@ -301,7 +323,8 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const requestedTests = resolveLabTemplates(adjustedOrder.orderName).map((template) => ({
+        const resolvedTests = resolveLabTemplates(adjustedOrder.orderName, patient.gender, patient.dateOfBirth);
+        const requestedTests = resolvedTests.map((template) => ({
           testName: template.testName,
           unit: template.unit,
           referenceRange: template.referenceRange,
@@ -368,19 +391,14 @@ export function OrdersManagement({
         }
 
         const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
-          ? ((aiResponse.data as { labs: unknown }).labs as Array<{
-              testName: string;
-              value: string | number;
-              unit?: string;
-              referenceRange?: string;
-              status?: string;
-              collectionTime?: string;
-              resultTime?: string;
-            }>)
+          ? validateGeneratedLabResults(
+              (aiResponse.data as { labs: GeneratedLabPayload[] }).labs,
+              resolvedTests,
+            )
           : null;
 
         const generatedLabs =
-          aiLabs?.length && requestedTests.length
+          aiLabs?.length === requestedTests.length
             ? aiLabs
             : await generateLabResults(patient.id, adjustedOrder.orderName, {
                 patient,
@@ -392,7 +410,9 @@ export function OrdersManagement({
                 vitals,
               });
 
-        const runTimestamp = new Date().toISOString();
+          const runTimestamp = effectiveAssignmentId
+            ? new Date().toISOString()
+            : minimumPriorTimestamp(patient.admissionDate);
         const labsWithScope = generatedLabs.map((lab, index) => ({
           id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
           patientId: patient.id,
@@ -420,6 +440,32 @@ export function OrdersManagement({
       }
     }
     onOrderAdded?.(saved);
+    return true;
+  };
+
+  const ensureCompletedLabResults = async (order: MedicalOrder): Promise<boolean> => {
+    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return false;
+    const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
+    const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
+    if (!isResultProducingStatLab(order)) return false;
+    const generated = await generateLabResults(patient.id, order.orderName, {
+      patient,
+      assignmentId,
+      roomId: patient.roomId,
+      orderName: order.orderName,
+    });
+    const results = buildMissingCompletedLabResults({
+      order,
+      patient,
+      assignmentId,
+      existingLabs: existing,
+      generatedLabs: generated,
+      templates,
+    });
+    if (!results.length) return false;
+    const writeResult = await emrApi.addLabResults(results, patient.roomId);
+    if (!writeResult.ok) throw new Error(writeResult.error);
+    return true;
   };
 
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
@@ -429,12 +475,27 @@ export function OrdersManagement({
     if (updated && 'conflict' in updated) {
       setOrders((prev) => prev.map((order) => (order.id === orderId ? updated.current : order)));
       setOrderSaveError('This order changed elsewhere. The newer server version is now shown.');
-    } else if (updated) {
+  } else if (updated) {
       setOrders((prev) => prev.map((order) => (order.id === orderId ? updated : order)));
+      // LabResults reconciles completed STAT orders on its next refresh. This
+      // matters when the learner completes an order before the async result
+      // callback has finished (or when the original callback failed).
+      if (updated.category === 'Lab' && updated.status === 'Completed') {
+        try {
+          await ensureCompletedLabResults(updated);
+        } catch (error) {
+          console.error('Failed to materialize completed lab results', error);
+          setOrderSaveError('The order completed, but its assignment-linked result could not be materialized. Refresh and retry.');
+        }
+        onLabsGenerated?.();
+      }
     }
   };
 
   const handlePlaceIvOrder = async () => {
+    if (isPlacingIv) return;
+    setIsPlacingIv(true);
+    setIvSuccess(null);
     const quickIvOrder: MedicalOrder = {
       id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
       patientId: patient.id,
@@ -442,15 +503,21 @@ export function OrdersManagement({
       roomId: forceBaseline ? null : patient.roomId ?? null,
       overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: 'Nursing',
-      orderName: 'Place IV',
+      orderName: 'Peripheral IV access',
       priority: 'Routine',
       status: 'Active',
-      orderedBy: patient.attendingPhysician ?? 'Attending',
+      orderedBy: profile?.full_name ? `${profile.full_name} (${profile.role ?? 'student'})` : 'Learner (student)',
       orderTime: new Date().toISOString(),
       instructions: 'Establish peripheral IV access.',
       recordVersion: 1,
     };
-    await handleOrderPlaced(quickIvOrder);
+    try {
+      if (await handleOrderPlaced(quickIvOrder)) {
+        setIvSuccess('Peripheral IV access order saved: Routine · Active.');
+      }
+    } finally {
+      setIsPlacingIv(false);
+    }
   };
 
   const getStatusIcon = (status: string) => {
@@ -604,8 +671,8 @@ export function OrdersManagement({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void handlePlaceIvOrder()}>
-            Place IV order
+          <Button variant="outline" onClick={() => void handlePlaceIvOrder()} disabled={isPlacingIv}>
+            {isPlacingIv ? 'Saving…' : 'Order peripheral IV access'}
           </Button>
           <Button onClick={() => setShowOrderEntry(!showOrderEntry)} className="flex items-center gap-2">
             <Plus className="h-4 w-4" />
@@ -617,6 +684,11 @@ export function OrdersManagement({
       {orderSaveError && (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {orderSaveError}
+        </p>
+      )}
+      {ivSuccess && (
+        <p role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          {ivSuccess}
         </p>
       )}
 
