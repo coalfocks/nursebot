@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
     const { data: assignment, error: assignmentError } = await supabaseAdmin
       .from('student_room_assignments')
       .select(
-        'scenario_baseline, room:room_id(emr_context, patient_conversation_prompt, patient_conversation_enabled, patient_participation_reason, patient_speaker_type)',
+        'scenario_baseline, room:room_id(emr_context, patient_conversation_prompt, patient_conversation_enabled, patient_participation_reason, patient_speaker_type, patient_response_mode)',
       )
       .eq('id', payload.assignmentId)
       .eq('student_id', authData.user.id)

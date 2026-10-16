@@ -25,6 +25,30 @@ describe('resolvePatientChatConfig', () => {
     }).responseMode).toBe('unable');
   });
 
+  it('uses a legacy prompt-only unable declaration for a pinned dedicated prompt', () => {
+    expect(resolvePatientChatConfig({
+      patient_conversation_prompt: 'Patient unable to respond; do not provide a conversational answer.',
+      patient_conversation_enabled: true,
+      emr_context: JSON.stringify({ patientChat: { enabled: true } }),
+    })).toMatchObject({ enabled: true, responseMode: 'unable' });
+  });
+
+  it('lets an explicit responsive mode override a legacy unable declaration', () => {
+    expect(resolvePatientChatConfig({
+      patient_conversation_prompt: 'Patient unable to respond unless the mode is explicitly responsive.',
+      patient_conversation_enabled: true,
+      patient_response_mode: 'responsive',
+    }).responseMode).toBe('responsive');
+  });
+
+  it('does not infer a legacy alias from a versioned structured prompt', () => {
+    expect(resolvePatientChatConfig({
+      patient_conversation_prompt: 'The patient is unable to respond to this question, but remains responsive to simple comfort checks.',
+      patient_conversation_enabled: true,
+      emr_context: JSON.stringify({ patientChat: { configVersion: 2 } }),
+    }).responseMode).toBe('responsive');
+  });
+
   it('preserves disabled and caregiver configuration', () => {
     expect(resolvePatientChatConfig({
       patient_conversation_prompt: 'Caregiver behavior',
