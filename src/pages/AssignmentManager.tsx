@@ -14,6 +14,7 @@ import {
 import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
+import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -149,28 +150,7 @@ export default function AssignmentManager() {
       setLoading(true);
       setLoadError(null);
       try {
-        let assignmentsQuery = supabase
-          .from('student_room_assignments')
-          .eq('is_sandbox', false)
-          .select(`
-            *,
-            student:student_id (
-              id,
-              full_name,
-              study_year,
-              email,
-              school_id,
-              specialization_interest
-            ),
-            room:room_id (
-              id,
-              room_number,
-              specialty_id,
-              difficulty_level,
-              school_id
-            )
-          `)
-          .order('created_at', { ascending: false });
+        const assignmentsQuery = buildAssignmentListQuery(supabase, scopedSchoolId);
 
         let studentsQuery = supabase
           .from('profiles')
@@ -189,7 +169,6 @@ export default function AssignmentManager() {
           .order('name');
 
         if (scopedSchoolId) {
-          assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
           studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
           specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
