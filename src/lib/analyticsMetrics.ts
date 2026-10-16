@@ -1,15 +1,18 @@
 export type AnalyticsAssignment = {
+  id?: string;
   status: string | null;
   feedbackStatus: string | null;
   studentId: string | null;
   communicationScore: number | null;
   mdmScore: number | null;
   overallScore: number | null;
+  feedbackDebrief?: Record<string, unknown> | null;
 };
 
 export type AnalyticsRow = AnalyticsAssignment & {
   id: string;
   schoolId: string | null;
+  schoolName?: string | null;
   studentName: string;
   studentRole: string | null;
   roomId: number;
@@ -22,6 +25,7 @@ export type AnalyticsRow = AnalyticsAssignment & {
   communicationBreakdown: Record<string, unknown> | null;
   mdmBreakdown: Record<string, unknown> | null;
   nurseFeedback: Record<string, unknown> | null;
+  feedbackDebrief: Record<string, unknown> | null;
 };
 
 export type DashboardMetrics = CohortMetrics & {
@@ -58,7 +62,17 @@ export type CohortMetrics = {
   };
 };
 
-export const ANALYTICS_METRIC_VERSION = '2026-10-06.1';
+export const ANALYTICS_METRIC_VERSION = '2026-10-16.1';
+
+export const ANALYTICS_QUERY_CONTRACT = {
+  source: 'student_room_assignments',
+  rowGrain: 'one row per assignment id',
+  officialFilter: 'is_sandbox = false',
+  eligible: "status != 'cancelled'",
+  completed: "status = 'completed'",
+  assessed: "status = 'completed' AND feedback_status = 'completed'",
+  scoreSamples: 'one distinct assignment id per domain, restricted to assessed rows with a finite score',
+} as const;
 
 export const formatCompletionDuration = (minutes: number | null): string => {
   if (minutes == null || !Number.isFinite(minutes)) return '—';
@@ -109,7 +123,8 @@ export const computeCohortMetrics = (
   assignments: AnalyticsAssignment[],
   eligibleLearners: number,
 ): CohortMetrics => {
-  const eligible = assignments.filter((assignment) => assignment.status !== 'cancelled');
+  const uniqueAssignments = uniqueByAssignmentId(assignments);
+  const eligible = uniqueAssignments.filter((assignment) => assignment.status !== 'cancelled');
   const completed = eligible.filter((assignment) => assignment.status === 'completed');
   const assessed = completed.filter((assignment) => assignment.feedbackStatus === 'completed');
   const participatingLearners = new Set(
@@ -142,6 +157,88 @@ export const computeCohortMetrics = (
     participationRate: percentage(participatingLearners, eligibleLearners),
     scoreDistributions: { communication, mdm },
   };
+};
+
+const uniqueByAssignmentId = <T extends AnalyticsAssignment>(assignments: T[]): T[] => {
+  const seen = new Set<string>();
+  return assignments.filter((assignment, index) => {
+    const id = assignment.id ?? `row-${index}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
+export type GroupedAnalytics = {
+  attempts: number;
+  completed: number;
+  assessed: number;
+  communication: number[];
+  mdm: number[];
+};
+
+export const computeGroupedAnalytics = (
+  rows: AnalyticsRow[],
+  groupBy: 'school' | 'specialty',
+): Map<string, GroupedAnalytics> => {
+  const groups = new Map<string, GroupedAnalytics>();
+  uniqueByAssignmentId(rows).forEach((row) => {
+    const key = groupBy === 'school' ? row.schoolName ?? 'Unknown school' : row.specialty;
+    const current = groups.get(key) ?? { attempts: 0, completed: 0, assessed: 0, communication: [], mdm: [] };
+    current.attempts += 1;
+    if (row.status === 'completed') current.completed += 1;
+    const assessed = row.status === 'completed' && row.feedbackStatus === 'completed';
+    if (assessed) {
+      current.assessed += 1;
+      if (typeof row.communicationScore === 'number' && Number.isFinite(row.communicationScore)) current.communication.push(row.communicationScore);
+      if (typeof row.mdmScore === 'number' && Number.isFinite(row.mdmScore)) current.mdm.push(row.mdmScore);
+    }
+    groups.set(key, current);
+  });
+  return groups;
+};
+
+type Narrative = { text?: unknown; evidence_event_ids?: unknown; evidence?: unknown; title?: unknown; practice_example?: unknown; example?: unknown };
+export type AnalyticsTheme = { text: string; count: number };
+
+const narrativeEvidenceIds = (item: Narrative): string[] => {
+  const direct = Array.isArray(item.evidence_event_ids) ? item.evidence_event_ids : [];
+  const nested = Array.isArray(item.evidence) ? item.evidence : [];
+  return [...direct, ...nested.map((e) => e && typeof e === 'object' ? (e as Record<string, unknown>).event_id ?? (e as Record<string, unknown>).id : null)]
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+};
+
+const narrativeText = (item: Narrative, growth: boolean): string | null => {
+  const value = growth ? (item.title ?? item.practice_example ?? item.example ?? item.text) : item.text;
+  if (typeof value !== 'string') return null;
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text || /^observed (?:a )?learner-authored/i.test(text) || /^no case-specific/i.test(text)) return null;
+  return text;
+};
+
+export const extractEvidenceBackedThemes = (rows: AnalyticsRow[]): { strengths: AnalyticsTheme[]; growth: AnalyticsTheme[] } => {
+  const collect = (target: Map<string, AnalyticsTheme>, values: unknown, growth: boolean) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((raw) => {
+      if (!raw || typeof raw !== 'object') return;
+      const item = raw as Narrative;
+      const text = narrativeText(item, growth);
+      if (!text || narrativeEvidenceIds(item).length === 0) return;
+      const key = text.toLocaleLowerCase();
+      const existing = target.get(key);
+      if (existing) existing.count += 1;
+      else target.set(key, { text, count: 1 });
+    });
+  };
+  const strengths = new Map<string, AnalyticsTheme>();
+  const growth = new Map<string, AnalyticsTheme>();
+  uniqueByAssignmentId(rows).forEach((row) => {
+    const debrief = row.feedbackDebrief ?? {};
+    collect(strengths, debrief.strengths, false);
+    collect(growth, debrief.growth_areas, true);
+    collect(growth, debrief.improvements, true);
+  });
+  return { strengths: [...strengths.values()].sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)), growth: [...growth.values()].sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)) };
 };
 
 const average = (values: number[]) =>
