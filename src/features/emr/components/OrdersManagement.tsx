@@ -14,6 +14,8 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { minimumPriorTimestamp } from '../lib/scenarioTime';
+import { buildMissingCompletedLabResults } from '../lib/completedLabReconciliation';
+import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -22,6 +24,7 @@ interface OrdersManagementProps {
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
+  refreshToken?: number;
 }
 
 type RoomMeta = {
@@ -54,6 +57,7 @@ export function OrdersManagement({
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
+  refreshToken,
 }: OrdersManagementProps) {
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
@@ -87,18 +91,19 @@ export function OrdersManagement({
       // entry may have loaded while that callback was still failing). Repair
       // only completed, assignment-scoped lab orders on fresh load; the
       // materializer is idempotent and never touches baseline results.
+      let materialized = false;
       if (assignmentId) {
         for (const order of data.filter((item) => item.category === 'Lab' && item.status === 'Completed')) {
           try {
-            await ensureCompletedLabResults(order);
+            materialized = (await ensureCompletedLabResults(order)) || materialized;
           } catch (error) {
             console.error('Failed to reconcile completed lab on chart load', error);
           }
         }
-        if (requestIdentity.isCurrent(request)) onLabsGenerated?.();
+        if (materialized && requestIdentity.isCurrent(request)) onLabsGenerated?.();
       }
     })();
-  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
+  }, [patient.id, patient.roomId, assignmentId, refreshToken, requestIdentity]);
 
   useEffect(() => {
     const request = requestIdentity.capture();
@@ -438,41 +443,29 @@ export function OrdersManagement({
     return true;
   };
 
-  const ensureCompletedLabResults = async (order: MedicalOrder) => {
-    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return;
+  const ensureCompletedLabResults = async (order: MedicalOrder): Promise<boolean> => {
+    if (order.category !== 'Lab' || !assignmentId || !patient.roomId) return false;
     const existing = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId);
     const templates = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
-    const existingNames = new Set(existing.filter((lab) => lab.assignmentId === assignmentId).map((lab) => lab.testName.toLowerCase()));
-    const missing = templates.filter((template) => !existingNames.has(template.testName.toLowerCase()));
-    if (!missing.length) return;
+    if (!isResultProducingStatLab(order)) return false;
     const generated = await generateLabResults(patient.id, order.orderName, {
       patient,
       assignmentId,
       roomId: patient.roomId,
       orderName: order.orderName,
     });
-    const byName = new Map(generated.map((lab) => [lab.testName.toLowerCase(), lab]));
-    const now = new Date().toISOString();
-    const results = missing.map((template, index) => {
-      const generatedLab = byName.get(template.testName.toLowerCase());
-      return {
-        id: generatedLab?.id ?? `completed-lab-${order.id}-${index}`,
-        patientId: patient.id,
-        assignmentId,
-        roomId: patient.roomId,
-        overrideScope: 'assignment' as const,
-        testName: template.testName,
-        value: generatedLab?.value ?? 0,
-        unit: template.unit,
-        referenceRange: template.referenceRange,
-        status: generatedLab?.status ?? 'Normal',
-        collectionTime: now,
-        resultTime: now,
-        orderedBy: order.orderedBy,
-      };
+    const results = buildMissingCompletedLabResults({
+      order,
+      patient,
+      assignmentId,
+      existingLabs: existing,
+      generatedLabs: generated,
+      templates,
     });
+    if (!results.length) return false;
     const writeResult = await emrApi.addLabResults(results, patient.roomId);
     if (!writeResult.ok) throw new Error(writeResult.error);
+    return true;
   };
 
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {

@@ -190,7 +190,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!isCurrent(request)) return;
 
       const candidates = orders.filter(
-        (order) => isResultProducingStatLab(order),
+        (order) => isResultProducingStatLab(order) && order.status !== 'Completed',
       );
 
       for (const order of candidates) {
@@ -260,7 +260,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 vitals,
               });
           const runTimestamp = assignmentId
-            ? new Date().toISOString()
+            ? order.orderTime
             : minimumPriorTimestamp(patient.admissionDate);
           const labsWithScope = generatedLabs.map((lab, index) => ({
             id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,

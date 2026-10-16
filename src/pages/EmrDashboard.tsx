@@ -39,7 +39,7 @@ export default function EmrDashboard() {
   const [patientLoadError, setPatientLoadError] = useState<string | null>(null);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
-  const [labsRefreshToken, setLabsRefreshToken] = useState(0);
+  const [emrRefreshToken, setEmrRefreshToken] = useState(0);
   const [isEditingCustomSections, setIsEditingCustomSections] = useState(false);
   const [customSectionDraft, setCustomSectionDraft] = useState<CustomOverviewSection[]>([]);
   const [customSectionErrors, setCustomSectionErrors] = useState<Record<string, string>>({});
@@ -137,8 +137,18 @@ export default function EmrDashboard() {
       // Assignment routes carry immutable room and assignment IDs. Prefer
       // that linked patient over the broad student list, which may contain a
       // previous sandbox session for the same room.
-      if (assignmentId && routeRoomId) {
-        const patient = await emrApi.getPatientByRoomId(Number.parseInt(routeRoomId, 10));
+      if (assignmentId && !routeRoomId && !hasAdminAccess(profile)) {
+        setPatients([]);
+        setSelectedPatient(null);
+        setPatientLoadError('This assignment route is missing its linked room scope. Open the EMR from the active assignment.');
+        return;
+      }
+      if (assignmentId && routeRoomId && !hasAdminAccess(profile)) {
+        const patient = await emrApi.getPatientForStudentAssignment(
+          user.id,
+          assignmentId,
+          Number.parseInt(routeRoomId, 10),
+        );
         if (patient) {
           setPatients([patient]);
           setSelectedPatient(patient);
@@ -174,6 +184,7 @@ export default function EmrDashboard() {
   useEffect(() => {
     const patientIdParam = searchParams.get('patientId');
     const roomIdParam = searchParams.get('roomId');
+    if (!hasAdminAccess(profile) && assignmentId) return;
     if (patients.length) {
       const matchingPatient =
         patients.find(
@@ -187,6 +198,8 @@ export default function EmrDashboard() {
         return;
       }
     }
+
+    if (!hasAdminAccess(profile)) return;
 
     if (roomIdParam) {
       void (async () => {
@@ -217,7 +230,7 @@ export default function EmrDashboard() {
         }
       })();
     }
-  }, [patients, searchParams]);
+  }, [assignmentId, patients, profile, searchParams]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -292,7 +305,7 @@ export default function EmrDashboard() {
         setVitalsForm({});
       }
     })();
-  }, [selectedPatient, effectiveAssignmentId, capturePatientRequest, isCurrentPatientRequest]);
+  }, [selectedPatient, effectiveAssignmentId, emrRefreshToken, capturePatientRequest, isCurrentPatientRequest]);
 
   useEffect(() => {
     if (!selectedPatient || !user || forceBaseline) {
@@ -970,7 +983,7 @@ export default function EmrDashboard() {
                                   },
                                 ];
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
-                                setLabsRefreshToken((t) => t + 1);
+                                setEmrRefreshToken((t) => t + 1);
                                 setSandboxLabForm({
                                   testName: '',
                                   value: '',
@@ -1071,7 +1084,7 @@ export default function EmrDashboard() {
                                   orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
                                 }));
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
-                                setLabsRefreshToken((t) => t + 1);
+                                setEmrRefreshToken((t) => t + 1);
                                 setSandboxLabForm({
                                   testName: '',
                                   value: '',
@@ -1116,7 +1129,7 @@ export default function EmrDashboard() {
                 assignmentId={effectiveAssignmentId}
                 isSandbox={isSandbox}
                 sandboxLabs={sandboxLabs}
-                refreshToken={labsRefreshToken}
+                refreshToken={emrRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
               />
             </TabsContent>
@@ -1135,8 +1148,13 @@ export default function EmrDashboard() {
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
                 forceBaseline={forceBaseline}
-                onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
-                onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
+                refreshToken={emrRefreshToken}
+                onOrderAdded={() => {
+                  setEmrRefreshToken((token) => token + 1);
+                }}
+                onLabsGenerated={() => {
+                  setEmrRefreshToken((token) => token + 1);
+                }}
                 onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}
               />
             </TabsContent>

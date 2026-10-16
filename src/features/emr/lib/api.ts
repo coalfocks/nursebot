@@ -297,6 +297,36 @@ export const emrApi = {
     return null;
   },
 
+  async getPatientForStudentAssignment(studentId: string, assignmentId: string, roomId: number): Promise<Patient | null> {
+    const { data, error } = await supabase
+      .from('student_room_assignments')
+      .select(`
+        id,
+        room_id,
+        room:room_id (
+          id,
+          room_number,
+          patient:patient_id (*)
+        )
+      `)
+      .eq('id', assignmentId)
+      .eq('student_id', studentId)
+      .eq('room_id', roomId)
+      .in('status', ['assigned', 'in_progress', 'bedside', 'completed'])
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching student assignment patient', error);
+      return null;
+    }
+
+    const patientRow = data?.room?.patient as Database['public']['Tables']['patients']['Row'] | null;
+    if (!patientRow || patientRow.deleted_at) return null;
+    const patient = mapPatient(patientRow, data.room?.id ?? roomId);
+    if (data.room?.room_number) patient.room = data.room.room_number;
+    return patient;
+  },
+
   async listPatients(): Promise<Patient[]> {
     const { data, error } = await supabase
       .from('patients')
