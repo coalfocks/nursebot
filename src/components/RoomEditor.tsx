@@ -11,6 +11,7 @@ import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
+import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -175,9 +176,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           if (typeof generated.consultantResponsePrompt === 'string') generatedConsultantPrompt = generated.consultantResponsePrompt;
           if (typeof generated.consultant_response_prompt === 'string') generatedConsultantPrompt = generated.consultant_response_prompt;
           const patientChat = (parsed as { patientChat?: { responseMode?: unknown } }).patientChat;
-          if (patientChat?.responseMode === 'unable' || (parsed as { patientResponseMode?: unknown }).patientResponseMode === 'unable') {
-            generatedPatientResponseMode = 'unable';
-          }
+          generatedPatientResponseMode = normalizePatientResponseMode(patientChat?.responseMode ?? (parsed as { patientResponseMode?: unknown }).patientResponseMode);
           const rawLeniency = (parsed as {
             evaluation?: { leniencyMultiplier?: unknown };
           }).evaluation?.leniencyMultiplier;
@@ -493,7 +492,16 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         }))
         .filter((entry) => entry.labName || entry.note || entry.value);
 
-      const emrContextPayloadObject: Record<string, unknown> = {};
+      let existingEmrContext: Record<string, unknown> = {};
+      if (typeof room?.emr_context === 'string') {
+        try {
+          const parsed = JSON.parse(room.emr_context);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) existingEmrContext = parsed as Record<string, unknown>;
+        } catch {
+          // Rebuild only malformed legacy JSON; valid nested fields are preserved below.
+        }
+      }
+      const emrContextPayloadObject: Record<string, unknown> = mergePatientChatContext(existingEmrContext, patientResponseMode);
       if (cleanedAdmissionLabs.length > 0) {
         emrContextPayloadObject.admission = { labs: cleanedAdmissionLabs };
       }
@@ -506,7 +514,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       if (initialVitals) {
         emrContextPayloadObject.initial_vitals = initialVitals;
       }
-      emrContextPayloadObject.patientChat = { responseMode: patientResponseMode };
       const normalizedLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(
         Number.parseFloat(evaluationLeniencyMultiplier),
       );

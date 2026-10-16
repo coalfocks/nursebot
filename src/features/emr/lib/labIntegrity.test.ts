@@ -157,7 +157,7 @@ describe('lab integrity', () => {
     ])).toBe(false);
   });
 
-  it('compares follow-up glucose to the active assignment result, not admission baseline', () => {
+  it('does not use prior synthetic glucose rows as truth anchors', () => {
     const tests = resolveLabTemplates('Glucose POC');
     expect(validateGeneratedLabResults(
       [{ testName: 'Glucose', value: 97.2, referenceRange: tests[0].referenceRange }],
@@ -169,7 +169,17 @@ describe('lab integrity', () => {
           { testName: 'Glucose', value: 570, assignmentId: 'attempt-1' },
         ] as unknown as LabResult[],
       },
-    )).toEqual([]);
+    )).toHaveLength(1);
+  });
+
+  it('allows a coherent post-treatment/euglycemic DKA panel', () => {
+    const tests = resolveLabTemplates('VBG');
+    expect(validateGeneratedLabResults([
+      { testName: 'pH (Venous)', value: 7.25, referenceRange: tests[0].referenceRange },
+      { testName: 'pCO2 (Venous)', value: 29, referenceRange: tests[1].referenceRange },
+      { testName: 'HCO3 (Venous)', value: 16, referenceRange: tests[2].referenceRange },
+      { testName: 'Base Excess', value: -10, referenceRange: tests[3].referenceRange },
+    ], tests, { caseInstructions: 'DKA after treatment; euglycemic stage.', caseStage: 'post-treatment', treatmentActions: [{ name: 'insulin infusion', status: 'given', occurredAt: '2026-10-16T11:10:00Z' }] })).toHaveLength(4);
   });
 
   it('requires every ordered CBC differential analyte', () => {

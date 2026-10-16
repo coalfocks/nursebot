@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { decideExistingPatientChatRequest } from '../_shared/patient-chat-request-claim.ts';
+import { resolvePatientChatConfig, type PatientChatRoomConfig } from '../_shared/patient-chat-config.ts';
 
 interface ChatMessage {
   role: 'system' | 'assistant' | 'user';
@@ -15,13 +16,7 @@ interface PatientChatPayload {
   messages?: ChatMessage[];
 }
 
-interface PatientChatRoom {
-  emr_context?: unknown;
-  patient_conversation_prompt?: string | null;
-  patient_conversation_enabled?: boolean | null;
-  patient_participation_reason?: string | null;
-  patient_speaker_type?: 'patient' | 'caregiver' | null;
-}
+type PatientChatRoom = PatientChatRoomConfig;
 
 const resolvePinnedRoom = (room: PatientChatRoom | null, baseline: unknown) => {
   if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) return room;
@@ -32,46 +27,6 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL');
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!supabaseUrl || !serviceRoleKey) throw new Error('Missing Supabase service credentials');
 const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
-
-const readPatientChatConfig = (room: PatientChatRoom | null) => {
-  // Existing rooms receive a null prompt when the optional columns are added.
-  // Keep their authored legacy patientChat configuration working. A non-null
-  // prompt or an explicit disabled flag opts into the structured authoring path.
-  if (room?.patient_conversation_prompt != null || room?.patient_conversation_enabled === false) {
-    const prompt = room.patient_conversation_prompt?.trim() ?? '';
-    const enabled = Boolean(room.patient_conversation_enabled) && Boolean(prompt);
-    const speaker = room.patient_speaker_type === 'caregiver' ? 'caregiver' : 'patient';
-    return {
-      enabled,
-      prompt,
-      speaker,
-      responseMode: 'responsive' as const,
-      reason: room.patient_participation_reason?.trim() || 'Patient cannot participate in conversation.',
-    };
-  }
-
-  const emrContext = room?.emr_context;
-  let context = emrContext;
-  if (typeof context === 'string') {
-    try {
-      context = JSON.parse(context);
-    } catch {
-      return { enabled: false, prompt: '', speaker: 'patient', responseMode: 'responsive' as const, reason: 'Patient background is unavailable.' };
-    }
-  }
-  const record = context && typeof context === 'object' ? context as Record<string, unknown> : {};
-  const bedside = record.bedside && typeof record.bedside === 'object' ? record.bedside as Record<string, unknown> : record;
-  const patientChat = record.patientChat && typeof record.patientChat === 'object' ? record.patientChat as Record<string, unknown> : {};
-  const prompt = String(patientChat.prompt ?? bedside.patientChatPrompt ?? '');
-  const enabled = Boolean(patientChat.enabled ?? bedside.patientChatEnabled) && Boolean(prompt);
-  return {
-    enabled,
-    prompt,
-    speaker: patientChat.speaker === 'caregiver' ? 'caregiver' : 'patient',
-    responseMode: patientChat.responseMode === 'unable' || bedside.patientResponseMode === 'unable' ? 'unable' : 'responsive',
-    reason: String(patientChat.disableReason ?? bedside.disableReason ?? 'Patient cannot participate in conversation.'),
-  };
-};
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -251,7 +206,7 @@ Deno.serve(async (req) => {
     if (assignmentError) throw assignmentError;
     const room = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
     const pinnedRoom = resolvePinnedRoom(room as PatientChatRoom | null, assignment?.scenario_baseline);
-    const config = readPatientChatConfig(pinnedRoom);
+    const config = resolvePatientChatConfig(pinnedRoom);
     if (!config.enabled) {
       return new Response(JSON.stringify({ error: config.reason }), {
         status: 409,

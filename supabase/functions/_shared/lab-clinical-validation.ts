@@ -11,6 +11,9 @@ type LabContext = {
   objective?: string | null;
   emrContext?: unknown;
   previousLabs?: Array<{ testName?: string; value?: LabValue; assignmentId?: string | null }>;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
+  orders?: Array<{ orderName?: string | null; status?: string | null; instructions?: string | null; orderTime?: string | null }>;
 };
 
 const key = (value: string) => value.toLowerCase().replace(/[()]/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -34,6 +37,11 @@ const contextText = (context?: LabContext) => [
   typeof context?.emrContext === 'string' ? context.emrContext : JSON.stringify(context?.emrContext ?? ''),
 ].filter(Boolean).join(' ').toLowerCase();
 
+const isPostTreatmentStage = (context?: LabContext) => {
+  const stage = `${context?.caseStage ?? ''} ${context?.emrContext ? JSON.stringify(context.emrContext) : ''} ${context?.treatmentActions?.map((action) => `${action.name ?? ''} ${action.status ?? ''}`).join(' ') ?? ''} ${context?.orders?.map((order) => `${order.orderName ?? ''} ${order.status ?? ''} ${order.instructions ?? ''}`).join(' ') ?? ''}`.toLowerCase();
+  return /post[- ]?treatment|after treatment|improv|recheck|euglycemic|insulin given|fluids given|treatment started/.test(stage);
+};
+
 export const validateClinicalLabPanel = (
   rows: Record<string, unknown>[],
   context?: LabContext,
@@ -41,7 +49,7 @@ export const validateClinicalLabPanel = (
   const text = contextText(context);
   const dkaLike = /\bdka\b|diabetic ketoacidosis|kussmaul|deep\s+(?:and\s+)?rapid\s+breath|insulin\s+(?:was\s+)?omitted|glucose\s*[:=]?\s*[2-9]\d\d/.test(text);
 
-  if (dkaLike) {
+  if (dkaLike && !isPostTreatmentStage(context)) {
     const glucose = numberFor(rows, ['Glucose']);
     const ketones = numberFor(rows, ['Beta-Hydroxybutyrate']);
     const bicarbonate = numberFor(rows, ['CO2 (Bicarbonate)', 'HCO3 (Arterial)', 'HCO3 (Venous)']);
@@ -71,18 +79,6 @@ export const validateClinicalLabPanel = (
     .filter(Number.isFinite);
   if (glucoseRows.length > 1 && Math.max(...glucoseRows) - Math.min(...glucoseRows) > 5) {
     return { ok: false, reason: 'glucose values disagree across the ordered panel' };
-  }
-  if (context?.assignmentId) {
-    const priorAssignmentGlucose = (context.previousLabs ?? [])
-      .filter((entry) => entry.assignmentId === context.assignmentId && /glucose/i.test(entry.testName ?? ''))
-      .map((entry) => typeof entry.value === 'number' ? entry.value : Number(entry.value))
-      .filter(Number.isFinite);
-    if (priorAssignmentGlucose.length && glucoseRows.length) {
-      const latest = priorAssignmentGlucose[priorAssignmentGlucose.length - 1];
-      if (glucoseRows.some((value) => Math.abs(value - latest) > 5)) {
-        return { ok: false, reason: 'glucose disagrees with the active assignment result' };
-      }
-    }
   }
   return { ok: true };
 };
