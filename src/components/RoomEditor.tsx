@@ -12,7 +12,7 @@ import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
-import { buildContextOnlyEmrPayload } from '../lib/roomEditorPersistence';
+import { buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -136,17 +136,15 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
   const [nurseContext, setNurseContext] = useState(room?.nurse_context || room?.context || '');
   const parsedEmrContext = (() => {
     const raw = room?.emr_context;
-    let contextText = raw || '';
+    const parsed = parseRoomEmrContext(raw);
+    let contextText = typeof parsed.context === 'string' ? parsed.context : (typeof raw === 'string' ? raw : '');
     let admissionLabs: AdmissionLabEntry[] = [];
     let deliveryNote = '';
     let evaluationLeniencyMultiplier = 1;
     let generatedPatientPrompt = '';
     let generatedPatientResponseMode: 'responsive' | 'unable' = 'responsive';
     let generatedConsultantPrompt = '';
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
+    if (Object.keys(parsed).length > 0) {
           if (typeof parsed.context === 'string') {
             contextText = parsed.context;
           }
@@ -186,11 +184,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
           } else if (typeof rawLeniency === 'string') {
             evaluationLeniencyMultiplier = normalizeEvaluationLeniencyMultiplier(Number(rawLeniency));
           }
-        }
-      } catch {
-        // If not JSON, treat as plain text context
-        contextText = raw;
-      }
     }
     return { contextText, admissionLabs, deliveryNote, evaluationLeniencyMultiplier, generatedPatientPrompt, generatedConsultantPrompt, generatedPatientResponseMode };
   })();
@@ -463,49 +456,44 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       }
       const finalPdfUrl = pdfUrl;
 
-      // EMR context is independently authored. When it is the only dirty
-      // section on an existing room, make a minimal patch and return before
-      // timeline validation/default reconstruction/full-form submission.
-      if (room && emrContext !== parsedEmrContext.contextText) {
-        const unchanged = JSON.stringify({
-          roomNumber, learnerProgram, role, objective, style, nurseContext, caseGoals, progressNote,
-          assessmentHint, diagnosisDifferentiatorHint, planHint, bedsideHint, patientConversationPrompt,
-          patientConversationEnabled, consultantResponsePrompt, bedsideRequirement, specialtyIds,
-          difficultyLevel, expectedDiagnosis, expectedTreatment, ordersConfig, isActive, continuesFrom,
-          patientResponseMode,
-          schoolId, availableSchoolIds, allSchoolsSelected, encounterType, hospitalStayDays,
-          hospitalTimelineText, deliveryNote, evaluationLeniencyMultiplier,
-        }) === JSON.stringify({
-          roomNumber: room.room_number, learnerProgram: room.learner_program === 'nursing' ? 'nursing' : 'medical',
-          role: room.role || '', objective: room.objective || '', style: room.style || '',
-          nurseContext: room.nurse_context || room.context || '', caseGoals: room.case_goals || '',
-          progressNote: room.progress_note || '', assessmentHint: parsedCompletionHints.assessmentHint,
-          diagnosisDifferentiatorHint: parsedCompletionHints.diagnosisDifferentiatorHint,
-          planHint: parsedCompletionHints.planHint, bedsideHint: room.bedside_hint || '',
-          patientConversationPrompt: room.patient_conversation_prompt || parsedEmrContext.generatedPatientPrompt || '',
-          patientConversationEnabled: room.patient_conversation_enabled ?? Boolean(room.patient_conversation_prompt),
-          patientResponseMode: normalizePatientResponseMode(
-            (parsedEmrContext as { generatedPatientResponseMode?: unknown }).generatedPatientResponseMode,
-          ),
-          consultantResponsePrompt: room.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
-          bedsideRequirement: normalizeBedsideRequirement(room.bedside_requirement), specialtyIds: initialSpecialtyIds,
-          difficultyLevel: room.difficulty_level || null, expectedDiagnosis: room.expected_diagnosis || '',
-          expectedTreatment: room.expected_treatment || [], ordersConfig: initialOrdersConfig,
-          isActive: room.is_active ?? true, continuesFrom: room.continues_from ? String(room.continues_from) : '',
-          schoolId: scopedSchoolId ?? '', availableSchoolIds: initialAvailableSchoolIds, allSchoolsSelected: isAllSchools,
-          encounterType: roomWithTimeline?.encounter_type ?? 'inpatient',
-          hospitalStayDays: String(roomWithTimeline?.hospital_stay_days ?? 1), hospitalTimelineText: initialHospitalTimelineText,
-          deliveryNote: parsedEmrContext.deliveryNote, evaluationLeniencyMultiplier: String(parsedEmrContext.evaluationLeniencyMultiplier),
-        });
-        if (unchanged) {
-          const { error: contextError } = await supabase
-            .from('rooms')
-            .update({ emr_context: buildContextOnlyEmrPayload(room.emr_context, emrContext) })
-            .eq('id', room.id);
-          if (contextError) throw contextError;
-          onSave();
-          return;
-        }
+      // Build the same snapshot shape on both sides. Stable structural
+      // comparison avoids false full-form saves caused by JSON property order.
+      const currentNonContextSnapshot = {
+        roomNumber, learnerProgram, role, objective, style, patientName, nurseContext, caseGoals, progressNote,
+        assessmentHint, diagnosisDifferentiatorHint, planHint, bedsideHint, patientConversationPrompt,
+        patientConversationEnabled, patientResponseMode, consultantResponsePrompt, bedsideRequirement,
+        specialtyIds, difficultyLevel, expectedDiagnosis, expectedTreatment, ordersConfig, isActive, continuesFrom,
+        schoolId, availableSchoolIds, allSchoolsSelected, encounterType, hospitalStayDays,
+        hospitalTimelineText, deliveryNote, evaluationLeniencyMultiplier,
+      };
+      const originalNonContextSnapshot = {
+        roomNumber: room?.room_number || '', learnerProgram: room?.learner_program === 'nursing' ? 'nursing' : 'medical',
+        role: room?.role || '', objective: room?.objective || '', style: room?.style || '', patientName: '',
+        nurseContext: room?.nurse_context || room?.context || '', caseGoals: room?.case_goals || '',
+        progressNote: room?.progress_note || '', assessmentHint: parsedCompletionHints.assessmentHint,
+        diagnosisDifferentiatorHint: parsedCompletionHints.diagnosisDifferentiatorHint,
+        planHint: parsedCompletionHints.planHint, bedsideHint: room?.bedside_hint || '',
+        patientConversationPrompt: room?.patient_conversation_prompt || parsedEmrContext.generatedPatientPrompt || '',
+        patientConversationEnabled: room?.patient_conversation_enabled ?? Boolean(room?.patient_conversation_prompt),
+        patientResponseMode: parsedEmrContext.generatedPatientResponseMode,
+        consultantResponsePrompt: room?.consultant_response_prompt || parsedEmrContext.generatedConsultantPrompt || '',
+        bedsideRequirement: normalizeBedsideRequirement(room?.bedside_requirement), specialtyIds: initialSpecialtyIds,
+        difficultyLevel: room?.difficulty_level || null, expectedDiagnosis: room?.expected_diagnosis || '',
+        expectedTreatment: room?.expected_treatment || [], ordersConfig: initialOrdersConfig,
+        isActive: room?.is_active ?? true, continuesFrom: room?.continues_from ? String(room.continues_from) : '',
+        schoolId: scopedSchoolId ?? '', availableSchoolIds: initialAvailableSchoolIds, allSchoolsSelected: isAllSchools,
+        encounterType: roomWithTimeline?.encounter_type ?? 'inpatient',
+        hospitalStayDays: String(roomWithTimeline?.hospital_stay_days ?? 1), hospitalTimelineText: initialHospitalTimelineText,
+        deliveryNote: parsedEmrContext.deliveryNote, evaluationLeniencyMultiplier: String(parsedEmrContext.evaluationLeniencyMultiplier),
+      };
+      const contextOnlyUpdate = room
+        ? buildContextOnlyRoomUpdate(room.emr_context, emrContext, currentNonContextSnapshot, originalNonContextSnapshot)
+        : null;
+      if (contextOnlyUpdate && room) {
+        const { error: contextError } = await supabase.from('rooms').update(contextOnlyUpdate).eq('id', room.id);
+        if (contextError) throw contextError;
+        onSave();
+        return;
       }
 
       let hospitalTimeline: HospitalTimeline;
