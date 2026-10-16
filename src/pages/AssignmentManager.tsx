@@ -11,6 +11,7 @@ import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
+import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -109,27 +110,35 @@ export default function AssignmentManager() {
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
+  const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
-    const result = new Set<string>();
-    // Keep the `in` filter bounded. All-school admin views can contain thousands
-    // of assignments, and a 1,000-ID URL can exceed the REST gateway envelope.
-    const pageSize = 200;
-    for (let from = 0; from < assignmentIds.length; from += pageSize) {
-      const { data, error } = await withTimeout(
-        supabase
-          .from('chat_messages')
-          .select('assignment_id')
-          .in('assignment_id', assignmentIds.slice(from, from + pageSize))
-          .range(0, pageSize - 1),
-        'chat evidence lookup'
+    setChatEvidenceStatus('loading');
+    try {
+      const result = await collectPersistedChatAssignmentIds(
+        assignmentIds,
+        async (batch, from, to) => {
+          const { data, error } = await withTimeout(
+            supabase
+              .from('chat_messages')
+              .select('assignment_id')
+              .in('assignment_id', batch)
+              .order('created_at', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to),
+            'chat evidence lookup'
+          );
+          return { data: data as { assignment_id: string | null }[] | null, error };
+        },
       );
-      if (error) throw error;
-      (data ?? []).forEach((message) => result.add(message.assignment_id));
+      setChatEvidenceStatus('ready');
+      return result;
+    } catch (error) {
+      setChatEvidenceStatus('error');
+      throw error;
     }
-    return result;
   };
 
   const getOverallScore = (feedback: Database['public']['Tables']['student_room_assignments']['Row']['nurse_feedback']) => {
@@ -191,7 +200,13 @@ export default function AssignmentManager() {
 
         const loadedAssignments = ((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null);
         setAssignments(loadedAssignments);
-        setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+        try {
+          setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+        } catch (error) {
+          console.error('Error fetching persisted chat evidence:', error);
+          // The assignment list remains usable, but every badge stays unknown.
+          setAssignmentsWithPersistedChat(new Set());
+        }
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -239,7 +254,12 @@ export default function AssignmentManager() {
     if (error) throw error;
     const loadedAssignments = ((data ?? []) as Assignment[]).filter(a => a.room !== null);
     setAssignments(loadedAssignments);
-    setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+    try {
+      setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+    } catch (error) {
+      console.error('Error fetching persisted chat evidence:', error);
+      setAssignmentsWithPersistedChat(new Set());
+    }
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {
@@ -1085,16 +1105,24 @@ export default function AssignmentManager() {
                           <div className="text-gray-500">
                             Feedback provided
                           </div>
-                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                          {chatEvidenceStatus === 'error' ? (
+                            <div className="text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</div>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <div className="text-xs text-gray-500">Checking chat evidence…</div>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
                             <div className="text-xs text-amber-700">No persisted chat evidence</div>
-                          )}
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-500">
                           No feedback yet
-                          {!assignmentsWithPersistedChat.has(assignment.id) && (
+                          {chatEvidenceStatus === 'error' ? (
+                            <span className="block text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</span>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <span className="block text-xs text-gray-500">Checking chat evidence…</span>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
                             <span className="block text-xs text-amber-700">No persisted chat evidence</span>
-                          )}
+                          ) : null}
                         </span>
                       )}
                     </td>

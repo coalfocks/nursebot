@@ -7,7 +7,8 @@ import {
   parseNumericLabValue,
   parseNumericReferenceRange,
 } from './labIntegrity';
-import { resolveLabTemplates, validateGeneratedLabResults } from './aiLabGenerator';
+import { isClinicallyCoherentPanel, resolveLabTemplates, validateGeneratedLabResults } from './aiLabGenerator';
+import type { LabResult } from './types';
 
 describe('lab integrity', () => {
   it('parses bounded numeric ranges without accepting malformed text', () => {
@@ -139,6 +140,44 @@ describe('lab integrity', () => {
       status: 'Pending',
       specimen: 'Peripheral blood',
     }]);
+  });
+
+  it('rejects admission-jitter glucose/ketone output for a DKA case', () => {
+    const tests = resolveLabTemplates('BMP');
+    expect(validateGeneratedLabResults([
+      ...tests.map((test) => ({ testName: test.testName, value: test.testName === 'Glucose' ? 97.2 : 140, referenceRange: test.referenceRange })),
+    ], tests, { caseInstructions: 'Opening glucose 570 with Kussmaul breathing after insulin was omitted.' })).toEqual([]);
+  });
+
+  it('rejects incoherent VBG values instead of persisting them', () => {
+    expect(isClinicallyCoherentPanel([
+      { testName: 'pH (Venous)', value: 6.7 },
+      { testName: 'pCO2 (Venous)', value: 44.4 },
+      { testName: 'HCO3 (Venous)', value: 30.7 },
+    ])).toBe(false);
+  });
+
+  it('compares follow-up glucose to the active assignment result, not admission baseline', () => {
+    const tests = resolveLabTemplates('Glucose POC');
+    expect(validateGeneratedLabResults(
+      [{ testName: 'Glucose', value: 97.2, referenceRange: tests[0].referenceRange }],
+      tests,
+      {
+        assignmentId: 'attempt-1',
+        previousLabs: [
+          { testName: 'Glucose', value: 108, assignmentId: null },
+          { testName: 'Glucose', value: 570, assignmentId: 'attempt-1' },
+        ] as unknown as LabResult[],
+      },
+    )).toEqual([]);
+  });
+
+  it('requires every ordered CBC differential analyte', () => {
+    const tests = resolveLabTemplates('CBC with Differential');
+    const missingDifferential = tests
+      .filter((test) => test.testName !== 'Neutrophils %')
+      .map((test) => ({ testName: test.testName, value: 10, referenceRange: test.referenceRange }));
+    expect(validateGeneratedLabResults(missingDifferential, tests)).toEqual([]);
   });
 
   it.each([
