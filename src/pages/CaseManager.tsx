@@ -294,17 +294,8 @@ export default function CaseManager() {
         
         if (error) throw error;
         
-        // Update assignment status if not already completed
-        const { error: updateError } = await supabase
-          .from('student_room_assignments')
-          .update({
-            status: 'completed',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', selectedAssignmentId)
-          .eq('status', 'in_progress'); // Only update if in progress
-        
-        if (updateError) throw updateError;
+        // Manual feedback is not a completion transition. Completion must go
+        // through the audited learner/admin RPC with an explicit request ID.
       }
       
       // Refresh assignments

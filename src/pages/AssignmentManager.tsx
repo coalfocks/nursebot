@@ -112,6 +112,7 @@ export default function AssignmentManager() {
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
+  const [repairingCompletions, setRepairingCompletions] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
@@ -749,6 +750,26 @@ export default function AssignmentManager() {
     }
   };
 
+  const handleRepairInvalidCompletion = async (assignment: Assignment) => {
+    const completion = assignment as Assignment & { completed_at?: string | null; completion_source?: string | null; completion_actor_id?: string | null; completion_request_id?: string | null };
+    const invalid = assignment.status === 'completed' && (!completion.completed_at || !completion.completion_source || !completion.completion_actor_id || !completion.completion_request_id);
+    if (!assignment.is_sandbox || !invalid) return;
+    if (!window.confirm('Restore this invalid synthetic completion to active? Evidence will be preserved and the action will be audited.')) return;
+    setRepairingCompletions((current) => new Set(current).add(assignment.id));
+    try {
+      const { error } = await (supabase as any).rpc('restore_invalid_completion_to_active', {
+        p_assignment_id: assignment.id,
+        p_client_request_id: crypto.randomUUID(),
+      });
+      if (error) throw error;
+      await fetchAssignments();
+    } catch (error) {
+      alert(`Invalid completion could not be repaired: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setRepairingCompletions((current) => { const next = new Set(current); next.delete(assignment.id); return next; });
+    }
+  };
+
   const filteredStudents = assignableStudents.filter((student) => {
     const term = studentSearch.toLowerCase();
     return (
@@ -1216,6 +1237,11 @@ export default function AssignmentManager() {
                                 {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
                               </button>
                             )}
+                            {assignment.is_sandbox && assignment.status === 'completed' && (() => {
+                              const candidate = assignment as Assignment & { completed_at?: string | null; completion_source?: string | null; completion_actor_id?: string | null; completion_request_id?: string | null };
+                              const invalid = !candidate.completed_at || !candidate.completion_source || !candidate.completion_actor_id || !candidate.completion_request_id;
+                              return invalid ? <button onClick={() => void handleRepairInvalidCompletion(assignment)} disabled={repairingCompletions.has(assignment.id)} className="inline-flex items-center px-3 py-2 border border-amber-300 shadow-sm text-sm leading-4 font-medium rounded-md text-amber-700 bg-white hover:bg-amber-50 disabled:opacity-50">{repairingCompletions.has(assignment.id) ? 'Repairing…' : 'Repair invalid completion'}</button> : null;
+                            })()}
                           </>
                         )}
                       </div>
