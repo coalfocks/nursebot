@@ -56,4 +56,13 @@ describe('resolvePatientChatConfig', () => {
       patient_speaker_type: 'caregiver',
     })).toMatchObject({ enabled: false, speaker: 'caregiver' });
   });
+
+  it('resolves a pinned nested mode without the optional dedicated mode column', () => {
+    const config = resolvePatientChatConfig({
+      patient_conversation_prompt: 'Return exactly the authored response.',
+      patient_conversation_enabled: true,
+      emr_context: JSON.stringify({ patientChat: { enabled: true, responseMode: 'unable', prompt: 'legacy' } }),
+    });
+    expect(config).toMatchObject({ enabled: true, responseMode: 'unable', prompt: 'Return exactly the authored response.' });
+  });
 });

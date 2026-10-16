@@ -17,6 +17,7 @@ import {
 } from '../lib/caseBuilderPublish';
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from '../components/HospitalTimelineEditor';
+import { normalizeAuthoredConversationPrompt } from '../lib/conversationPrompts';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -393,9 +394,9 @@ export default function CaseBuilder() {
         bedside_requirement: form.bedsideRequirement,
         bedside_required: form.bedsideRequirement === 'yes',
         patient_chat_enabled: form.patientChatEnabled,
-        patient_conversation_prompt: form.patientConversationPrompt.trim() || null,
+        patient_conversation_prompt: normalizeAuthoredConversationPrompt(form.patientConversationPrompt),
         consults: form.consults.trim() || null,
-        consultant_response_prompt: form.consultantResponsePrompt.trim() || null,
+        consultant_response_prompt: normalizeAuthoredConversationPrompt(form.consultantResponsePrompt),
         event_vitals: form.eventVitals.trim() || null,
         nurse_exam: form.nurseExam.trim() || null,
         bedside_exam: form.bedsideExam.trim() || null,
@@ -1216,7 +1217,10 @@ export default function CaseBuilder() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-4">
+                  <h3 className="text-base font-semibold text-slate-900">Conversation Prompts</h3>
+                  <p className="mt-1 text-xs text-slate-600">These two authored fields are carried unchanged into the published room and pinned assignment. They are the complete channel instructions; no generated nurse context, goals, or hidden defaults are appended.</p>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium text-slate-700">Consults</label>
                     <textarea
@@ -1266,6 +1270,7 @@ export default function CaseBuilder() {
                       unconscious patients.
                     </p>
                   </div>
+                </div>
                 </div>
 
                 <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">

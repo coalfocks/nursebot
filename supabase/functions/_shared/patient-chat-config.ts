@@ -101,7 +101,8 @@ export const resolvePatientChatConfig = (room: PatientChatRoomConfig | null): Re
   const explicitEnabled = room?.patient_conversation_enabled ?? patientChat.enabled ?? bedside.patientChatEnabled;
   const enabled = Boolean(explicitEnabled) && Boolean(prompt);
   const reason = room?.patient_participation_reason?.trim() ||
-    String(patientChat.disableReason ?? bedside.disableReason ?? 'Patient cannot participate in conversation.');
+    String(patientChat.disableReason ?? bedside.disableReason ??
+      (prompt ? 'Patient conversation is disabled for this room.' : 'Patient Conversation Prompt not configured. Ask an administrator to configure this room.'));
 
   return { enabled, prompt, speaker, responseMode, reason };
 };
