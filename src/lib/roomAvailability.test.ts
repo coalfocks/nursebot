@@ -23,8 +23,22 @@ describe('room availability', () => {
   });
 
   it('reports added and removed school IDs without touching the primary', () => {
-    expect(describeRoomAvailabilityChange(['primary', 'other'], ['primary', 'ua'], 'primary')).toEqual({
+    expect(describeRoomAvailabilityChange(['primary', 'other'], ['primary', 'ua'], 'primary', ['primary', 'ua', 'other'])).toEqual({
       addedSchoolIds: ['ua'], removedSchoolIds: ['other'],
+      beforeLabel: 'Specific schools', afterLabel: 'Specific schools',
+    });
+  });
+
+  it('uses effective sets for null primary-only, all, and specific transitions', () => {
+    const directory = ['primary', 'ua', 'other'];
+    expect(describeRoomAvailabilityChange(null, ['primary', 'ua'], 'primary', directory)).toMatchObject({
+      beforeLabel: 'Primary school only', afterLabel: 'Specific schools', addedSchoolIds: ['ua'], removedSchoolIds: [],
+    });
+    expect(describeRoomAvailabilityChange([], ['primary', 'ua'], 'primary', directory)).toMatchObject({
+      beforeLabel: 'All schools', afterLabel: 'Specific schools', addedSchoolIds: [], removedSchoolIds: ['other'],
+    });
+    expect(describeRoomAvailabilityChange(['primary', 'ua'], [], 'primary', directory)).toMatchObject({
+      beforeLabel: 'Specific schools', afterLabel: 'All schools', addedSchoolIds: ['other'], removedSchoolIds: [],
     });
   });
 });

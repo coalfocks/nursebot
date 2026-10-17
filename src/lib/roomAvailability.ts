@@ -8,6 +8,8 @@ export type RoomAvailabilityInput = {
 export type RoomAvailabilityDiff = {
   addedSchoolIds: string[];
   removedSchoolIds: string[];
+  beforeLabel: string;
+  afterLabel: string;
 };
 
 export function normalizeRoomAvailability(input: RoomAvailabilityInput): string[] {
@@ -24,15 +26,27 @@ export function normalizeRoomAvailability(input: RoomAvailabilityInput): string[
 
 export function describeRoomAvailabilityChange(
   previous: readonly string[] | null | undefined,
-  next: readonly string[],
+  next: readonly string[] | null | undefined,
   primarySchoolId: string,
+  authorizedSchoolIds: readonly string[] = [],
 ): RoomAvailabilityDiff {
-  // null/undefined and [] both mean all schools; compare their effective sets
-  // only when a concrete list is available from the admin's school directory.
-  const previousIds = new Set((previous ?? []).filter((id) => id && id !== primarySchoolId));
-  const nextIds = new Set(next.filter((id) => id && id !== primarySchoolId));
+  const directory = new Set(authorizedSchoolIds.filter(Boolean));
+  const effective = (value: readonly string[] | null | undefined) => {
+    if (Array.isArray(value) && value.length === 0) return new Set(directory);
+    if (value == null) return new Set(primarySchoolId ? [primarySchoolId] : []);
+    return new Set([primarySchoolId, ...value].filter((id) => !directory.size || directory.has(id)));
+  };
+  const previousIds = effective(previous);
+  const nextIds = effective(next);
+  const label = (value: readonly string[] | null | undefined) => {
+    if (Array.isArray(value) && value.length === 0) return 'All schools';
+    if (value == null) return 'Primary school only';
+    return 'Specific schools';
+  };
   return {
-    addedSchoolIds: [...nextIds].filter((id) => !previousIds.has(id)),
-    removedSchoolIds: [...previousIds].filter((id) => !nextIds.has(id)),
+    addedSchoolIds: [...nextIds].filter((id) => !previousIds.has(id) && id !== primarySchoolId),
+    removedSchoolIds: [...previousIds].filter((id) => !nextIds.has(id) && id !== primarySchoolId),
+    beforeLabel: label(previous),
+    afterLabel: label(next),
   };
 }

@@ -319,6 +319,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   })();
   const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
   const [allSchoolsSelected, setAllSchoolsSelected] = useState(isAllSchools);
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
   const selectedSchoolNames = (ids: readonly string[]) => ids
     .map((id) => schools.find((school) => school.id === id)?.name ?? id)
     .join(', ');
@@ -526,8 +527,10 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       setAvailabilityStatus('Only an authorized super admin can change room school availability.');
       return;
     }
+    if (availabilitySaving) return;
     const primarySchoolId = room.school_id ?? schoolId;
     const validSchoolIds = new Set(schools.map((school) => school.id));
+    setAvailabilitySaving(true);
     setAvailabilityStatus('Saving school availability…');
     try {
       const normalizedSchoolIds = normalizeRoomAvailability({
@@ -536,30 +539,40 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         allSchools: allSchoolsSelected,
         validSchoolIds,
       });
-      const { data, error: saveError } = await supabase
+      let availabilityQuery = supabase
         .from('rooms')
         .update({ available_school_ids: normalizedSchoolIds })
-        .eq('id', room.id)
+        .eq('id', room.id);
+      availabilityQuery = room.updated_at == null
+        ? availabilityQuery.is('updated_at', null)
+        : availabilityQuery.eq('updated_at', room.updated_at);
+      const { data, error: saveError } = await availabilityQuery
         .select('id, available_school_ids, updated_at')
-        .single();
+        .maybeSingle();
       if (saveError) throw saveError;
-      const savedIds = Array.isArray(data?.available_school_ids) ? data.available_school_ids : [];
-      const priorIds = room.available_school_ids ?? [];
-      setAvailableSchoolIds(savedIds.length ? savedIds : (primarySchoolId ? [primarySchoolId] : []));
-      setAllSchoolsSelected(savedIds.length === 0);
+      if (!data) {
+        setAvailabilityStatus('Save conflict: this room changed elsewhere. Your draft was kept; reload before retrying.');
+        return;
+      }
+      const savedIds = Array.isArray(data.available_school_ids) ? data.available_school_ids : null;
+      const priorIds = room.available_school_ids;
+      setAvailableSchoolIds(savedIds && savedIds.length ? savedIds : (primarySchoolId ? [primarySchoolId] : []));
+      setAllSchoolsSelected(savedIds !== null && savedIds.length === 0);
       onRoomPatch?.({
         available_school_ids: savedIds,
         updated_at: data?.updated_at ?? room.updated_at,
       } as Partial<Room>);
-      const diff = describeRoomAvailabilityChange(priorIds, savedIds, primarySchoolId ?? '');
-      const scopeLabel = savedIds.length === 0 ? 'all schools' : selectedSchoolNames(savedIds);
+      const diff = describeRoomAvailabilityChange(priorIds, savedIds, primarySchoolId ?? '', schools.map((school) => school.id));
+      const scopeLabel = diff.afterLabel === 'All schools' ? 'all schools' : diff.afterLabel === 'Primary school only' ? 'primary school only' : selectedSchoolNames(savedIds ?? []);
       const changes = [
         diff.addedSchoolIds.length ? `added ${selectedSchoolNames(diff.addedSchoolIds)}` : '',
         diff.removedSchoolIds.length ? `removed ${selectedSchoolNames(diff.removedSchoolIds)}` : '',
       ].filter(Boolean).join('; ');
-      setAvailabilityStatus(`Saved and read back: ${scopeLabel}${changes ? ` (${changes})` : ''}.`);
+      setAvailabilityStatus(`Saved and read back: ${diff.beforeLabel} → ${scopeLabel}${changes ? ` (${changes})` : ''}.`);
     } catch (saveError) {
       setAvailabilityStatus(`Save failed: ${saveError instanceof Error ? saveError.message : 'Unable to save school availability.'}`);
+    } finally {
+      setAvailabilitySaving(false);
     }
   };
   const handleSubmit = async (e: React.FormEvent) => {
@@ -922,9 +935,10 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
                       type="button"
                       data-testid="save-school-availability"
                       onClick={() => void saveSchoolAvailability()}
+                      disabled={availabilitySaving}
                       className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
                     >
-                      Save school availability
+                      {availabilitySaving ? 'Saving…' : 'Save school availability'}
                     </button>
                     {availabilityStatus && <span role="status" className="text-xs text-gray-700">{availabilityStatus}</span>}
                   </div>

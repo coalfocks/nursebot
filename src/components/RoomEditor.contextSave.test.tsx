@@ -2,7 +2,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import RoomEditor from './RoomEditor';
 
-const { updateRoom, rpc } = vi.hoisted(() => ({ updateRoom: vi.fn(), rpc: vi.fn() }));
+const { updateRoom, rpc, availabilityState } = vi.hoisted(() => ({
+  updateRoom: vi.fn(),
+  rpc: vi.fn(),
+  availabilityState: {
+    response: { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null } as { data: unknown; error: unknown },
+    pending: null as Promise<unknown> | null,
+  },
+}));
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
@@ -13,16 +20,13 @@ vi.mock('../lib/supabase', () => ({
       builder.or = vi.fn(() => builder);
       builder.update = vi.fn((payload: unknown) => {
         updateRoom(payload);
-        return {
-          eq: vi.fn(() => ({
-            select: vi.fn(() => ({
-              single: vi.fn(async () => ({
-                data: { available_school_ids: (payload as { available_school_ids?: string[] }).available_school_ids ?? ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' },
-                error: null,
-              })),
-            })),
-          })),
+        const query = {
+          eq: vi.fn(() => query),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn(async () => availabilityState.pending ?? availabilityState.response),
+          select: vi.fn(() => query),
         };
+        return query;
       });
       return builder;
     },
@@ -65,7 +69,12 @@ const room = {
 } as never;
 
 describe('RoomEditor EMR context control', () => {
-  beforeEach(() => { updateRoom.mockReset(); rpc.mockReset(); });
+  beforeEach(() => {
+    updateRoom.mockReset();
+    rpc.mockReset();
+    availabilityState.pending = null;
+    availabilityState.response = { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
+  });
 
   it('bypasses native required Style and incomplete timeline validation', async () => {
     render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} />);
@@ -81,6 +90,7 @@ describe('RoomEditor EMR context control', () => {
 
   it('saves only school availability with blank Style and invalid unchanged timeline', async () => {
     const onRoomPatch = vi.fn();
+    availabilityState.response = { data: { available_school_ids: [], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
     render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} onRoomPatch={onRoomPatch} />);
     fireEvent.click(screen.getByLabelText('Available to all schools'));
     fireEvent.click(screen.getByTestId('save-school-availability'));
@@ -91,6 +101,29 @@ describe('RoomEditor EMR context control', () => {
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('hospital_timeline');
     expect(rpc).not.toHaveBeenCalled();
     expect(onRoomPatch).toHaveBeenCalledWith(expect.objectContaining({ available_school_ids: [] }));
-    expect(screen.getByRole('status')).toHaveTextContent('Saved and read back: all schools');
+    expect(screen.getByRole('status')).toHaveTextContent('Saved and read back: Specific schools → all schools');
+  });
+
+  it('keeps the draft and reports a conflict when the room revision is stale', async () => {
+    const onRoomPatch = vi.fn();
+    availabilityState.response = { data: null, error: null };
+    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} onRoomPatch={onRoomPatch} />);
+    fireEvent.click(screen.getByTestId('save-school-availability'));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save conflict'));
+    expect(onRoomPatch).not.toHaveBeenCalled();
+  });
+
+  it('allows only one in-flight availability save', async () => {
+    let resolvePending!: (value: unknown) => void;
+    availabilityState.pending = new Promise((resolve) => { resolvePending = resolve; });
+    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const button = screen.getByTestId('save-school-availability');
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(updateRoom).toHaveBeenCalledTimes(1);
+
+    resolvePending({ data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:01.000Z' }, error: null });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved and read back'));
   });
 });
