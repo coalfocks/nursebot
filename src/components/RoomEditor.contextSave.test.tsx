@@ -13,7 +13,16 @@ vi.mock('../lib/supabase', () => ({
       builder.or = vi.fn(() => builder);
       builder.update = vi.fn((payload: unknown) => {
         updateRoom(payload);
-        return { eq: vi.fn(async () => ({ error: null })) };
+        return {
+          eq: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn(async () => ({
+                data: { available_school_ids: (payload as { available_school_ids?: string[] }).available_school_ids ?? ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' },
+                error: null,
+              })),
+            })),
+          })),
+        };
       });
       return builder;
     },
@@ -29,7 +38,10 @@ vi.mock('../stores/authStore', () => ({
 }));
 
 vi.mock('../hooks/useSchools', () => ({
-  useSchools: () => ({ schools: [{ id: 'school-1', name: 'Synthetic School', display_name: 'Synthetic School' }] }),
+  useSchools: () => ({ schools: [
+    { id: 'school-1', name: 'Synthetic School', display_name: 'Synthetic School' },
+    { id: 'school-2', name: 'University of Arizona SOM', display_name: 'University of Arizona SOM' },
+  ] }),
   getSchoolDisplayName: (school: { name: string }) => school.name,
 }));
 
@@ -65,5 +77,20 @@ describe('RoomEditor EMR context control', () => {
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('style');
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('hospital_timeline');
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('saves only school availability with blank Style and invalid unchanged timeline', async () => {
+    const onRoomPatch = vi.fn();
+    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} onRoomPatch={onRoomPatch} />);
+    fireEvent.click(screen.getByLabelText('Available to all schools'));
+    fireEvent.click(screen.getByTestId('save-school-availability'));
+
+    await waitFor(() => expect(updateRoom).toHaveBeenCalledTimes(1));
+    expect(updateRoom).toHaveBeenCalledWith({ available_school_ids: [] });
+    expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('style');
+    expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('hospital_timeline');
+    expect(rpc).not.toHaveBeenCalled();
+    expect(onRoomPatch).toHaveBeenCalledWith(expect.objectContaining({ available_school_ids: [] }));
+    expect(screen.getByRole('status')).toHaveTextContent('Saved and read back: all schools');
   });
 });
