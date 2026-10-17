@@ -50,8 +50,13 @@ export type LabOrderSetting = {
 };
 
 export interface RoomOrdersConfig {
-  labs: LabOrderSetting[];
+  /** Legacy room format. Modern Case Builder rooms use the fields below. */
+  labs?: LabOrderSetting[];
+  admissionOrders?: string[];
+  gatedResults?: string[];
+  imaging?: string[];
   notes?: string | null;
+  [key: string]: unknown;
 }
 
 export interface ClinicalNote {

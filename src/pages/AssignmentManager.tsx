@@ -12,6 +12,7 @@ import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
+import { assessOrdersConfig } from '../lib/ordersConfig';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -262,11 +263,7 @@ export default function AssignmentManager() {
     }
   };
 
-  const validateRoomOrdersConfig = (room: Room): boolean => {
-    if (!room.orders_config) return false;
-    const config = room.orders_config as { labs?: Array<{ name: string; type: string }> };
-    return config.labs && config.labs.length > 0;
-  };
+  const getRoomOrdersReadiness = (room: Room) => assessOrdersConfig(room.orders_config);
 
 
   const validateAssignmentDates = (
@@ -346,9 +343,11 @@ export default function AssignmentManager() {
       return;
     }
 
-    const invalidRooms = selectedRoomsData.filter(room => !validateRoomOrdersConfig(room));
+    const invalidRooms = selectedRoomsData
+      .map((room) => ({ room, readiness: getRoomOrdersReadiness(room) }))
+      .filter(({ readiness }) => !readiness.valid);
     if (invalidRooms.length > 0) {
-      alert(`The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Please configure orders for these rooms before creating assignments.`);
+      alert(invalidRooms.map(({ room, readiness }) => `Room ${room.room_number}: ${readiness.message}`).join('\n'));
       return;
     }
 
@@ -1279,7 +1278,8 @@ export default function AssignmentManager() {
                         <div className="mt-2 max-h-56 overflow-y-auto border border-gray-200 rounded-md">
                           {rooms.map(room => {
                             const roomId = room.id.toString();
-                            const hasOrdersConfig = validateRoomOrdersConfig(room);
+                            const ordersReadiness = getRoomOrdersReadiness(room);
+                            const hasOrdersConfig = ordersReadiness.valid;
                             const isSelected = selectedRooms.includes(roomId);
                             return (
                               <button
@@ -1294,7 +1294,7 @@ export default function AssignmentManager() {
                                 <div className="font-medium">Room {room.room_number}</div>
                                 <div className="text-sm text-gray-500">
                                   {room.difficulty_level || 'No difficulty set'}
-                                  {!hasOrdersConfig && ' • No orders configured'}
+                                  {!hasOrdersConfig && ` • ${ordersReadiness.message}`}
                                 </div>
                               </button>
                             );

@@ -18,6 +18,7 @@ import {
 import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from '../components/HospitalTimelineEditor';
 import { normalizeAuthoredConversationPrompt } from '../lib/conversationPrompts';
+import { assessOrdersConfig } from '../lib/ordersConfig';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -626,6 +627,11 @@ export default function CaseBuilder() {
         hospital_stay_days: blueprint.hospital_stay_days,
         hospital_timeline: blueprint.hospital_timeline,
       };
+
+      const ordersReadiness = assessOrdersConfig(roomPayload.orders_config);
+      if (!ordersReadiness.valid) {
+        throw new Error(`[CASE_ORDERS_CONFIG_INVALID] ${ordersReadiness.message}`);
+      }
 
       if (!roomPayload.objective || !roomPayload.nurse_context || !roomPayload.emr_context) {
         throw new Error('[CASE_ROOM_INCOMPLETE] Objective, Nurse Context, and EMR context are required before publishing.');

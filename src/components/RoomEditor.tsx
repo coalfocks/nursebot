@@ -14,6 +14,7 @@ import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
 import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
 import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
+import { preserveOrdersConfig } from '../lib/ordersConfig';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -283,8 +284,8 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
 
   const initialOrdersConfig = (() => {
     const raw = room?.orders_config as RoomOrdersConfig | null | undefined;
-    if (raw && Array.isArray(raw.labs)) {
-      return { ...buildDefaultOrdersConfig(), ...raw, labs: buildDefaultOrdersConfig().labs };
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      return preserveOrdersConfig(raw);
     }
     return buildDefaultOrdersConfig();
   })();
