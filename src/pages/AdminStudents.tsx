@@ -40,6 +40,29 @@ export default function AdminStudents() {
   const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'test_user'>('all');
   const [roleUpdating, setRoleUpdating] = useState<Set<string>>(new Set());
 
+  const loadAllAssignments = async (schoolId: string | null) => {
+    const rows: AssignmentRow[] = [];
+    const pageSize = 1000;
+    let from = 0;
+
+    while (true) {
+      let query = supabase
+        .from('student_room_assignments')
+        .select('id, student_id, status, feedback_status, communication_score, mdm_score, created_at, completed_at, school_id')
+        .eq('is_sandbox', false)
+        .range(from, from + pageSize - 1);
+      if (schoolId) query = query.eq('school_id', schoolId);
+      const { data, error } = await query;
+      if (error) throw error;
+      const page = (data ?? []) as AssignmentRow[];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return rows;
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -63,22 +86,13 @@ export default function AdminStudents() {
           profileQuery = profileQuery.eq('role', 'student');
         }
 
-        let assignmentQuery = supabase
-          .from('student_room_assignments')
-          .select('id, student_id, status, grade, nurse_feedback, created_at, completed_at, school_id');
-
-        if (scopedSchoolId) {
-          assignmentQuery = assignmentQuery.eq('school_id', scopedSchoolId);
-        }
-
-        const [{ data: profileRows, error: profileError }, { data: assignmentRows, error: assignmentError }] =
+        const [{ data: profileRows, error: profileError }, assignmentRows] =
           await Promise.all([
             profileQuery,
-            assignmentQuery,
+            loadAllAssignments(scopedSchoolId),
           ]);
 
         if (profileError) throw profileError;
-        if (assignmentError) throw assignmentError;
 
         const assignmentsByStudent = new Map<string, AssignmentRow[]>();
         (assignmentRows as AssignmentRow[] | null)?.forEach((assignment) => {
@@ -95,17 +109,9 @@ export default function AdminStudents() {
           );
 
           const scores = completedAssignments
-            .map((assignment) => {
-              const feedback = assignment.nurse_feedback as AssignmentRow['nurse_feedback'];
-              if (feedback && typeof feedback.overall_score === 'number') {
-                return feedback.overall_score;
-              }
-              if (typeof assignment.grade === 'number') {
-                return assignment.grade / 20; // convert percentage (0-100) to 0-5 scale
-              }
-              return null;
-            })
-            .filter((value): value is number => value !== null);
+            .filter((assignment) => assignment.feedback_status === 'completed')
+            .flatMap((assignment) => [assignment.communication_score, assignment.mdm_score])
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 
           const averageScore = scores.length
             ? Number((scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(2))
@@ -338,7 +344,7 @@ export default function AdminStudents() {
                 <GraduationCap className="h-5 w-5" />
               </span>
             </div>
-            <p className="mt-2 text-xs text-slate-500">Completed simulations in the last cycle</p>
+            <p className="mt-2 text-xs text-slate-500">All-time completed simulations in this school scope</p>
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -353,7 +359,7 @@ export default function AdminStudents() {
                 <TrendingUp className="h-5 w-5" />
               </span>
             </div>
-            <p className="mt-2 text-xs text-slate-500">Average overall feedback score (0-5)</p>
+            <p className="mt-2 text-xs text-slate-500">Average current-rubric component score (0–5)</p>
           </article>
         </section>
 

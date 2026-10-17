@@ -2,6 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+@media print {
+  nav,
+  aside,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  #feedback-print-root {
+    max-width: none !important;
+    color: #111827 !important;
+  }
+
+  #feedback-print-root section {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  #feedback-print-root > .print-sheet {
+    display: block !important;
+  }
+
+  #feedback-print-root > .print\:hidden {
+    display: none !important;
+  }
+}
+
+.print-sheet {
+  display: none;
+}
+
+/* The popup-independent feedback route is a normal screen view until the
+ * learner chooses Print. It must not inherit the in-app print sheet's hidden
+ * screen state. */
+.print-mode .print-sheet {
+  display: block;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -7,6 +7,18 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import type { Database, Json } from '../lib/database.types';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import {
+  buildDeterministicMrn,
+  buildDeterministicPatientId,
+  buildLearnerEmrContext,
+  getStructuredPatientIdentity,
+  validateGeneratedCasePackage,
+  type GeneratedCasePackage,
+} from '../lib/caseBuilderPublish';
+import { DEFAULT_HOSPITAL_TIMELINE, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
+import { HospitalTimelineEditor } from '../components/HospitalTimelineEditor';
+import { normalizeAuthoredConversationPrompt } from '../lib/conversationPrompts';
+import { assessOrdersConfig } from '../lib/ordersConfig';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -19,24 +31,18 @@ type GenerationSection =
   | 'nurse_chat'
   | 'evaluation';
 
-type GeneratedCasePackage = {
-  patient?: Record<string, unknown>;
-  emr?: Record<string, unknown>;
-  event?: Record<string, unknown>;
-  orders?: Record<string, unknown>;
-  bedside?: Record<string, unknown>;
-  nurse_chat?: Record<string, unknown>;
-  evaluation?: Record<string, unknown>;
-};
-
 type CaseFormState = {
   specialty: string;
   title: string;
   roomNumber: string;
+  sourcePatientId: string;
+  continuesFromRoomId: string;
   difficulty: CaseBlueprint['difficulty'];
   objectives: string;
   admittingHpi: string;
   hospitalDays: string;
+  encounterType: EncounterType;
+  hospitalTimeline: string;
   admitOrders: string;
   admissionVitals: string;
   admissionLabs: string;
@@ -44,7 +50,9 @@ type CaseFormState = {
   initialMessage: string;
   bedsideRequirement: BedsideRequirement;
   patientChatEnabled: boolean;
+  patientConversationPrompt: string;
   consults: string;
+  consultantResponsePrompt: string;
   eventVitals: string;
   nurseExam: string;
   bedsideExam: string;
@@ -153,6 +161,7 @@ const createClinicalNotePayloads = (
   patientId: string,
   schoolId: string,
   roomId: number,
+  blueprintId: string,
   generatedPackage: GeneratedCasePackage,
 ) => {
   const emr = getGeneratedSection(generatedPackage, 'emr');
@@ -166,6 +175,8 @@ const createClinicalNotePayloads = (
       patient_id: patientId,
       school_id: schoolId,
       room_id: roomId,
+      case_blueprint_id: blueprintId,
+      case_publish_key: `${noteType}:${title}`,
       override_scope: 'room',
       note_type: noteType,
       title,
@@ -190,6 +201,27 @@ const createClinicalNotePayloads = (
   return notePayloads;
 };
 
+const materializeTimelineForRoom = async (
+  timeline: HospitalTimeline,
+  patientId: string,
+  roomId: number,
+  schoolId: string,
+  blueprintId: string,
+  nurseContext: string,
+  generatedAt: string,
+) => {
+  const { error } = await supabase.rpc('materialize_hospital_timeline', {
+    p_room_id: roomId,
+    p_patient_id: patientId,
+    p_school_id: schoolId,
+    p_case_blueprint_id: blueprintId,
+    p_timeline: timeline,
+    p_nurse_context: nurseContext,
+    p_generated_at: generatedAt,
+  });
+  if (error) throw error;
+};
+
 const deriveImagingDetails = (orderName: string) => {
   const normalized = orderName.toLowerCase();
   let studyType = orderName;
@@ -206,14 +238,26 @@ const deriveImagingDetails = (orderName: string) => {
   return { studyType, contrast };
 };
 
+const isUniqueViolation = (error: unknown) =>
+  Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23505');
+
+const roomNumberOccupiedError = (roomNumber: string) =>
+  new Error(
+    `[ROOM_NUMBER_OCCUPIED] Room ${roomNumber} is already used by another case. Choose a different room number and publish again.`,
+  );
+
 const initialForm: CaseFormState = {
   specialty: specialtyOptions[0],
   title: '',
   roomNumber: '',
+  sourcePatientId: '',
+  continuesFromRoomId: '',
   difficulty: 'easy',
   objectives: '',
   admittingHpi: '',
   hospitalDays: '',
+  encounterType: 'inpatient',
+  hospitalTimeline: JSON.stringify(DEFAULT_HOSPITAL_TIMELINE, null, 2),
   admitOrders: '',
   admissionVitals: '',
   admissionLabs: '',
@@ -221,7 +265,9 @@ const initialForm: CaseFormState = {
   initialMessage: '',
   bedsideRequirement: 'no',
   patientChatEnabled: false,
+  patientConversationPrompt: '',
   consults: '',
+  consultantResponsePrompt: '',
   eventVitals: '',
   nurseExam: '',
   bedsideExam: '',
@@ -245,6 +291,7 @@ export default function CaseBuilder() {
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [generatingSection, setGeneratingSection] = useState<GenerationSection | 'all' | null>(null);
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [publishedLinks, setPublishedLinks] = useState<Record<string, { roomId: number; patientId: string; notes: number }>>({});
 
   const fetchBlueprints = useCallback(async () => {
     setLoading(true);
@@ -314,6 +361,15 @@ export default function CaseBuilder() {
 
       const parsedHospitalDays = form.hospitalDays ? parseInt(form.hospitalDays, 10) : null;
       const hospitalDays = Number.isNaN(parsedHospitalDays) ? null : parsedHospitalDays;
+      let hospitalTimeline: HospitalTimeline;
+      try {
+        hospitalTimeline = parseHospitalTimeline(JSON.parse(form.hospitalTimeline));
+      } catch {
+        throw new Error('[TIMELINE_INVALID_JSON] Hospital timeline must be valid JSON.');
+      }
+      hospitalTimeline = { ...hospitalTimeline, encounterType: form.encounterType, stayDays: hospitalDays ?? hospitalTimeline.stayDays };
+      const timelineErrors = validateHospitalTimeline(hospitalTimeline);
+      if (timelineErrors.length) throw new Error(`[TIMELINE_INVALID] ${timelineErrors.join(' ')}`);
 
       const trimmedQuestions = form.typicalQuestions.map((q) => q.trim()).filter(Boolean);
       const trimmedHarmful = form.harmfulActions.map((q) => q.trim()).filter(Boolean);
@@ -322,10 +378,15 @@ export default function CaseBuilder() {
         title: form.title.trim(),
         specialty: form.specialty,
         room_number: form.roomNumber.trim() || null,
+        source_patient_id: form.sourcePatientId.trim() || null,
+        continues_from_room_id: form.continuesFromRoomId ? Number.parseInt(form.continuesFromRoomId, 10) : null,
         difficulty: form.difficulty,
         objectives: form.objectives.trim(),
         admitting_hpi: form.admittingHpi.trim(),
         hospital_days: hospitalDays,
+        encounter_type: form.encounterType,
+        hospital_stay_days: hospitalTimeline.stayDays,
+        hospital_timeline: hospitalTimeline,
         admit_orders: form.admitOrders.trim() || null,
         admission_vitals: form.admissionVitals.trim() || null,
         admission_labs: form.admissionLabs.trim() || null,
@@ -334,7 +395,9 @@ export default function CaseBuilder() {
         bedside_requirement: form.bedsideRequirement,
         bedside_required: form.bedsideRequirement === 'yes',
         patient_chat_enabled: form.patientChatEnabled,
+        patient_conversation_prompt: normalizeAuthoredConversationPrompt(form.patientConversationPrompt),
         consults: form.consults.trim() || null,
+        consultant_response_prompt: normalizeAuthoredConversationPrompt(form.consultantResponsePrompt),
         event_vitals: form.eventVitals.trim() || null,
         nurse_exam: form.nurseExam.trim() || null,
         bedside_exam: form.bedsideExam.trim() || null,
@@ -476,11 +539,20 @@ export default function CaseBuilder() {
       return;
     }
 
-    const generatedPackage = asGeneratedPackage(blueprint.generation_package);
-    if (!generatedPackage) {
+    const generatedPackageValue = asGeneratedPackage(blueprint.generation_package);
+    if (!generatedPackageValue) {
       setError('Generate the case package before publishing it to a room.');
       return;
     }
+
+    const packageValidation = validateGeneratedCasePackage(generatedPackageValue);
+    if (!packageValidation.ok) {
+      setError(
+        `[${packageValidation.issue.code}] ${packageValidation.issue.path}: ${packageValidation.issue.message}`,
+      );
+      return;
+    }
+    const generatedPackage = packageValidation.value;
 
     const roomNumber = blueprint.room_number?.trim();
     if (!roomNumber) {
@@ -491,6 +563,8 @@ export default function CaseBuilder() {
     setPublishingId(blueprint.id);
     setError(null);
 
+    let createdRoomId: number | null = null;
+    let createdPatientId: string | null = null;
     try {
       const patient = getGeneratedSection(generatedPackage, 'patient');
       const event = getGeneratedSection(generatedPackage, 'event');
@@ -502,31 +576,22 @@ export default function CaseBuilder() {
       const generatedAt = blueprint.generated_at ?? new Date().toISOString();
 
       const emrContextPayload = {
-        source: 'case-builder-v2',
-        blueprintId: blueprint.id,
-        generatedAt,
-        package: generatedPackage,
-        patientChat: {
-          enabled: Boolean(bedside.patientChatEnabled),
-          prompt: asString(bedside.patientChatPrompt),
-          disableReason: asString(bedside.disableReason),
-        },
-        evaluation: {
-          leniencyMultiplier: 1,
-          package: evaluation,
-        },
+        ...buildLearnerEmrContext(generatedPackage, blueprint.id, generatedAt),
+        hospitalTimeline: blueprint.hospital_timeline,
       };
 
       const roomPayload = {
         room_number: roomNumber,
+        case_blueprint_id: blueprint.id,
+        continues_from: blueprint.continues_from_room_id,
         role: blueprint.title,
-        context: buildRoomText(nurseChat.initialMessage, event.trigger, event.nurseObservations),
-        nurse_context: buildRoomText(
+        context: buildRoomText(event.trigger, event.nurseObservations),
+        nurse_context: mergeHospitalTimelineIntoNurseContext(buildRoomText(
           nurseChat.initialMessage,
           nurseChat.behaviorRules,
           nurseChat.knownFacts,
           nurseChat.protectedFacts,
-        ),
+        ), parseHospitalTimeline(blueprint.hospital_timeline)),
         emr_context: JSON.stringify(emrContextPayload),
         expected_diagnosis: asString(evaluation.bedsideVerdict),
         expected_treatment: asStringArray(evaluation.expectedWorkup),
@@ -545,79 +610,199 @@ export default function CaseBuilder() {
           bedside.disableReason ? `Patient chat disabled: ${asString(bedside.disableReason)}` : null,
         ) || null,
         bedside_requirement: bedsideRequirement,
+        patient_conversation_enabled: Boolean(bedside.patientChatEnabled),
+        patient_conversation_prompt: asString(bedside.patientChatPrompt) ?? blueprint.patient_conversation_prompt,
+        consultant_response_prompt: asString(bedside.consultantResponsePrompt) ?? blueprint.consultant_response_prompt,
+        patient_participation_reason: asString(bedside.disableReason),
+        patient_speaker_type: 'patient',
         orders_config: {
-          generatedOrders: orders,
           admissionOrders: asStringArray(orders.admissionOrders),
-          expectedOrders: asStringArray(orders.expectedOrders),
           gatedResults: asStringArray(orders.gatedResults),
           imaging: asStringArray(orders.imaging),
-          harmfulOrUnnecessary: asStringArray(orders.harmfulOrUnnecessary),
         },
         school_id: scopedSchoolId,
         created_by: user?.id ?? null,
         is_active: true,
+        encounter_type: blueprint.encounter_type,
+        hospital_stay_days: blueprint.hospital_stay_days,
+        hospital_timeline: blueprint.hospital_timeline,
       };
 
-      const { data: existingRoom, error: existingError } = await supabase
+      const ordersReadiness = assessOrdersConfig(roomPayload.orders_config);
+      if (!ordersReadiness.valid) {
+        throw new Error(`[CASE_ORDERS_CONFIG_INVALID] ${ordersReadiness.message}`);
+      }
+
+      if (!roomPayload.objective || !roomPayload.nurse_context || !roomPayload.emr_context) {
+        throw new Error('[CASE_ROOM_INCOMPLETE] Objective, Nurse Context, and EMR context are required before publishing.');
+      }
+      if (roomPayload.patient_conversation_enabled && !roomPayload.patient_conversation_prompt) {
+        throw new Error('[CASE_BEDSIDE_PROMPT_REQUIRED] Add a patient conversation prompt or disable patient chat before publishing.');
+      }
+
+      const { data: blueprintRoom, error: blueprintRoomError } = await supabase
         .from('rooms')
-        .select('id, patient_id, school_id')
-        .eq('room_number', roomNumber)
+        .select('id, patient_id, school_id, case_blueprint_id')
         .eq('school_id', scopedSchoolId)
+        .eq('case_blueprint_id', blueprint.id)
         .maybeSingle();
 
-      if (existingError) throw existingError;
+      if (blueprintRoomError) throw blueprintRoomError;
 
-      const { data: roomRecord, error: roomError } = existingRoom
-        ? await supabase
-            .from('rooms')
-            .update(roomPayload)
-            .eq('id', existingRoom.id)
-            .select('id, patient_id, school_id')
-            .single()
-        : await supabase
-            .from('rooms')
-            .insert([roomPayload])
-            .select('id, patient_id, school_id')
-            .single();
+      let roomRecord = blueprintRoom;
+      let reusedRoom = Boolean(blueprintRoom);
 
-      if (roomError || !roomRecord) throw roomError ?? new Error('Room publish failed');
+      if (blueprintRoom) {
+        const { data, error: updateError } = await supabase
+          .from('rooms')
+          .update(roomPayload)
+          .eq('id', blueprintRoom.id)
+          .eq('school_id', scopedSchoolId)
+          .eq('case_blueprint_id', blueprint.id)
+          .select('id, patient_id, school_id, case_blueprint_id')
+          .single();
+        if (updateError || !data) throw updateError ?? new Error('Room publish failed');
+        roomRecord = data;
+      } else {
+        const { data: occupiedRoom, error: occupiedError } = await supabase
+          .from('rooms')
+          .select('id, case_blueprint_id')
+          .eq('room_number', roomNumber)
+          .eq('school_id', scopedSchoolId)
+          .limit(1)
+          .maybeSingle();
+        if (occupiedError) throw occupiedError;
+        if (occupiedRoom) throw roomNumberOccupiedError(roomNumber);
 
-      let patientId = roomRecord.patient_id;
-      if (!patientId) {
-        const nameText = asString(patient.demographics) ?? `Sim Patient ${roomNumber}`;
-        const nameParts = nameText.replace(/[,()]/g, ' ').trim().split(/\s+/);
-        const firstName = nameParts[0] || 'Sim';
-        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : 'Patient';
-        const allergies = asStringArray(patient.allergies);
-
-        const { data: patientRecord, error: patientError } = await supabase
-          .from('patients')
-          .insert([
-            {
-              room_id: roomRecord.id,
-              school_id: scopedSchoolId,
-              mrn: `ROOM-${roomNumber}-${Date.now()}`,
-              first_name: firstName,
-              last_name: lastName,
-              date_of_birth: '1990-01-01',
-              gender: 'Other',
-              admission_date: new Date().toISOString().slice(0, 10),
-              service: blueprint.specialty,
-              attending_physician: null,
-              allergies,
-              code_status: asString(patient.codeStatus),
-            },
-          ])
-          .select('id')
+        const { data: insertedRoom, error: insertRoomError } = await supabase
+          .from('rooms')
+          .insert([roomPayload])
+          .select('id, patient_id, school_id, case_blueprint_id')
           .single();
 
-        if (patientError || !patientRecord) throw patientError ?? new Error('Patient publish failed');
-        patientId = patientRecord.id;
-        await supabase.from('rooms').update({ patient_id: patientId }).eq('id', roomRecord.id);
+        if (insertRoomError) {
+          if (!isUniqueViolation(insertRoomError)) throw insertRoomError;
+
+          const { data: concurrentlyPublishedRoom, error: rereadError } = await supabase
+            .from('rooms')
+            .select('id, patient_id, school_id, case_blueprint_id')
+            .eq('school_id', scopedSchoolId)
+            .eq('case_blueprint_id', blueprint.id)
+            .maybeSingle();
+          if (rereadError) throw rereadError;
+          if (!concurrentlyPublishedRoom) throw roomNumberOccupiedError(roomNumber);
+          roomRecord = concurrentlyPublishedRoom;
+          reusedRoom = true;
+        } else {
+          roomRecord = insertedRoom;
+          createdRoomId = insertedRoom.id;
+        }
+      }
+
+      if (!roomRecord) throw new Error('Room publish failed');
+
+      let patientId = roomRecord.patient_id ?? blueprint.source_patient_id;
+      let patientSkippedForMissingDob = false;
+      if (blueprint.source_patient_id) {
+        const { data: sourcePatient, error: sourcePatientError } = await supabase
+          .from('patients')
+          .select('id, school_id, deleted_at')
+          .eq('id', blueprint.source_patient_id)
+          .eq('school_id', scopedSchoolId)
+          .is('deleted_at', null)
+          .maybeSingle();
+        if (sourcePatientError) throw sourcePatientError;
+        if (!sourcePatient) throw new Error('[CASE_SOURCE_PATIENT_NOT_FOUND] The selected synthetic patient is not available in this school.');
+        patientId = sourcePatient.id;
+        if (!roomRecord.patient_id) {
+          const { error: sourceLinkError } = await supabase
+            .from('rooms')
+            .update({ patient_id: patientId })
+            .eq('id', roomRecord.id)
+            .eq('school_id', scopedSchoolId);
+          if (sourceLinkError) throw sourceLinkError;
+        }
+      }
+      if (!patientId) {
+        const identity = getStructuredPatientIdentity(patient);
+        if (!identity.dateOfBirth) {
+          // patients.date_of_birth is currently NOT NULL. Leaving the room unlinked is the
+          // schema-safe absence; publishing must never fabricate a clinical identity value.
+          patientSkippedForMissingDob = true;
+        } else {
+          const deterministicPatientId = await buildDeterministicPatientId(
+            scopedSchoolId,
+            blueprint.id,
+            roomNumber,
+          );
+          const patientPayload = {
+            id: deterministicPatientId,
+            room_id: roomRecord.id,
+            school_id: scopedSchoolId,
+            mrn: buildDeterministicMrn(scopedSchoolId, blueprint.id, roomNumber),
+            first_name: identity.firstName ?? 'Sim',
+            last_name: identity.lastName ?? 'Patient',
+            date_of_birth: identity.dateOfBirth,
+            gender: identity.gender ?? 'Unknown',
+            admission_date: null,
+            service: blueprint.specialty,
+            attending_physician: null,
+            allergies: asStringArray(patient.allergies),
+            code_status: asString(patient.codeStatus),
+          };
+
+          const { data: existingPatient, error: existingPatientError } = await supabase
+            .from('patients')
+            .select('id')
+            .eq('id', deterministicPatientId)
+            .maybeSingle();
+          if (existingPatientError) throw existingPatientError;
+
+          if (!existingPatient) {
+            const { data: insertedPatient, error: patientError } = await supabase
+              .from('patients')
+              .insert([patientPayload])
+              .select('id')
+              .single();
+            if (patientError && !isUniqueViolation(patientError)) throw patientError;
+            patientId = insertedPatient?.id ?? deterministicPatientId;
+            createdPatientId = patientId;
+          } else {
+            patientId = existingPatient.id;
+          }
+
+          const { error: linkPatientError } = await supabase
+            .from('rooms')
+            .update({ patient_id: patientId })
+            .eq('id', roomRecord.id)
+            .eq('school_id', scopedSchoolId)
+            .eq('case_blueprint_id', blueprint.id)
+            .is('patient_id', null);
+          if (linkPatientError) throw linkPatientError;
+
+          const { data: linkedRoom, error: linkedRoomError } = await supabase
+            .from('rooms')
+            .select('patient_id')
+            .eq('id', roomRecord.id)
+            .single();
+          if (linkedRoomError) throw linkedRoomError;
+          patientId = linkedRoom.patient_id;
+        }
       }
 
       const imagingFailures: string[] = [];
+      let noteCount = 0;
       if (patientId) {
+        const authoredTimeline = parseHospitalTimeline(blueprint.hospital_timeline);
+        await materializeTimelineForRoom(
+          authoredTimeline,
+          patientId,
+          roomRecord.id,
+          scopedSchoolId,
+          blueprint.id,
+          roomPayload.nurse_context,
+          generatedAt,
+        );
         const generatedImagingOrders = asStringArray(orders.imaging);
 
         for (const orderName of generatedImagingOrders) {
@@ -627,6 +812,7 @@ export default function CaseBuilder() {
             .select('id, report')
             .eq('patient_id', patientId)
             .eq('room_id', roomRecord.id)
+            .eq('case_blueprint_id', blueprint.id)
             .eq('order_name', orderName)
             .is('deleted_at', null)
             .order('created_at', { ascending: false })
@@ -641,6 +827,7 @@ export default function CaseBuilder() {
             const { error: studyError } = await supabase.from('imaging_studies').insert({
               id: studyId,
               patient_id: patientId,
+              case_blueprint_id: blueprint.id,
               room_id: roomRecord.id,
               school_id: scopedSchoolId,
               override_scope: 'room',
@@ -707,35 +894,58 @@ export default function CaseBuilder() {
           }
         }
 
-        const { error: deleteNotesError } = await supabase
+        const { data: existingGeneratedNotes, error: existingNotesError } = await supabase
           .from('clinical_notes')
-          .update({ deleted_at: new Date().toISOString() })
+          .select('id')
           .eq('patient_id', patientId)
           .eq('room_id', roomRecord.id)
+          .eq('case_blueprint_id', blueprint.id)
           .eq('override_scope', 'room')
           .eq('author', 'Nurse Althea Generator')
           .is('deleted_at', null);
-        if (deleteNotesError) throw deleteNotesError;
+        if (existingNotesError) throw existingNotesError;
 
-        const notePayloads = createClinicalNotePayloads(
-          patientId,
-          scopedSchoolId,
-          roomRecord.id,
-          generatedPackage,
-        );
-        if (notePayloads.length) {
-          const { error: noteError } = await supabase.from('clinical_notes').insert(notePayloads);
-          if (noteError) throw noteError;
+        if (existingGeneratedNotes?.length) {
+          noteCount = existingGeneratedNotes.length;
+        } else {
+          const notePayloads = createClinicalNotePayloads(
+            patientId,
+            scopedSchoolId,
+            roomRecord.id,
+            blueprint.id,
+            generatedPackage,
+          );
+          noteCount = notePayloads.length;
+          if (notePayloads.length) {
+            const { error: noteError } = await supabase.from('clinical_notes').insert(notePayloads);
+            if (noteError) throw noteError;
+          }
         }
       }
 
+      if (!patientId) throw new Error('[CASE_EMR_LINK_REQUIRED] Publishing completed without a patient/chart link.');
+      const linkedIds = `Room ID ${roomRecord.id}; patient/chart ID ${patientId}; ${noteCount} generated note${noteCount === 1 ? '' : 's'}.`;
+      setPublishedLinks((previous) => ({ ...previous, [blueprint.id]: { roomId: roomRecord.id, patientId, notes: noteCount } }));
+      const publishVerb = reusedRoom ? 'Reused' : 'Published';
+      const details = patientSkippedForMissingDob
+        ? ' No patient was created because the generated package has no structured dateOfBirth; regenerate with structured identity data or link a patient manually.'
+        : '';
+      const imagingDetail = imagingFailures.length
+        ? ` Report generation failed for: ${imagingFailures.join(', ')}.`
+        : '';
       setError(
-        imagingFailures.length
-          ? `Published ${blueprint.title} to room ${roomNumber}, but report generation failed for: ${imagingFailures.join(', ')}.`
-          : `Published ${blueprint.title} to room ${roomNumber}.`,
+        `${publishVerb} ${blueprint.title} in room ${roomNumber}. ${linkedIds}${details}${imagingDetail}`,
       );
     } catch (err) {
       console.error('Failed to publish case blueprint to room', err);
+      if (createdPatientId) {
+        await supabase.from('clinical_notes').delete().eq('patient_id', createdPatientId).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('imaging_studies').delete().eq('patient_id', createdPatientId).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('rooms').delete().eq('id', createdRoomId ?? -1).eq('case_blueprint_id', blueprint.id);
+        await supabase.from('patients').delete().eq('id', createdPatientId).eq('school_id', scopedSchoolId);
+      } else if (createdRoomId) {
+        await supabase.from('rooms').delete().eq('id', createdRoomId).eq('case_blueprint_id', blueprint.id);
+      }
       setError(err instanceof Error ? err.message : 'Unable to publish this generated case to a room.');
     } finally {
       setPublishingId(null);
@@ -881,6 +1091,27 @@ export default function CaseBuilder() {
                       placeholder="412"
                     />
                   </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Existing synthetic patient ID (optional)</label>
+                    <input
+                      type="text"
+                      value={form.sourcePatientId}
+                      onChange={(e) => setForm((prev) => ({ ...prev, sourcePatientId: e.target.value }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      placeholder="Reuse patient/chart UUID for Part B/C"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Prior room ID (optional)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={form.continuesFromRoomId}
+                      onChange={(e) => setForm((prev) => ({ ...prev, continuesFromRoomId: e.target.value }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                      placeholder="Carry over prior case context"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-3">
@@ -909,13 +1140,26 @@ export default function CaseBuilder() {
                     <label className="text-sm font-medium text-slate-700">Days in hospital</label>
                     <input
                       type="number"
-                      min="0"
+                      min="1"
+                      max="3"
                       value={form.hospitalDays}
                       onChange={(e) => setForm((prev) => ({ ...prev, hospitalDays: e.target.value }))}
                       className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      placeholder="Example: 3"
+                      placeholder="1–3"
                     />
-                    <p className="mt-1 text-xs text-slate-500">Days before the incident occurred.</p>
+                    <p className="mt-1 text-xs text-slate-500">Hard maximum 3; ED remains one encounter.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-700">Encounter type</label>
+                    <select
+                      value={form.encounterType}
+                      onChange={(e) => setForm((prev) => ({ ...prev, encounterType: e.target.value as EncounterType }))}
+                      className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm"
+                    >
+                      <option value="inpatient">Inpatient</option>
+                      <option value="ed">ED visit (single encounter)</option>
+                      <option value="ld">L&amp;D / postpartum</option>
+                    </select>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700">Bedside verdict</label>
@@ -937,6 +1181,23 @@ export default function CaseBuilder() {
                     </div>
                     <p className="mt-1 text-xs text-slate-500">Used by feedback after the case.</p>
                   </div>
+                </div>
+
+                <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+                  <label className="text-sm font-medium text-slate-700">Pre-page hospital timeline</label>
+                  <div className="mt-2"><HospitalTimelineEditor value={form.hospitalTimeline} encounterType={form.encounterType} onChange={(hospitalTimeline) => setForm((prev) => ({ ...prev, hospitalTimeline }))} /></div>
+                  <p id="timeline-help" className="mt-1 text-xs text-slate-600">
+                    Use relative-hour entries for admission, one progress note per inpatient day, consults, labs, vitals, procedures, and the nurse page. Learners see labels such as “24 hours prior”; this chart context is excluded from student scoring.
+                  </p>
+                  {(() => {
+                    try {
+                      const timeline = { ...parseHospitalTimeline(JSON.parse(form.hospitalTimeline)), encounterType: form.encounterType };
+                      const errors = validateHospitalTimeline(timeline);
+                      return <div className="mt-2 text-xs">{errors.length ? <p className="text-rose-700">{errors.join(' ')}</p> : <p className="text-emerald-700">Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries yet.'}</p>}</div>;
+                    } catch {
+                      return <p className="mt-2 text-xs text-rose-700">Timeline JSON is not valid yet.</p>;
+                    }
+                  })()}
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -962,7 +1223,10 @@ export default function CaseBuilder() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 p-4">
+                  <h3 className="text-base font-semibold text-slate-900">Conversation Prompts</h3>
+                  <p className="mt-1 text-xs text-slate-600">These two authored fields are carried unchanged into the published room and pinned assignment. They are the complete channel instructions; no generated nurse context, goals, or hidden defaults are appended.</p>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium text-slate-700">Consults</label>
                     <textarea
@@ -974,6 +1238,14 @@ export default function CaseBuilder() {
                     <p className="mt-1 text-xs text-slate-500">
                       Each specialty/reason becomes a generated consult note in the EMR package.
                     </p>
+                    <label className="mt-3 block text-sm font-medium text-slate-700">Consultant response behavior</label>
+                    <textarea
+                      value={form.consultantResponsePrompt}
+                      onChange={(e) => setForm((prev) => ({ ...prev, consultantResponsePrompt: e.target.value }))}
+                      className="mt-1 h-20 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="How the consultant responds: answer the question asked, state recommendation and rationale, do not reveal hidden goals."
+                    />
+                    <p className="mt-1 text-xs text-slate-500">Stored with the package and used by the student Consultant Portal.</p>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-slate-700">Bedside patient chat</label>
@@ -991,11 +1263,20 @@ export default function CaseBuilder() {
                         participate.
                       </span>
                     </label>
+                    <label className="mt-3 block text-sm font-medium text-slate-700">Patient conversation prompt</label>
+                    <textarea
+                      value={form.patientConversationPrompt}
+                      onChange={(e) => setForm((prev) => ({ ...prev, patientConversationPrompt: e.target.value }))}
+                      className="mt-1 h-20 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100"
+                      disabled={!form.patientChatEnabled}
+                      placeholder="Patient persona, authored history, and answer boundaries; no diagnosis or learning-goal leakage."
+                    />
                     <p className="mt-1 text-xs text-slate-500">
                       The generator should auto-disable chat for altered, sedated, intubated, or
                       unconscious patients.
                     </p>
                   </div>
+                </div>
                 </div>
 
                 <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
@@ -1307,6 +1588,13 @@ export default function CaseBuilder() {
                           <p className="mt-2 text-sm text-slate-700">
                             {blueprint.objectives}
                           </p>
+                          {publishedLinks[blueprint.id] && (
+                            <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+                              <p className="font-semibold">Published room linkage verified</p>
+                              <p className="mt-1">Room {publishedLinks[blueprint.id].roomId} → patient/chart {publishedLinks[blueprint.id].patientId}</p>
+                              <p className="mt-1">EMR notes created: {publishedLinks[blueprint.id].notes}. Re-publishing this blueprint reuses the same room/patient linkage.</p>
+                            </div>
+                          )}
                           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
                             <div>
                               <span className="font-semibold text-slate-800">Consults:</span>{' '}

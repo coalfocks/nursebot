@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nurse Althea — Partner Technical Brief</title>
+  <style>
+    :root { --ink:#172033; --muted:#596579; --blue:#155eef; --teal:#0e8b86; --aqua:#67d5cb; --pale:#eef8f7; --line:#dbe3ef; --warn:#fff7e6; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); font:15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
+    .page { max-width:940px; margin:0 auto; padding:44px 54px 60px; }
+    .cover { min-height:760px; display:flex; flex-direction:column; justify-content:space-between; background:radial-gradient(circle at 92% 12%,rgba(103,213,203,.25),transparent 28%),linear-gradient(145deg,#f4fbff 0%,#fff 62%); position:relative; overflow:hidden; }
+    .cover:after { content:""; position:absolute; width:340px; height:340px; border:1px solid rgba(21,94,239,.12); border-radius:50%; right:-160px; bottom:-140px; }
+    .brand { display:flex; align-items:center; gap:12px; }
+    .brand-mark { display:block; text-align:center; line-height:46px; width:46px; height:46px; border-radius:15px 15px 15px 5px; background:linear-gradient(135deg,var(--blue),var(--teal)); color:#fff; font-size:23px; font-weight:800; }
+    .brand-name { font-size:16px; font-weight:800; letter-spacing:-.02em; }
+    .eyebrow { color:var(--blue); font-weight:800; letter-spacing:.13em; text-transform:uppercase; font-size:12px; }
+    h1 { font-size:58px; line-height:1.02; letter-spacing:-.05em; margin:22px 0 18px; max-width:650px; color:#101a32; }
+    h2 { font-size:27px; letter-spacing:-.025em; margin:42px 0 12px; padding:0 0 8px 14px; border-bottom:2px solid var(--ink); border-left:5px solid var(--teal); page-break-after:avoid; }
+    h3 { font-size:18px; margin:25px 0 7px; page-break-after:avoid; }
+    p { margin:8px 0 13px; }
+    ul, ol { padding-left:23px; }
+    li { margin:5px 0; }
+    .subtitle { font-size:21px; color:var(--muted); max-width:680px; }
+    .meta { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:36px; }
+    .meta div, .card { border:1px solid var(--line); border-radius:12px; padding:15px 17px; background:#fff; }
+    .meta small, .label { display:block; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+    .meta strong { display:block; margin-top:4px; }
+    .callout { border-left:5px solid var(--blue); background:var(--pale); border-radius:0 10px 10px 0; padding:15px 18px; margin:18px 0; }
+    .warning { border-left-color:#d97706; background:var(--warn); }
+    .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:14px; }
+    .grid.three { grid-template-columns:repeat(3,1fr); }
+    .card h3 { margin-top:0; color:#163b5d; }
+    table { width:100%; border-collapse:collapse; margin:13px 0 22px; font-size:13px; }
+    th, td { text-align:left; vertical-align:top; border:1px solid var(--line); padding:9px 10px; }
+    th { background:#f3f6fa; font-weight:700; }
+    code { font:12px ui-monospace, SFMono-Regular, Menlo, monospace; background:#f2f4f7; padding:2px 5px; border-radius:4px; }
+    .flow { display:flex; align-items:stretch; gap:9px; margin:18px 0; }
+    .flow > div { flex:1; border:1px solid var(--line); border-radius:10px; padding:12px; background:#fbfdff; }
+    .arrow { align-self:center; color:var(--blue); font-size:22px; }
+    .small { color:var(--muted); font-size:13px; }
+    .tag { display:inline-block; color:var(--teal); background:#e8f8f6; padding:3px 8px; border-radius:99px; font-size:12px; font-weight:700; margin:2px 3px 2px 0; }
+    .qa { margin:0; padding:0; list-style:none; }
+    .qa li { margin:0; padding:14px 0; border-bottom:1px solid var(--line); }
+    .qa strong { display:block; margin-bottom:4px; }
+    .footer { margin-top:50px; padding-top:15px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .page-break { page-break-before:always; }
+    @media print { .page { padding:28px 36px 40px; } .cover { min-height:250mm; } h2 { margin-top:28px; } }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div>
+      <div class="brand"><div class="brand-mark">✦</div><div class="brand-name">Nurse Althea</div></div>
+      <div class="eyebrow">Partner technical briefing</div>
+      <h1>Nurse Althea</h1>
+      <p class="subtitle">A multi-school, AI-assisted nursing education platform with a simulated nurse conversation, a realistic EMR workspace, and structured case evaluation.</p>
+      <div class="meta">
+        <div><small>Prepared</small><strong>30 July 2026</strong></div>
+        <div><small>Audience</small><strong>Partner technical team</strong></div>
+        <div><small>Source basis</small><strong>Repository HEAD + migrations</strong></div>
+      </div>
+    </div>
+    <div>
+      <div class="callout"><strong>Executive takeaway.</strong> Nurse Althea combines deterministic case configuration and persistence with AI-generated conversational and clinical-simulation content. The core product is a browser-based React application; Supabase supplies identity, Postgres, storage, realtime, and server-side Edge Functions.</div>
+      <p class="small">This brief describes the implementation visible in the repository at the date above. Exact production deployment status, Netlify site identity, Supabase region, retention policy, uptime, and compliance attestations should be confirmed with the operator before being represented as contractual commitments.</p>
+    </div>
+  </section>
+
+  <main class="page">
+    <h2>1. Product and user experience</h2>
+    <p>Nurse Althea is an EMR simulation for nursing education. A student receives one or more assigned rooms/cases, interacts with a nurse persona through chat, reviews patient information in an EHR-style interface, places orders, reviews generated results, writes a progress note, and completes the case. Faculty and administrators configure cases, manage schools and users, review timelines, and inspect automated feedback.</p>
+    <div class="grid three">
+      <div class="card"><span class="tag">Student</span><h3>Practice</h3><p>Chat with the nurse, inspect the patient chart, order labs/medications/imaging, review vitals and results, and submit a progress note.</p></div>
+      <div class="card"><span class="tag">Faculty</span><h3>Teach</h3><p>Author rooms and case context, assign cases to students or cohorts, schedule availability windows, and review performance.</p></div>
+      <div class="card"><span class="tag">Platform admin</span><h3>Operate</h3><p>Manage schools, roles, bulk users, room access, assignments, feedback regeneration, exports, and cross-school reporting.</p></div>
+    </div>
+
+    <h2>2. System architecture</h2>
+    <div class="flow">
+      <div><span class="label">Client</span><strong>React + TypeScript + Vite</strong><br><span class="small">Browser UI, routing, EMR components, auth state, realtime subscriptions</span></div><div class="arrow">→</div>
+      <div><span class="label">Platform</span><strong>Supabase</strong><br><span class="small">Auth, Postgres, Row Level Security, Storage, Edge Functions, realtime</span></div><div class="arrow">→</div>
+      <div><span class="label">AI / messaging</span><strong>OpenAI + optional Twilio</strong><br><span class="small">Chat, vitals, labs, imaging, feedback; SMS notifications with consent</span></div>
+    </div>
+    <table><tr><th>Layer</th><th>Current implementation</th><th>Partner implication</th></tr>
+      <tr><td>Web app</td><td>Vite production build, React 18, TypeScript, Tailwind, React Router, Zustand.</td><td>Static-hosting friendly; SPA fallback is configured through <code>netlify.toml</code>.</td></tr>
+      <tr><td>Data and auth</td><td>Supabase project reference <code>lvpbwtfvairspufrashl</code>; <code>@supabase/supabase-js</code> client.</td><td>Managed Postgres and Supabase Auth are the system of record. The public client uses an anon key; privileged keys stay in functions/server scripts.</td></tr>
+      <tr><td>Server logic</td><td>Deno-based Supabase Edge Functions.</td><td>AI provider credentials and service-role access are intended to remain server-side.</td></tr>
+      <tr><td>External messaging</td><td>Twilio integration for assignment-effective SMS, gated by phone number and SMS consent.</td><td>Requires Twilio account secrets and a configured sending number; SMS is optional to the learning flow.</td></tr>
+    </table>
+
+    <h2>3. How a case works end to end</h2>
+    <ol>
+      <li>An administrator creates a room/case with nurse persona, clinical/EMR context, objectives, difficulty, expected diagnosis/treatment, orders configuration, optional PDFs, and a linked patient.</li>
+      <li>The case is assigned to a student. Assignment windows can activate cases at scheduled/effective times, with optional SMS notification when the assignment becomes effective.</li>
+      <li>The browser loads the student assignment and subscribes to assignment-scoped chat updates. The initial nurse prompt is derived from the room role, style, and nurse context.</li>
+      <li>The student sends a message. The client invokes the <code>chat</code> Edge Function; the function calls OpenAI and persists/returns the assistant response.</li>
+      <li>Orders, notes, vitals, labs, and imaging are written to the EMR tables with scope metadata. STAT/manual generation invokes the relevant Edge Function; local generators can act as fallbacks for some lab/vital paths.</li>
+      <li>Completion saves status, timestamp, and the student progress note, then triggers evaluation. The evaluator builds a chronological timeline of conversation and clinical actions.</li>
+      <li>Feedback is stored against the assignment, including communication and medical-decision-making scores, detailed breakdowns, learning objectives, case difficulty, and legacy feedback fields.</li>
+    </ol>
+
+    <h2>4. Data model and isolation model</h2>
+    <p>The model is relational Postgres with UUIDs for users, patients, assignments, and clinical artifacts; rooms are integer-keyed. Records carry school ownership and, for simulated clinical activity, assignment/room scope.</p>
+    <table><tr><th>Entity</th><th>Purpose / important fields</th><th>Relationships</th></tr>
+      <tr><td><code>schools</code></td><td>Institution/tenant record; name, slug, timezone.</td><td>Parent for profiles, rooms, patients, assignments, and clinical artifacts.</td></tr>
+      <tr><td><code>profiles</code></td><td>User profile; role is student, school_admin, super_admin, or test_user; school affiliation, email, phone, SMS consent.</td><td>Backed by Supabase Auth user identity.</td></tr>
+      <tr><td><code>rooms</code></td><td>Case container; room number/role/style, nurse and EMR context, diagnosis/treatment, goals, difficulty, objective, progress-note prompt, completion hints, orders config, PDF, continuity.</td><td>May link to a patient, specialty, school access, and prior room.</td></tr>
+      <tr><td><code>patients</code></td><td>Simulated patient demographics, MRN, service, attending, allergies, code status, room, custom overview content.</td><td>One patient can have clinical artifacts and be attached to a room.</td></tr>
+      <tr><td><code>student_room_assignments</code></td><td>Student-to-room attempt; status, scheduling window, completion, progress note, grade, feedback status, scores, breakdown JSON.</td><td>Joins one student to one room; primary unit of student activity and evaluation.</td></tr>
+      <tr><td>Clinical artifacts</td><td><code>clinical_notes</code>, <code>medical_orders</code>, <code>lab_results</code>, <code>vital_signs</code>, <code>imaging_studies</code>.</td><td>Patient-linked; can be baseline, room-scoped, or assignment-scoped. Soft deletion uses <code>deleted_at</code> where implemented.</td></tr>
+      <tr><td><code>chat_messages</code></td><td>Chronological nurse/student messages keyed by assignment.</td><td>Realtime subscription and evaluation timeline source.</td></tr>
+    </table>
+    <div class="callout"><strong>Scope semantics.</strong> Baseline data is shared case setup; room data is the configured scenario layer; assignment data is a student’s isolated attempt. The EMR API and evaluation timeline filter artifacts by these scopes so one student’s generated activity does not become another student’s chart.</div>
+
+    <h2>5. AI services and guardrails</h2>
+    <div class="grid">
+      <div class="card"><h3>Conversational nurse</h3><p><code>chat</code> receives an assignment ID and message history, then calls OpenAI model <code>gpt-5-mini</code>. Room instructions tell the assistant to stay in character, be concise, avoid suggesting treatments, and ask for physician orders when appropriate.</p></div>
+      <div class="card"><h3>Clinical simulation generators</h3><p><code>lab-results</code>, <code>vitals-generator</code>, and <code>imaging-results</code> receive patient, room, assignment, chart, order, and case context. They return structured JSON that the app persists in the corresponding EMR tables.</p></div>
+      <div class="card"><h3>Evaluation</h3><p><code>generate-feedback</code> assembles chat, orders, labs, vitals, imaging, completion, and the progress note into a chronological evaluation timeline. It scores Communication and Medical Decision Making on 0–5 scales with rubric breakdowns and optional case leniency.</p></div>
+      <div class="card"><h3>Operational functions</h3><p>Bulk user creation, effective-assignment processing, feedback reruns/exports, superadmin reporting, and SMS support administrative workflows.</p></div>
+    </div>
+      <div class="callout warning"><strong>Important product boundary.</strong> AI outputs are simulated educational content, not clinical advice, diagnostic output, or a production medical record. Partner-facing messaging should describe Nurse Althea as a training/simulation platform.</div>
+
+    <h2>6. Security, privacy, and diligence notes</h2>
+    <h3>Controls visible in the code</h3>
+    <ul><li>Supabase Auth supplies authenticated sessions; application roles and school membership drive UI and many database policies.</li><li>Privileged operations use the Supabase service-role key inside Edge Functions rather than the browser bundle.</li><li>Chat, export, reporting, and feedback paths use assignment IDs; reporting/export functions explicitly validate the caller in code.</li><li>Storage-backed room PDFs and imaging assets are accessed through signed URLs in the client flow.</li><li>SMS requires an explicit consent flag and a phone number.</li><li>Clinical records support soft deletion and timestamps; database changes are versioned as migrations.</li></ul>
+    <h3>Items to verify or harden before production partner commitments</h3>
+    <ul><li>Some legacy EMR migrations use broad “authenticated users” read/write policies, while later migrations add more specific role/school/assignment policies. Confirm the effective remote policy set and tighten it to least privilege before storing real PHI.</li><li>Several functions have <code>verify_jwt: false</code> in local function config. Their endpoint-level authorization should be standardized, and public invocation should be restricted where appropriate.</li><li>Confirm the deployed function versions match this repository, especially the current model, prompts, auth checks, and migrations.</li><li>Confirm production hosting provider/site, Supabase region, backups/PITR, retention/deletion, audit logging, incident response, encryption statements, and any HIPAA/BAA posture separately; they are not established by this repository alone.</li><li>Review repository/CI secret hygiene and rotate any credentials that may have appeared in git remotes, logs, or committed configuration. Never distribute service-role, OpenAI, Twilio, or source-control credentials in partner materials.</li></ul>
+
+    <h2>7. Deployment and operations</h2>
+    <table><tr><th>Activity</th><th>Current workflow in repo</th><th>Production question for partner</th></tr>
+      <tr><td>Frontend</td><td><code>npm run build</code> generates <code>dist/</code>; SPA rewrite sends all routes to <code>index.html</code>.</td><td>Which Netlify site/account owns production, and how are preview/prod environments separated?</td></tr>
+      <tr><td>Database</td><td>Supabase SQL migrations under <code>supabase/migrations</code>.</td><td>Who approves migrations, and what rollback/backup process is used?</td></tr>
+      <tr><td>Functions</td><td><code>npx supabase functions deploy &lt;name&gt;</code>; secrets are set with Supabase secrets.</td><td>Are functions deployed from CI with environment-specific secrets and logs/alerts?</td></tr>
+      <tr><td>Quality</td><td>Vitest tests are present; build/lint commands are defined. Manual EMR and assignment flows remain important.</td><td>What release gates and test accounts are used for partner environments?</td></tr>
+    </table>
+
+    <div class="page-break"></div>
+    <h2>8. Technical FAQ</h2>
+    <ul class="qa">
+      <li><strong>Where is Nurse Althea hosted?</strong> The application is built as a static Vite SPA and includes Netlify SPA routing configuration. The backend is Supabase at the project URL associated with project reference <code>lvpbwtfvairspufrashl</code>. The exact production web site, Supabase region, and active deployment should be confirmed by the operator.</li>
+      <li><strong>Does the browser call OpenAI directly?</strong> The intended architecture is server-mediated: the browser calls Supabase Edge Functions, and those functions call OpenAI using a server-side secret. The public browser configuration contains only the Supabase URL and anon key.</li>
+      <li><strong>What does the AI see?</strong> Depending on the operation, prompts can include simulated patient demographics, allergies/code status, room and assignment identifiers, nurse/EMR context, objectives, notes, prior vitals/labs, orders, progress-note context, and completion hints. The platform should use synthetic data unless a reviewed privacy/compliance design says otherwise.</li>
+      <li><strong>Can the AI place orders or change the database by itself?</strong> The model returns text or structured generated results; application code persists chat and clinical artifacts. The student explicitly places orders through the UI. The model is not an autonomous clinical actor.</li>
+      <li><strong>How are students isolated?</strong> Assignments identify a student’s attempt. Clinical records include <code>assignment_id</code>, <code>room_id</code>, and <code>override_scope</code>; reads combine only relevant baseline, room lineage, and current assignment rows. Effective RLS must still be verified in the deployed database.</li>
+      <li><strong>What is a room?</strong> A room is a configurable case/scenario, not merely a physical bed. It contains persona, case metadata, patient linkage, learning objectives, documents, orders configuration, and optional continuity from a previous room.</li>
+      <li><strong>How is feedback generated?</strong> After case completion, the evaluator reads the full chronological activity timeline and calls OpenAI with a fixed rubric. It stores structured scores, feedback, learning objectives, and breakdown JSON on the assignment.</li>
+      <li><strong>What happens if generation fails?</strong> The UI surfaces errors; lab and vital paths retain local fallback generators in the client architecture. Feedback tracks processing/completed/failed state and an error field, and administrators can rerun assessments.</li>
+      <li><strong>Is there realtime?</strong> Yes. The chat interface subscribes to assignment chat changes and updates the timeline as messages and clinical events are persisted.</li>
+      <li><strong>Can a school use its own content?</strong> The multi-school model supports school affiliation, school admins, room access by school or all schools, case blueprints, assignments, and bulk user creation. Confirm the desired content ownership and cross-school sharing policy during integration planning.</li>
+      <li><strong>Does it integrate with a real EHR?</strong> The repository shows an internal simulated EMR, not a production EHR integration or FHIR API. A real EHR, SSO, LMS, roster, or gradebook integration would be a separate scope.</li>
+      <li><strong>Is Nurse Althea HIPAA compliant?</strong> The repository alone cannot establish compliance. Treat it as a synthetic-data educational simulator until hosting, access control, audit, retention, encryption, incident response, and contractual requirements have been reviewed.</li>
+      <li><strong>How are documents and images handled?</strong> Room PDFs and imaging assets are stored through Supabase Storage and served via signed URLs in the application flow. Bucket policies and expiry durations should be confirmed in the live project.</li>
+      <li><strong>What is the expected scale?</strong> No capacity or load-test numbers are defined in the repository. Supabase and OpenAI limits, concurrent student sessions, prompt/token volume, function timeouts, and storage growth should be load-tested for the partner’s cohort size.</li>
+      <li><strong>What would an integration project need?</strong> Agree on identity/SSO, roster and school mapping, case/content ownership, assignment lifecycle, reporting/export fields, privacy boundaries, environment separation, support ownership, and an acceptance test using synthetic cases.</li>
+    </ul>
+
+    <h2>9. Suggested partner discussion checklist</h2>
+    <div class="grid">
+      <div class="card"><h3>Technical</h3><p>Confirm deployment topology, region, environment separation, SSO/LMS/roster needs, rate limits, observability, backups, and integration contracts.</p></div>
+      <div class="card"><h3>Clinical and academic</h3><p>Agree on case authoring, rubric ownership, faculty override/review, content update process, safety language, and what is explicitly simulation-only.</p></div>
+      <div class="card"><h3>Privacy and security</h3><p>Define synthetic versus real data, PHI boundaries, retention, deletion, audit events, access reviews, incident response, vendor agreements, and least-privilege policies.</p></div>
+      <div class="card"><h3>Commercial / rollout</h3><p>Define pilot cohort, schools, success metrics, support SLA, training, migration/import plan, release cadence, and ownership after handoff.</p></div>
+    </div>
+    <div class="footer">Nurse Althea partner technical brief · Prepared from repository documentation, source, migrations, and configuration at HEAD on 30 July 2026. Internal partner discussion draft; verify live infrastructure and contractual claims before distribution.</div>
+  </main>
+</body>
+</html>

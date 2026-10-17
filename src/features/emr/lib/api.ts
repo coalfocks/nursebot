@@ -17,6 +17,7 @@ import type {
 } from './types';
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
+import { normalizeLabResult } from './labIntegrity';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
@@ -101,6 +102,8 @@ const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): Clini
     timestamp: row.timestamp,
     signed: row.signed ?? false,
     recordVersion: row.record_version,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
 };
 
@@ -130,7 +133,7 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
 
 const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
-  return {
+  const mapped: LabResult = {
     id: row.id,
     recordVersion: row.record_version,
     patientId: row.patient_id ?? fallbackPatientId,
@@ -147,13 +150,16 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     unit: row.unit ?? '',
     referenceRange: row.reference_range ?? '',
     status: (row.status as LabResult['status']) ?? 'Pending',
-    lifecycleStatus: row.lifecycle_status as LabResult['lifecycleStatus'],
+    lifecycleStatus: (row.lifecycle_status as LabResult['lifecycleStatus']) ?? (row.status === 'Pending' ? 'pending' : 'resulted'),
     collectionTime: row.collection_time ?? new Date().toISOString(),
     resultTime: row.result_time ?? undefined,
     orderedBy: row.ordered_by ?? 'Unknown',
     createdAt: row.created_at ?? undefined,
     deletedAt: row.deleted_at,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
+  return normalizeLabResult(mapped);
 };
 
 const serializeLabValue = (lab: LabResult) => {
@@ -189,9 +195,18 @@ const mapImagingStudy = (row: ImagingStudyRow, fallbackPatientId: string): Imagi
     orderedBy: row.ordered_by ?? undefined,
     orderTime: row.order_time,
     report: row.report ?? undefined,
+    bodySite: row.body_site ?? undefined,
+    laterality: row.laterality ?? undefined,
+    indication: row.indication ?? undefined,
+    findings: row.findings ?? undefined,
+    impression: row.impression ?? undefined,
+    encounterTime: row.encounter_time ?? undefined,
+    recordVersion: row.record_version,
     reportGeneratedAt: row.report_generated_at ?? undefined,
     images,
     deletedAt: row.deleted_at,
+    timelineEntryId: row.timeline_entry_id,
+    relativeOffsetHours: row.relative_offset_hours,
   };
 };
 
@@ -304,8 +319,8 @@ export const emrApi = {
     });
   },
 
-  async listPatientsForStudent(studentId: string): Promise<Patient[]> {
-    const { data, error } = await supabase
+  async listPatientsForStudent(studentId: string, sandboxOnly = false): Promise<Patient[]> {
+    let query = supabase
       .from('student_room_assignments')
       .select(
         `
@@ -320,6 +335,8 @@ export const emrApi = {
       )
       .eq('student_id', studentId)
       .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
+    if (sandboxOnly) query = query.eq('is_sandbox', true);
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error fetching student patients', error);
@@ -467,7 +484,12 @@ export const emrApi = {
     }
   },
 
-  async listLabResults(patientId: string, assignmentId?: string, roomId?: number | null): Promise<LabResult[]> {
+  async listLabResults(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+    onError?: (message: string) => void,
+  ): Promise<LabResult[]> {
     const targetRooms = await getRoomLineage(roomId);
     const queries = [
       supabase
@@ -506,6 +528,7 @@ export const emrApi = {
     const errors = results.map(({ error }) => error).filter(Boolean);
     if (errors.length) {
       errors.forEach((error) => console.error('Error fetching labs', error));
+      onError?.('Unable to load saved lab results. Refresh the chart and try again.');
     }
 
     return results
@@ -529,6 +552,7 @@ export const emrApi = {
 
   async addLabResults(labs: LabResult[], roomId?: number | null): Promise<LabWriteResult> {
     if (!labs.length) return { ok: true };
+    labs = labs.map((lab) => normalizeLabResult(lab));
     
     // Check if all labs are baseline scope (no assignment, no room)
     const allBaseline = labs.every((lab) => {
@@ -688,9 +712,9 @@ export const emrApi = {
     updates: Partial<Pick<LabResult, 'testName' | 'value' | 'valueType' | 'unit' | 'referenceRange' | 'status' | 'collectionTime' | 'resultTime' | 'interpretation' | 'abnormalFlag' | 'specimen' | 'lifecycleStatus'>>,
     expectedVersion?: number,
   ): Promise<VersionedMutationResult<LabResult>> {
-    const valuePatch = updates.value === undefined
-      ? {}
-      : serializeLabValue({
+    const normalizedValue = updates.value === undefined
+      ? null
+      : normalizeLabResult({
           id: labId,
           patientId: '',
           testName: updates.testName ?? '',
@@ -698,10 +722,14 @@ export const emrApi = {
           valueType: updates.valueType,
           unit: updates.unit ?? '',
           referenceRange: updates.referenceRange ?? '',
-          status: updates.status ?? 'Pending',
+          status: updates.status ?? 'Unknown',
           collectionTime: updates.collectionTime ?? new Date().toISOString(),
           orderedBy: '',
+          lifecycleStatus: updates.lifecycleStatus,
         });
+    const valuePatch = normalizedValue === null
+      ? {}
+      : serializeLabValue(normalizedValue);
     let query = supabase
       .from('lab_results')
       .update({
@@ -709,11 +737,11 @@ export const emrApi = {
         ...valuePatch,
         unit: updates.unit,
         reference_range: updates.referenceRange,
-        status: updates.status,
+        status: normalizedValue?.status,
         collection_time: updates.collectionTime,
         result_time: updates.resultTime,
         interpretation: updates.interpretation,
-        abnormal_flag: updates.abnormalFlag,
+        abnormal_flag: normalizedValue ? normalizedValue.abnormalFlag : updates.abnormalFlag,
         specimen: updates.specimen,
         lifecycle_status: updates.lifecycleStatus,
       })
@@ -762,6 +790,8 @@ export const emrApi = {
           roomId: row.room_id ?? undefined,
           overrideScope: scope,
           timestamp: row.timestamp,
+          timelineEntryId: row.timeline_entry_id,
+          relativeOffsetHours: row.relative_offset_hours,
           temperature: row.temperature ?? undefined,
           bloodPressureSystolic: row.blood_pressure_systolic ?? undefined,
           bloodPressureDiastolic: row.blood_pressure_diastolic ?? undefined,
@@ -1083,29 +1113,62 @@ export const emrApi = {
 
   async updateImagingStudy(
     studyId: string,
-    updates: Partial<Pick<ImagingStudy, 'report' | 'reportGeneratedAt' | 'status' | 'images'>>,
+    updates: Partial<Pick<ImagingStudy, 'report' | 'reportGeneratedAt' | 'status' | 'images' | 'bodySite' | 'laterality' | 'indication' | 'findings' | 'impression' | 'encounterTime' | 'contrast'>> & { expectedVersion?: number },
   ): Promise<ImagingStudy | null> {
+    const { data: existing, error: existingError } = await supabase
+      .from('imaging_studies')
+      .select('*')
+      .eq('id', studyId)
+      .maybeSingle();
+    if (existingError || !existing) return null;
+    if (updates.expectedVersion !== undefined && existing.record_version !== updates.expectedVersion) {
+      console.error('Imaging report edit conflict', { studyId, expected: updates.expectedVersion, actual: existing.record_version });
+      return null;
+    }
     const payload = {
       report: updates.report,
       report_generated_at: updates.reportGeneratedAt,
       status: updates.status,
       images: updates.images,
+      body_site: updates.bodySite,
+      laterality: updates.laterality,
+      indication: updates.indication,
+      findings: updates.findings,
+      impression: updates.impression,
+      encounter_time: updates.encounterTime,
+      record_version: updates.expectedVersion !== undefined ? updates.expectedVersion + 1 : undefined,
     };
     const cleanPayload = Object.fromEntries(
       Object.entries(payload).filter(([, value]) => value !== undefined),
     );
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('imaging_studies')
       .update(cleanPayload)
-      .eq('id', studyId)
-      .select('*')
-      .maybeSingle();
+      .eq('id', studyId);
+    if (updates.expectedVersion !== undefined) query = query.eq('record_version', updates.expectedVersion);
+    const { data, error } = await query.select('*').maybeSingle();
 
     if (error || !data) {
       console.error('Error updating imaging study', error);
       return null;
     }
+
+    const nextVersion = data.record_version ?? (existing.record_version + 1);
+    await supabase.from('imaging_study_versions').upsert({
+      study_id: studyId,
+      version: nextVersion,
+      report: data.report,
+      body_site: data.body_site,
+      laterality: data.laterality,
+      contrast: data.contrast,
+      indication: data.indication,
+      findings: data.findings,
+      impression: data.impression,
+      status: data.status,
+      encounter_time: data.encounter_time,
+      is_addendum: false,
+    }, { onConflict: 'study_id,version' });
 
     return mapImagingStudy(data, data.patient_id ?? '');
   },

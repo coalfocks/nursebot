@@ -8,6 +8,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  Printer,
 } from 'lucide-react';
 import type { Database, Json } from '../lib/database.types';
 
@@ -17,6 +18,8 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 
 interface FeedbackSidebarProps {
   assignment: Assignment;
+  onRetryFeedback?: () => void;
+  retryingFeedback?: boolean;
 }
 
 type BreakdownItem = {
@@ -152,7 +155,7 @@ function BreakdownRow({
   );
 }
 
-export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
+export function FeedbackSidebar({ assignment, onRetryFeedback, retryingFeedback }: FeedbackSidebarProps) {
   const [expandedSection, setExpandedSection] = useState<'communication' | 'mdm' | null>(null);
 
   // Only show after explicit completion
@@ -172,6 +175,11 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
               : 'Processing feedback...'}
           </p>
         </div>
+        {onRetryFeedback && (
+          <button type="button" onClick={onRetryFeedback} disabled={retryingFeedback} className="mt-4 w-full rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+            {retryingFeedback ? 'Retrying feedback…' : 'Retry feedback generation'}
+          </button>
+        )}
       </div>
     );
   }
@@ -195,15 +203,27 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
     return null;
   }
 
+  // The detailed v2 debrief is a dedicated page. Do not render the retired
+  // overall-grade/efficiency-deduction contract in the completed-case sidebar.
+  return (
+    <div className="bg-white shadow rounded-lg p-6 space-y-3">
+      <div className="flex items-center gap-2">
+        <Award className="h-5 w-5 text-blue-600" />
+        <h2 className="text-lg font-semibold text-gray-900">Feedback ready</h2>
+      </div>
+      <p className="text-sm text-gray-600">Review your evidence-linked formative debrief and separate safety result.</p>
+      <button
+        type="button"
+        onClick={() => { window.location.href = `/assignment/${assignment.id}/feedback`; }}
+        className="w-full rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800"
+      >
+        Review your feedback
+      </button>
+    </div>
+  );
+
   const commScore = assignment.communication_score;
   const mdmScore = assignment.mdm_score;
-  const availableScores = [commScore, mdmScore].filter((score): score is number => score != null);
-  const computedGrade =
-    availableScores.length > 0
-      ? Math.round((availableScores.reduce((sum, score) => sum + score, 0) / availableScores.length) * 20)
-      : null;
-  const grade = assignment.grade ?? computedGrade;
-
   const communicationBreakdown = parseCommunicationBreakdown(assignment.communication_breakdown);
   const mdmBreakdown = parseMdmBreakdown(assignment.mdm_breakdown);
 
@@ -214,29 +234,26 @@ export function FeedbackSidebar({ assignment }: FeedbackSidebarProps) {
     return 'text-red-600 bg-red-50 border-red-200';
   };
 
-  const getGradeColor = (g: number) => {
-    if (g >= 90) return 'text-green-600';
-    if (g >= 80) return 'text-blue-600';
-    if (g >= 70) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
   return (
     <div className="bg-white shadow rounded-lg p-6 space-y-5">
-      <div className="flex items-center gap-2 border-b pb-3">
-        <Award className="h-5 w-5 text-amber-500" />
-        <h2 className="text-lg font-semibold text-gray-900">Your Results</h2>
+      <div className="flex items-center justify-between gap-2 border-b pb-3">
+        <div className="flex items-center gap-2">
+          <Award className="h-5 w-5 text-amber-500" />
+          <h2 className="text-lg font-semibold text-gray-900">Review your feedback</h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 print:hidden"
+        >
+          <Printer className="h-3.5 w-3.5" />
+          Print
+        </button>
       </div>
 
-      {/* Grade */}
-      <div className="text-center py-2">
-        {grade != null ? (
-          <div className={`text-4xl font-bold ${getGradeColor(grade)}`}>{grade}</div>
-        ) : (
-          <div className="text-4xl font-bold text-gray-400">--</div>
-        )}
-        <p className="text-xs text-gray-500 mt-1">Overall Grade</p>
-      </div>
+      <p className="text-xs text-gray-500">
+        Formative feedback from this simulation—not an ACGME Milestone, EPA entrustment decision, or validated competence determination.
+      </p>
 
       {/* Score Circles */}
       <div className="grid grid-cols-2 gap-3">

@@ -7,10 +7,12 @@ interface CsvUser {
   email: string;
   password: string;
   specialty: string;
+  learner_program?: string;
 }
 
 interface BulkCreateRequest {
   users: CsvUser[];
+  learnerProgram?: string;
 }
 
 interface CreateResult {
@@ -49,7 +51,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { users }: BulkCreateRequest = await req.json();
+    const { users, learnerProgram = 'medical' }: BulkCreateRequest = await req.json();
 
     if (!users || !Array.isArray(users) || users.length === 0) {
       return new Response(
@@ -62,6 +64,13 @@ Deno.serve(async (req) => {
           },
         },
       );
+    }
+
+    if (!['medical', 'nursing'].includes(learnerProgram)) {
+      return new Response(JSON.stringify({ error: 'Invalid learner program' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const results: CreateResult[] = [];
@@ -122,6 +131,16 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        const { data: schoolPrograms, error: programError } = await supabaseAdmin
+          .from('schools')
+          .select('enabled_programs')
+          .eq('id', schoolData.id)
+          .single();
+        if (programError || !schoolPrograms?.enabled_programs?.includes(learnerProgram)) {
+          results.push({ success: false, email, error: `Program "${learnerProgram}" is not enabled for school "${school}"` });
+          continue;
+        }
+
         // Create auth user
         const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
           email,
@@ -159,6 +178,7 @@ Deno.serve(async (req) => {
             sms_consent: false,
             role: 'student',
             school_id: schoolData.id,
+            learner_program: learnerProgram,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },

@@ -1,16 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, ClipboardList, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
-import {
-  ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
-  getAssignableStudentCutoffDate,
-  isAssignableStudentProfile,
-} from '../lib/studentVisibility';
+import { getEligibleAssignmentStudents } from '../lib/assignmentStudentEligibility';
+import { getSchoolDisplayName } from '../hooks/useSchools';
+import { classifyFeedbackScore } from '../lib/feedbackScore';
+import { withTimeout } from '../lib/asyncTimeout';
+import { buildAssignmentListQuery } from '../lib/assignmentQueries';
+import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
+import { assessOrdersConfig } from '../lib/ordersConfig';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -36,12 +38,41 @@ type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
 
+type EvidenceAuditEvent = {
+  id: string;
+  type: string;
+  timestamp: string;
+  details: string;
+};
+
+type EvidenceAudit = {
+  assignment: Pick<Database['public']['Tables']['student_room_assignments']['Row'],
+    'feedback_debrief' | 'communication_breakdown' | 'mdm_breakdown' | 'safety_result' |
+    'scoring_start_at' | 'rubric_version' | 'case_key_version' | 'assessment_version' |
+    'source_event_ids' | 'technical_incomplete' | 'feedback_status' | 'feedback_error'>;
+  firstPage: { id: string; timestamp: string; details: string } | null;
+  events: EvidenceAuditEvent[];
+  latestRun: {
+    id: string;
+    created_at: string;
+    attempt_id: string;
+    rubric_version: string;
+    case_key_version: string;
+    assessment_version: string;
+    technical_incomplete: boolean;
+    scoring_start_at: string | null;
+    source_event_ids: Database['public']['Tables']['feedback_assessment_runs']['Row']['source_event_ids'];
+    result: Database['public']['Tables']['feedback_assessment_runs']['Row']['result'];
+  } | null;
+};
+
 export default function AssignmentManager() {
   const { user, profile, activeSchoolId } = useAuthStore();
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [students, setStudents] = useState<Profile[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
@@ -71,37 +102,60 @@ export default function AssignmentManager() {
   } | null>(null);
   const [showChatModal, setShowChatModal] = useState(false);
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [showEvidenceModal, setShowEvidenceModal] = useState(false);
+  const [evidenceAudit, setEvidenceAudit] = useState<EvidenceAudit | null>(null);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
+  const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
-  const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
-  const assignableStudentCutoff = getAssignableStudentCutoffDate();
+  const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
+
+  const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
+    setChatEvidenceStatus('loading');
+    try {
+      const result = await collectPersistedChatAssignmentIds(
+        assignmentIds,
+        async (batch, from, to) => {
+          const { data, error } = await withTimeout(
+            supabase
+              .from('chat_messages')
+              .select('assignment_id')
+              .in('assignment_id', batch)
+              .order('created_at', { ascending: true })
+              .order('id', { ascending: true })
+              .range(from, to),
+            'chat evidence lookup'
+          );
+          return { data: data as { assignment_id: string | null }[] | null, error };
+        },
+      );
+      setChatEvidenceStatus('ready');
+      return result;
+    } catch (error) {
+      setChatEvidenceStatus('error');
+      throw error;
+    }
+  };
+
+  const getOverallScore = (feedback: Database['public']['Tables']['student_room_assignments']['Row']['nurse_feedback']) => {
+    if (feedback && typeof feedback === 'object' && !Array.isArray(feedback) && 'overall_score' in feedback) {
+      return feedback.overall_score;
+    }
+    return undefined;
+  };
 
   useEffect(() => {
     if (!hasAdmin) return;
     const loadData = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
-        let assignmentsQuery = supabase
-          .from('student_room_assignments')
-          .select(`
-            *,
-            student:student_id (
-              id,
-              full_name,
-              study_year,
-              email,
-              school_id,
-              specialization_interest
-            ),
-            room:room_id (
-              id,
-              room_number,
-              specialty_id,
-              difficulty_level,
-              school_id
-            )
-          `)
-          .order('created_at', { ascending: false });
+        const assignmentsQuery = buildAssignmentListQuery(supabase, scopedSchoolId);
 
         let studentsQuery = supabase
           .from('profiles')
@@ -120,7 +174,6 @@ export default function AssignmentManager() {
           .order('name');
 
         if (scopedSchoolId) {
-          assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
           studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
           specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
@@ -132,13 +185,13 @@ export default function AssignmentManager() {
           roomsResult,
           specialtiesResult,
           schoolsResult,
-        ] = await Promise.all([
+        ] = await withTimeout(Promise.all([
           assignmentsQuery,
           studentsQuery,
           roomsQuery,
           specialtiesQuery,
           supabase.from('schools').select('*').order('name'),
-        ]);
+        ]), 'case assignments data load', 30000);
 
         if (assignmentsResult.error) throw assignmentsResult.error;
         if (studentsResult.error) throw studentsResult.error;
@@ -146,13 +199,22 @@ export default function AssignmentManager() {
         if (specialtiesResult.error) throw specialtiesResult.error;
         if (schoolsResult.error) throw schoolsResult.error;
 
-        setAssignments(((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null));
+        const loadedAssignments = ((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null);
+        setAssignments(loadedAssignments);
+        try {
+          setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+        } catch (error) {
+          console.error('Error fetching persisted chat evidence:', error);
+          // The assignment list remains usable, but every badge stays unknown.
+          setAssignmentsWithPersistedChat(new Set());
+        }
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
         setSchools(schoolsResult.data || []);
       } catch (error) {
         console.error('Error fetching data:', error);
+        setLoadError(error instanceof Error ? error.message : 'Unable to load case assignments.');
       } finally {
         setLoading(false);
       }
@@ -191,14 +253,17 @@ export default function AssignmentManager() {
     const { data, error } = await query;
 
     if (error) throw error;
-    setAssignments(((data ?? []) as Assignment[]).filter(a => a.room !== null));
+    const loadedAssignments = ((data ?? []) as Assignment[]).filter(a => a.room !== null);
+    setAssignments(loadedAssignments);
+    try {
+      setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
+    } catch (error) {
+      console.error('Error fetching persisted chat evidence:', error);
+      setAssignmentsWithPersistedChat(new Set());
+    }
   };
 
-  const validateRoomOrdersConfig = (room: Room): boolean => {
-    if (!room.orders_config) return false;
-    const config = room.orders_config as { labs?: Array<{ name: string; type: string }> };
-    return config.labs && config.labs.length > 0;
-  };
+  const getRoomOrdersReadiness = (room: Room) => assessOrdersConfig(room.orders_config);
 
 
   const validateAssignmentDates = (
@@ -278,9 +343,11 @@ export default function AssignmentManager() {
       return;
     }
 
-    const invalidRooms = selectedRoomsData.filter(room => !validateRoomOrdersConfig(room));
+    const invalidRooms = selectedRoomsData
+      .map((room) => ({ room, readiness: getRoomOrdersReadiness(room) }))
+      .filter(({ readiness }) => !readiness.valid);
     if (invalidRooms.length > 0) {
-      alert(`The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Please configure orders for these rooms before creating assignments.`);
+      alert(invalidRooms.map(({ room, readiness }) => `Room ${room.room_number}: ${readiness.message}`).join('\n'));
       return;
     }
 
@@ -491,6 +558,8 @@ export default function AssignmentManager() {
   };
 
   const fetchChatMessages = async (assignmentId: string) => {
+    setChatLoading(true);
+    setChatError(null);
     try {
       const { data, error } = await supabase
         .from('chat_messages')
@@ -502,7 +571,10 @@ export default function AssignmentManager() {
       return data || [];
     } catch (error) {
       console.error('Error fetching chat messages:', error);
+      setChatError(error instanceof Error ? error.message : 'Unable to read persisted chat events for this attempt.');
       return [];
+    } finally {
+      setChatLoading(false);
     }
   };
 
@@ -511,6 +583,125 @@ export default function AssignmentManager() {
     const messages = await fetchChatMessages(assignment.id);
     setSelectedChatMessages(messages);
     setShowChatModal(true);
+  };
+
+  const handleViewEvidence = async (assignment: Assignment) => {
+    setSelectedAssignment(assignment);
+    setShowEvidenceModal(true);
+    setEvidenceAudit(null);
+    setEvidenceError(null);
+    setEvidenceLoading(true);
+    try {
+      const [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
+        supabase.from('student_room_assignments')
+          .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
+          .eq('id', assignment.id)
+          .single(),
+        supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        supabase.from('patient_chat_messages').select('id, role, content, created_at, reply_to_client_message_id').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('consultant_chat_messages').select('id, role, content, specialty, urgency, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        supabase.from('medical_orders').select('id, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
+        supabase.from('imaging_studies').select('id, study_type, order_name, status, report, order_time, report_generated_at, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
+        supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      for (const result of [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
+        if (result.error) throw result.error;
+      }
+
+      const messages = messagesResult.data ?? [];
+      const firstPageMessage = messages
+        .filter((message) => (message.role === 'assistant' || message.role === 'nurse') && message.content !== '<completed>' && message.created_at)
+        .sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime())[0];
+      const persistedStart = assignmentResult.data.scoring_start_at;
+      const scoringStart = persistedStart ?? (firstPageMessage?.created_at ? new Date(firstPageMessage.created_at).toISOString() : null);
+      const isPostPage = (timestamp: string | null) => Boolean(timestamp && scoringStart && new Date(timestamp).getTime() >= new Date(scoringStart).getTime());
+      const events: EvidenceAuditEvent[] = [];
+      const timestamp = (value: string | null) => value ? new Date(value).toISOString() : null;
+
+      messages.forEach((message) => {
+        const eventTimestamp = timestamp(message.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({
+          id: `message-${message.id}`,
+          type: message.role === 'student' || message.role === 'user' ? 'student_chat' : 'nurse_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+
+      const transcriptIds = new Set<string>();
+      (patientMessagesResult.data ?? []).forEach((message) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `patient-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_patient_chat' : 'patient_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+      (consultantMessagesResult.data ?? []).forEach((message: { id: string; role: string; content: string; created_at: string | null }) => {
+        const eventTimestamp = timestamp(message.created_at);
+        const eventId = `consultant-message-${message.id}`;
+        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        transcriptIds.add(eventId);
+        events.push({
+          id: eventId,
+          type: message.role === 'student' || message.role === 'user' ? 'student_consultant_chat' : 'consultant_chat',
+          timestamp: eventTimestamp,
+          details: message.content,
+        });
+      });
+
+      (ordersResult.data ?? []).forEach((order) => {
+        const eventTimestamp = timestamp(order.order_time ?? order.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({ id: `order-${order.id}`, type: 'medical_order', timestamp: eventTimestamp, details: [order.order_name, order.dose, order.route, order.frequency, order.priority, order.status, order.instructions].filter(Boolean).join(' • ') });
+      });
+      const labsByTimestamp = new Map<string, string[]>();
+      (labsResult.data ?? []).forEach((lab) => {
+        const eventTimestamp = timestamp(lab.result_time ?? lab.collection_time ?? lab.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        const details = [lab.test_name, lab.value !== null ? `${lab.value}${lab.unit ? ` ${lab.unit}` : ''}` : lab.text_value, lab.status, lab.interpretation].filter(Boolean).join(' • ');
+        labsByTimestamp.set(eventTimestamp, [...(labsByTimestamp.get(eventTimestamp) ?? []), details]);
+      });
+      labsByTimestamp.forEach((details, eventTimestamp) => events.push({ id: `labs-assignment-${eventTimestamp.slice(0, 16)}`, type: 'lab_result', timestamp: eventTimestamp, details: details.join('\n') }));
+      (vitalsResult.data ?? []).forEach((vital) => {
+        const eventTimestamp = timestamp(vital.timestamp);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({ id: `vital-${vital.id}`, type: 'vital_signs', timestamp: eventTimestamp, details: [vital.temperature !== null ? `T ${vital.temperature}` : null, vital.blood_pressure_systolic !== null && vital.blood_pressure_diastolic !== null ? `BP ${vital.blood_pressure_systolic}/${vital.blood_pressure_diastolic}` : null, vital.heart_rate !== null ? `HR ${vital.heart_rate}` : null, vital.respiratory_rate !== null ? `RR ${vital.respiratory_rate}` : null, vital.oxygen_saturation !== null ? `SpO2 ${vital.oxygen_saturation}%` : null, vital.pain !== null ? `Pain ${vital.pain}/10` : null].filter(Boolean).join(' • ') });
+      });
+      (imagingResult.data ?? []).forEach((study) => {
+        const eventTimestamp = timestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({ id: `imaging-${study.id}`, type: 'imaging_study', timestamp: eventTimestamp, details: [study.order_name || study.study_type, study.status, study.report].filter(Boolean).join(' • ') });
+      });
+      (learnerActionsResult.data ?? []).forEach((action) => {
+        const eventTimestamp = timestamp(action.occurred_at ?? action.created_at);
+        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        events.push({ id: `learner-action-${action.id}`, type: `learner_${action.action_type} · ${action.channel}`, timestamp: eventTimestamp, details: action.content });
+      });
+      if (assignment.student_progress_note?.trim() && assignment.completed_at && isPostPage(assignment.completed_at)) {
+        events.push({ id: `progress-note-${assignment.id}`, type: 'progress_note', timestamp: new Date(assignment.completed_at).toISOString(), details: assignment.student_progress_note.trim() });
+      }
+      events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      setEvidenceAudit({
+        assignment: assignmentResult.data,
+        firstPage: firstPageMessage?.created_at ? { id: String(firstPageMessage.id), timestamp: new Date(firstPageMessage.created_at).toISOString(), details: firstPageMessage.content } : null,
+        events,
+        latestRun: runResult.data,
+      });
+    } catch (error) {
+      console.error('Error fetching assignment evidence audit:', error);
+      setEvidenceError(error instanceof Error ? error.message : 'Unable to read assignment evidence audit.');
+    } finally {
+      setEvidenceLoading(false);
+    }
   };
 
   const handleRerunAssessment = async (assignmentId: string) => {
@@ -704,6 +895,20 @@ export default function AssignmentManager() {
       <AdminLayout>
         <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <AdminLayout>
+        <div className="mx-auto max-w-3xl px-6 py-12">
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
+            <h2 className="font-semibold">Case Assignments could not be loaded</h2>
+            <p className="mt-2">{loadError}</p>
+            <p className="mt-2 text-red-700">Check the selected school scope and try again. No assignment data was changed.</p>
+          </div>
         </div>
       </AdminLayout>
     );
@@ -907,15 +1112,44 @@ export default function AssignmentManager() {
                       {assignment.nurse_feedback ? (
                         <div className="text-sm">
                           <div className="font-medium text-gray-900">
-                            Score: {assignment.nurse_feedback.overall_score}/5
+                            {(() => {
+                              const score = classifyFeedbackScore(getOverallScore(assignment.nurse_feedback), 'legacy');
+                              if (score.kind === 'legacy') {
+                                return (
+                                <>
+                                  <div>{score.displayText}</div>
+                                  <div className="mt-1 text-xs font-normal text-gray-500">{score.explanation}</div>
+                                </>
+                                );
+                              }
+                              const canonicalScores = [
+                                typeof assignment.communication_score === 'number' ? `Communication: ${assignment.communication_score}/5` : null,
+                                typeof assignment.mdm_score === 'number' ? `MDM: ${assignment.mdm_score}/5` : null,
+                              ].filter((value): value is string => value !== null);
+                              return canonicalScores.length > 0 ? canonicalScores.join(' · ') : score.displayText;
+                            })()}
                           </div>
                           <div className="text-gray-500">
                             Feedback provided
                           </div>
+                          {chatEvidenceStatus === 'error' ? (
+                            <div className="text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</div>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <div className="text-xs text-gray-500">Checking chat evidence…</div>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
+                            <div className="text-xs text-amber-700">No persisted chat evidence</div>
+                          ) : null}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-500">
                           No feedback yet
+                          {chatEvidenceStatus === 'error' ? (
+                            <span className="block text-xs text-amber-700">Chat evidence unavailable — retrying/query failed</span>
+                          ) : chatEvidenceStatus === 'loading' ? (
+                            <span className="block text-xs text-gray-500">Checking chat evidence…</span>
+                          ) : !assignmentsWithPersistedChat.has(assignment.id) ? (
+                            <span className="block text-xs text-amber-700">No persisted chat evidence</span>
+                          ) : null}
                         </span>
                       )}
                     </td>
@@ -959,6 +1193,13 @@ export default function AssignmentManager() {
                             >
                               <MessageSquare className="w-4 h-4 mr-1" />
                               View Chat
+                            </button>
+                            <button
+                              onClick={() => void handleViewEvidence(assignment)}
+                              className="inline-flex items-center px-3 py-2 border border-indigo-300 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            >
+                              <ClipboardList className="w-4 h-4 mr-1" />
+                              View Evidence/Audit
                             </button>
                             {assignment.status === 'completed' && (
                               <button
@@ -1037,7 +1278,8 @@ export default function AssignmentManager() {
                         <div className="mt-2 max-h-56 overflow-y-auto border border-gray-200 rounded-md">
                           {rooms.map(room => {
                             const roomId = room.id.toString();
-                            const hasOrdersConfig = validateRoomOrdersConfig(room);
+                            const ordersReadiness = getRoomOrdersReadiness(room);
+                            const hasOrdersConfig = ordersReadiness.valid;
                             const isSelected = selectedRooms.includes(roomId);
                             return (
                               <button
@@ -1052,7 +1294,7 @@ export default function AssignmentManager() {
                                 <div className="font-medium">Room {room.room_number}</div>
                                 <div className="text-sm text-gray-500">
                                   {room.difficulty_level || 'No difficulty set'}
-                                  {!hasOrdersConfig && ' • No orders configured'}
+                                  {!hasOrdersConfig && ` • ${ordersReadiness.message}`}
                                 </div>
                               </button>
                             );
@@ -1117,8 +1359,7 @@ export default function AssignmentManager() {
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Search Students</label>
                       <p className="mt-1 text-xs text-gray-500">
-                        Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                        (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                        Showing current eligible students in the selected school; older active accounts remain assignable.
                       </p>
                       <div className="mt-1">
                         <input
@@ -1170,7 +1411,7 @@ export default function AssignmentManager() {
                           <option value="">All Schools</option>
                           {schools.map(school => (
                             <option key={school.id} value={school.id}>
-                              {school.name}
+                              {getSchoolDisplayName(school)}
                             </option>
                           ))}
                         </select>
@@ -1202,8 +1443,7 @@ export default function AssignmentManager() {
                           Select Students ({selectedBulkStudents.length} selected)
                         </label>
                         <p className="mt-1 text-xs text-gray-500">
-                          Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                          (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                          Showing current eligible students; use the school and specialty filters to narrow the list.
                         </p>
                         <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
                           {assignableStudents
@@ -1434,7 +1674,10 @@ export default function AssignmentManager() {
                   Chat History - {selectedAssignment.student.full_name} in Room {selectedAssignment.room.room_number}
                 </h3>
                 <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                  {selectedChatMessages.map((message) => (
+                  {chatLoading && <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading persisted chat events…</p>}
+                  {!chatLoading && chatError && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Chat history could not be read: {chatError}</p>}
+                  {!chatLoading && !chatError && selectedChatMessages.length === 0 && <p className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No chat events were persisted for this attempt. This is different from an empty loading state; check the assignment event log before interpreting feedback.</p>}
+                  {!chatLoading && selectedChatMessages.map((message) => (
                     <div
                       key={message.id}
                       className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
@@ -1477,6 +1720,95 @@ export default function AssignmentManager() {
           </div>
         </div>
       )}
+
+      {showEvidenceModal && selectedAssignment && (
+        <EvidenceAuditModal
+          assignment={selectedAssignment}
+          audit={evidenceAudit}
+          loading={evidenceLoading}
+          error={evidenceError}
+          closeButtonRef={evidenceCloseButtonRef}
+          onClose={() => {
+            setShowEvidenceModal(false);
+            setEvidenceAudit(null);
+            setEvidenceError(null);
+          }}
+        />
+      )}
     </AdminLayout>
+  );
+}
+
+function EvidenceAuditModal({
+  assignment,
+  audit,
+  loading,
+  error,
+  closeButtonRef,
+  onClose,
+}: {
+  assignment: Assignment;
+  audit: EvidenceAudit | null;
+  loading: boolean;
+  error: string | null;
+  closeButtonRef: React.RefObject<HTMLButtonElement>;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    closeButtonRef.current?.focus();
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeButtonRef, onClose]);
+
+  const json = (value: unknown) => value == null ? 'None recorded' : JSON.stringify(value, null, 2);
+  const close = <button ref={closeButtonRef} type="button" onClick={onClose} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Close</button>;
+
+  return (
+    <div className="fixed inset-0 z-20 overflow-y-auto" role="presentation">
+      <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={onClose} aria-hidden="true" />
+      <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+        <div role="dialog" aria-modal="true" aria-labelledby="evidence-audit-title" className="relative inline-block w-full max-w-5xl transform overflow-hidden rounded-lg bg-white px-4 pt-5 pb-4 text-left align-bottom shadow-xl sm:my-8 sm:p-6 sm:align-middle">
+          <h2 id="evidence-audit-title" className="text-lg font-semibold text-gray-900">Evidence Audit — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2>
+          <p className="mt-1 text-sm text-gray-500">Read-only provenance for this assignment. Press Escape to close.</p>
+          <div className="mt-4 max-h-[70vh] space-y-5 overflow-y-auto pr-1">
+            {loading && <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading read-only evidence…</p>}
+            {!loading && error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Evidence audit could not be read: {error}</p>}
+            {!loading && !error && audit && (
+              <>
+                <section className="rounded-md border border-gray-200 p-4">
+                  <h3 className="font-medium text-gray-900">Scoring boundary</h3>
+                  <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                    <div><dt className="font-medium text-gray-500">First-page event</dt><dd className="break-words text-gray-900">{audit.firstPage ? `${audit.firstPage.id} · ${new Date(audit.firstPage.timestamp).toLocaleString()} · ${audit.firstPage.details}` : 'No first nurse page recorded'}</dd></div>
+                    <div><dt className="font-medium text-gray-500">Scoring starts at</dt><dd className="text-gray-900">{audit.assignment.scoring_start_at ? new Date(audit.assignment.scoring_start_at).toLocaleString() : 'Not recorded'}</dd></div>
+                  </dl>
+                </section>
+                <section className="rounded-md border border-gray-200 p-4">
+                  <h3 className="font-medium text-gray-900">Feedback provenance</h3>
+                  <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                    <div><dt className="font-medium text-gray-500">Status / error</dt><dd className="text-gray-900">{audit.assignment.feedback_status ?? 'Not recorded'}{audit.assignment.feedback_error ? ` — ${audit.assignment.feedback_error}` : ''}</dd></div>
+                    <div><dt className="font-medium text-gray-500">Technical incomplete</dt><dd className="text-gray-900">{audit.assignment.technical_incomplete ? 'Yes' : 'No'}</dd></div>
+                    <div><dt className="font-medium text-gray-500">Rubric / case key / assessment</dt><dd className="break-words text-gray-900">{audit.assignment.rubric_version ?? '—'} / {audit.assignment.case_key_version ?? '—'} / {audit.assignment.assessment_version ?? '—'}</dd></div>
+                    <div><dt className="font-medium text-gray-500">Source event IDs</dt><dd className="break-words text-gray-900">{json(audit.assignment.source_event_ids)}</dd></div>
+                  </dl>
+                  <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><h4 className="font-semibold text-gray-600">Feedback debrief</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json(audit.assignment.feedback_debrief)}</pre></div><div><h4 className="font-semibold text-gray-600">Communication / MDM / safety</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json({ communication: audit.assignment.communication_breakdown, mdm: audit.assignment.mdm_breakdown, safety: audit.assignment.safety_result })}</pre></div></div>
+                </section>
+                <section className="rounded-md border border-gray-200 p-4">
+                  <h3 className="font-medium text-gray-900">Latest feedback assessment run</h3>
+                  {!audit.latestRun ? <p className="mt-2 text-sm text-amber-700">No assessment run was recorded.</p> : <div className="mt-2 text-sm"><p><span className="font-medium">Run:</span> {audit.latestRun.id} · {new Date(audit.latestRun.created_at).toLocaleString()}</p><p><span className="font-medium">Attempt:</span> {audit.latestRun.attempt_id} · <span className="font-medium">Boundary:</span> {audit.latestRun.scoring_start_at ?? 'Not recorded'} · <span className="font-medium">Incomplete:</span> {audit.latestRun.technical_incomplete ? 'Yes' : 'No'}</p><p><span className="font-medium">Rubric / case key / assessment:</span> {audit.latestRun.rubric_version} / {audit.latestRun.case_key_version} / {audit.latestRun.assessment_version}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs">{json({ source_event_ids: audit.latestRun.source_event_ids, result: audit.latestRun.result })}</pre></div>}
+                </section>
+                <section className="rounded-md border border-gray-200 p-4">
+                  <h3 className="font-medium text-gray-900">Post-page clinical evidence ({audit.events.length})</h3>
+                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No assignment-scoped clinical evidence was recorded at or after the scoring boundary.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => <div key={`${event.id}-${event.timestamp}`} className="rounded border border-gray-100 bg-gray-50 p-2 text-sm"><div className="font-medium text-gray-900">{event.type} · {event.id}</div><div className="text-xs text-gray-500">{new Date(event.timestamp).toLocaleString()}</div><div className="mt-1 whitespace-pre-wrap text-gray-700">{event.details || 'No details recorded'}</div></div>)}</div>}
+                </section>
+              </>
+            )}
+          </div>
+          <div className="mt-5 flex justify-end">{close}</div>
+        </div>
+      </div>
+    </div>
   );
 }

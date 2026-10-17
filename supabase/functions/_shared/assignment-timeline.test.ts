@@ -204,4 +204,70 @@ describe('assignment timeline for evaluation', () => {
     expect(rendered).not.toContain('Order: BMP');
     expect(rendered).not.toContain('Order: Vancomycin');
   });
+
+  it('keeps bedside-first patient teach-back as learner-authored evidence without a nurse message', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [],
+      orders: [],
+      labs: [],
+      vitals: [],
+      imaging: [],
+      patientMessages: [
+        { id: 'patient-q', assignment_id: 'assignment-1', role: 'student', content: 'I explained the risks and asked whether you agree to one gentle attempt.', created_at: '2026-03-12T10:01:00.000Z' },
+        { id: 'patient-a', assignment_id: 'assignment-1', role: 'patient', content: 'I understand and agree.', created_at: '2026-03-12T10:01:05.000Z', reply_to_client_message_id: 'patient-q' },
+      ],
+    });
+
+    expect(entries.map((entry) => entry.id)).toEqual(['patient-message-patient-q', 'patient-message-patient-a']);
+    expect(entries[0].meta).toContain('Author: Student');
+    expect(entries[1].meta).toContain('Author: Patient');
+    expect(entries[1].meta).not.toContain('Author: Student');
+  });
+
+  it('preserves explicit learner bedside and team actions as distinct evidence', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [], orders: [], labs: [], vitals: [], imaging: [],
+      learnerActions: [
+        { id: 'action-1', assignment_id: 'assignment-1', room_id: 7, action_type: 'bedside_finding', channel: 'bedside', content: 'Cool extremities and delayed capillary refill.', occurred_at: '2026-03-12T10:01:00.000Z', created_at: '2026-03-12T10:01:00.000Z' },
+        { id: 'action-2', assignment_id: 'assignment-1', room_id: 7, action_type: 'team_escalation', channel: 'team', content: 'Escalated to senior clinician.', occurred_at: '2026-03-12T10:02:00.000Z', created_at: '2026-03-12T10:02:00.000Z' },
+      ],
+    });
+    expect(entries.map((entry) => entry.id)).toEqual(['learner-action-action-1', 'learner-action-action-2']);
+    expect(entries[0].meta).toContain('Channel: bedside');
+    expect(entries[1].meta).toContain('Channel: team');
+  });
+
+  it('excludes authored pre-page chart rows from learner evidence', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'assignment-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'assignment-1',
+      targetRoomIds: [7],
+      messages: [], orders: [],
+      labs: [{
+        id: 'seed-lab', assignment_id: null, room_id: 7, override_scope: 'room',
+        timeline_entry_id: 'day-1-wbc', test_name: 'WBC', value: 12, unit: 'K/uL', status: 'Unknown',
+        collection_time: '2026-03-12T08:00:00.000Z', result_time: '2026-03-12T08:00:00.000Z', created_at: '2026-03-12T08:00:00.000Z',
+      }],
+      vitals: [], imaging: [],
+    });
+    expect(entries).toEqual([]);
+  });
+
+  it('uses assignment insertion time for legacy learner orders/results written with a baseline clock', () => {
+    const entries = buildAssignmentTimelineEntries({
+      assignment: { id: 'attempt-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'attempt-1', targetRoomIds: [24], messages: [], learnerActions: [],
+      orders: [{ id: 'order-1', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', category: 'Lab', order_name: 'STAT CBC', dose: null, route: null, frequency: 'Once', priority: 'STAT', status: 'Completed', instructions: null, order_time: '2000-01-01T00:00:00.000Z', created_at: '2026-10-15T22:33:43.000Z' }],
+      labs: [{ id: 'lab-1', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', test_name: 'WBC', value: 15, unit: 'K/uL', status: 'Abnormal', collection_time: '2000-01-01T00:00:00.000Z', result_time: '2000-01-01T00:00:00.000Z', created_at: '2026-10-15T22:33:51.000Z' }],
+      vitals: [], imaging: [],
+    });
+    expect(entries.find((entry) => entry.kind === 'order')?.timestamp).toBe('2026-10-15T22:33:43.000Z');
+    expect(entries.find((entry) => entry.kind === 'labs')?.timestamp).toBe('2026-10-15T22:33:51.000Z');
+  });
 });

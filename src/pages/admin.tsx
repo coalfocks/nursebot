@@ -16,6 +16,7 @@ export default function AdminPage() {
   const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const hasAdmin = hasAdminAccess(profile);
@@ -31,6 +32,8 @@ export default function AdminPage() {
   }, [user, hasAdmin, navigate, scopedSchoolId]);
 
   const fetchRooms = async () => {
+    setRoomsError(null);
+    setLoading(true);
     try {
       let query = supabase
         .from('rooms')
@@ -51,6 +54,7 @@ export default function AdminPage() {
       setRooms(data || []);
     } catch (error) {
       console.error('Error fetching rooms:', error);
+      setRoomsError(error instanceof Error ? error.message : 'Unable to load rooms. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -91,6 +95,12 @@ export default function AdminPage() {
         <div className="flex h-full items-center justify-center py-24">
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
+
+        {roomsError && (
+          <div role="alert" className="mb-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {roomsError}
+          </div>
+        )}
       </AdminLayout>
     );
   }
@@ -133,6 +143,11 @@ export default function AdminPage() {
         )}
 
         <div className="space-y-6">
+          {rooms.length === 0 && !roomsError && (
+            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center text-sm text-gray-600">
+              No rooms are available for the selected school scope.
+            </div>
+          )}
           {rooms.map((room) => (
             <div key={room.id} className="bg-white rounded-lg shadow p-6">
               {editingRoom?.id === room.id ? (

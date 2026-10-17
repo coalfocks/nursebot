@@ -3,13 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, ExternalLink, Book, CheckCircle } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
-import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
+import { ConsultantPortal } from '../components/ConsultantPortal';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
+import { generateFeedback } from '../lib/feedbackService';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   room: Database['public']['Tables']['rooms']['Row'] & {
@@ -24,7 +25,8 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [consultantOpen, setConsultantOpen] = useState(false);
+  const [retryingFeedback, setRetryingFeedback] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -67,35 +69,6 @@ export default function AssignmentView() {
       channel.unsubscribe();
     };
   }, [assignmentId, assignment?.id]);
-
-  const getSignedUrl = async (path: string) => {
-    try {
-      console.log('Original PDF URL:', path);
-      
-      // Extract just the filename from the full URL
-      const filename = path.split('/').pop();
-      console.log('Extracted filename:', filename);
-
-      if (!filename) {
-        console.error('No filename found in path');
-        return null;
-      }
-
-      const { data, error } = await supabase.storage
-        .from('room_pdfs')
-        .createSignedUrl(filename, 3600); // URL valid for 1 hour
-
-      if (error) {
-        console.error('Error getting signed URL:', error);
-        throw error;
-      }
-      console.log('Signed URL response:', data);
-      return data?.signedUrl;
-    } catch (error) {
-      console.error('Error in getSignedUrl:', error);
-      return null;
-    }
-  };
 
   const fetchAssignment = async () => {
     try {
@@ -149,24 +122,25 @@ export default function AssignmentView() {
         setAssignment({ ...assignmentWithSpecialties, status: 'in_progress' });
       }
 
-      // Get signed URL for PDF if it exists
-      if (pinnedRoom.pdf_url) {
-        console.log('Found PDF URL in room data:', pinnedRoom.pdf_url);
-        const signedUrl = await getSignedUrl(pinnedRoom.pdf_url);
-        console.log('Generated signed URL:', signedUrl);
-        if (signedUrl) {
-          setPdfUrl(signedUrl);
-        } else {
-          console.log('Failed to generate signed URL');
-        }
-      } else {
-        console.log('No PDF URL found in room data');
-      }
     } catch (error) {
       console.error('Error fetching assignment:', error);
       navigate('/assignments');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const retryFeedback = async () => {
+    if (!assignmentId || retryingFeedback) return;
+    setRetryingFeedback(true);
+    try {
+      await generateFeedback(assignmentId);
+      await fetchAssignment();
+    } catch (error) {
+      console.error('Feedback retry failed', error);
+      await fetchAssignment();
+    } finally {
+      setRetryingFeedback(false);
     }
   };
 
@@ -280,12 +254,27 @@ export default function AssignmentView() {
                     type="button"
                     onClick={() => navigate(`/emr?assignmentId=${assignment.id}&roomId=${assignment.room.id}`)}
                     className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
-                    title="Open EHR"
+                    title="Open EMR"
                   >
                     <ExternalLink className="h-4 w-4 mr-1" />
-                    Open EHR
+                    Open EMR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConsultantOpen(true)}
+                    className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
+                    title="Open Consultant Portal"
+                  >
+                    <Book className="h-4 w-4 mr-1" />
+                    Consultant Portal
                   </button>
                 </div>
+                {assignment.status === 'completed' && (assignment as any).feedback_status === 'completed' && (
+                  <div className="mb-4 flex items-center justify-between rounded-md border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm text-blue-900">Your formative feedback is ready.</p>
+                    <button type="button" onClick={() => navigate(`/assignment/${assignment.id}/feedback`)} className="rounded-md bg-blue-700 px-3 py-2 text-sm font-medium text-white hover:bg-blue-800">Review your feedback</button>
+                  </div>
+                )}
                 <ChatInterface
                   assignmentId={assignment.id}
                   roomNumber={assignment.room.room_number}
@@ -298,57 +287,13 @@ export default function AssignmentView() {
 
             <div className="space-y-4">
               {/* Show feedback sidebar when completed */}
-              <FeedbackSidebar assignment={assignment} />
+              <FeedbackSidebar assignment={assignment} onRetryFeedback={retryFeedback} retryingFeedback={retryingFeedback} />
               
-              <div className="bg-white shadow rounded-lg p-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-gray-500" />
-                  <h2 className="text-lg font-medium text-gray-900">Room Resources</h2>
-                </div>
-                {assignment.status === 'in_progress' && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-                    <div className="flex items-center">
-                      <AlertCircle className="w-5 h-5 text-red-400 mr-2" />
-                      <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
-                    </div>
-                  </div>
-                )}
-                {assignment.window_start && (
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-4 h-4 text-gray-500" />
-                    <div>
-                      <p className="text-xs text-gray-500">Window</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {new Date(assignment.window_start).toLocaleDateString()} - {new Date(assignment.window_end).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm text-gray-600 mb-2">
-                    Use the EHR to find your patient and place orders; the chat is for nurse interactions only.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => navigate('/emr')}
-                    className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Go to EHR
-                  </button>
-                </div>
-                {pdfUrl ? (
-                  <div className="h-[240px] border rounded-lg overflow-hidden">
-                    <EmbeddedPdfViewer pdfUrl={pdfUrl} />
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500">No progress note provided for this room.</p>
-                )}
-              </div>
             </div>
           </div>
         </div>
       </div>
+      {assignment && <ConsultantPortal assignmentId={assignment.id} open={consultantOpen} onClose={() => setConsultantOpen(false)} />}
     </div>
   );
 } 

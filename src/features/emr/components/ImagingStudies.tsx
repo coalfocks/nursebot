@@ -11,6 +11,8 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { formatScopedEmrTimestamp, timestampForScope } from '../lib/scenarioTime';
+import { normalizeImagingContrast } from '../lib/imagingContrast';
 
 type PendingUpload = {
   id: string;
@@ -59,6 +61,9 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
   const [uploadingStudyId, setUploadingStudyId] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<Record<string, PendingUpload[]>>({});
   const [roomMeta, setRoomMeta] = useState<RoomMeta | null>(null);
+  const [editingStudy, setEditingStudy] = useState<ImagingStudy | null>(null);
+  const [editForm, setEditForm] = useState({ bodySite: '', laterality: '', indication: '', findings: '', impression: '', report: '', encounterTime: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
   const [createForm, setCreateForm] = useState({
     orderName: '',
     studyType: 'CT',
@@ -101,9 +106,8 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
-  const formatDate = (value?: string | null) => {
-    if (!value) return '—';
-    return new Date(value).toLocaleString();
+  const formatDate = (value?: string | null, relativeOffsetHours?: number | null, scope?: ImagingStudy['overrideScope']) => {
+    return formatScopedEmrTimestamp(value, scope, patient.admissionDate, relativeOffsetHours);
   };
 
   const handleCreateStudy = async () => {
@@ -137,7 +141,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       priority: createForm.priority ?? 'Routine',
       status: 'Pending',
       orderedBy: profile?.full_name ?? 'Admin',
-      orderTime: new Date().toISOString(),
+      orderTime: timestampForScope(forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline', patient.admissionDate),
       images: [],
     };
 
@@ -243,6 +247,33 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       return;
     }
     setStudies((prev) => prev.filter((item) => item.id !== study.id));
+  };
+
+  const beginEditStudy = (study: ImagingStudy) => {
+    setEditingStudy(study);
+    setEditForm({
+      bodySite: study.bodySite ?? '', laterality: study.laterality ?? '', indication: study.indication ?? '',
+      findings: study.findings ?? '', impression: study.impression ?? '', report: study.report ?? '',
+      encounterTime: study.encounterTime ?? study.orderTime ?? '',
+    });
+  };
+
+  const saveStudyEdit = async () => {
+    if (!editingStudy) return;
+    setSavingEdit(true);
+    setError('');
+    const updated = await emrApi.updateImagingStudy(editingStudy.id, {
+      ...editForm,
+      expectedVersion: editingStudy.recordVersion,
+      reportGeneratedAt: new Date().toISOString(),
+    });
+    setSavingEdit(false);
+    if (!updated) {
+      setError('This study changed while you were editing it. Reload the study and compare before retrying.');
+      return;
+    }
+    setStudies((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+    setEditingStudy(null);
   };
 
   const handleSelectFiles = (studyId: string, files: FileList | null) => {
@@ -412,10 +443,11 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
       ) : (
         <div className="space-y-6">
           {studies.map((study) => {
+            const normalizedContrast = normalizeImagingContrast(study);
             const contrastLabel =
-              study.contrast === 'with'
+              normalizedContrast.contrast === 'with'
                 ? 'With contrast'
-                : study.contrast === 'without'
+                : normalizedContrast.contrast === 'without'
                 ? 'Without contrast'
                 : null;
             return (
@@ -423,24 +455,21 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <CardTitle>{study.orderName || study.studyType}</CardTitle>
+                      <CardTitle>{normalizedContrast.displayOrderName || study.orderName || study.studyType}</CardTitle>
                       <p className="text-sm text-muted-foreground">
                         {study.studyType}
-                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime)}
+                        {contrastLabel ? ` • ${contrastLabel}` : ''} • Ordered {formatDate(study.orderTime, study.relativeOffsetHours, study.overrideScope)}
                       </p>
+                      {normalizedContrast.warning && <p className="mt-1 text-xs text-amber-700">{normalizedContrast.warning}</p>}
                     </div>
                     <div className="flex items-center gap-2">
                       {study.priority && <Badge variant="outline">{study.priority}</Badge>}
                       {study.status && <Badge>{study.status}</Badge>}
                       {canEdit && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void handleDeleteStudy(study)}
-                          aria-label={`Delete ${study.orderName || study.studyType}`}
-                        >
-                          <Trash className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          {study.status === 'Completed' && <Button size="sm" variant="outline" onClick={() => beginEditStudy(study)}>Edit report</Button>}
+                          <Button size="sm" variant="outline" onClick={() => void handleDeleteStudy(study)} aria-label={`Delete ${study.orderName || study.studyType}`}><Trash className="h-4 w-4" /></Button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -448,6 +477,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                 <CardContent className="space-y-4">
                   <div>
                     <h4 className="text-sm font-semibold text-muted-foreground">Radiology Read</h4>
+                    {contrastLabel && <p className="text-xs text-muted-foreground">Normalized contrast: {contrastLabel}</p>}
                     {study.report ? (
                       <pre className="whitespace-pre-wrap text-sm bg-muted p-4 rounded-lg">{study.report}</pre>
                     ) : (
@@ -455,7 +485,7 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                     )}
                     {study.reportGeneratedAt && (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Generated {formatDate(study.reportGeneratedAt)}
+                        Generated {formatDate(study.reportGeneratedAt, study.relativeOffsetHours, study.overrideScope)}
                       </p>
                     )}
                   </div>
@@ -575,6 +605,31 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
                 <p className="text-sm text-muted-foreground">{modalImage.annotation}</p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {editingStudy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="edit-radiology-title">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
+            <h3 id="edit-radiology-title" className="text-lg font-semibold">Edit radiology report</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Study version {editingStudy.recordVersion ?? 1}. The saved change creates a new version and preserves the study and attachments.</p>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {(['bodySite', 'laterality', 'indication', 'encounterTime'] as const).map((field) => (
+                <div key={field}>
+                  <label className="block text-sm font-medium text-muted-foreground">{field === 'bodySite' ? 'Body site' : field === 'encounterTime' ? 'Authored encounter time' : field[0].toUpperCase() + field.slice(1)}</label>
+                  <Input type={field === 'encounterTime' ? 'datetime-local' : 'text'} value={editForm[field]} onChange={(event) => setEditForm((prev) => ({ ...prev, [field]: event.target.value }))} />
+                </div>
+              ))}
+            </div>
+            {(['findings', 'impression', 'report'] as const).map((field) => (
+              <div key={field} className="mt-4">
+                <label className="block text-sm font-medium text-muted-foreground">{field[0].toUpperCase() + field.slice(1)}</label>
+                <Textarea rows={field === 'report' ? 6 : 4} value={editForm[field]} onChange={(event) => setEditForm((prev) => ({ ...prev, [field]: event.target.value }))} />
+              </div>
+            ))}
+            <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm"><strong>Before/after:</strong> report text changes are versioned; other studies, attachments, orders, and active learner sessions are not regenerated.</div>
+            <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setEditingStudy(null)}>Cancel</Button><Button onClick={() => void saveStudyEdit()} disabled={savingEdit}>{savingEdit ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save new version</Button></div>
           </div>
         </div>
       )}

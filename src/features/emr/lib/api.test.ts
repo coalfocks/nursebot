@@ -161,6 +161,8 @@ describe('emrApi versioned note/order mutations', () => {
 
     expect(labs).toHaveLength(3);
     expect(new Set(labs.map((entry) => entry.id))).toEqual(new Set(['active-lab', 'room-lab', 'baseline-lab']));
+    expect(labs.find((entry) => entry.id === 'room-lab')?.status).toBe('Abnormal');
+    expect(labs.find((entry) => entry.id === 'active-lab')?.status).toBe('Abnormal');
   });
 
   it('persists coded lab values without coercing them to zero or null-only results', async () => {
@@ -186,7 +188,32 @@ describe('emrApi versioned note/order mutations', () => {
     ], 3);
 
     expect(insert).toHaveBeenCalledWith([
-      expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded' }),
+      expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded', status: 'Unknown', abnormal_flag: null }),
+    ]);
+  });
+
+  it('recomputes numeric status at the save boundary instead of trusting a supplied label', async () => {
+    const insert = vi.fn(async () => ({ error: null }));
+    from.mockReturnValue({ insert });
+
+    await emrApi.addLabResults([{
+      id: 'numeric-lab',
+      patientId: 'patient-1',
+      assignmentId: 'assignment-1',
+      roomId: 3,
+      overrideScope: 'assignment',
+      testName: 'Creatinine',
+      value: 1,
+      valueType: 'numeric',
+      unit: 'mg/dL',
+      referenceRange: '0.7-1.3',
+      status: 'Critical',
+      collectionTime: '2026-10-02T21:00:00.000Z',
+      orderedBy: 'Model',
+    }], 3);
+
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({ value: 1, status: 'Normal', abnormal_flag: false }),
     ]);
   });
 });

@@ -6,6 +6,8 @@ export interface OrderItem {
   id: string;
   name: string;
   aliases?: string[];
+  productIdentifier?: string;
+  formulation?: string;
   category: 'Lab' | 'Medication' | 'Imaging' | 'Procedure' | 'Diet' | 'Activity' | 'Nursing' | 'Consult' | 'General';
   subcategory?: string;
   frequencies?: string[];
@@ -17,6 +19,8 @@ export interface OrderItem {
 }
 
 const standardFrequencies = new Set([
+  'Once',
+  'Continuous',
   'Daily',
   'BID',
   'TID',
@@ -33,6 +37,11 @@ const standardFrequencies = new Set([
 ]);
 
 const frequencyAliases: Record<string, string[]> = {
+  once: ['Once'],
+  bolus: ['Once'],
+  continuous: ['Continuous'],
+  infusion: ['Continuous'],
+  'per hour': ['Continuous'],
   daily: ['Daily'],
   'q24h': ['Daily'],
   'every 24 hours': ['Daily'],
@@ -100,6 +109,7 @@ const curatedLabOrders: OrderItem[] = [
   {
     id: 'lab-1',
     name: 'Complete Blood Count with Differential',
+    aliases: ['CBC with Differential', 'CBC'],
     category: 'Lab',
     subcategory: 'Instant Lab',
     frequencies: ['Once', 'Daily', 'BID', 'q8h', 'q12h'],
@@ -197,9 +207,23 @@ const pendingLabOrders: OrderItem[] = pendingLabs.map((name, index) => ({
   priorities: ['Routine', 'STAT'],
 }));
 
+const canonicalLabKey = (name: string) => {
+  const normalized = name.toLowerCase().replace(/[\u2018\u2019']/g, '').replace(/\s+/g, ' ').trim();
+  if (
+    normalized === 'cbc' ||
+    normalized === 'cbc with differential' ||
+    normalized === 'complete blood count' ||
+    normalized === 'complete blood count with differential'
+  ) {
+    return 'cbc-with-differential';
+  }
+  if (normalized === 'lactate' || normalized === 'lactate (serum)') return 'lactate';
+  return normalized;
+};
+
 const labOrdersMap = new Map<string, OrderItem>();
 [...curatedLabOrders, ...instantLabOrders, ...pendingLabOrders].forEach((order) => {
-  const key = order.name.toLowerCase();
+  const key = canonicalLabKey(order.name);
   if (!labOrdersMap.has(key)) {
     labOrdersMap.set(key, order);
   }
@@ -208,6 +232,62 @@ const labOrdersMap = new Map<string, OrderItem>();
 export const labOrders: OrderItem[] = Array.from(labOrdersMap.values());
 
 const baseMedicationOrders: OrderItem[] = [
+  {
+    id: 'med-buspirone-tablet',
+    name: 'Buspirone 10 mg tablet',
+    aliases: ['Buspar', 'buspirone'],
+    productIdentifier: 'buspirone-10mg-tablet',
+    formulation: 'Immediate-release tablet',
+    category: 'Medication',
+    subcategory: 'Anxiolytic',
+    frequencies: ['BID', 'TID'],
+    routes: ['PO'],
+    priorities: ['Routine'],
+    defaultDose: '10',
+    units: ['mg'],
+  },
+  {
+    id: 'med-clozapine-tablet',
+    name: 'Clozapine 100 mg tablet',
+    aliases: ['clozapine'],
+    productIdentifier: 'clozapine-100mg-tablet',
+    formulation: 'Immediate-release tablet',
+    category: 'Medication',
+    subcategory: 'Antipsychotic',
+    frequencies: ['Daily', 'BID', 'qHS'],
+    routes: ['PO'],
+    priorities: ['Routine'],
+    defaultDose: '100',
+    units: ['mg'],
+  },
+  {
+    id: 'med-prazosin-capsule',
+    name: 'Prazosin 1 mg capsule',
+    aliases: ['prazosin'],
+    productIdentifier: 'prazosin-1mg-capsule',
+    formulation: 'Immediate-release capsule',
+    category: 'Medication',
+    subcategory: 'Alpha-1 blocker',
+    frequencies: ['Daily', 'BID', 'qHS'],
+    routes: ['PO'],
+    priorities: ['Routine'],
+    defaultDose: '1',
+    units: ['mg'],
+  },
+  {
+    id: 'med-divalproex-er-tablet',
+    name: 'Divalproex sodium ER 500 mg tablet',
+    aliases: ['divalproex ER', 'Depakote ER'],
+    productIdentifier: 'divalproex-sodium-er-500mg-tablet',
+    formulation: 'Extended-release tablet',
+    category: 'Medication',
+    subcategory: 'Anticonvulsant / mood stabilizer',
+    frequencies: ['Daily', 'BID'],
+    routes: ['PO'],
+    priorities: ['Routine'],
+    defaultDose: '500',
+    units: ['mg'],
+  },
   {
     id: 'med-1',
     name: 'Lisinopril',

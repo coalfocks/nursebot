@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
-import { Loader2, FileText } from 'lucide-react';
+import { Loader2, MessageSquare } from 'lucide-react';
 import Navbar from '../components/Navbar';
-import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
@@ -18,40 +18,11 @@ export default function StudentDashboard() {
   const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [selectedRoom, setSelectedRoom] = useState<Assignment | null>(null);
-  const [pdfUrls, setPdfUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!user) return;
     fetchAssignments();
   }, [user]);
-
-  const getSignedUrl = async (path: string) => {
-    try {
-      // Extract just the filename from the full URL
-      const filename = path.split('/').pop();
-      if (!filename) {
-        console.error('No filename found in path:', path);
-        return null;
-      }
-
-      console.log('Getting signed URL for:', filename);
-      const { data, error } = await supabase.storage
-        .from('room_pdfs')
-        .createSignedUrl(filename, 3600); // URL valid for 1 hour
-
-      if (error) {
-        console.error('Error getting signed URL:', error);
-        return null;
-      }
-
-      console.log('Generated signed URL:', data?.signedUrl);
-      return data?.signedUrl;
-    } catch (error) {
-      console.error('Error getting signed URL:', error);
-      return null;
-    }
-  };
 
   const fetchAssignments = async () => {
     try {
@@ -64,6 +35,7 @@ export default function StudentDashboard() {
           )
         `)
         .eq('student_id', user?.id)
+        .eq('is_sandbox', false)
         .in('status', ['assigned', 'in_progress'])
         .order('created_at', { ascending: false });
 
@@ -85,19 +57,6 @@ export default function StudentDashboard() {
       );
 
       setAssignments(assignmentsWithSpecialties);
-
-      // Get signed URLs for all PDFs
-      const urls: Record<string, string> = {};
-      for (const assignment of data || []) {
-        const resolvedRoom = resolveAssignmentRoom(assignment.room, assignment.scenario_baseline);
-        if (resolvedRoom.pdf_url) {
-          const signedUrl = await getSignedUrl(resolvedRoom.pdf_url);
-          if (signedUrl) {
-            urls[resolvedRoom.pdf_url] = signedUrl;
-          }
-        }
-      }
-      setPdfUrls(urls);
     } catch (error) {
       console.error('Error fetching assignments:', error);
     } finally {
@@ -119,67 +78,37 @@ export default function StudentDashboard() {
   return (
     <div className="min-h-screen bg-gray-100">
       <Navbar />
-      <div className="flex h-[calc(100vh-64px)]">
-        {/* Left column - Room list */}
-        <div className="w-1/3 border-r border-gray-200 bg-white overflow-y-auto">
-          <div className="p-4">
+      <div className="mx-auto w-full max-w-5xl p-6">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+          <div>
             <h2 className="text-lg font-semibold text-gray-900">Rooms</h2>
+            <p className="mt-1 text-sm text-gray-500">Practice in assigned simulation rooms and review learner tutorials.</p>
           </div>
-          <div className="divide-y divide-gray-200">
-            {assignments.map((assignment) => (
-              <button
-                key={assignment.id}
-                onClick={() => setSelectedRoom(assignment)}
-                className={`w-full p-4 text-left hover:bg-gray-50 focus:outline-none ${
-                  selectedRoom?.id === assignment.id ? 'bg-blue-50' : ''
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900">
-                      Room {assignment.room.room_number}
-                    </h3>
-                    <p className="text-sm text-gray-500">
-                      {assignment.room.specialties && assignment.room.specialties.length > 0
-                        ? assignment.room.specialties.map(s => s.name).join(', ')
-                        : 'General Practice'}
-                    </p>
-                  </div>
-                  {assignment.room.pdf_url && (
-                    <FileText className="h-5 w-5 text-gray-400" />
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
+          <Link to="/walkthrough-videos" className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 shadow-sm hover:bg-blue-50">
+            Student walkthroughs
+          </Link>
         </div>
-
-        {/* Right column - PDF viewer */}
-        <div className="flex-1 bg-white p-4">
-          {selectedRoom ? (
-            <div className="h-full">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Room {selectedRoom.room.room_number} - {selectedRoom.room.specialties && selectedRoom.room.specialties.length > 0
-                    ? selectedRoom.room.specialties.map(s => s.name).join(', ')
-                    : 'General Practice'}
-                </h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {assignments.map((assignment) => (
+            <Link
+              key={assignment.id}
+              to={`/assignment/${assignment.id}`}
+              className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm transition hover:border-blue-300 hover:shadow focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Room {assignment.room.room_number}</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {assignment.room.specialties && assignment.room.specialties.length > 0
+                      ? assignment.room.specialties.map(s => s.name).join(', ')
+                      : 'General Practice'}
+                  </p>
+                </div>
+                <MessageSquare className="h-5 w-5 text-blue-600" aria-hidden="true" />
               </div>
-              {selectedRoom.room.pdf_url && pdfUrls[selectedRoom.room.pdf_url] ? (
-                <div className="h-[calc(100vh-180px)] border rounded-lg overflow-hidden">
-                  <EmbeddedPdfViewer pdfUrl={pdfUrls[selectedRoom.room.pdf_url]} />
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-[calc(100vh-180px)] text-gray-500">
-                  No PDF available for this room
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Select a room to view its PDF
-            </div>
-          )}
+              <span className="mt-4 inline-block text-sm font-medium text-blue-700">Open nurse chat</span>
+            </Link>
+          ))}
         </div>
       </div>
     </div>

@@ -205,6 +205,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
                     <User className="h-3 w-3" />
                     {note.author}
                   </div>
+                  {note.relativeOffsetHours !== null && note.relativeOffsetHours !== undefined && <span>{note.relativeOffsetHours === 0 ? 'At encounter' : `${note.relativeOffsetHours} hours prior`}</span>}
                 </div>
               </div>
             </div>

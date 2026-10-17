@@ -74,6 +74,7 @@ type AssignmentEvaluationRow = {
   school: {
     id: string;
     name: string;
+    displayName: string | null;
     slug: string;
   } | null;
   room: {
@@ -417,7 +418,7 @@ export default function SuperAdminPortal() {
                           <p>{row.assignedBy?.fullName ?? '—'}</p>
                           <p className="text-xs text-slate-500">{row.assignedBy?.email ?? '—'}</p>
                         </td>
-                        <td className="px-3 py-2 text-sm text-slate-700">{row.school?.name ?? '—'}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{row.school?.displayName ?? row.school?.name ?? '—'}</td>
                         <td className="px-3 py-2 text-sm text-slate-700">{row.room?.roomNumber ?? '—'}</td>
                         <td className="px-3 py-2 text-sm text-slate-700">{row.status ?? '—'}</td>
                         <td className="px-3 py-2 text-sm text-slate-700">

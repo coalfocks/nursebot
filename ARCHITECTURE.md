@@ -46,7 +46,7 @@
 
 ## Room Configuration
 - `RoomEditor.tsx` (admin) manages room metadata: role/style, nurse context, EMR context (`emr_context`), expected diagnosis/treatment, goals, difficulty, objectives, progress note, completion hints, orders config, PDFs. Seeds initial labs/vitals when linking/creating patient (legacy).
-- `CaseBuilder.tsx` (admin) captures v2 case blueprints, generates preview packages, regenerates individual package sections, and publishes generated packages into live rooms. Published v2 packages are stored in `rooms.emr_context` under `source = case-builder-v2`, with room-scoped generated notes created for the linked EMR patient.
+- `CaseBuilder.tsx` (admin) captures v2 case blueprints, generates preview packages, regenerates individual package sections, and publishes generated packages into live rooms. Published rooms retain a nullable `case_blueprint_id`; a partial school/blueprint unique index makes repeat or concurrent publication reuse the same room. `rooms.emr_context` stores only an explicit learner-facing patient/EMR/event/orders allowlist under `source = case-builder-v2`; nurse and patient conversation prompts stay in their dedicated columns, and hidden evaluation content is excluded. Room-scoped generated notes are created for the linked EMR patient when structured identity data satisfies the patient schema.
 
 ## Scope & Persistence Rules
 - Baseline (super admin) orders/labs/vitals save without assignmentId; roomId as applicable.
