@@ -13,6 +13,7 @@ import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 import { assessOrdersConfig } from '../lib/ordersConfig';
+import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -37,6 +38,13 @@ type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
+
+type AssignmentCreateStatus = {
+  kind: 'error' | 'success' | 'info';
+  code: string;
+  message: string;
+  requestId?: string;
+};
 
 type EvidenceAuditEvent = {
   id: string;
@@ -95,6 +103,9 @@ export default function AssignmentManager() {
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
+  const [createStatus, setCreateStatus] = useState<AssignmentCreateStatus | null>(null);
+  const [pendingAssignmentCreate, setPendingAssignmentCreate] = useState<PendingAssignmentCreate | null>(null);
+  const [createInFlight, setCreateInFlight] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<{
     id: string;
     window_start: string;
@@ -114,6 +125,45 @@ export default function AssignmentManager() {
   const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
+  const pendingAssignmentStorageKey = user
+    ? `assignment-create-pending:${user.id}:${scopedSchoolId ?? 'all-schools'}`
+    : null;
+
+  useEffect(() => {
+    if (!pendingAssignmentStorageKey || pendingAssignmentCreate) return;
+    try {
+      const raw = window.localStorage.getItem(pendingAssignmentStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PendingAssignmentCreate;
+      if (typeof parsed.requestId === 'string' && Array.isArray(parsed.assignments) && parsed.assignments.length > 0) {
+        setPendingAssignmentCreate(parsed);
+        setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_RECOVERED', message: 'An earlier assignment request was not confirmed. Read back the original request before retrying.', requestId: parsed.requestId });
+      }
+    } catch (error) {
+      console.error('Unable to recover pending assignment creation:', error);
+      window.localStorage.removeItem(pendingAssignmentStorageKey);
+    }
+  }, [pendingAssignmentStorageKey, pendingAssignmentCreate]);
+
+  const persistPendingAssignmentCreate = (request: PendingAssignmentCreate) => {
+    setPendingAssignmentCreate(request);
+    if (!pendingAssignmentStorageKey) return;
+    try {
+      window.localStorage.setItem(pendingAssignmentStorageKey, JSON.stringify(request));
+    } catch (error) {
+      console.error('Unable to persist pending assignment creation:', error);
+    }
+  };
+
+  const clearPendingAssignmentCreate = () => {
+    setPendingAssignmentCreate(null);
+    if (!pendingAssignmentStorageKey) return;
+    try {
+      window.localStorage.removeItem(pendingAssignmentStorageKey);
+    } catch (error) {
+      console.error('Unable to clear pending assignment creation:', error);
+    }
+  };
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
     setChatEvidenceStatus('loading');
@@ -265,6 +315,36 @@ export default function AssignmentManager() {
 
   const getRoomOrdersReadiness = (room: Room) => assessOrdersConfig(room.orders_config);
 
+  const readBackCreatedAssignments = async (request: PendingAssignmentCreate) => {
+    const { data, error } = await supabase
+      .from('student_room_assignments')
+      .select('id')
+      .in('id', request.assignments.map((assignment) => assignment.id));
+    if (error) throw error;
+    const existingIds = new Set((data ?? []).map((assignment) => assignment.id));
+    return {
+      existingIds,
+      missing: getMissingAssignmentRows(request.assignments, existingIds),
+    };
+  };
+
+  const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
+    const beforeInsert = await readBackCreatedAssignments(request);
+    if (beforeInsert.missing.length > 0) {
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .insert(beforeInsert.missing);
+      if (error) throw error;
+    }
+
+    const afterInsert = await readBackCreatedAssignments(request);
+    if (afterInsert.missing.length > 0) {
+      const error = new Error('Assignment creation returned without confirming every requested assignment.');
+      (error as Error & { code?: string }).code = 'ASSIGNMENT_CREATE_UNCONFIRMED';
+      throw error;
+    }
+  };
+
 
   const validateAssignmentDates = (
     windowStart: string,
@@ -330,16 +410,76 @@ export default function AssignmentManager() {
     return extras.map((extra) => minGapMs + extra);
   };
 
+  const resetAssignmentDraft = () => {
+    setSelectedStudent('');
+    setStudentSearch('');
+    setSelectedRooms([]);
+    setWindowStart('');
+    setWindowEnd('');
+    setTargetingMode('individual');
+    setBulkTargetSchoolId('');
+    setBulkTargetSpecialty('');
+    setSelectedBulkStudents([]);
+  };
+
   const handleAssign = async () => {
+    let activeRequestId = pendingAssignmentCreate?.requestId;
+    const fail = (code: string, message: string) => {
+      setCreateStatus({ kind: 'error', code, message, requestId: activeRequestId });
+    };
+
+    if (createInFlight) return;
+
+    // A failed or timed-out request owns its generated row IDs. Retry that
+    // exact draft first; do not rebuild it from possibly edited form fields.
+    if (pendingAssignmentCreate) {
+      const request = pendingAssignmentCreate;
+      activeRequestId = request.requestId;
+      setCreateInFlight(true);
+      setCreateStatus({
+        kind: 'info',
+        code: 'ASSIGNMENT_CREATE_RETRYING',
+        message: `Checking the original creation request before retrying ${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}…`,
+        requestId: request.requestId,
+      });
+      try {
+        await confirmAssignmentCreate(request);
+        setCreateStatus({ kind: 'success', code: 'ASSIGNMENT_CREATE_CONFIRMED', message: `Assignment creation confirmed (${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}).`, requestId: request.requestId });
+        clearPendingAssignmentCreate();
+        setShowAssignModal(false);
+        resetAssignmentDraft();
+        try {
+          await fetchAssignments();
+        } catch (refreshError) {
+          console.error('Assignment created but list refresh failed:', refreshError);
+          setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_CONFIRMED_REFRESH_FAILED', message: 'Assignment creation was confirmed, but the assignment list could not be refreshed. Refresh the page to read it back; no second create was attempted.', requestId: request.requestId });
+        }
+      } catch (error) {
+        console.error('Error retrying assignment creation:', error);
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : 'ASSIGNMENT_CREATE_RETRY_FAILED';
+        setCreateStatus({
+          kind: 'error',
+          code,
+          message: error instanceof Error ? error.message : 'The original creation request is still unconfirmed. Your draft is retained.',
+          requestId: request.requestId,
+        });
+      } finally {
+        setCreateInFlight(false);
+      }
+      return;
+    }
+
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
-      alert('Please select at least one room and set the window start and end times');
+      fail('ASSIGNMENT_INPUT_REQUIRED', 'Select at least one room and provide the window start and end times.');
       return;
     }
 
     // Validate that all selected rooms have orders configured
     const selectedRoomsData = rooms.filter(r => selectedRooms.includes(r.id.toString()));
     if (selectedRoomsData.length !== selectedRooms.length) {
-      alert('Some selected rooms not found');
+      fail('ROOM_NOT_FOUND', 'One or more selected rooms is no longer available. Refresh and try again.');
       return;
     }
 
@@ -347,14 +487,14 @@ export default function AssignmentManager() {
       .map((room) => ({ room, readiness: getRoomOrdersReadiness(room) }))
       .filter(({ readiness }) => !readiness.valid);
     if (invalidRooms.length > 0) {
-      alert(invalidRooms.map(({ room, readiness }) => `Room ${room.room_number}: ${readiness.message}`).join('\n'));
+      fail('ROOM_ORDERS_NOT_READY', invalidRooms.map(({ room, readiness }) => `Room ${room.room_number}: ${readiness.message}`).join(' '));
       return;
     }
 
     // Validate date constraints
     const dateValidation = validateAssignmentDates(windowStart, windowEnd);
     if (!dateValidation.valid) {
-      alert(dateValidation.error);
+      fail('ASSIGNMENT_WINDOW_INVALID', dateValidation.error ?? 'The assignment window is invalid.');
       return;
     }
 
@@ -363,17 +503,39 @@ export default function AssignmentManager() {
 
     if (targetingMode === 'individual') {
       if (!selectedStudent) {
-        alert('Please select a student');
+        fail('STUDENT_REQUIRED', 'Select a student before creating the assignment.');
         return;
       }
       studentsToAssign = [selectedStudent];
     } else {
       // Bulk mode
       if (selectedBulkStudents.length === 0) {
-        alert('Please select at least one student');
+        fail('STUDENTS_REQUIRED', 'Select at least one student before creating assignments.');
         return;
       }
       studentsToAssign = selectedBulkStudents;
+    }
+
+    const studentProfiles = studentsToAssign.map((studentId) => students.find((student) => student.id === studentId));
+    const missingStudent = studentProfiles.findIndex((student) => !student);
+    if (missingStudent !== -1) {
+      fail('STUDENT_NOT_FOUND', 'One or more selected students is no longer available. Refresh and try again.');
+      return;
+    }
+
+    const incompatibleStudent = studentProfiles.find((student) => {
+      const assignmentSchoolId = student?.school_id ?? scopedSchoolId;
+      if (!assignmentSchoolId) return true;
+      return selectedRoomsData.some((room) => {
+        const availableSchoolIds = room.available_school_ids;
+        const explicitlyAvailable = Array.isArray(availableSchoolIds)
+          && (availableSchoolIds.length === 0 || availableSchoolIds.includes(assignmentSchoolId));
+        return room.school_id !== assignmentSchoolId && !explicitlyAvailable;
+      });
+    });
+    if (incompatibleStudent) {
+      fail('ROOM_SCHOOL_SCOPE_MISMATCH', `The selected room is not available to ${incompatibleStudent.full_name}'s school. Choose a compatible room or student; no assignment was submitted.`);
+      return;
     }
 
     try {
@@ -383,7 +545,7 @@ export default function AssignmentManager() {
       const windowEndUTCDate = convertToUTC(windowEnd, selectedTimezone);
 
       if (!windowStartUTCDate || !windowEndUTCDate) {
-        alert('Please provide valid window start and end times.');
+        fail('ASSIGNMENT_WINDOW_INVALID', 'Please provide valid window start and end times.');
         return;
       }
 
@@ -395,7 +557,7 @@ export default function AssignmentManager() {
       // Check if window duration is sufficient for selected rooms with slot padding
       const totalSlotsNeeded = (selectedRooms.length * SLOT_PADDING_MINUTES) - SLOT_PADDING_MINUTES;
       if (windowDurationMinutes < totalSlotsNeeded) {
-        alert(`Warning: With ${selectedRooms.length} room(s), minimum time needed between assignments is ${totalSlotsNeeded} minutes due to ${SLOT_PADDING_MINUTES}-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing the window duration or reducing the number of rooms.`);
+        fail('ASSIGNMENT_WINDOW_TOO_SHORT', `With ${selectedRooms.length} room(s), the window needs at least ${totalSlotsNeeded} minutes; current window is ${windowDurationMinutes.toFixed(0)} minutes.`);
         return;
       }
 
@@ -403,17 +565,9 @@ export default function AssignmentManager() {
       const windowEndUTC = windowEndUTCDate.toISOString();
 
       // Create N x M assignments (each student gets each room)
-      const assignments: Array<{
-        student_id: string;
-        room_id: number;
-        assigned_by: string;
-        status: 'assigned';
-        effective_date: string | null;
-        window_start: string | null;
-        window_end: string | null;
-        school_id: string;
-      }> = [];
-
+      const assignments: PendingAssignmentCreate['assignments'] = [];
+      const requestId = pendingAssignmentCreate?.requestId ?? crypto.randomUUID();
+      activeRequestId = requestId;
       for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
         const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
@@ -447,17 +601,14 @@ export default function AssignmentManager() {
 
         let currentCaseMs = firstCaseMs;
         for (const [roomIndex, roomId] of scheduledRooms.entries()) {
-          if (roomIndex > 0) {
-            currentCaseMs += gapMs[roomIndex - 1];
-          }
-          const studentEffectiveDate = new Date(currentCaseMs);
-
+          if (roomIndex > 0) currentCaseMs += gapMs[roomIndex - 1];
           assignments.push({
+            id: crypto.randomUUID(),
             student_id: studentId,
             room_id: parseInt(roomId),
             assigned_by: user.id,
-            status: 'assigned' as const,
-            effective_date: studentEffectiveDate.toISOString(),
+            status: 'assigned',
+            effective_date: new Date(currentCaseMs).toISOString(),
             window_start: windowStartUTC,
             window_end: windowEndUTC,
             school_id: assignmentSchoolId,
@@ -465,26 +616,36 @@ export default function AssignmentManager() {
         }
       }
 
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .insert(assignments);
+      const request: PendingAssignmentCreate = { requestId, assignments };
+      persistPendingAssignmentCreate(request);
+      setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_PENDING', message: `Creating ${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}…`, requestId });
+      setCreateInFlight(true);
 
-      if (error) throw error;
+      await confirmAssignmentCreate(request);
 
+      setCreateStatus({ kind: 'success', code: 'ASSIGNMENT_CREATE_CONFIRMED', message: `Assignment creation confirmed (${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}).`, requestId });
+      clearPendingAssignmentCreate();
       setShowAssignModal(false);
-      setSelectedStudent('');
-      setStudentSearch('');
-      setSelectedRooms([]);
-      setWindowStart('');
-      setWindowEnd('');
-      setTargetingMode('individual');
-      setBulkTargetSchoolId('');
-      setBulkTargetSpecialty('');
-      setSelectedBulkStudents([]);
-      await fetchAssignments();
+      resetAssignmentDraft();
+      try {
+        await fetchAssignments();
+      } catch (refreshError) {
+        console.error('Assignment created but list refresh failed:', refreshError);
+        setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_CONFIRMED_REFRESH_FAILED', message: 'Assignment creation was confirmed, but the assignment list could not be refreshed. Refresh the page to read it back; no second create was attempted.', requestId });
+      }
     } catch (error) {
       console.error('Error assigning case:', error);
-      alert(`Error assigning case: ${error instanceof Error ? error.message : 'Please try again.'}`);
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'ASSIGNMENT_CREATE_FAILED';
+      setCreateStatus({
+        kind: 'error',
+        code,
+        message: error instanceof Error ? error.message : 'Assignment creation failed; no confirmation was received. Your draft is retained.',
+        requestId: activeRequestId,
+      });
+    } finally {
+      setCreateInFlight(false);
     }
   };
 
@@ -926,7 +1087,10 @@ export default function AssignmentManager() {
           <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
             <SchoolScopeSelector className="sm:w-56" label="School scope" />
             <button
-              onClick={() => setShowAssignModal(true)}
+              onClick={() => {
+                setCreateStatus(null);
+                setShowAssignModal(true);
+              }}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -934,6 +1098,25 @@ export default function AssignmentManager() {
             </button>
           </div>
         </div>
+
+        {createStatus && !showAssignModal && (
+          <div
+            role={createStatus.kind === 'error' ? 'alert' : 'status'}
+            className={`mb-6 rounded-md border px-3 py-2 text-sm ${
+              createStatus.kind === 'error'
+                ? 'border-red-200 bg-red-50 text-red-800'
+                : createStatus.kind === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-800'
+                  : 'border-blue-200 bg-blue-50 text-blue-800'
+            }`}
+          >
+            <div className="font-medium">{createStatus.message}</div>
+            <div className="mt-1 text-xs opacity-80">
+              Code: {createStatus.code}
+              {createStatus.requestId ? ` · Request ${createStatus.requestId}` : ''}
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white shadow rounded-lg mb-6">
@@ -1235,6 +1418,40 @@ export default function AssignmentManager() {
             <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6">
               <div>
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Assign Case</h3>
+                {createStatus && (
+                  <div
+                    role={createStatus.kind === 'error' ? 'alert' : 'status'}
+                    className={`mb-4 rounded-md border px-3 py-2 text-sm ${
+                      createStatus.kind === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-800'
+                        : createStatus.kind === 'success'
+                          ? 'border-green-200 bg-green-50 text-green-800'
+                          : 'border-blue-200 bg-blue-50 text-blue-800'
+                    }`}
+                  >
+                    <div className="font-medium">{createStatus.message}</div>
+                    <div className="mt-1 text-xs opacity-80">
+                      Code: {createStatus.code}
+                      {createStatus.requestId ? ` · Request ${createStatus.requestId}` : ''}
+                    </div>
+                    {createStatus.kind === 'error' && pendingAssignmentCreate && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span>The draft is retained. Retry uses the same request and assignment IDs after a read-back check.</span>
+                        <button
+                          type="button"
+                          className="font-medium underline"
+                          onClick={() => {
+                            clearPendingAssignmentCreate();
+                            setCreateStatus(null);
+                            resetAssignmentDraft();
+                          }}
+                        >
+                          Discard and start a new assignment
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-4">
                   {/* Targeting Mode Selection */}
                   <div>
@@ -1560,9 +1777,10 @@ export default function AssignmentManager() {
                 <button
                   type="button"
                   onClick={handleAssign}
+                  disabled={createInFlight}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
                 >
-                  {(() => {
+                  {createInFlight ? 'Creating…' : (() => {
                     const studentCount = targetingMode === 'individual' ? 1 : selectedBulkStudents.length;
                     const totalAssignments = studentCount * selectedRooms.length;
                     return targetingMode === 'individual'
