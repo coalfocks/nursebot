@@ -16,6 +16,7 @@ import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
 import AssignmentView from './pages/AssignmentView';
+import AssignmentDebrief from './pages/AssignmentDebrief';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
@@ -24,8 +25,14 @@ import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
+import About from './pages/About';
+import AdminWalkthroughVideos, { AdminOnboarding, CourseEditor } from './pages/AdminWalkthroughVideos';
+import StudentWalkthroughVideos from './pages/StudentWalkthroughVideos';
+import StudentLearningGate from './components/StudentLearningGate';
+import AdminAnalytics from './pages/AdminAnalytics';
+import AdminUsers from './pages/AdminUsers';
 import ErrorBoundary from './components/ErrorBoundary';
-import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
+import { hasAdminAccess, isStudent, isSuperAdmin, isTestUser } from './lib/roles';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -79,11 +86,15 @@ function App() {
           path="/reset-password" 
           element={<ResetPassword />} 
         />
+        <Route
+          path="/about"
+          element={user ? <About /> : <Navigate to="/login" replace />}
+        />
         <Route 
           path="/dashboard" 
           element={
             user ? (
-              isTester ? <TestRooms /> : <AdminDashboard />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <AdminDashboard />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -139,7 +150,7 @@ function App() {
           path="/cases"
           element={
             user ? (
-              isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
+              <StudentLearningGate>{isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -149,7 +160,7 @@ function App() {
           path="/test-rooms"
           element={
             user ? (
-              isTester ? <TestRooms /> : <Navigate to="/dashboard" replace />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <Navigate to="/dashboard" replace />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
@@ -226,19 +237,55 @@ function App() {
             )
           }
         />
+        <Route
+          path="/admin/analytics"
+          element={user?.id && hasAdmin ? <AdminAnalytics /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/superadmin/users"
+          element={user?.id && superAdmin ? <AdminUsers /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/walkthrough-videos"
+          element={user?.id && hasAdmin ? <AdminWalkthroughVideos /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/onboarding"
+          element={user?.id && hasAdmin ? <AdminOnboarding /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/walkthrough-courses/new"
+          element={user?.id && superAdmin ? <CourseEditor /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/walkthrough-courses/:courseId"
+          element={user?.id && superAdmin ? <CourseEditor /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/walkthrough-videos"
+          element={user?.id && (isStudent(profile) || isTester) ? <StudentWalkthroughVideos /> : <Navigate to="/dashboard" replace />}
+        />
         <Route 
           path="/assignments" 
           element={
             user ? (
-              isTester ? <TestRooms /> : <MyCases />
+              <StudentLearningGate>{isTester ? <TestRooms /> : <MyCases />}</StudentLearningGate>
             ) : (
               <Navigate to="/login" replace />
             )
           }
         />
+        <Route
+          path="/assignment/:assignmentId/feedback"
+          element={user ? <AssignmentDebrief /> : <Navigate to="/login" replace />}
+        />
         <Route 
           path="/assignment/:assignmentId" 
-          element={user ? <AssignmentView /> : <Navigate to="/login" replace />} 
+          element={user ? <StudentLearningGate><AssignmentView /></StudentLearningGate> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/learning-library"
+          element={user ? <StudentWalkthroughVideos /> : <Navigate to="/login" replace />}
         />
       </Routes>
     </Router>

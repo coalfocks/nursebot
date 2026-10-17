@@ -126,7 +126,7 @@ Deno.serve(async (req: Request) => {
         },
       }
     );
-  } catch (error) {
+  } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid request body' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }

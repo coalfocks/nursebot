@@ -1,5 +1,4 @@
 import type { User } from '@supabase/supabase-js';
-import type { Profile } from '../lib/roles';
 import type { Database } from '../lib/database.types';
 
 type DbProfile = Database['public']['Tables']['profiles']['Row'];
@@ -33,8 +32,6 @@ export const createMockProfile = (overrides: Partial<DbProfile> = {}): DbProfile
   };
 };
 
-export const createMockAuthError = (message: string, status = 400): Error => {
-  const error = new Error(message);
-  (error as any).status = status;
-  return error;
+export const createMockAuthError = (message: string, status = 400): Error & { status: number } => {
+  return Object.assign(new Error(message), { status });
 };

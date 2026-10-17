@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog, Activity, TestTube } from 'lucide-react';
+import { Stethoscope, Menu, X, LogOut, User, Settings, Book, UserCog, Activity, TestTube, Library } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
-import { hasAdminAccess, isTestUser } from '../lib/roles';
+import { hasAdminAccess, isStudent, isTestUser } from '../lib/roles';
+import { EMR_LABEL } from '../lib/terminology';
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { profile, signOut } = useAuthStore();
   const showAdminLinks = hasAdminAccess(profile);
   const showTestRooms = isTestUser(profile);
+  const showLearningLibrary = isStudent(profile) || showTestRooms;
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -46,7 +48,7 @@ export default function Navbar() {
                 } inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
               >
                 <Activity className="h-4 w-4 mr-1" />
-                EHR
+                {EMR_LABEL}
               </Link>
               {showTestRooms ? (
                 <Link
@@ -71,6 +73,15 @@ export default function Navbar() {
                 >
                   <Book className="h-4 w-4 mr-1" />
                   Secure Chat
+                </Link>
+              )}
+              {showLearningLibrary && (
+                <Link
+                  to="/learning-library"
+                  className={`${location.pathname === '/learning-library' ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}
+                >
+                  <Library className="h-4 w-4 mr-1" />
+                  Learning Library
                 </Link>
               )}
               {showAdminLinks && (
@@ -104,6 +115,12 @@ export default function Navbar() {
           <div className="hidden sm:ml-6 sm:flex sm:items-center">
             <div className="relative">
               <div className="flex items-center">
+                <Link
+                  to="/about"
+                  className="mr-3 text-sm font-medium text-gray-500 hover:text-gray-700"
+                >
+                  About
+                </Link>
                 <div className="flex items-center">
                   <button
                     type="button"
@@ -155,7 +172,7 @@ export default function Navbar() {
               } block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
             >
               <Activity className="h-4 w-4 mr-2" />
-              EHR
+              {EMR_LABEL}
             </Link>
             {showTestRooms ? (
               <Link
@@ -180,6 +197,15 @@ export default function Navbar() {
               >
                 <Book className="h-4 w-4 mr-2" />
                 My Cases
+              </Link>
+            )}
+            {showLearningLibrary && (
+              <Link
+                to="/learning-library"
+                className={`${location.pathname === '/learning-library' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'border-transparent text-gray-500 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-700'} block pl-3 pr-4 py-2 border-l-4 text-base font-medium flex items-center`}
+              >
+                <Library className="h-4 w-4 mr-2" />
+                Learning Library
               </Link>
             )}
             <Link

@@ -50,8 +50,13 @@ export type LabOrderSetting = {
 };
 
 export interface RoomOrdersConfig {
-  labs: LabOrderSetting[];
+  /** Legacy room format. Modern Case Builder rooms use the fields below. */
+  labs?: LabOrderSetting[];
+  admissionOrders?: string[];
+  gatedResults?: string[];
+  imaging?: string[];
   notes?: string | null;
+  [key: string]: unknown;
 }
 
 export interface ClinicalNote {
@@ -67,6 +72,8 @@ export interface ClinicalNote {
   signed: boolean;
   recordVersion?: number;
   assignmentId?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface LabResult {
@@ -86,12 +93,14 @@ export interface LabResult {
   lifecycleStatus?: 'not_ordered' | 'ordered' | 'collected' | 'pending' | 'resulted' | 'corrected' | 'canceled' | 'rejected';
   unit: string;
   referenceRange: string;
-  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending';
+  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending' | 'Unknown';
   collectionTime: string;
   resultTime?: string;
   orderedBy: string;
   createdAt?: string;
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export type LabWriteResult =
@@ -115,6 +124,8 @@ export interface VitalSigns {
   weight?: number;
   height?: number;
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface MedicalOrder {
@@ -166,9 +177,18 @@ export interface ImagingStudy {
   orderedBy?: string | null;
   orderTime?: string;
   report?: string | null;
+  bodySite?: string | null;
+  laterality?: string | null;
+  indication?: string | null;
+  findings?: string | null;
+  impression?: string | null;
+  encounterTime?: string | null;
+  recordVersion?: number;
   reportGeneratedAt?: string | null;
   images?: ImagingImage[];
   deletedAt?: string | null;
+  timelineEntryId?: string | null;
+  relativeOffsetHours?: number | null;
 }
 
 export interface ImagingResult {

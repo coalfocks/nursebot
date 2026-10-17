@@ -12,7 +12,12 @@ import {
   NotebookPen,
   UserPlus,
   Download,
+  Video,
+  BarChart3,
 } from 'lucide-react';
+import { EMR_LABEL } from '../../lib/terminology';
+import { isSuperAdmin } from '../../lib/roles';
+import { useAuthStore } from '../../stores/authStore';
 
 interface AdminSidebarProps {
   collapsed?: boolean;
@@ -23,6 +28,7 @@ const classNames = (...classes: Array<string | false | null | undefined>) =>
   classes.filter(Boolean).join(' ');
 
 export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: AdminSidebarProps) {
+  const { profile } = useAuthStore();
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const collapsed = collapsedProp ?? internalCollapsed;
 
@@ -34,13 +40,16 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
 
   const navItems = [
     { label: 'Overview', to: '/dashboard', icon: LayoutDashboard },
-    { label: 'EHR', to: '/ehr', icon: Activity },
+    { label: EMR_LABEL, to: '/ehr', icon: Activity },
     { label: 'Case Assignments', to: '/admin/assignments', icon: FileText },
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
     { label: 'Students', to: '/cases', icon: GraduationCap },
+    { label: 'Analytics', to: '/admin/analytics', icon: BarChart3 },
     { label: 'Data Download', to: '/admin/data-download', icon: Download },
+    { label: 'Walkthrough Videos', to: '/admin/walkthrough-videos', icon: Video },
     { label: 'Patients', to: '/admin/patients', icon: UserPlus },
     { label: 'Rooms', to: '/admin/rooms', icon: School },
+    ...(isSuperAdmin(profile) ? [{ label: 'Admin Users', to: '/superadmin/users', icon: UserPlus }] : []),
     { label: 'Profile Settings', to: '/profile', icon: Settings },
   ];
 

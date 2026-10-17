@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { useSchools } from '../../hooks/useSchools';
+import { getSchoolDisplayName, useSchools } from '../../hooks/useSchools';
 import { useAuthStore } from '../../stores/authStore';
 import { isSuperAdmin } from '../../lib/roles';
 import type { Database } from '../../lib/database.types';
@@ -43,7 +43,8 @@ const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
 
 const defaultStartDate = () => {
   const date = new Date();
-  date.setDate(date.getDate() - 30);
+  date.setUTCMonth(0, 1);
+  date.setUTCHours(0, 0, 0, 0);
   return formatDateInput(date);
 };
 
@@ -146,10 +147,11 @@ export default function ExportScoresCard() {
           completed_at,
           feedback_status,
           school_id,
-          school:school_id ( name ),
+          school:school_id ( name, display_name ),
           room:room_id ( room_number, specialty:specialty_id ( name ) )
         `)
         .eq('status', 'completed')
+        .eq('is_sandbox', false)
         .gte('completed_at', toIsoStart(startDate))
         .lte('completed_at', toIsoEnd(endDate))
         .order('completed_at', { ascending: true })
@@ -191,7 +193,7 @@ export default function ExportScoresCard() {
       const exportRows: ExportRow[] = await Promise.all(
         assignments.map(async (row) => ({
           student_id_hash: await hashStudentId(row.student_id),
-          school: row.school?.name ?? row.school_id ?? 'Unknown',
+          school: row.school?.display_name ?? row.school?.name ?? row.school_id ?? 'Unknown',
           room_number: row.room?.room_number ?? null,
           specialty: (row.room as { specialty?: { name: string | null } | null } | null)?.specialty?.name ?? null,
           communication_score: row.communication_score,
@@ -258,7 +260,7 @@ export default function ExportScoresCard() {
               {superAdmin && <option value="all">All schools</option>}
               {availableSchools.map((school) => (
                 <option key={school.id} value={school.id}>
-                  {school.name}
+                  {getSchoolDisplayName(school)}
                 </option>
               ))}
             </select>

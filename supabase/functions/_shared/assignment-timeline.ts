@@ -39,6 +39,7 @@ export type TimelineLabRow = {
   result_time: string | null;
   created_at: string | null;
   deleted_at?: string | null;
+  timeline_entry_id?: string | null;
 };
 
 export type TimelineVitalRow = {
@@ -55,6 +56,7 @@ export type TimelineVitalRow = {
   oxygen_saturation: number | null;
   pain: number | null;
   deleted_at?: string | null;
+  timeline_entry_id?: string | null;
 };
 
 export type TimelineImagingRow = {
@@ -72,6 +74,38 @@ export type TimelineImagingRow = {
   deleted_at?: string | null;
 };
 
+export type TimelineLearnerActionRow = {
+  id: string;
+  assignment_id: string;
+  room_id: number | null;
+  action_type: 'bedside_finding' | 'patient_interaction' | 'team_escalation' | 'clinical_action';
+  channel: string;
+  content: string;
+  occurred_at: string | null;
+  created_at: string | null;
+};
+
+export type TimelineConsultantMessageRow = {
+  id: string;
+  assignment_id: string;
+  role: 'student' | 'consultant';
+  content: string;
+  specialty: string | null;
+  urgency: string | null;
+  created_at: string | null;
+  request_id?: string | null;
+};
+
+export type TimelinePatientMessageRow = {
+  id: string;
+  assignment_id: string;
+  role: 'student' | 'patient' | 'caregiver' | string;
+  content: string;
+  created_at: string | null;
+  reply_to_client_message_id?: string | null;
+  client_message_id?: string | null;
+};
+
 export type TimelineAssignmentSummary = {
   id: string;
   completed_at: string | null;
@@ -80,7 +114,7 @@ export type TimelineAssignmentSummary = {
 
 export type EvaluationTimelineEntry = {
   id: string;
-  kind: 'message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note';
+  kind: 'message' | 'patient-message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
   timestamp: string;
   title: string;
   body?: string;
@@ -146,6 +180,8 @@ const getTimelineKindRank = (kind: EvaluationTimelineEntry['kind']) => {
   switch (kind) {
     case 'message':
       return 1;
+    case 'consultant-message':
+      return 1;
     case 'order':
       return 2;
     case 'labs':
@@ -158,6 +194,8 @@ const getTimelineKindRank = (kind: EvaluationTimelineEntry['kind']) => {
       return 6;
     case 'progress-note':
       return 7;
+    case 'learner-action':
+      return 2;
     default:
       return 99;
   }
@@ -172,6 +210,9 @@ export const buildAssignmentTimelineEntries = ({
   labs,
   vitals,
   imaging,
+  learnerActions,
+  consultantMessages,
+  patientMessages,
 }: {
   assignment: TimelineAssignmentSummary;
   assignmentId: string;
@@ -181,8 +222,24 @@ export const buildAssignmentTimelineEntries = ({
   labs: TimelineLabRow[];
   vitals: TimelineVitalRow[];
   imaging: TimelineImagingRow[];
+  learnerActions?: TimelineLearnerActionRow[];
+  consultantMessages?: TimelineConsultantMessageRow[];
+  patientMessages?: TimelinePatientMessageRow[];
 }): EvaluationTimelineEntry[] => {
   const entries: EvaluationTimelineEntry[] = [];
+
+  for (const action of learnerActions ?? []) {
+    const timestamp = normalizeTimelineTimestamp(action.occurred_at ?? action.created_at);
+    if (!timestamp || action.assignment_id !== assignmentId || !action.content.trim()) continue;
+    entries.push({
+      id: `learner-action-${action.id}`,
+      kind: 'learner-action',
+      timestamp,
+      title: `Learner ${action.action_type.replaceAll('_', ' ')}`,
+      body: action.content.trim(),
+      meta: [`Channel: ${action.channel}`, 'Author: Student'],
+    });
+  }
 
   for (const message of messages) {
     const timestamp = normalizeTimelineTimestamp(message.created_at);
@@ -206,6 +263,43 @@ export const buildAssignmentTimelineEntries = ({
     });
   }
 
+  const seenPatientMessageIds = new Set<string>();
+  for (const message of patientMessages ?? []) {
+    const timestamp = normalizeTimelineTimestamp(message.created_at);
+    if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    const id = String(message.client_message_id ?? message.id);
+    if (seenPatientMessageIds.has(id)) continue;
+    seenPatientMessageIds.add(id);
+    const learnerAuthored = message.role === 'student' || message.role === 'user';
+    entries.push({
+      id: `patient-message-${id}`,
+      kind: 'patient-message',
+      timestamp,
+      title: learnerAuthored ? 'Patient conversation question' : 'Patient conversation response',
+      body: message.content.trim(),
+      meta: [
+        'Channel: patient',
+        learnerAuthored ? 'Author: Student' : `Author: ${message.role === 'caregiver' ? 'Caregiver' : 'Patient'}`,
+        message.reply_to_client_message_id ? `Reply to: ${message.reply_to_client_message_id}` : 'Persisted message',
+      ],
+    });
+  }
+
+  for (const message of consultantMessages ?? []) {
+    const timestamp = normalizeTimelineTimestamp(message.created_at);
+    if (!timestamp || message.assignment_id !== assignmentId || !message.content.trim()) continue;
+    const identity = message.request_id ? `${message.request_id}:${message.role}` : String(message.id);
+    if (entries.some((entry) => entry.id === `consultant-message-${identity}`)) continue;
+    entries.push({
+      id: `consultant-message-${identity}`,
+      kind: 'consultant-message',
+      timestamp,
+      title: message.role === 'student' ? `Consult request (${message.specialty ?? 'consultant'})` : 'Consultant response',
+      body: message.content.trim(),
+      meta: [`Urgency: ${message.urgency ?? 'routine'}`, message.role === 'student' ? 'Author: Student' : 'Author: Consultant'],
+    });
+  }
+
   const filteredOrders = orders.filter((row) =>
     timelineScopeMatchesContext(
       deriveTimelineScope(row.override_scope, row.assignment_id, row.room_id),
@@ -217,7 +311,14 @@ export const buildAssignmentTimelineEntries = ({
   );
 
   for (const order of filteredOrders) {
-    const timestamp = normalizeTimelineTimestamp(order.order_time ?? order.created_at);
+    // Assignment-scoped order_time values from older clients were incorrectly
+    // written with the baseline sentinel. created_at is the durable insertion
+    // event for learner actions; keep authored/baseline timestamps unchanged.
+    const timestamp = normalizeTimelineTimestamp(
+      deriveTimelineScope(order.override_scope, order.assignment_id, order.room_id) === 'assignment'
+        ? (order.created_at ?? order.order_time)
+        : (order.order_time ?? order.created_at),
+    );
     if (!timestamp) continue;
     const details = [order.dose, order.route, order.frequency].filter(Boolean).join(' • ');
     entries.push({
@@ -242,6 +343,7 @@ export const buildAssignmentTimelineEntries = ({
 
   const groupedLabs = new Map<string, TimelineLabRow[]>();
   for (const lab of filteredLabs) {
+    if (lab.timeline_entry_id) continue;
     const timestamp = getLabTimelineTimestamp(lab);
     if (!timestamp) continue;
     const key = `${deriveTimelineScope(lab.override_scope, lab.assignment_id, lab.room_id)}-${timestamp.slice(0, 16)}`;
@@ -251,7 +353,9 @@ export const buildAssignmentTimelineEntries = ({
   }
 
   groupedLabs.forEach((group, key) => {
-    const timestamp = getLabTimelineTimestamp(group[0]);
+    const timestamp = deriveTimelineScope(group[0].override_scope, group[0].assignment_id, group[0].room_id) === 'assignment'
+      ? normalizeTimelineTimestamp(group[0].created_at ?? group[0].result_time ?? group[0].collection_time)
+      : getLabTimelineTimestamp(group[0]);
     if (!timestamp) return;
     group.sort((a, b) => a.test_name.localeCompare(b.test_name));
     entries.push({
@@ -282,6 +386,7 @@ export const buildAssignmentTimelineEntries = ({
   );
 
   for (const vital of filteredVitals) {
+    if (vital.timeline_entry_id) continue;
     const timestamp = normalizeTimelineTimestamp(vital.timestamp);
     if (!timestamp) continue;
     const details = [

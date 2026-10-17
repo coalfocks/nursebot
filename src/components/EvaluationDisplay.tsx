@@ -1,9 +1,17 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Activity, AlertTriangle, CheckCircle, XCircle, Target, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, Award, Brain, MessageSquare, Activity, AlertTriangle, Target, Zap } from 'lucide-react';
 import type { Database } from '../lib/database.types';
 import { isFeedbackEligibleStatus } from '../lib/feedbackEligibility';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'];
+type EvaluationAssignment = Assignment & {
+  communication_score?: number | null;
+  mdm_score?: number | null;
+  communication_breakdown?: CommunicationBreakdown | null;
+  mdm_breakdown?: MDMBreakdown | null;
+  learning_objectives?: string | null;
+  case_difficulty?: string | null;
+};
 
 interface CommunicationBreakdown {
   information_sharing: {
@@ -38,20 +46,20 @@ interface MDMBreakdown {
 }
 
 interface EvaluationDisplayProps {
-  assignment: Assignment;
+  assignment: EvaluationAssignment;
   onRetryFeedback?: () => void;
 }
 
-export default function EvaluationDisplay({ assignment, onRetryFeedback }: EvaluationDisplayProps) {
+export default function EvaluationDisplay({ assignment }: EvaluationDisplayProps) {
   const [expandedSection, setExpandedSection] = useState<string | null>('communication');
 
   // Type assertion for new scoring columns
-  const communicationScore = (assignment as any).communication_score;
-  const mdmScore = (assignment as any).mdm_score;
-  const communicationBreakdown = (assignment as any).communication_breakdown as CommunicationBreakdown | null;
-  const mdmBreakdown = (assignment as any).mdm_breakdown as MDMBreakdown | null;
-  const learningObjectives = (assignment as any).learning_objectives;
-  const caseDifficulty = (assignment as any).case_difficulty || 'intermediate';
+  const communicationScore = assignment.communication_score;
+  const mdmScore = assignment.mdm_score;
+  const communicationBreakdown = assignment.communication_breakdown;
+  const mdmBreakdown = assignment.mdm_breakdown;
+  const learningObjectives = assignment.learning_objectives;
+  const caseDifficulty = assignment.case_difficulty || 'intermediate';
 
   // Only show when feedback is ready
   if (!isFeedbackEligibleStatus(assignment.status)) {
@@ -65,21 +73,6 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
-  };
-
-  const ScoreBadge = ({ score, maxScore = 5, label }: { score: number; maxScore?: number; label: string }) => {
-    const percentage = (score / maxScore) * 100;
-    const color = percentage >= 80 ? 'bg-green-100 text-green-800 border-green-300' :
-                  percentage >= 60 ? 'bg-blue-100 text-blue-800 border-blue-300' :
-                  percentage >= 40 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
-                  'bg-red-100 text-red-800 border-red-300';
-
-    return (
-      <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${color}`}>
-        <span>{label}: </span>
-        <span className="ml-1">{score.toFixed(1)}/{maxScore}</span>
-      </div>
-    );
   };
 
   const SubScoreRow = ({ 
@@ -149,7 +142,7 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
                   <div className="text-3xl font-bold text-white">
                     {mdmScore.toFixed(1)}
                   </div>
-                  <div className="text-xs text-blue-100 uppercase tracking-wide">Medical Decision</div>
+                  <div className="text-xs text-blue-100 uppercase tracking-wide">Clinical Reasoning</div>
                 </div>
               </div>
             )}
@@ -235,7 +228,7 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
             <div className="flex items-center gap-3">
               <Brain className="w-6 h-6 text-purple-600" />
               <div className="text-left">
-                <h3 className="text-lg font-semibold text-gray-900">Medical Decision Making</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Clinical Reasoning Score</h3>
                 <p className="text-sm text-gray-500">
                   Raw: {(
                     mdmBreakdown.labs_orders_quality.score +
@@ -284,7 +277,7 @@ export default function EvaluationDisplay({ assignment, onRetryFeedback }: Evalu
       <div className="px-6 py-4 bg-gray-50 text-xs text-gray-500">
         <p><strong>Scoring Formula:</strong></p>
         <p>Communication = clamp(Information Sharing (0-2) + Responsive Communication (0-3) + Efficiency Deduction (-2 to 0), 0, 5)</p>
-        <p>MDM = clamp(Labs/Orders (0-3) + Note Thought Process (0-2) + Safety Deduction (-2 to 0), 0, 5)</p>
+        <p>Clinical Reasoning = clamp(Orders/Monitoring (0-3) + Clinical Reasoning/Documentation (0-2) + Safety Deduction (0, −1, −2), 0, 5)</p>
       </div>
     </div>
   );

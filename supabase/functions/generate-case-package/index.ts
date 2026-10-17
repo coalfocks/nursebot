@@ -19,6 +19,9 @@ type CaseBlueprintPayload = {
   objectives: string;
   admitting_hpi: string;
   hospital_days?: number | null;
+  encounter_type?: 'inpatient' | 'ed' | 'ld';
+  hospital_stay_days?: number | null;
+  hospital_timeline?: Record<string, unknown> | null;
   admit_orders?: string | null;
   admission_vitals?: string | null;
   admission_labs?: string | null;
@@ -27,7 +30,9 @@ type CaseBlueprintPayload = {
   bedside_requirement?: string | null;
   bedside_required?: boolean | null;
   patient_chat_enabled?: boolean | null;
+  patient_conversation_prompt?: string | null;
   consults?: string | null;
+  consultant_response_prompt?: string | null;
   event_vitals?: string | null;
   nurse_exam?: string | null;
   bedside_exam?: string | null;
@@ -58,6 +63,12 @@ const sectionKeys: GenerationSection[] = [
 
 const packageSkeleton = {
   patient: {
+    // Structured identity fields are required for publication. Keep demographics as
+    // authored narrative context, but never make the publisher parse it for identity.
+    firstName: '',
+    lastName: '',
+    dateOfBirth: '',
+    gender: '',
     demographics: '',
     allergies: '',
     codeStatus: '',
@@ -73,6 +84,7 @@ const packageSkeleton = {
     consultNotes: [] as string[],
     nursingNotes: [] as string[],
     labTrends: [] as string[],
+    hospitalTimeline: null as Record<string, unknown> | null,
   },
   event: {
     trigger: '',
@@ -92,6 +104,7 @@ const packageSkeleton = {
     exam: '',
     patientChatEnabled: false,
     patientChatPrompt: '',
+    consultantResponsePrompt: '',
     disableReason: '',
   },
   nurse_chat: {
@@ -116,6 +129,10 @@ const stringifyBlueprint = (blueprint: CaseBlueprintPayload) => JSON.stringify(b
 const schemaInstruction = `Return compact JSON only. Use this exact top-level shape:
 {
   "patient": {
+    "firstName": "synthetic first name",
+    "lastName": "synthetic last name",
+    "dateOfBirth": "YYYY-MM-DD date-only value",
+    "gender": "sex/gender value used for reference ranges",
     "demographics": "age/sex and brief background, no real PHI",
     "allergies": "string",
     "codeStatus": "string",
@@ -130,7 +147,8 @@ const schemaInstruction = `Return compact JSON only. Use this exact top-level sh
     "dailyProgressNotes": ["one per relevant hospital day"],
     "consultNotes": ["consult specialty and recommendation"],
     "nursingNotes": ["brief shift-style note"],
-    "labTrends": ["trendable lab value series"]
+    "labTrends": ["trendable lab value series"],
+    "hospitalTimeline": {"encounterType":"inpatient","stayDays":1,"priorContextHours":12,"entries":[]}
   },
   "event": {
     "trigger": "what prompts the nurse message",
@@ -150,6 +168,7 @@ const schemaInstruction = `Return compact JSON only. Use this exact top-level sh
     "exam": "what the learner sees in person",
     "patientChatEnabled": true,
     "patientChatPrompt": "patient persona and answer boundaries, empty if disabled",
+    "consultantResponsePrompt": "consultant response behavior and boundaries, empty when no consultant portal is authored",
     "disableReason": "why chat is disabled if altered/sedated/intubated/unconscious"
   },
   "nurse_chat": {
@@ -178,8 +197,11 @@ const buildPrompt = ({ blueprint, section, existingPackage }: Required<GenerateC
     'Keep nurse chat short and text-like. No suggestions, no hints, no diagnosis leakage.',
     'Gate lab, imaging, and study results behind matching placed orders.',
     'Use the blueprint overrides exactly when present; otherwise generate clinically plausible content.',
-    'Generate enough chart depth to match hospital_days. If hospital_days is absent, infer a plausible inpatient course.',
+    'Use hospital_timeline as the source of truth for relative-hour pre-page chart context. Display baseline items only as hours prior to the student encounter; never render calendar dates, clock times, or hospital-day labels. Preserve the 12-hour immediate context window and never imply more than hospital_stay_days (1–3) inpatient days. ED is one encounter; L&D is a short labor/postpartum course unless the authored timeline explicitly supports up to 3 days.',
+    'Require one chronological progress note for every inpatient day and keep labs/vitals as dated entries with analyte, value, and unit. Do not collapse a daily series into one undated result or invent unmodeled results.',
+    'Pass the same verified hospital-course and trend facts into nurse_chat. The nurse may answer a requested trend concisely, but must not volunteer a data dump or leak evaluation goals.',
     'Disable bedside patient chat for altered, sedated, intubated, unconscious, or otherwise non-participatory patients.',
+    'When patient_conversation_prompt or consultant_response_prompt is authored, preserve it as the corresponding behavior prompt; do not replace it with generic instructions.',
     'Future reverse-mode should remain possible: keep learner-facing nurse behavior separate from hidden evaluation facts.',
   ].join('\n- ');
 
@@ -243,6 +265,29 @@ const normalizePackage = (value: unknown) => {
   };
 };
 
+const validateTimeline = (blueprint: CaseBlueprintPayload) => {
+  const type = blueprint.encounter_type ?? 'inpatient';
+  const days = blueprint.hospital_stay_days ?? blueprint.hospital_days ?? 1;
+  if (!['inpatient', 'ed', 'ld'].includes(type)) throw new Error('Invalid encounter type');
+  if (!Number.isInteger(days) || days < 1 || days > 3) throw new Error('Hospital stay must be 1-3 days');
+  if (type === 'ed' && days !== 1) throw new Error('ED cases must use one encounter day');
+  const timeline = blueprint.hospital_timeline;
+  if (!timeline) return;
+  const entries = Array.isArray(timeline.entries) ? timeline.entries as Array<Record<string, unknown>> : [];
+  for (let day = 1; day <= days; day += 1) {
+    if ((type === 'inpatient' || type === 'ld') && !entries.some((entry) => entry.kind === 'progress_note' && entry.hospitalDay === day)) {
+      throw new Error(`Hospital day ${day} requires a progress note`);
+    }
+  }
+  const offsets = entries.map((entry) => Number(entry.relativeHoursBeforeEncounter ?? entry.offsetHours ?? 0));
+  const usesRelativeOffsets = entries.some((entry) => entry.relativeHoursBeforeEncounter !== undefined);
+  const outOfOrder = usesRelativeOffsets
+    ? offsets.some((offset, index) => index > 0 && offset > offsets[index - 1])
+    : offsets.some((offset, index) => index > 0 && offset < offsets[index - 1]);
+  if (outOfOrder) throw new Error('Hospital timeline must be chronological by relative offset');
+  if (entries.some((entry) => entry.kind === 'nurse_page' && Number(entry.relativeHoursBeforeEncounter ?? entry.offsetHours ?? 0) > 12)) throw new Error('Nurse page must be in the final 12-hour window');
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -254,6 +299,7 @@ Deno.serve(async (req) => {
     if (!payload.blueprint?.title || !payload.blueprint.objectives || !payload.blueprint.admitting_hpi) {
       throw new Error('Missing required case blueprint fields');
     }
+    validateTimeline(payload.blueprint);
     if (payload.section && !sectionKeys.includes(payload.section)) {
       throw new Error(`Unsupported generation section: ${payload.section}`);
     }

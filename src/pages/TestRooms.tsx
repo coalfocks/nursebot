@@ -17,13 +17,19 @@ type AssignmentSummary = Pick<
   'id' | 'room_id' | 'status' | 'created_at'
 >;
 
+const describeSupabaseError = (error: { message?: string; details?: string; hint?: string } | null | undefined) => {
+  if (!error) return 'Unknown server error.';
+  return [error.message, error.details, error.hint].filter(Boolean).join(' — ') || 'Unknown server error.';
+};
+
 export default function TestRooms() {
   const { user, profile } = useAuthStore();
   const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [assignmentsByRoom, setAssignmentsByRoom] = useState<Map<number, AssignmentSummary>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [openingRoomId, setOpeningRoomId] = useState<number | null>(null);
   const [resettingRoomIds, setResettingRoomIds] = useState<Set<number>>(new Set());
 
@@ -40,12 +46,29 @@ export default function TestRooms() {
 
     const loadRooms = async () => {
       setLoading(true);
-      setError(null);
+      setRoomsError(null);
       try {
-        const { data, error: roomsError } = await supabase
+        let roomsQuery = supabase
           .from('rooms')
           .select('*')
+          .eq('is_active', true)
           .order('room_number');
+
+        const learnerProgram = profile?.learner_program || 'medical';
+        roomsQuery = roomsQuery.eq('learner_program', learnerProgram);
+
+        // RLS remains the authorization boundary. These predicates keep the
+        // test-room list consistent with the same immutable school/program
+        // eligibility used by the sandbox-assignment INSERT policy.
+        if (profile?.school_id) {
+          roomsQuery = roomsQuery.or(
+            `school_id.eq.${profile.school_id},available_school_ids.cs.{${profile.school_id}},available_school_ids.eq.{}`,
+          );
+        } else {
+          roomsQuery = roomsQuery.eq('available_school_ids', '{}');
+        }
+
+        const { data, error: roomsError } = await roomsQuery;
 
         if (roomsError) throw roomsError;
 
@@ -63,7 +86,7 @@ export default function TestRooms() {
       } catch (err) {
         console.error('Failed to load rooms', err);
         if (isMounted) {
-          setError('Unable to load rooms.');
+          setRoomsError(describeSupabaseError(err as { message?: string }));
         }
       } finally {
         if (isMounted) {
@@ -74,11 +97,13 @@ export default function TestRooms() {
 
     const loadAssignments = async () => {
       if (!user) return;
+      setSessionError(null);
       try {
         const { data, error: assignmentsError } = await supabase
           .from('student_room_assignments')
           .select('id, room_id, status, created_at')
           .eq('student_id', user.id)
+          .eq('is_sandbox', true)
           .order('created_at', { ascending: false });
 
         if (assignmentsError) throw assignmentsError;
@@ -95,7 +120,7 @@ export default function TestRooms() {
       } catch (err) {
         console.error('Failed to load test assignments', err);
         if (isMounted) {
-          setError('Unable to load existing test sessions.');
+          setSessionError(describeSupabaseError(err as { message?: string }));
         }
       }
     };
@@ -106,10 +131,14 @@ export default function TestRooms() {
     return () => {
       isMounted = false;
     };
-  }, [user, canAccess, navigate]);
+  }, [user, canAccess, navigate, profile?.school_id, profile?.learner_program]);
 
   const ensureTestAssignment = async (roomId: number) => {
     if (!user) return null;
+    if (!profile?.school_id) {
+      setSessionError('Your test account has no school scope, so a sandbox session cannot be started.');
+      return null;
+    }
     const existing = assignmentsByRoom.get(roomId);
     if (existing) return existing;
 
@@ -120,14 +149,15 @@ export default function TestRooms() {
         room_id: roomId,
         assigned_by: user.id,
         status: 'assigned',
-        school_id: profile?.school_id ?? undefined,
+        is_sandbox: true,
+        school_id: profile.school_id,
       })
       .select('id, room_id, status, created_at')
       .maybeSingle();
 
     if (insertError || !data) {
       console.error('Failed to create test assignment', insertError);
-      setError('Unable to start a test session for this room.');
+      setSessionError(`Unable to start a test session for this room${insertError ? `: ${describeSupabaseError(insertError)}` : '.'}`);
       return null;
     }
 
@@ -139,7 +169,7 @@ export default function TestRooms() {
 
   const handleOpenRoom = async (roomId: number) => {
     setOpeningRoomId(roomId);
-    setError(null);
+    setSessionError(null);
     try {
       const assignment = await ensureTestAssignment(roomId);
       if (assignment) {
@@ -154,7 +184,11 @@ export default function TestRooms() {
     const assignment = assignmentsByRoom.get(roomId);
     if (!assignment) return;
     if (!user) {
-      setError('You must be signed in to reset a test session.');
+      setSessionError('You must be signed in to reset a test session.');
+      return;
+    }
+    if (!profile?.school_id) {
+      setSessionError('Your test account has no school scope, so this sandbox session cannot be reset.');
       return;
     }
     if (!window.confirm('Reset this room? This clears labs, orders, vitals, notes, imaging, and chat for your test session.')) {
@@ -162,7 +196,7 @@ export default function TestRooms() {
     }
 
     setResettingRoomIds((prev) => new Set(prev).add(roomId));
-    setError(null);
+    setSessionError(null);
 
     try {
       const results = await Promise.all([
@@ -177,7 +211,7 @@ export default function TestRooms() {
       const firstError = results.find((result) => result.error);
       if (firstError?.error) {
         console.error('Failed to reset test session', firstError.error);
-        setError('Reset failed. Please try again.');
+        setSessionError('Reset failed. Please try again.');
       }
 
       const { error: deleteError } = await supabase
@@ -187,7 +221,7 @@ export default function TestRooms() {
 
       if (deleteError) {
         console.error('Failed to remove old test session', deleteError);
-        setError('Reset failed. Please try again.');
+        setSessionError('Reset failed. Please try again.');
         return;
       }
 
@@ -198,14 +232,15 @@ export default function TestRooms() {
           room_id: roomId,
           assigned_by: user.id,
           status: 'assigned',
-          school_id: profile?.school_id ?? undefined,
+          is_sandbox: true,
+          school_id: profile.school_id,
         })
         .select('id, room_id, status, created_at')
         .maybeSingle();
 
       if (insertError || !newAssignment) {
         console.error('Failed to create fresh test session', insertError);
-        setError('Reset succeeded, but a fresh session could not be created.');
+        setSessionError(`Reset succeeded, but a fresh session could not be created${insertError ? `: ${describeSupabaseError(insertError)}` : '.'}`);
         setAssignmentsByRoom((prev) => {
           const next = new Map(prev);
           next.delete(roomId);
@@ -221,7 +256,7 @@ export default function TestRooms() {
       });
     } catch (err) {
       console.error('Failed to reset test session', err);
-      setError('Reset failed. Please try again.');
+      setSessionError('Reset failed. Please try again.');
     } finally {
       setResettingRoomIds((prev) => {
         const next = new Set(prev);
@@ -247,9 +282,9 @@ export default function TestRooms() {
           </p>
         </div>
 
-        {error && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+        {(roomsError || sessionError) && (
+          <div role="alert" className="mb-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {roomsError ?? sessionError}
           </div>
         )}
 
@@ -259,7 +294,7 @@ export default function TestRooms() {
           </div>
         ) : rooms.length === 0 ? (
           <div className="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center text-gray-500">
-            No rooms available yet.
+            No eligible active Test Rooms are available for this account and school.
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">

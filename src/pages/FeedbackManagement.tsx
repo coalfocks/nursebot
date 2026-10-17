@@ -60,6 +60,7 @@ export default function FeedbackManagement() {
             case_goals
           )
         `)
+        .eq('is_sandbox', false)
         .order('created_at', { ascending: false });
 
       if (scopedSchoolId) {
@@ -181,6 +182,7 @@ export default function FeedbackManagement() {
           )
         `)
         .eq('student_id', studentId)
+        .eq('is_sandbox', false)
         .order('created_at', { ascending: false });
 
       if (scopedSchoolId) {

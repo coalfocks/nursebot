@@ -51,6 +51,7 @@ type AssignmentEvaluationRow = {
   school: {
     id: string;
     name: string;
+    display_name: string | null;
     slug: string;
   } | null;
   room: {
@@ -99,6 +100,7 @@ type AssignmentEvaluationSourceRow = {
   school: {
     id: string;
     name: string;
+    display_name: string | null;
     slug: string;
   } | null;
   room: {
@@ -382,7 +384,7 @@ const buildTimelineExportHtml = (
 ) => {
   const studentName = assignment.student?.full_name ?? 'Unknown Student';
   const roomNumber = assignment.room?.room_number ?? 'Unknown Room';
-  const schoolName = assignment.school?.name ?? 'Unknown School';
+  const schoolName = assignment.school?.display_name ?? assignment.school?.name ?? 'Unknown School';
   const assignedBy = assignment.assigned_by_profile?.full_name ?? 'Unknown';
   const headerMeta = [
     `Student: ${studentName}`,
@@ -603,7 +605,7 @@ const buildTimelineExport = async (
         student_progress_note,
         room_id,
         room:room_id ( id, room_number, role, patient_id, specialty:specialty_id ( name ) ),
-        school:school_id ( id, name, slug ),
+        school:school_id ( id, name, display_name, slug ),
         student:student_id ( id, full_name, email ),
         assigned_by_profile:assigned_by ( id, full_name, email )
       `,
@@ -976,7 +978,7 @@ Deno.serve(async (req) => {
     }
 
     const [schoolsRes, profilesRes, roomsRes, assignmentsRes, recentAssignmentsRes] = await Promise.all([
-      serviceClient.from('schools').select('id, name, slug'),
+      serviceClient.from('schools').select('id, name, display_name, slug'),
       serviceClient.from('profiles').select('id, school_id, role'),
       serviceClient.from('rooms').select('id, school_id, is_active'),
       serviceClient.from('student_room_assignments').select('id, school_id, status, feedback_status'),
@@ -1028,7 +1030,7 @@ Deno.serve(async (req) => {
             communication_breakdown,
             mdm_breakdown,
             nurse_feedback,
-            school:school_id ( id, name, slug ),
+            school:school_id ( id, name, display_name, slug ),
             room:room_id ( id, room_number, role, specialty:specialty_id ( name ) ),
             student:student_id ( id, full_name, email, role, school_id ),
             assigned_by_profile:assigned_by ( id, full_name, email, role )
@@ -1143,6 +1145,7 @@ Deno.serve(async (req) => {
         ? {
             id: row.school.id,
             name: row.school.name,
+            display_name: row.school.display_name,
             slug: row.school.slug,
           }
         : null,

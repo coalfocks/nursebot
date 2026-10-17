@@ -1,4 +1,5 @@
 import type { ClinicalNote, LabResult, Patient, VitalSigns } from './types';
+import { classifyLabResult, formatNumericReferenceRange, getDefaultReferenceRange } from './labIntegrity';
 
 export type LabGenerationContext = {
   patient?: Patient;
@@ -8,16 +9,158 @@ export type LabGenerationContext = {
   previousLabs?: LabResult[];
   clinicalNotes?: ClinicalNote[];
   vitals?: VitalSigns[];
+  /** Authored room/package instructions for the current case stage. */
+  caseInstructions?: string | null;
+  caseStage?: string | null;
+  treatmentActions?: Array<{ name?: string | null; occurredAt?: string | null; status?: string | null }>;
 };
 
-type LabTemplate = {
+export type LabTemplate = {
   testName: string;
   unit: string;
   referenceRange: string;
   normal: [number, number];
+  resultKind?: 'numeric' | 'pending-microbiology';
+};
+
+const canonicalAnalyteKey = (name: string) => name
+  .toLowerCase()
+  .replace(/[\u2018\u2019']/g, '')
+  .replace(/\(serum\)|\(plasma\)|\s+/g, ' ')
+  .trim();
+
+const validReferenceRange = (range: unknown) => {
+  if (typeof range !== 'string' || !range.trim()) return false;
+  return /^-?\d+(?:\.\d+)?\s*(?:-|to)\s*\+?-?\d+(?:\.\d+)?(?:\s*%|\s*[a-zA-Z/%]+)?$/.test(range.trim());
+};
+
+export type GeneratedLabPayload = {
+  testName?: string;
+  value?: string | number;
+  unit?: string;
+  referenceRange?: string;
+  status?: LabResult['status'];
+  collectionTime?: string;
+  resultTime?: string;
+  valueType?: LabResult['valueType'];
+  narrative?: string | null;
+  specimen?: string | null;
+  lifecycleStatus?: LabResult['lifecycleStatus'];
+};
+
+/** Keep model output inside the explicitly ordered panel contract. */
+export const validateGeneratedLabResults = (
+  results: GeneratedLabPayload[],
+  requestedTests: LabTemplate[],
+  context?: LabGenerationContext,
+): GeneratedLabPayload[] => {
+  const requestedByKey = new Map(requestedTests.map((test) => [canonicalAnalyteKey(test.testName), test]));
+  const seen = new Set<string>();
+  const normalized = results.flatMap((result) => {
+    if (!result.testName) return [];
+    const template = requestedByKey.get(canonicalAnalyteKey(result.testName));
+    if (!template || seen.has(template.testName)) return [];
+    if (template.resultKind === 'pending-microbiology') {
+      const pendingValue = typeof result.value === 'string' ? result.value.trim() : '';
+      if (!pendingValue && !result.narrative?.trim()) return [];
+      seen.add(template.testName);
+      return [{
+        ...result,
+        testName: template.testName,
+        unit: '',
+        referenceRange: 'Pending microbiology: organism/status not yet finalized',
+        value: pendingValue,
+        valueType: 'coded',
+        lifecycleStatus: 'pending',
+        status: 'Pending',
+        specimen: result.specimen ?? 'Peripheral blood',
+      }];
+    }
+    if (!validReferenceRange(result.referenceRange)) return [];
+    if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
+    seen.add(template.testName);
+    return [{
+      ...result,
+      testName: template.testName,
+      unit: template.unit,
+      referenceRange: template.referenceRange,
+      status: classifyLabResult(template.testName, result.value, template.referenceRange).status,
+    }];
+  });
+  if (normalized.length !== requestedTests.length) return [];
+  return isClinicallyCoherentPanel(normalized, context) ? normalized : [];
+};
+
+const numericResult = (results: GeneratedLabPayload[], names: string[]) => {
+  const wanted = new Set(names.map(canonicalAnalyteKey));
+  const result = results.find((entry) => wanted.has(canonicalAnalyteKey(entry.testName ?? '')));
+  if (!result) return null;
+  const value = typeof result.value === 'number' ? result.value : Number(result.value);
+  return Number.isFinite(value) ? value : null;
+};
+
+const caseText = (context?: LabGenerationContext) => [
+  context?.caseInstructions,
+  context?.caseStage,
+  ...(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`),
+  context?.orderName,
+  ...(context?.clinicalNotes ?? []).map((note) => `${note.title ?? ''} ${note.content ?? ''}`),
+  ...(context?.vitals ?? []).map((vital) => JSON.stringify(vital)),
+].filter(Boolean).join(' ').toLowerCase();
+
+/**
+ * Model output is rejected when it contradicts the authored acute scenario or
+ * violates basic chemistry/acid-base relationships. Returning false is
+ * intentional: callers must surface a recoverable generation error rather than
+ * persist a plausible-looking substitute.
+ */
+export const isClinicallyCoherentPanel = (
+  results: GeneratedLabPayload[],
+  context?: LabGenerationContext,
+): boolean => {
+  const text = caseText(context);
+  const dkaLike = /\bdka\b|diabetic ketoacidosis|kussmaul|deep\s+(?:and\s+)?rapid\s+breath|insulin\s+(?:was\s+)?omitted|glucose\s*[:=]?\s*[2-9]\d\d/.test(text);
+
+  const stageText = `${context?.caseStage ?? ''} ${(context?.treatmentActions ?? []).map((action) => `${action.name ?? ''} ${action.status ?? ''}`).join(' ')}`.toLowerCase();
+  const postTreatment = /post[- ]?treatment|after treatment|improv|recheck|euglycemic|insulin given|fluids given|treatment started/.test(stageText);
+  if (dkaLike && !postTreatment) {
+    const glucose = numericResult(results, ['Glucose']);
+    const ketones = numericResult(results, ['Beta-Hydroxybutyrate']);
+    const bicarbonate = numericResult(results, ['CO2 (Bicarbonate)', 'HCO3 (Arterial)', 'HCO3 (Venous)']);
+    const ph = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+    if (glucose !== null && glucose < 250) return false;
+    if (ketones !== null && ketones < 3) return false;
+    if (bicarbonate !== null && bicarbonate > 18) return false;
+    if (ph !== null && ph > 7.3) return false;
+    const sodium = numericResult(results, ['Sodium']);
+    const chloride = numericResult(results, ['Chloride']);
+    if (sodium !== null && chloride !== null && bicarbonate !== null && sodium - chloride - bicarbonate < 12) return false;
+  }
+
+  const acidPh = numericResult(results, ['pH (Arterial)', 'pH (Venous)']);
+  const acidPco2 = numericResult(results, ['PaCO2', 'pCO2 (Venous)']);
+  const acidBicarb = numericResult(results, ['HCO3 (Arterial)', 'HCO3 (Venous)']);
+  if (acidPh !== null && acidPco2 !== null && acidBicarb !== null && acidPco2 > 0 && acidBicarb > 0) {
+    const expectedPh = 6.1 + Math.log10(acidBicarb / (0.03 * acidPco2));
+    if (Math.abs(expectedPh - acidPh) > 0.15) return false;
+  }
+
+  const glucoseValues = results
+    .filter((entry) => /glucose/i.test(entry.testName ?? ''))
+    .map((entry) => typeof entry.value === 'number' ? entry.value : Number(entry.value))
+    .filter((value) => Number.isFinite(value));
+  if (glucoseValues.length > 1 && Math.max(...glucoseValues) - Math.min(...glucoseValues) > 5) return false;
+  return true;
 };
 
 const labTemplates: LabTemplate[] = [
+  {
+    testName: 'Blood Culture x2 (Peripheral)',
+    unit: '',
+    referenceRange: 'Pending microbiology: organism/status not yet finalized',
+    normal: [0, 0],
+    resultKind: 'pending-microbiology',
+  },
   // Hematology
   { testName: 'Hemoglobin', unit: 'g/dL', referenceRange: '12.0-15.5', normal: [12, 15.5] },
   { testName: 'Hematocrit', unit: '%', referenceRange: '36-46', normal: [36, 46] },
@@ -109,9 +252,22 @@ const labTemplates: LabTemplate[] = [
 
 const randomInRange = (min: number, max: number) => Number((Math.random() * (max - min) + min).toFixed(1));
 
-export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
+export const resolveLabTemplates = (
+  orderName?: string,
+  sex?: Patient['gender'],
+  dateOfBirth?: string | null,
+  asOf: unknown = new Date(),
+): LabTemplate[] => {
   const normalized = (orderName ?? '').toLowerCase().replace(/[–—]/g, '-');
-  const templateMap = Object.fromEntries(labTemplates.map((t) => [t.testName.toLowerCase(), t]));
+  const templatesForPatient = labTemplates.map((template) => {
+    const demographicRange = sex === 'Male' || sex === 'Female'
+      ? getDefaultReferenceRange(template.testName, sex, dateOfBirth, asOf)
+      : null;
+    return demographicRange
+      ? { ...template, referenceRange: formatNumericReferenceRange(demographicRange), normal: [demographicRange.low, demographicRange.high] as [number, number] }
+      : template;
+  });
+  const templateMap = Object.fromEntries(templatesForPatient.map((t) => [t.testName.toLowerCase(), t]));
 
   const panelMatches: Record<string, string[]> = {
     'cbc with differential': [
@@ -195,6 +351,8 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
     amylase: ['amylase'],
     'beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
     'ketone beta-hydroxybutyrate': ['beta-hydroxybutyrate'],
+    'blood culture x2': ['blood culture x2 (peripheral)'],
+    'blood culture': ['blood culture x2 (peripheral)'],
     'serum alcohol level': ['serum alcohol level'],
     'acetaminophen level': ['acetaminophen level'],
     'salicylate level': ['salicylate level'],
@@ -214,21 +372,11 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
       .filter(Boolean) as LabTemplate[];
   }
 
-  const directMatches = labTemplates.filter((template) => normalized.includes(template.testName.toLowerCase()));
+  const directMatches = templatesForPatient.filter((template) => normalized.includes(template.testName.toLowerCase()));
   if (directMatches.length) return directMatches;
 
   const defaultPanel = ['white blood cell count', 'hemoglobin', 'platelets', 'sodium', 'potassium', 'creatinine', 'glucose'];
   return defaultPanel.map((name) => templateMap[name]).filter(Boolean) as LabTemplate[];
-};
-
-const deriveLabStatus = (value: number, [low, high]: [number, number]) => {
-  if (value < low * 0.9 || value > high * 1.1) {
-    return 'Critical';
-  }
-  if (value < low || value > high) {
-    return 'Abnormal';
-  }
-  return 'Normal';
 };
 
 type ClinicalSignals = {
@@ -366,7 +514,11 @@ export async function generateLabResults(
   context?: LabGenerationContext,
 ): Promise<LabResult[]> {
   const signals = deriveClinicalSignals(caseDescription, context);
-  const templates = resolveLabTemplates(context?.orderName ?? caseDescription);
+  const templates = resolveLabTemplates(
+    context?.orderName ?? caseDescription,
+    context?.patient?.gender,
+    context?.patient?.dateOfBirth,
+  );
 
   const results = templates.map((template, index) => {
     const [low, high] = template.normal;
@@ -375,7 +527,7 @@ export async function generateLabResults(
     const variance = signals.emphasis === 'Critical' ? 0.3 : signals.emphasis === 'Abnormal' ? 0.18 : 0.08;
     const drifted = base * (1 + randomInRange(-variance, variance));
     const biasedValue = applyClinicalBias(template, drifted, signals);
-    const status = emphasizeStatus(deriveLabStatus(biasedValue, template.normal), signals.emphasis);
+    const status = classifyLabResult(template.testName, biasedValue, template.referenceRange).status;
 
     return {
       id: `generated-lab-${Date.now()}-${index}`,
@@ -395,13 +547,6 @@ export async function generateLabResults(
 
   return Promise.resolve(results);
 }
-
-const emphasizeStatus = (status: LabResult['status'], emphasis: string): LabResult['status'] => {
-  if (emphasis === 'Abnormal' && status === 'Normal') {
-    return 'Abnormal';
-  }
-  return status;
-};
 
 export async function generateVitalSigns(patientId: string, caseDescription: string): Promise<VitalSigns[]> {
   const baseTemp = caseDescription.toLowerCase().includes('fever') ? 100 : 98.4;
