@@ -12,6 +12,7 @@ import MyCases from './pages/MyCases';
 import AdminStudents from './pages/AdminStudents';
 import AdminStudentCases from './pages/AdminStudentCases';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminAnalytics from './pages/AdminAnalytics';
 import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
@@ -26,6 +27,7 @@ import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
+import { isSyntheticAnalyticsPreview } from './lib/analyticsPreview';
 
 function App() {
   const { user, loading, loadUser, profile } = useAuthStore();
@@ -142,6 +144,16 @@ function App() {
               isTester ? <TestRooms /> : hasAdmin ? <AdminStudents /> : <MyCases />
             ) : (
               <Navigate to="/login" replace />
+            )
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            (user?.id && hasAdmin) || isSyntheticAnalyticsPreview() ? (
+              <AdminAnalytics />
+            ) : (
+              <Navigate to="/dashboard" replace />
             )
           }
         />
