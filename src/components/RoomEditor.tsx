@@ -14,6 +14,7 @@ import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
 import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
 import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
+import { describeRoomAvailabilityChange, normalizeRoomAvailability } from '../lib/roomAvailability';
 import { preserveOrdersConfig } from '../lib/ordersConfig';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
@@ -126,6 +127,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   const [error, setError] = useState<string>('');
   const [patientPromptStatus, setPatientPromptStatus] = useState('');
   const [consultantPromptStatus, setConsultantPromptStatus] = useState('');
+  const [availabilityStatus, setAvailabilityStatus] = useState('');
   const [promptPreview, setPromptPreview] = useState<ConversationPromptKind | null>(null);
   const [timelineWarning, setTimelineWarning] = useState<string>('');
   const advancedSettingsVisible = false;
@@ -317,6 +319,9 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   })();
   const [availableSchoolIds, setAvailableSchoolIds] = useState<string[]>(initialAvailableSchoolIds);
   const [allSchoolsSelected, setAllSchoolsSelected] = useState(isAllSchools);
+  const selectedSchoolNames = (ids: readonly string[]) => ids
+    .map((id) => schools.find((school) => school.id === id)?.name ?? id)
+    .join(', ');
   const pdfUrl = room?.pdf_url ?? null;
   const buildInitialLabResults = (patientId: string, schoolId?: string | null) => {
     // Use consolidated baseline timestamp for all initial labs
@@ -509,6 +514,52 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : 'Unable to save this conversation prompt.';
       setStatus(`Save failed: ${message}`);
+    }
+  };
+
+  const saveSchoolAvailability = async () => {
+    if (!room?.id) {
+      setAvailabilityStatus('Save the room once before changing school availability.');
+      return;
+    }
+    if (!isSuperAdmin(profile)) {
+      setAvailabilityStatus('Only an authorized super admin can change room school availability.');
+      return;
+    }
+    const primarySchoolId = room.school_id ?? schoolId;
+    const validSchoolIds = new Set(schools.map((school) => school.id));
+    setAvailabilityStatus('Saving school availability…');
+    try {
+      const normalizedSchoolIds = normalizeRoomAvailability({
+        primarySchoolId,
+        selectedSchoolIds: availableSchoolIds,
+        allSchools: allSchoolsSelected,
+        validSchoolIds,
+      });
+      const { data, error: saveError } = await supabase
+        .from('rooms')
+        .update({ available_school_ids: normalizedSchoolIds })
+        .eq('id', room.id)
+        .select('id, available_school_ids, updated_at')
+        .single();
+      if (saveError) throw saveError;
+      const savedIds = Array.isArray(data?.available_school_ids) ? data.available_school_ids : [];
+      const priorIds = room.available_school_ids ?? [];
+      setAvailableSchoolIds(savedIds.length ? savedIds : (primarySchoolId ? [primarySchoolId] : []));
+      setAllSchoolsSelected(savedIds.length === 0);
+      onRoomPatch?.({
+        available_school_ids: savedIds,
+        updated_at: data?.updated_at ?? room.updated_at,
+      } as Partial<Room>);
+      const diff = describeRoomAvailabilityChange(priorIds, savedIds, primarySchoolId ?? '');
+      const scopeLabel = savedIds.length === 0 ? 'all schools' : selectedSchoolNames(savedIds);
+      const changes = [
+        diff.addedSchoolIds.length ? `added ${selectedSchoolNames(diff.addedSchoolIds)}` : '',
+        diff.removedSchoolIds.length ? `removed ${selectedSchoolNames(diff.removedSchoolIds)}` : '',
+      ].filter(Boolean).join('; ');
+      setAvailabilityStatus(`Saved and read back: ${scopeLabel}${changes ? ` (${changes})` : ''}.`);
+    } catch (saveError) {
+      setAvailabilityStatus(`Save failed: ${saveError instanceof Error ? saveError.message : 'Unable to save school availability.'}`);
     }
   };
   const handleSubmit = async (e: React.FormEvent) => {
@@ -863,6 +914,24 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
                   </select>
                   <p className="mt-1 text-xs text-gray-500">Primary school is always included.</p>
                 </>
+              )}
+              {room && (
+                <div className="mt-3 rounded-md border border-blue-100 bg-blue-50/50 p-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      data-testid="save-school-availability"
+                      onClick={() => void saveSchoolAvailability()}
+                      className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+                    >
+                      Save school availability
+                    </button>
+                    {availabilityStatus && <span role="status" className="text-xs text-gray-700">{availabilityStatus}</span>}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Saves only availability and the room audit timestamp. Primary school remains included; no clinical, prompt, chart, timeline, or assignment-pin fields are changed.
+                  </p>
+                </div>
               )}
             </div>
           </div>
