@@ -91,6 +91,7 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
   if (input.stopPriorHours !== null && input.stopPriorHours !== undefined) finiteHours(input.stopPriorHours, 'stop_hours');
   const stop = input.stopPriorHours === null || input.stopPriorHours === undefined ? null : input.stopPriorHours;
   if (stop !== null && stop > first) throw new RangeError('MAR_STOP_BEFORE_START');
+  if (stop !== null && stop <= 0) throw new RangeError('MAR_STOP_MUST_PRECEDE_FIRST_PAGE');
   const category = input.category ?? 'scheduled';
   if (first === 0) {
     throw new RangeError('MAR_ZERO_HOUR_BASELINE');

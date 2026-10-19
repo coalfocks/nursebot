@@ -19,4 +19,19 @@ describe('MAR medication projection', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].administrations).toHaveLength(0);
   });
+
+  it('uses current order metadata while preserving older administration details', () => {
+    const current = { ...order('q4h', 'Give PRN for symptoms'), dose: '20 mg', route: 'PO', id: 'order-current' };
+    const historical = {
+      id: 'event-old', patientId: 'p1', roomId: 7, assignmentId: 'a1', orderId: 'order-current', caseVersion: 'v1',
+      occurrenceKey: 'old', relativeOffsetHours: 24, administeredAt: null, medicationName: current.orderName,
+      orderedDose: '10 mg', administeredDose: '10 mg', unit: 'mg', route: 'IV', frequency: 'q6h', category: 'prn' as const,
+      status: 'Given' as const, source: 'authored_scenario' as const,
+    };
+    const rows = projectMedicationRows([historical], [current], patient, 'v1', 'all', '');
+    expect(rows[0].representative.orderedDose).toBe('20 mg');
+    expect(rows[0].representative.route).toBe('PO');
+    expect(rows[0].administrations[0].administeredDose).toBe('10 mg');
+    expect(rows[0].administrations[0].route).toBe('IV');
+  });
 });

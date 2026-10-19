@@ -8,6 +8,8 @@ export type AssignmentCreateRow = {
   window_start: string | null;
   window_end: string | null;
   school_id: string;
+  /** Immutable MAR case version materialized with this new assignment. */
+  case_key_version: string;
 };
 
 export type PendingAssignmentCreate = {

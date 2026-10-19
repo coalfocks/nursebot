@@ -14,6 +14,7 @@ import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 import { assessOrdersConfig } from '../lib/ordersConfig';
 import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
+import { authoredMarCaseVersion } from '../lib/marMaterialization';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -38,6 +39,9 @@ type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
+type RpcResult = { data: unknown; error: { message: string } | null };
+const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
 
 type AssignmentCreateStatus = {
   kind: 'error' | 'success' | 'info';
@@ -329,11 +333,28 @@ export default function AssignmentManager() {
   };
 
   const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
-    const beforeInsert = await readBackCreatedAssignments(request);
-    if (beforeInsert.missing.length > 0) {
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .insert(beforeInsert.missing);
+    const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
+    if (readinessError || !(readiness as { ready?: boolean } | null)?.ready) {
+      const error = new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed MAR snapshot/materialization setup is required before creating a new assignment.');
+      (error as Error & { code?: string }).code = 'MAR_NORMAL_MATERIALIZATION_NOT_READY';
+      throw error;
+    }
+    // The normal path is one server transaction per stable assignment ID:
+    // create/read the authored room version, insert the assignment, snapshot
+    // Orders + MAR, and materialize immutable assignment events. A later
+    // retry replays the same assignment ID and operation identity.
+    for (const assignment of request.assignments) {
+      const { error } = await callGeneratedRpc('create_assignment_with_mar_materialization', {
+        p_request_id: assignment.id,
+        p_assignment_id: assignment.id,
+        p_student_id: assignment.student_id,
+        p_room_id: assignment.room_id,
+        p_school_id: assignment.school_id,
+        p_case_version: assignment.case_key_version,
+        p_effective_date: assignment.effective_date,
+        p_window_start: assignment.window_start,
+        p_window_end: assignment.window_end,
+      });
       if (error) throw error;
     }
 
@@ -612,6 +633,7 @@ export default function AssignmentManager() {
             window_start: windowStartUTC,
             window_end: windowEndUTC,
             school_id: assignmentSchoolId,
+            case_key_version: authoredMarCaseVersion(parseInt(roomId)),
           });
         }
       }

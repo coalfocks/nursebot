@@ -11,6 +11,7 @@ const row = (id: string): AssignmentCreateRow => ({
   window_start: '2026-10-17T00:00:00.000Z',
   window_end: '2026-10-17T00:20:00.000Z',
   school_id: 'synthetic-school',
+  case_key_version: 'room-105-mar-v1',
 });
 
 describe('assignment creation idempotency', () => {

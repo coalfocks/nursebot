@@ -51,6 +51,7 @@ const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
 export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
   const actorId = profile?.id ?? 'anonymous';
+  const actorAvailable = Boolean(profile?.id);
   const [schemaReady, setSchemaReady] = useState(false);
   // Admin authoring may create the first immutable assignment snapshot. Learner
   // reads still require the already-pinned version and never enter this path.
@@ -97,10 +98,24 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setDirty(false);
     setSchemaReady(false);
     setBaselineReady(forceBaseline || !assignmentId);
+    // Scope changes must not carry an editor, preview, expansion, or draft
+    // from another patient/assignment/actor into the new chart.
+    setEditingId(null);
+    setEditingDraft({});
+    setExpandedMedicationKeys(new Set());
+    setObsoleteKeys(new Set());
+    setPreviewMessage(null);
+    setPopulateOpen(false);
+    setManualOpen(false);
   }, [assignmentId, forceBaseline, recoveryKey, scopeKey]);
 
   const load = useCallback(async () => {
-    if (!patient.roomId) return;
+    if (!patient.roomId || !actorAvailable) {
+      setLoading(false);
+      setSchemaReady(false);
+      setBaselineReady(false);
+      return;
+    }
     const request = capture();
     setLoading(true);
     setError(null);
@@ -143,7 +158,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setSchemaReady(true);
     setDirty(Boolean(pendingSave && recovered !== loadedEvents));
     setLoading(false);
-  }, [actorId, assignmentId, capture, effectiveCaseVersion, forceBaseline, isCurrent, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
+  }, [actorAvailable, actorId, assignmentId, capture, effectiveCaseVersion, forceBaseline, isCurrent, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -318,17 +333,17 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     ? (event.relativeOffsetHours <= 0 ? 'During encounter' : `${event.relativeOffsetHours}h prior`)
     : event.administeredAt ? (adminContext ? new Date(event.administeredAt).toLocaleString() : 'During encounter') : '—';
 
-  const lastGivenLabel = (event: MarAdministrationEvent) => {
-    const key = `${event.orderId ?? 'manual'}:${event.medicationName}`;
+  const lastGivenLabel = (event: MarAdministrationEvent, order?: MedicalOrder) => {
+    const key = `${order?.id ?? event.orderId ?? 'manual'}:${order?.orderName ?? event.medicationName}`;
     const lastGiven = lastGivenByMedication.get(key);
     return lastGiven ? eventTimeLabel(lastGiven) : '—';
   };
 
   const medicationSummaries = useMemo(() => {
-    return projectMedicationRows(filteredEvents, orders, patient, effectiveCaseVersion, categoryFilter, search);
-  }, [categoryFilter, effectiveCaseVersion, filteredEvents, orders, patient, search]);
+    return projectMedicationRows(events, orders, patient, effectiveCaseVersion, categoryFilter, search);
+  }, [categoryFilter, effectiveCaseVersion, events, orders, patient, search]);
 
-  const setupBlocked = !schemaReady || Boolean(assignmentId && (!caseVersion || !baselineReady));
+  const setupBlocked = !actorAvailable || !schemaReady || Boolean(assignmentId && (!caseVersion || !baselineReady));
   const adminContext = hasAdminAccess(profile) && !readOnly;
 
   return (
@@ -399,7 +414,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'MAR authoring will appear after the reviewed setup is installed and this attempt is materialized.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
             <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           ) : (
-            <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, administrations }) => { const expanded = expandedMedicationKeys.has(key); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{administrations.length ? administrations.map((event) => <div key={event.id} className="flex flex-wrap gap-x-3 gap-y-1"><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.reason && <span>{event.reason}</span>}</div>) : <p className="text-muted-foreground">No documented doses.</p>}</div>}</div>; })}</div>
+            <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, order, administrations }) => { const expanded = expandedMedicationKeys.has(key); const visibleAdministrations = administrations.filter((event) => event.relativeOffsetHours == null || event.relativeOffsetHours <= Number(historyHours)); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative, order)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{administrations.length ? <>{visibleAdministrations.length === 0 && <p className="text-muted-foreground">No doses in the selected {historyHours} hours. Older history remains available by widening the range.</p>}{administrations.map((event) => <div key={event.id} className={`flex flex-wrap gap-x-3 gap-y-1 ${event.relativeOffsetHours != null && event.relativeOffsetHours > Number(historyHours) ? 'text-muted-foreground' : ''}`}><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.route && <span>{event.route}</span>}{event.reason && <span>{event.reason}</span>}</div>)}</> : <p className="text-muted-foreground">No documented doses.</p>}</div>}</div>; })}</div>
           )}
           {adminContext && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" /> Authored baseline times are shown as prior-hour offsets; real attempt administrations use persisted server times.</div>}
         </CardContent>

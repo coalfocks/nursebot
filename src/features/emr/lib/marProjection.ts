@@ -10,6 +10,7 @@ export const medicationOrderCategory = (order: MedicalOrder): MarAdministrationE
 
 export type MarMedicationRow = {
   key: string;
+  order?: MedicalOrder;
   representative: MarAdministrationEvent;
   administrations: MarAdministrationEvent[];
   orderOnly: boolean;
@@ -46,7 +47,29 @@ export function projectMedicationRows(
 
   return Array.from(grouped.entries()).map(([key, row]) => {
     const category = row.order ? medicationOrderCategory(row.order) : row.administrations[0]?.category ?? 'scheduled';
-    const representative = row.administrations.find((event) => event.status === 'Given') ?? row.administrations[0] ?? {
+    // Order metadata is authoritative for the current medication summary.
+    // Historical administrations may intentionally contain an older dose or
+    // route and must remain history, never overwrite today's order summary.
+    const representative = row.order ? {
+      id: `order-row:${key}`,
+      patientId: row.order.patientId,
+      roomId: row.order.roomId ?? patient.roomId ?? 0,
+      assignmentId: row.order.assignmentId ?? null,
+      orderId: row.order.id,
+      caseVersion,
+      occurrenceKey: `order-row:${key}`,
+      relativeOffsetHours: null,
+      administeredAt: null,
+      medicationName: row.order.orderName,
+      orderedDose: row.order.dose ?? null,
+      administeredDose: null,
+      unit: null,
+      route: row.order.route ?? null,
+      frequency: row.order.frequency ?? null,
+      category,
+      status: 'Not documented' as const,
+      source: 'authored_scenario' as const,
+    } : row.administrations.find((event) => event.status === 'Given') ?? row.administrations[0] ?? {
       id: `order-row:${key}`,
       patientId: row.order?.patientId ?? patient.id,
       roomId: row.order?.roomId ?? patient.roomId ?? 0,
@@ -68,6 +91,7 @@ export function projectMedicationRows(
     };
     return {
       key,
+      order: row.order,
       representative,
       administrations: [...row.administrations].sort((a, b) => (b.relativeOffsetHours ?? -1) - (a.relativeOffsetHours ?? -1)),
       orderOnly: row.administrations.length === 0 && Boolean(row.order),

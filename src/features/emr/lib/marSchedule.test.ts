@@ -39,10 +39,10 @@ describe('MAR schedule expansion', () => {
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: 12, firstDosePriorHours: 12, stopPriorHours: 16 })).toThrow('MAR_STOP_BEFORE_START');
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: Number.NaN, firstDosePriorHours: 12 })).toThrow('MAR_INVALID_HISTORY_HOURS');
     expect(() => expandMarSchedule({ medicationName: 'PRN TID', frequency: 'TID', category: 'prn', historyHours: 24, firstDosePriorHours: 24, assumePrnGiven: true })).toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
-    expect(expandMarSchedule({ medicationName: 'PRN q4h', frequency: 'q4h', category: 'prn', historyHours: 48, firstDosePriorHours: 48, stopPriorHours: 0, assumePrnGiven: true }).map((event) => event.relativeOffsetHours)).toEqual([48, 44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4]);
+    expect(() => expandMarSchedule({ medicationName: 'PRN q4h', frequency: 'q4h', category: 'prn', historyHours: 48, firstDosePriorHours: 48, stopPriorHours: 0, assumePrnGiven: true })).toThrow('MAR_STOP_MUST_PRECEDE_FIRST_PAGE');
     expect(() => expandMarSchedule({ medicationName: 'Explicit zero', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12, explicitPriorHours: [12, 4, 0] })).toThrow('MAR_TIME_MUST_PRECEDE_FIRST_PAGE');
-    expect(expandMarSchedule({ medicationName: 'Fractional', frequency: 'q4h', historyHours: 12.5, firstDosePriorHours: 12.5, stopPriorHours: 0 }).map((event) => event.relativeOffsetHours))
-      .toEqual([12.5, 8.5, 4.5, 0.5]);
+    expect(() => expandMarSchedule({ medicationName: 'Fractional', frequency: 'q4h', historyHours: 12.5, firstDosePriorHours: 12.5, stopPriorHours: 0 }))
+      .toThrow('MAR_STOP_MUST_PRECEDE_FIRST_PAGE');
   });
 
   it('does not create administrations for infusions or learner orders', () => {
