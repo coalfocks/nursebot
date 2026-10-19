@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -44,6 +44,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [editingDraft, setEditingDraft] = useState<Partial<MarAdministrationEvent>>({});
   const [obsoleteKeys, setObsoleteKeys] = useState<Set<string>>(new Set());
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [saveRequestId, setSaveRequestId] = useState(() => crypto.randomUUID());
   const [populateOpen, setPopulateOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '', prnIndication: '', response: '', infusionDetails: '' });
@@ -58,18 +59,28 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     if (!patient.roomId) return;
     setLoading(true);
     setError(null);
-    const [loadedEvents, loadedOrders, loadedRevision, baseline, marReady] = await Promise.all([
+    const marReady = await emrApi.getMarReadiness();
+    if (!marReady) {
+      setEvents([]);
+      setOrders([]);
+      setRevision(0);
+      setBaselineReady(false);
+      setSchemaReady(false);
+      setDirty(false);
+      setLoading(false);
+      return;
+    }
+    const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
       emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => setError(message)),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
-      emrApi.getMarReadiness(),
     ]);
     setEvents(loadedEvents);
     setOrders(loadedOrders.filter((order) => order.category === 'Medication'));
     setRevision(loadedRevision);
     setBaselineReady(forceBaseline || !assignmentId || Boolean(baseline && baseline.caseVersion === effectiveCaseVersion));
-    setSchemaReady(marReady);
+    setSchemaReady(true);
     setDirty(false);
     setLoading(false);
   }, [assignmentId, forceBaseline, patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
@@ -147,13 +158,14 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const save = async () => {
     if (!patient.roomId || !canEdit || !baselineReady) return;
     setSaveError(null);
-    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, revision, events);
+    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, revision, events, saveRequestId);
     if (!result.ok) {
       setSaveError(result.error);
       return;
     }
     setRevision(result.revision);
     setDirty(false);
+    setSaveRequestId(crypto.randomUUID());
   };
 
   const addManual = () => {
@@ -163,7 +175,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       setSaveError('MAR_INVALID_MANUAL_TIME: prior hours must be between 0 and 72.');
       return;
     }
-    if (relativeOffsetHours === 0 && manual.category !== 'one_time' && manual.status !== 'Not documented') {
+    if (relativeOffsetHours <= 0) {
       setSaveError('MAR_ZERO_HOUR_BASELINE: baseline administrations must be prior-hour events.');
       return;
     }
@@ -251,7 +263,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
             {canEdit && baselineReady && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">Blank means undocumented. Learner medication orders do not become Given automatically.</p>
-          {(!schemaReady || (assignmentId && (!caseVersion || !baselineReady))) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR editing is unavailable until the reviewed MAR schema is installed and this attempt has an immutable materialized case-version snapshot. This view performs no baseline generation or write on open.</p>}
+          {(!schemaReady || (assignmentId && (!caseVersion || !baselineReady))) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: this view is read-only until the reviewed schema, authorization policies, and immutable case-version snapshot are installed. No MAR history generation or write occurs on open.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && baselineReady && (
@@ -304,10 +316,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
             <Select value={historyHours} onValueChange={setHistoryHours}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent>{['12','24','48','72'].map((hours) => <SelectItem key={hours} value={hours}>{hours} hours</SelectItem>)}</SelectContent></Select>
             <Select value={categoryFilter} onValueChange={(value: 'all' | typeof categories[number]) => setCategoryFilter(value)}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All groups</SelectItem>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select>
           </div>
-          {error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+          {schemaReady && error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
           {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
-          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading MAR history…</div> : filteredEvents.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No documented administrations in this view.</div> : (
+          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading MAR history…</div> : !schemaReady || (assignmentId && (!caseVersion || !baselineReady)) ? <div className="rounded-md border p-6 text-sm text-muted-foreground">MAR history will appear after the reviewed setup is installed and this attempt is materialized.</div> : filteredEvents.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No documented administrations in this view.</div> : (
             <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3">{canEdit ? <Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select> : <Badge variant="outline">{event.status}</Badge>}</td><td className="p-3">{canEdit ? <Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button> : <span className="text-xs text-muted-foreground">{event.administeredDose || 'Dose not documented'}{event.route ? ` • ${event.route}` : ''}</span>}</td></tr>{editingId === event.id && canEdit && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           )}
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" /> Authored baseline times are shown as prior-hour offsets; real attempt administrations use persisted server times.</div>

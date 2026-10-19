@@ -30,7 +30,7 @@ describe('MAR schedule expansion', () => {
     expect(() => expandMarSchedule({ medicationName: 'PRN', frequency: 'PRN', category: 'prn', historyHours: 12, firstDosePriorHours: 8, assumePrnGiven: true }))
       .toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
     expect(expandMarSchedule({ medicationName: 'Bolus', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 12 })).toHaveLength(1);
-    expect(expandMarSchedule({ medicationName: 'Bolus now', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 0 })[0]).toMatchObject({ relativeOffsetHours: 0 });
+    expect(() => expandMarSchedule({ medicationName: 'Bolus now', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 0 })).toThrow('MAR_ZERO_HOUR_BASELINE');
   });
 
   it('rejects invalid schedule relationships instead of silently clamping authored values', () => {
@@ -39,6 +39,8 @@ describe('MAR schedule expansion', () => {
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: 12, firstDosePriorHours: 12, stopPriorHours: 16 })).toThrow('MAR_STOP_BEFORE_START');
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: Number.NaN, firstDosePriorHours: 12 })).toThrow('MAR_INVALID_HISTORY_HOURS');
     expect(() => expandMarSchedule({ medicationName: 'PRN TID', frequency: 'TID', category: 'prn', historyHours: 24, firstDosePriorHours: 24, assumePrnGiven: true })).toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
+    expect(expandMarSchedule({ medicationName: 'PRN q4h', frequency: 'q4h', category: 'prn', historyHours: 48, firstDosePriorHours: 48, stopPriorHours: 0, assumePrnGiven: true }).map((event) => event.relativeOffsetHours)).toEqual([48, 44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4]);
+    expect(() => expandMarSchedule({ medicationName: 'Explicit zero', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12, explicitPriorHours: [12, 4, 0] })).toThrow('MAR_TIME_MUST_PRECEDE_FIRST_PAGE');
   });
 
   it('does not create administrations for infusions or learner orders', () => {

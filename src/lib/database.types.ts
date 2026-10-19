@@ -1096,6 +1096,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_mar_readiness: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      save_mar_history_atomic: {
+        Args: {
+          p_assignment_id: string | null
+          p_case_version: string
+          p_events: Json
+          p_expected_revision: number
+          p_patient_id: string
+          p_request_id: string
+          p_room_id: number
+        }
+        Returns: Json
+      }
       materialize_hospital_timeline: {
         Args: {
           p_case_blueprint_id?: string | null

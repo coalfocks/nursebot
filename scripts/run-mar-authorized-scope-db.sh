@@ -51,19 +51,31 @@ SQL
 "${PG[@]}" -f supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql >/dev/null
 "${PG[@]}" -f supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql >/dev/null
 "${PG[@]}" -f supabase/migrations/20261019100011_mar_read_scope_and_versions.sql >/dev/null
+"${PG[@]}" -f supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql >/dev/null
 "${PG[@]}" <<'SQL'
 grant usage on schema public, auth to authenticated;
 grant authenticated to mar_scope_user;
 grant execute on function public.save_mar_history(uuid, integer, uuid, text, integer, jsonb) to mar_scope_user;
 grant execute on function public.get_mar_history_revision(uuid, integer, uuid) to mar_scope_user;
 grant execute on function public.create_mar_baseline_version(uuid, text, jsonb) to mar_scope_user;
+grant execute on function public.get_mar_readiness() to mar_scope_user;
+grant execute on function public.save_mar_history_atomic(uuid, uuid, integer, uuid, text, integer, jsonb) to mar_scope_user;
 SQL
 
 PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/mar_authorized_scope.sql
+ATOMIC_OUTPUT="$(PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
+select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 1, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-4', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
+select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 999, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-4', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
+SQL
+)"
+[[ "$ATOMIC_OUTPUT" == *'"revision": 2'* && "$ATOMIC_OUTPUT" == *'"caseVersion": "case-v1-other"'* ]] || { echo "atomic MAR RPC assertion failed: $ATOMIC_OUTPUT" >&2; exit 1; }
 POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_administration_events' and policyname='MAR authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
 [[ "$POLICY_ASSERT" == 1 ]] || { echo 'MAR read-scope policy replacement was not installed' >&2; exit 1; }
 REVISION_POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_history_revisions' and policyname='MAR revisions authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
 [[ "$REVISION_POLICY_ASSERT" == 1 ]] || { echo 'MAR revision read-scope policy replacement was not installed' >&2; exit 1; }
 VERSION_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_proc where proname='create_mar_baseline_version'")"
 [[ "$VERSION_ASSERT" == 1 ]] || { echo 'MAR immutable baseline version RPC missing' >&2; exit 1; }
+READINESS="$(${PG[@]} -Atc "select public.get_mar_readiness()")"
+[[ "$READINESS" == *'"ready": true'* && "$READINESS" == *'"schemaVersion": 4'* && "$READINESS" == *'"atomicPersistence": true'* ]] || { echo "MAR readiness assertion failed: $READINESS" >&2; exit 1; }
 echo 'MAR authorized scope disposable harness: PASS'

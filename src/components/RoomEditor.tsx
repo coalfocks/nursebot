@@ -1379,7 +1379,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
           {room?.id && room.patient_id && (
             <button
               type="button"
-              onClick={() => navigate(`/ehr?roomId=${room.id}&patientId=${room.patient_id}`)}
+              onClick={() => navigate(`/ehr?roomId=${room.id}&patientId=${room.patient_id}&tab=mar`)}
               className="rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
             >
               Open MAR history

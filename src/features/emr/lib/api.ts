@@ -1060,11 +1060,9 @@ export const emrApi = {
   },
 
   async getMarReadiness(): Promise<boolean> {
-    const { error } = await supabase
-      .from('mar_assignment_baseline_versions')
-      .select('assignment_id')
-      .limit(1);
-    return !error;
+    const { data, error } = await supabase.rpc('get_mar_readiness');
+    if (error) return false;
+    return Boolean((data as { ready?: boolean } | null)?.ready);
   },
 
   async saveMarHistory(
@@ -1074,35 +1072,10 @@ export const emrApi = {
     caseVersion: string | null,
     expectedRevision: number,
     events: MarAdministrationEvent[],
+    requestId: string = crypto.randomUUID(),
   ): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
-    if (assignmentId && caseVersion) {
-      const { error: baselineError } = await supabase.rpc('create_mar_baseline_version', {
-        p_assignment_id: assignmentId,
-        p_case_version: caseVersion,
-        p_event_snapshot: events.map((event) => ({
-          occurrenceKey: event.occurrenceKey,
-          orderId: event.orderId,
-          medicationName: event.medicationName,
-          orderedDose: event.orderedDose,
-          administeredDose: event.administeredDose,
-          unit: event.unit,
-          route: event.route,
-          frequency: event.frequency,
-          category: event.category,
-          relativeOffsetHours: event.relativeOffsetHours,
-          status: event.status,
-          simulatedClinician: event.simulatedClinician,
-          reason: event.reason,
-          prnIndication: event.prnIndication,
-          response: event.response,
-          actorLabel: event.actorLabel,
-          source: event.source,
-          infusionDetails: event.infusionDetails,
-        })),
-      });
-      if (baselineError) return { ok: false, error: baselineError.message };
-    }
-    const { data, error } = await supabase.rpc('save_mar_history', {
+    const { data, error } = await supabase.rpc('save_mar_history_atomic', {
+      p_request_id: requestId,
       p_patient_id: patientId,
       p_room_id: roomId,
       p_assignment_id: assignmentId,

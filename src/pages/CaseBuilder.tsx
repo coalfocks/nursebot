@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { Loader2, Plus, Wand2, ClipboardCopy, CheckCircle, RefreshCw, FileText, UploadCloud } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AdminLayout from '../components/admin/AdminLayout';
@@ -278,6 +278,7 @@ const initialForm: CaseFormState = {
 };
 
 export default function CaseBuilder() {
+  const navigate = useNavigate();
   const { user, profile, activeSchoolId } = useAuthStore();
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
@@ -1615,6 +1616,13 @@ export default function CaseBuilder() {
                               <p className="font-semibold">Published room linkage verified</p>
                               <p className="mt-1">Room {publishedLinks[blueprint.id].roomId} → patient/chart {publishedLinks[blueprint.id].patientId}</p>
                               <p className="mt-1">EMR notes created: {publishedLinks[blueprint.id].notes}. Re-publishing this blueprint reuses the same room/patient linkage.</p>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/ehr?roomId=${publishedLinks[blueprint.id].roomId}&patientId=${publishedLinks[blueprint.id].patientId}&tab=mar`)}
+                                className="mt-2 rounded-md border border-emerald-300 bg-white px-3 py-1.5 font-medium text-emerald-800 hover:bg-emerald-100"
+                              >
+                                Open MAR authoring
+                              </button>
                             </div>
                           )}
                           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">

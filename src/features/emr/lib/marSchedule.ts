@@ -75,6 +75,7 @@ const explicitOffsets = (input: MarScheduleInput, historyHours: number, first: n
   const values = input.explicitPriorHours ?? [];
   if (!values.length) throw new RangeError('MAR_EXPLICIT_TIMES_REQUIRED');
   const offsets = values.map((value) => finiteHours(value, 'explicit_time'));
+  if (offsets.some((value) => value <= 0)) throw new RangeError('MAR_TIME_MUST_PRECEDE_FIRST_PAGE');
   if (offsets.some((value) => value > historyHours)) throw new RangeError('MAR_TIME_OUTSIDE_STAY');
   if (offsets.some((value) => stop !== null && value < stop)) throw new RangeError('MAR_TIME_AFTER_STOP');
   if (offsets.some((value) => value > first)) throw new RangeError('MAR_TIME_BEFORE_START');
@@ -91,7 +92,7 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
   const stop = input.stopPriorHours === null || input.stopPriorHours === undefined ? null : input.stopPriorHours;
   if (stop !== null && stop > first) throw new RangeError('MAR_STOP_BEFORE_START');
   const category = input.category ?? 'scheduled';
-  if (first === 0 && category !== 'one_time' && !/^once$/i.test(input.frequency.trim())) {
+  if (first === 0) {
     throw new RangeError('MAR_ZERO_HOUR_BASELINE');
   }
   if (category === 'prn') {
@@ -100,7 +101,7 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     const requiresExplicit = ['bid', 'tid', 'qid'].includes(normalizedFrequency);
     const interval = requiresExplicit ? null : frequencyHours(input.frequency);
     const offsets = interval
-      ? Array.from({ length: Math.floor((first - (stop ?? 1)) / interval) + 1 }, (_, index) => first - index * interval)
+      ? Array.from({ length: Math.floor((first - Math.max(stop ?? 1, 1)) / interval) + 1 }, (_, index) => first - index * interval)
       : explicitOffsets(input, historyHours, first, stop);
     return offsets.map((offset) => ({
       occurrenceKey: `${input.orderId ?? input.medicationName}:prn:${offset}`,
@@ -192,7 +193,7 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     }));
   }
   const occurrences: MarDraftOccurrence[] = [];
-  const effectiveStop = stop ?? 1;
+  const effectiveStop = Math.max(stop ?? 1, 1);
   for (let offset = first; offset >= effectiveStop && offset <= historyHours; offset -= interval) {
     occurrences.push({
       occurrenceKey: `${input.orderId ?? input.medicationName}:scheduled:${offset}`,
