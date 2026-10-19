@@ -3,8 +3,8 @@ import { CONSULTANT_DIRECTORY } from './consultant-directory.ts';
 // This contract is coordinated with the consultant_transport_contract migration
 // and the consultant-chat Edge Function. The portal must remain unavailable if
 // either side does not report this exact version.
-export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 2;
-export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 2;
+export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 3;
+export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 3;
 
 export type ConsultantAudience = 'adult' | 'pediatric';
 
@@ -48,7 +48,7 @@ export const isConsultantAudience = (value: unknown): value is ConsultantAudienc
 
 export const canonicalConsultantService = (audience: ConsultantAudience, value: unknown) => {
   const specialty = typeof value === 'string' ? value.trim() : '';
-  return CONSULTANT_DIRECTORY.some((item) => item.value === specialty && item.audiences.includes(audience)) ? specialty : null;
+  return CONSULTANT_DIRECTORY.some((item) => item.value === specialty && (item.audiences as readonly ConsultantAudience[]).includes(audience)) ? specialty : null;
 };
 
 export const canonicalConsultantPayload = (payload: FrozenConsultantPayload) => JSON.stringify({

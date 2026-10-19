@@ -3,7 +3,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { resolvePinnedConversationPrompt } from '../_shared/conversation-prompt-config.ts';
-import { buildConsultantOrderLookup, decideConsultantOrderPersistence } from '../_shared/consultant-order.ts';
 import { resolveFailedConsultantRequestClaim } from '../_shared/consultant-request-claim.ts';
 import {
   CONSULTANT_TRANSPORT_FUNCTION_VERSION,
@@ -38,6 +37,8 @@ type StoredRequest = {
   disposition: string | null;
   consult_order_id: string | null;
   status: string;
+  lease_token: string | null;
+  lease_expires_at: string | null;
 };
 type PersistedMessage = {
   id: string;
@@ -93,7 +94,7 @@ const responseFromStoredRequest = async (request: StoredRequest, idempotent = tr
 const findExistingRequest = async (assignmentId: string, clientRequestId: string) => {
   const { data, error } = await admin
     .from('consultant_requests')
-    .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status')
+    .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status, lease_token, lease_expires_at')
     .eq('assignment_id', assignmentId)
     .eq('client_request_id', clientRequestId)
     .order('created_at', { ascending: true })
@@ -106,7 +107,7 @@ const findExistingRequest = async (assignmentId: string, clientRequestId: string
 const findPendingThreadRequest = async (payload: FrozenConsultantPayload) => {
   const { data, error } = await admin
     .from('consultant_requests')
-    .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status')
+    .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status, lease_token, lease_expires_at')
     .eq('assignment_id', payload.assignmentId)
     .eq('audience', payload.audience)
     .eq('specialty', payload.specialty)
@@ -118,59 +119,11 @@ const findPendingThreadRequest = async (payload: FrozenConsultantPayload) => {
   return data as StoredRequest | null;
 };
 
-const findOrCreateConsultOrder = async ({ assignmentId, patientId, roomId, schoolId, audience, specialty }: FrozenConsultPayload & { patientId: string; roomId: number; schoolId: string | null }) => {
-  const fields = 'id';
-  const lookup = buildConsultantOrderLookup({ assignmentId, audience, specialty });
-  const queryExisting = async () => {
-    const { data, error } = await admin
-      .from('medical_orders')
-      .select(fields)
-      .eq('assignment_id', lookup.assignmentId)
-      .eq('consult_audience', lookup.audience)
-      .eq('consult_service', lookup.specialty)
-      .eq('category', lookup.category)
-      .eq('override_scope', lookup.overrideScope)
-      .eq('status', lookup.status)
-      .is('deleted_at', lookup.deletedAt)
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    return data as { id: string } | null;
-  };
-
-  const existing = await queryExisting();
-  const existingDecision = decideConsultantOrderPersistence(existing);
-  if (existingDecision.action === 'reuse') return { order: existingDecision.order, created: false };
-
-  const { data, error } = await admin.from('medical_orders').insert({
-    patient_id: patientId,
-    assignment_id: assignmentId,
-    room_id: roomId,
-    school_id: schoolId,
-    override_scope: 'assignment',
-    category: 'Consult',
-    order_name: `Consult: ${specialty}`,
-    priority: null,
-    status: 'Active',
-    ordered_by: 'Student',
-    order_time: new Date().toISOString(),
-    instructions: null,
-    consult_audience: audience,
-    consult_service: specialty,
-  }).select(fields).single();
-  if (!error && data) return { order: data as { id: string }, created: true };
-  if (errorCode(error) !== '23505') throw error;
-  const raced = await queryExisting();
-  const racedDecision = decideConsultantOrderPersistence(raced);
-  if (racedDecision.action === 'create') throw error;
-  return { order: racedDecision.order, created: false };
-};
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let requestIdForCleanup: string | null = null;
-  let createdOrderId: string | null = null;
   let ownsRequestAttempt = false;
+  let leaseToken: string | null = null;
   try {
     const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim();
     if (!token) return json({ error: 'Authentication required' }, 401);
@@ -180,9 +133,21 @@ Deno.serve(async (req) => {
     const payload = await req.json() as Payload;
     if (payload.mode === 'preflight') {
       const { data: schema, error: schemaError } = await admin.rpc('consultant_transport_preflight');
-      if (schemaError || record(schema).schemaVersion !== CONSULTANT_TRANSPORT_SCHEMA_VERSION) return json({ error: 'Consultant transport schema is not ready' }, 503);
+      if (schemaError || record(schema).schemaVersion !== CONSULTANT_TRANSPORT_SCHEMA_VERSION || record(schema).atomicPersistence !== true) return json({ error: 'Consultant transport schema or atomic persistence is not ready' }, 503);
       if (payload.transportContractVersion !== CONSULTANT_TRANSPORT_FUNCTION_VERSION) return json({ error: 'Consultant transport function version is incompatible' }, 409);
-      return json({ ready: true, schemaVersion: CONSULTANT_TRANSPORT_SCHEMA_VERSION, functionVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, atomicPersistence: 'separate_dependency' });
+      return json({ ready: true, schemaVersion: CONSULTANT_TRANSPORT_SCHEMA_VERSION, functionVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, atomicPersistence: true });
+    }
+    if (payload.mode === 'recover') {
+      if (typeof payload.assignmentId !== 'string' || !payload.assignmentId) return json({ error: 'assignmentId is required for recovery' }, 400);
+      const { data: assignment, error: assignmentError } = await admin.from('student_room_assignments').select('id, student_id').eq('id', payload.assignmentId).maybeSingle();
+      if (assignmentError) throw assignmentError;
+      if (!assignment || assignment.student_id !== auth.user.id) return json({ error: 'Assignment not found' }, 404);
+      const { data: pending, error: pendingError } = await admin.from('consultant_requests')
+        .select('id, client_request_id, audience, specialty, message, payload_snapshot, payload_hash, status, lease_expires_at')
+        .eq('assignment_id', payload.assignmentId).eq('status', 'requested')
+        .order('created_at', { ascending: true }).limit(10);
+      if (pendingError) throw pendingError;
+      return json({ requests: pending ?? [] });
     }
     if (payload.transportContractVersion !== CONSULTANT_TRANSPORT_FUNCTION_VERSION) return json({ error: 'Consultant transport function version is incompatible' }, 409);
 
@@ -212,14 +177,29 @@ Deno.serve(async (req) => {
       if (!existingRequest.audience || !existingRequest.message || !consultantPayloadMatches({ ...storedPayload, audience: existingRequest.audience, message: existingRequest.message }, frozenPayload)) return json({ error: 'clientRequestId is already bound to a different assignment, audience, service, or exact message', code: 'idempotency_conflict', requestId: existingRequest.id }, 409);
       if (existingRequest.payload_hash && existingRequest.payload_hash !== payloadHash) return json({ error: 'clientRequestId payload hash does not match the frozen request', code: 'idempotency_conflict', requestId: existingRequest.id }, 409);
       if (existingRequest.status === 'answered' || existingRequest.status === 'assumes_care') return await responseFromStoredRequest(existingRequest);
-      if (existingRequest.status === 'requested') return await responseFromStoredRequest(existingRequest, false);
+      if (existingRequest.status === 'requested') {
+        if (existingRequest.lease_expires_at && new Date(existingRequest.lease_expires_at).getTime() > Date.now()) return await responseFromStoredRequest(existingRequest, false);
+        leaseToken = crypto.randomUUID();
+        const { data: claimedRows, error: claimError } = await admin.from('consultant_requests')
+          .update({ lease_token: leaseToken, lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString() })
+          .eq('id', existingRequest.id).eq('status', 'requested')
+          .or(`lease_expires_at.is.null,lease_expires_at.lte.${new Date().toISOString()}`)
+          .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status, lease_token, lease_expires_at');
+        if (claimError) throw claimError;
+        const claim = resolveFailedConsultantRequestClaim(claimedRows ?? []);
+        if (!claim.claimed) return await responseFromStoredRequest(await findExistingRequest(frozenPayload.assignmentId, clientRequestId) as StoredRequest, false);
+        requestRecord = claim.row as StoredRequest;
+        requestIdForCleanup = requestRecord.id;
+        ownsRequestAttempt = true;
+      }
       if (existingRequest.status === 'failed') {
+        leaseToken = crypto.randomUUID();
         const { data: claimedRows, error: reclaimError } = await admin
           .from('consultant_requests')
-          .update({ status: 'requested', response: null, answered_at: null })
+          .update({ status: 'requested', response: null, answered_at: null, lease_token: leaseToken, lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString() })
           .eq('id', existingRequest.id)
           .eq('status', 'failed')
-          .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status');
+          .select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status, lease_token, lease_expires_at');
         if (reclaimError) throw reclaimError;
         const claim = resolveFailedConsultantRequestClaim(claimedRows ?? []);
         if (claim.claimed) {
@@ -243,6 +223,7 @@ Deno.serve(async (req) => {
     if (!behavior) return json({ error: 'Consultant Conversation Prompt not configured. Ask an administrator to configure this room.' }, 409);
 
     if (!requestRecord) {
+      leaseToken = leaseToken ?? crypto.randomUUID();
       const { data: inserted, error: requestError } = await admin.from('consultant_requests').insert({
         assignment_id: frozenPayload.assignmentId,
         patient_id: patientId,
@@ -258,7 +239,9 @@ Deno.serve(async (req) => {
         urgency: null,
         client_request_id: clientRequestId,
         status: 'requested',
-      }).select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status').single();
+        lease_token: leaseToken,
+        lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      }).select('id, assignment_id, audience, specialty, message, payload_hash, response, disposition, consult_order_id, status, lease_token, lease_expires_at').single();
       if (requestError && errorCode(requestError) === '23505') {
         const raced = await findExistingRequest(frozenPayload.assignmentId, clientRequestId);
         if (!raced) throw requestError;
@@ -287,26 +270,30 @@ Deno.serve(async (req) => {
     const answer = typeof parsedAnswer.message === 'string' ? parsedAnswer.message.trim() : '';
     if (!answer) throw new Error('Consultant response was empty');
     const disposition = parsedAnswer.disposition === 'assumes_care' ? 'assumes_care' : 'routine_review';
-    const orderResult = await findOrCreateConsultOrder({ ...frozenPayload, patientId, roomId, schoolId: typeof roomRecord.school_id === 'string' ? roomRecord.school_id : null });
-    if (orderResult.created) createdOrderId = orderResult.order.id;
-    const { error: messageError } = await admin.from('consultant_chat_messages').insert([
-      { assignment_id: frozenPayload.assignmentId, request_id: requestRecord.id, role: 'student', content: frozenPayload.message, specialty: frozenPayload.specialty, audience: frozenPayload.audience, urgency: null, consult_order_id: orderResult.order.id },
-      { assignment_id: frozenPayload.assignmentId, request_id: requestRecord.id, role: 'consultant', content: answer, specialty: frozenPayload.specialty, audience: frozenPayload.audience, urgency: null, consult_order_id: orderResult.order.id },
-    ]);
-    if (messageError) throw messageError;
-    const persistedStatus = disposition === 'assumes_care' ? 'assumes_care' : 'answered';
-    const { error: updateError } = await admin.from('consultant_requests').update({ response: answer, disposition, consult_order_id: orderResult.order.id, status: persistedStatus, answered_at: new Date().toISOString() }).eq('id', requestRecord.id).eq('status', 'requested');
-    if (updateError) throw updateError;
+    const { data: persisted, error: persistError } = await admin.rpc('persist_consultant_response_v2', {
+      p_student_id: auth.user.id,
+      p_assignment_id: frozenPayload.assignmentId,
+      p_client_request_id: clientRequestId,
+      p_patient_id: patientId,
+      p_room_id: roomId,
+      p_audience: frozenPayload.audience,
+      p_specialty: frozenPayload.specialty,
+      p_message: frozenPayload.message,
+      p_payload_hash: payloadHash,
+      p_response: answer,
+      p_disposition: disposition,
+      p_lease_token: leaseToken,
+    });
+    if (persistError) throw persistError;
+    const persistedRow = Array.isArray(persisted) ? persisted[0] as Record<string, unknown> | undefined : undefined;
+    if (!persistedRow?.request_id) throw new Error('Consultant persistence returned no stored request');
     const messages = await readRequestMessages(requestRecord.id);
-    return json({ message: messages.find((message) => message.role === 'consultant')?.content ?? answer, messages, disposition, orderId: orderResult.order.id, requestId: requestRecord.id });
+    return json({ message: messages.find((message) => message.role === 'consultant')?.content ?? answer, messages, disposition: persistedRow.disposition, orderId: persistedRow.order_id, requestId: requestRecord.id });
   } catch (error) {
-    // Atomic request/order/message persistence is intentionally not claimed here.
-    // Until the separate transaction/RPC dependency is delivered, compensate
-    // only for artifacts owned by this invocation.
+    // Never compensate-delete after finalize. A read-back/network failure must
+    // leave the committed outcome replayable by the same frozen request ID.
     if (ownsRequestAttempt && requestIdForCleanup) {
-      await admin.from('consultant_chat_messages').delete().eq('request_id', requestIdForCleanup);
-      if (createdOrderId) await admin.from('medical_orders').delete().eq('id', createdOrderId);
-      await admin.from('consultant_requests').update({ status: 'failed' }).eq('id', requestIdForCleanup).eq('status', 'requested');
+      await admin.from('consultant_requests').update({ status: 'failed', lease_token: null, lease_expires_at: null }).eq('id', requestIdForCleanup).eq('status', 'requested').eq('lease_token', leaseToken);
     }
     return json({ error: error instanceof Error ? error.message : 'Consultant response failed' }, 500);
   }

@@ -10,6 +10,7 @@ type Props = { assignmentId: string; open: boolean; onClose: () => void };
 type Draft = { text: string; clientRequestId: string | null };
 type ThreadStatus = { loading: boolean; error: string | null; disposition: string | null };
 type GateState = { status: 'idle' | 'checking' | 'ready' | 'blocked'; reason?: string };
+type RecoveredRequest = { id: string; client_request_id: string; audience: Audience; specialty: string; message: string; status: 'requested'; lease_expires_at: string | null };
 type MessageQuery = {
   select: (columns: string) => MessageQuery;
   eq: (column: string, value: string) => MessageQuery;
@@ -48,6 +49,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
   const [historyErrors, setHistoryErrors] = useState<Record<string, string | null>>({});
   const [threadStatuses, setThreadStatuses] = useState<Record<string, ThreadStatus>>({});
   const [gate, setGate] = useState<GateState>({ status: 'idle' });
+  const [recoveredRequests, setRecoveredRequests] = useState<RecoveredRequest[]>([]);
   const currentAssignmentRef = useRef(assignmentId);
   currentAssignmentRef.current = assignmentId;
 
@@ -75,7 +77,6 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
           setGate({ status: 'blocked', reason: result.reason });
           return;
         }
-        setGate({ status: 'ready' });
         const messageClient = supabase as unknown as { from: (table: string) => MessageQuery };
         const { data, error: loadError } = await messageClient.from('consultant_chat_messages')
           .select('id, role, content, specialty, audience, created_at, request_id, consult_order_id')
@@ -85,11 +86,16 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
         if (!active || currentAssignmentRef.current !== assignmentId) return;
         if (loadError) {
           setHistoryErrors((current) => ({ ...current, [assignmentId]: loadError.message }));
+          setGate({ status: 'blocked', reason: 'Consultant sending is unavailable until transcript history can be read.' });
           return;
         }
         const loaded = (data ?? []) as Message[];
         setMessages(loaded.filter((message) => message.audience !== null));
         setLegacyMessages(loaded.filter((message) => message.audience === null));
+        setGate({ status: 'ready' });
+        void supabase.functions.invoke<{ requests?: RecoveredRequest[] }>('consultant-chat', { body: { mode: 'recover', transportContractVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, assignmentId } }).then(({ data: recovery }) => {
+          if (active && currentAssignmentRef.current === assignmentId) setRecoveredRequests(Array.isArray(recovery?.requests) ? recovery.requests : []);
+        });
       } catch {
         if (active) setGate({ status: 'blocked', reason: 'Consultant transport readiness could not be checked. Close and reopen the portal to retry.' });
       }
@@ -108,6 +114,14 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
   const chooseSpecialty = (next: string) => {
     setSpecialty(next);
     setSearch('');
+  };
+
+  const resumeRequest = (request: RecoveredRequest) => {
+    setAudience(request.audience);
+    setSpecialty(request.specialty);
+    const key = getConsultantThreadKey(assignmentId, request.audience, request.specialty);
+    setDrafts((current) => ({ ...current, [key]: { text: request.message, clientRequestId: request.client_request_id } }));
+    setRecoveredRequests((current) => current.filter((item) => item.id !== request.id));
   };
 
   const updateDraft = (text: string) => {
@@ -163,12 +177,13 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
     <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl bg-white shadow-xl">
       <div className="flex items-center justify-between border-b p-4"><div><h2 id="consultant-portal-title" className="text-lg font-semibold">Consultant Portal</h2><p className="text-xs text-slate-500">Choose the patient population and consultant before sending a message.</p></div><button type="button" onClick={onClose} aria-label="Close consultant portal"><X className="h-5 w-5" /></button></div>
       {gate.status !== 'ready' && <div role="status" className="border-b bg-amber-50 px-4 py-3 text-sm text-amber-900">{gate.status === 'checking' ? 'Checking consultant transport readiness…' : gate.reason ?? 'Consultant Portal is unavailable until the coordinated schema and function contract are ready.'}</div>}
+      {historyErrors[assignmentId] && <p role="alert" className="border-b bg-red-50 px-4 py-2 text-sm text-red-800">Transcript history could not be loaded: {historyErrors[assignmentId]}</p>}
       {gate.status === 'ready' && <>
+        {recoveredRequests.length > 0 && <section className="border-b bg-amber-50 px-4 py-3" aria-label="Recover pending consultant requests"><h3 className="text-sm font-semibold text-amber-900">Pending consultant request</h3><p className="mt-1 text-xs text-amber-800">A prior request was interrupted. Resume the exact frozen message; editing it requires a new request.</p><div className="mt-2 space-y-2">{recoveredRequests.map((request) => <button key={request.id} type="button" onClick={() => resumeRequest(request)} className="block w-full rounded border border-amber-300 bg-white px-3 py-2 text-left text-sm text-amber-950">Resume {request.audience} {request.specialty}: “{request.message}”</button>)}</div></section>}
         <div className="grid gap-3 border-b p-4">
           <fieldset><legend className="text-sm font-medium">Patient population</legend><div className="mt-1 flex gap-2" role="radiogroup" aria-label="Patient population"><button type="button" role="radio" aria-checked={audience === 'adult'} onClick={() => chooseAudience('adult')} className={`rounded-md border px-3 py-2 text-sm ${audience === 'adult' ? 'border-blue-600 bg-blue-50 text-blue-800' : ''}`}>Adult</button><button type="button" role="radio" aria-checked={audience === 'pediatric'} onClick={() => chooseAudience('pediatric')} className={`rounded-md border px-3 py-2 text-sm ${audience === 'pediatric' ? 'border-blue-600 bg-blue-50 text-blue-800' : ''}`}>Pediatric</button></div></fieldset>
           <label className="text-sm font-medium">Consultant service<input value={search} onChange={(e) => setSearch(e.target.value)} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" placeholder="Search adult or pediatric consultants…" aria-label="Search consultant services" /><select value={specialty} onChange={(e) => chooseSpecialty(e.target.value)} className="mt-1 w-full rounded-md border px-3 py-2 text-sm" aria-label="Consultant service"><option value="">Choose a consultant</option>{filteredSpecialties.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         </div>
-        {historyErrors[assignmentId] && <p role="alert" className="border-b bg-red-50 px-4 py-2 text-sm text-red-800">Transcript history could not be loaded: {historyErrors[assignmentId]}</p>}
         <div className="min-h-[180px] flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">{!historyErrors[assignmentId] && !specialty && <p className="text-sm text-slate-500">Choose a consultant to open that service&apos;s transcript.</p>}{!historyErrors[assignmentId] && specialty && threadMessages.length === 0 && <p className="text-sm text-slate-500">No messages in this {audience} {specialty} thread yet.</p>}{threadMessages.map((message) => <div key={message.id} className={`rounded-lg p-3 text-sm ${message.role === 'student' ? 'ml-8 bg-blue-50' : 'mr-8 bg-white shadow-sm'}`}><span className="mb-1 block text-xs font-semibold uppercase text-slate-500">{message.role === 'student' ? 'Your message' : 'Consultant response'}</span>{message.content}</div>)}</div>
         {legacyMessages.length > 0 && <section className="border-t bg-slate-100 px-4 py-3"><h3 className="text-sm font-semibold text-slate-800">Legacy / unclassified transcript</h3><p className="text-xs text-slate-600">Read-only legacy messages with no audience. They are not assigned to this current service thread.</p><div className="mt-2 space-y-2">{legacyMessages.map((message) => <div key={message.id} className="rounded border bg-white p-2 text-sm"><span className="mr-2 text-xs font-semibold uppercase text-slate-500">{message.role === 'student' ? 'Legacy request' : 'Legacy response'}</span>{message.content}</div>)}</div></section>}
         {threadStatus.disposition === 'assumes_care' && <p className="border-t bg-amber-50 px-4 py-2 text-sm text-amber-900">Consultant handoff plan: review the consultant response and follow the authored encounter instructions. This does not complete the case automatically.</p>}

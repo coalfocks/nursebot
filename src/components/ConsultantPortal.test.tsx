@@ -37,9 +37,9 @@ const installMessageQuery = () => {
 };
 
 const readyPreflight = () => {
-  mocks.rpc.mockResolvedValue({ data: { ready: true, schemaVersion: 2 }, error: null });
+  mocks.rpc.mockResolvedValue({ data: { ready: true, schemaVersion: 3 }, error: null });
   mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-    if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 2, functionVersion: 2, atomicPersistence: 'separate_dependency' }, error: null });
+    if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
     return Promise.resolve({ data: null, error: new Error('No response configured') });
   });
 };
@@ -60,7 +60,8 @@ describe('consultant portal transport integration', () => {
   it('renders exact stored successful messages and does not reconstruct from the draft', async () => {
     const stored = [message('1', 'student', 'server-stored request', 'adult', 'Medicine'), message('2', 'consultant', 'server-stored answer', 'adult', 'Medicine')];
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight'
-      ? Promise.resolve({ data: { ready: true, schemaVersion: 2, functionVersion: 2, atomicPersistence: 'separate_dependency' }, error: null })
+      ? Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null })
+      : options.body.mode === 'recover' ? Promise.resolve({ data: { requests: [] }, error: null })
       : Promise.resolve({ data: { message: 'server-stored answer', messages: stored, orderId: 'order-a' }, error: null }));
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
@@ -78,7 +79,7 @@ describe('consultant portal transport integration', () => {
       { message: 'follow-up answer', messages: [message('3', 'student', 'follow-up', 'adult', 'Medicine', 'request-2', 'shared-order'), message('4', 'consultant', 'follow-up answer', 'adult', 'Medicine', 'request-2', 'shared-order')], orderId: 'shared-order' },
     ];
     const responsesToServe = [...responses];
-    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight' ? Promise.resolve({ data: { ready: true, schemaVersion: 2, functionVersion: 2, atomicPersistence: 'separate_dependency' }, error: null }) : Promise.resolve({ data: responsesToServe.shift(), error: null }));
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight' ? Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null }) : options.body.mode === 'recover' ? Promise.resolve({ data: { requests: [] }, error: null }) : Promise.resolve({ data: responsesToServe.shift(), error: null }));
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
@@ -102,7 +103,8 @@ describe('consultant portal transport integration', () => {
   it('freezes an attempted draft, retries the exact same ID and text, then clears only after stored messages arrive', async () => {
     let attempt = 0;
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string; request?: { message: string } } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 2, functionVersion: 2, atomicPersistence: 'separate_dependency' }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       attempt += 1;
       if (attempt === 1) return Promise.resolve({ data: null, error: new Error('Request outcome unknown') });
       return Promise.resolve({ data: { message: `stored answer ${attempt}`, messages: [message(`${attempt}-student`, 'student', options.body.request?.message ?? '', 'adult', 'Medicine'), message(`${attempt}-consultant`, 'consultant', `stored answer ${attempt}`, 'adult', 'Medicine')] }, error: null });
@@ -156,7 +158,8 @@ describe('consultant portal transport integration', () => {
   it('keeps service transcripts and pending replies isolated during a service switch', async () => {
     let resolveReply: ((value: { data: unknown; error: null }) => void) | undefined;
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 2, functionVersion: 2, atomicPersistence: 'separate_dependency' }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       return new Promise((resolve) => { resolveReply = resolve; });
     });
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
@@ -211,8 +214,48 @@ describe('consultant portal transport integration', () => {
     mocks.messageQueryError = { message: 'history query failed' };
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('history query failed'));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
     expect(screen.getByRole('alert')).toHaveTextContent('history query failed');
-    expect(screen.queryByText(/No messages in this adult Medicine thread/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('does not enable sending until deferred authoritative history has loaded', async () => {
+    let resolveHistory: ((value: { data: Message[]; error: null }) => void) | undefined;
+    mocks.from.mockImplementation(() => {
+      const query = {
+        select: vi.fn(() => query),
+        eq: vi.fn(() => query),
+        order: vi.fn(() => query),
+        then: (resolve: (value: { data: Message[]; error: null }) => unknown) => {
+          resolveHistory = resolve;
+          return new Promise(() => undefined);
+        },
+      };
+      return query;
+    });
+    render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Checking consultant transport readiness'));
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    resolveHistory?.({ data: [message('history', 'student', 'authoritative history', 'adult', 'Medicine')], error: null });
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
+    expect(screen.getByText('authoritative history')).toBeInTheDocument();
+  });
+
+  it('offers Resume for an authenticated pending request without changing its frozen ID or text', async () => {
+    const pending = { id: 'server-request', client_request_id: 'frozen-request', audience: 'adult' as const, specialty: 'Medicine', message: 'resume this exact request', status: 'requested' as const, lease_expires_at: null };
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [pending] }, error: null });
+      return Promise.resolve({ data: { error: 'request still leased' }, error: new Error('request still leased') });
+    });
+    render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Resume adult Medicine/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Resume adult Medicine/ }));
+    expect(screen.getByLabelText('Message')).toHaveValue('resume this exact request');
+    expect(screen.getByLabelText('Message')).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText('Message').closest('form')!);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('request still leased'));
+    const request = mocks.invoke.mock.calls.find(([, options]) => (options as { body: { request?: unknown } }).body.request);
+    expect((request?.[1] as { body: { request: { clientRequestId: string; message: string } } }).body.request).toMatchObject({ clientRequestId: 'frozen-request', message: 'resume this exact request' });
   });
 });

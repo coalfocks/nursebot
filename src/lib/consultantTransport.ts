@@ -1,12 +1,12 @@
-export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 2;
-export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 2;
+export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 3;
+export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 3;
 
 type PreflightResult = {
   ready: boolean;
   reason?: string;
   schemaVersion?: number;
   functionVersion?: number;
-  atomicPersistence?: 'separate_dependency';
+  atomicPersistence?: boolean;
 };
 
 type SupabaseTransportClient = {
@@ -43,7 +43,7 @@ export async function preflightConsultantTransport(client: SupabaseTransportClie
     edge?.ready !== true
     || edge.schemaVersion !== CONSULTANT_TRANSPORT_SCHEMA_VERSION
     || edge.functionVersion !== CONSULTANT_TRANSPORT_FUNCTION_VERSION
-    || edge.atomicPersistence !== 'separate_dependency'
+    || edge.atomicPersistence !== true
   ) {
     return unavailable('Consultant service version is incompatible with this portal.');
   }
@@ -52,6 +52,6 @@ export async function preflightConsultantTransport(client: SupabaseTransportClie
     ready: true,
     schemaVersion: CONSULTANT_TRANSPORT_SCHEMA_VERSION,
     functionVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION,
-    atomicPersistence: 'separate_dependency',
+    atomicPersistence: true,
   };
 }

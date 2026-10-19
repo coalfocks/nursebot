@@ -4,9 +4,9 @@
 --   * this migration must be applied before the v2 consultant-chat function;
 --   * the v2 function must report the same contract version before the portal
 --     reads audience columns or sends a request;
---   * atomic persistence across request/order/messages remains a separate
---     dependency. The Edge Function keeps compensating cleanup until a
---     reviewed transaction/RPC is provided.
+--   * atomic persistence is intentionally supplied by the later
+--     20261019060000_atomic_consultant_transport_v2.sql migration. Do not
+--     enable v2 writes between these migrations.
 --
 -- Rollback (before enabling the v2 portal, while no v2 rows exist):
 --   drop index if exists public.medical_orders_active_consult_episode_key;
