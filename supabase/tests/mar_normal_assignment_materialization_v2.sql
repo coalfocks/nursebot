@@ -31,6 +31,7 @@
 select set_config('request.jwt.claim.sub', :'admin_sub', false);
 select set_config('mar.test.student_id', :'student_sub', false);
 select set_config('mar.test.room_id', :'room_id', false);
+set role authenticated;
 do $$ declare readiness jsonb; begin
   readiness := public.get_mar_normal_materialization_readiness();
   if coalesce((readiness->>'ready')::boolean, false) is not true
@@ -41,8 +42,12 @@ do $$ declare readiness jsonb; begin
 end $$;
 
 -- The disposable runner seeds one order with no administration and one
--- authored administration before this authenticated fixture starts.
-select public.publish_mar_case_version(:room_id::integer, null);
+-- authored administration before this authenticated fixture starts. The
+-- publication call uses the durable request/revision contract; the legacy
+-- publisher is intentionally no longer an execution path.
+select public.publish_mar_case_version_atomic(
+  gen_random_uuid(), :room_id::integer, 0, null, null
+);
 
 select set_config('mar.test.assignment_id', :'assignment_id', false);
 select set_config('mar.test.request_id', :'request_id', false);
@@ -123,3 +128,4 @@ select 'MAR_V2_FIXTURE_PASS' as result,
   (select count(*) from public.mar_assignment_baseline_versions where assignment_id = current_setting('mar.test.assignment_id')::uuid) as snapshots,
   (select count(*) from public.mar_administration_events where assignment_id = current_setting('mar.test.assignment_id')::uuid) as events,
   (select count(*) from public.mar_assignment_materialization_operations where assignment_id = current_setting('mar.test.assignment_id')::uuid) as operations;
+reset role;

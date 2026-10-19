@@ -34,12 +34,29 @@ interface PendingMarSave {
   actorId: string;
 }
 
+interface PendingMarPublication {
+  requestId: string;
+  roomId: number;
+  actorId: string;
+  expectedRevision: number;
+  expectedContentHash: string | null;
+}
+
 const marPayloadHash = (events: MarAdministrationEvent[]) => JSON.stringify(events);
 const readPendingMarSave = (key: string): PendingMarSave | null => {
   if (typeof window === 'undefined') return null;
   try {
     const value = JSON.parse(window.localStorage.getItem(key) ?? 'null') as PendingMarSave | null;
     return value && typeof value.requestId === 'string' && Array.isArray(value.events) ? value : null;
+  } catch {
+    return null;
+  }
+};
+const readPendingMarPublication = (key: string): PendingMarPublication | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? 'null') as PendingMarPublication | null;
+    return value && typeof value.requestId === 'string' && typeof value.roomId === 'number' && typeof value.expectedRevision === 'number' ? value : null;
   } catch {
     return null;
   }
@@ -62,6 +79,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
   const scopeKey = marScopeKey({ patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion, actorId });
   const recoveryKey = `mar-save:${scopeKey}`;
+  const publicationKey = `mar-publish:${scopeKey}`;
   const { capture, isCurrent } = useRequestIdentity(scopeKey);
   const [events, setEvents] = useState<MarAdministrationEvent[]>([]);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
@@ -85,9 +103,11 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [manual, setManual] = useState(emptyManual);
   const [populate, setPopulate] = useState(defaultPopulate);
   const [publishInFlight, setPublishInFlight] = useState(false);
+  const [pendingPublication, setPendingPublication] = useState<PendingMarPublication | null>(() => readPendingMarPublication(publicationKey));
 
   useEffect(() => {
     setPendingSave(readPendingMarSave(recoveryKey));
+    setPendingPublication(readPendingMarPublication(publicationKey));
     setEvents([]);
     setOrders([]);
     setError(null);
@@ -108,7 +128,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setManualOpen(false);
     setManual(emptyManual);
     setPopulate(defaultPopulate);
-  }, [assignmentId, forceBaseline, recoveryKey, scopeKey]);
+  }, [assignmentId, forceBaseline, publicationKey, recoveryKey, scopeKey]);
 
   const load = useCallback(async () => {
     if (!patient.roomId || !actorAvailable) {
@@ -120,9 +140,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     const request = capture();
     setLoading(true);
     setError(null);
-    const marReady = await emrApi.getMarReadiness();
+    const marReady = await emrApi.getMarNormalMaterializationReadiness();
     if (!isCurrent(request)) return;
-    if (!marReady) {
+    if (!marReady.ready || !marReady.atomic || marReady.materializationVersion < 4) {
       setEvents([]);
       setOrders([]);
       setRevision(0);
@@ -172,11 +192,19 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   }), [events, categoryFilter, search, historyHours]);
 
   const updateEvent = (id: string, patch: Partial<MarAdministrationEvent>) => {
+    if (pendingPublication) {
+      setSaveError('A MAR publication has an unresolved outcome. Resume that exact publication before editing or saving new content.');
+      return;
+    }
     setEvents((current) => current.map((event) => event.id === id ? { ...event, ...patch } : event));
     setDirty(true);
   };
 
   const handlePopulate = () => {
+    if (pendingPublication) {
+      setSaveError('A MAR publication has an unresolved outcome. Resume that exact publication before editing or saving new content.');
+      return;
+    }
     const order = orders.find((item) => item.id === populate.orderId);
     if (!order) return;
     try {
@@ -235,6 +263,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   const save = async () => {
     if (!patient.roomId || !canEdit) return;
+    if (pendingPublication) {
+      setSaveError('A MAR publication has an unresolved outcome. Resume that exact publication before editing or saving new content.');
+      return;
+    }
     const request = capture();
     setSaveError(null);
     const payloadHash = marPayloadHash(events);
@@ -264,10 +296,18 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setPublishInFlight(true);
     setSaveError(null);
     const request = capture();
+    const publication = pendingPublication && pendingPublication.roomId === patient.roomId && pendingPublication.actorId === actorId
+      ? pendingPublication
+      : { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: revision, expectedContentHash: null };
+    setPendingPublication(publication);
+    window.localStorage.setItem(publicationKey, JSON.stringify(publication));
     try {
-      const published = await emrApi.publishMarCaseVersion(patient.roomId);
+      const published = await emrApi.publishMarCaseVersion(patient.roomId, publication);
       if (!isCurrent(request)) return;
+      setRevision(published.revision);
       setPreviewMessage(`Published ${published.caseVersion}: ${published.orderCount} medication orders and ${published.eventCount} administrations are frozen for future assignments.`);
+      setPendingPublication(null);
+      window.localStorage.removeItem(publicationKey);
     } catch (publishError) {
       if (isCurrent(request)) setSaveError(publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.');
     } finally {
@@ -276,6 +316,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const addManual = () => {
+    if (pendingPublication) {
+      setSaveError('A MAR publication has an unresolved outcome. Resume that exact publication before editing or saving new content.');
+      return;
+    }
     if (!patient.roomId || !manual.medicationName.trim()) return;
     const relativeOffsetHours = Number(manual.relativeOffsetHours);
     if (!Number.isFinite(relativeOffsetHours) || relativeOffsetHours < 0 || relativeOffsetHours > 72) {
@@ -374,10 +418,11 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> {adminContext ? 'Medication Administration Record' : 'Medications'}</CardTitle>
-            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>{forceBaseline && <Button variant="outline" disabled={dirty || Boolean(pendingSave) || publishInFlight} onClick={() => void publishVersion()}>Publish MAR version</Button>}<Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={Boolean(pendingPublication)} onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" disabled={Boolean(pendingPublication)} onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>{forceBaseline && <Button variant="outline" disabled={dirty || Boolean(pendingSave) || publishInFlight} onClick={() => void publishVersion()}>Publish MAR version</Button>}<Button onClick={() => void save()} disabled={!dirty || Boolean(pendingPublication)}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
           {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}
+          {pendingPublication && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">A MAR publication is awaiting confirmation. Resume the exact publication before editing or saving new case content.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && (

@@ -5,10 +5,10 @@ set -euo pipefail
 [[ "${MAR_NORMAL_DISPOSABLE:-}" == 1 ]] || { echo 'Refusing without MAR_NORMAL_DISPOSABLE=1' >&2; exit 2; }
 command -v psql >/dev/null || { echo 'psql required' >&2; exit 2; }
 : "${MAR_NORMAL_DATABASE_URL:?Set MAR_NORMAL_DATABASE_URL to an isolated disposable PostgreSQL URL}"
-: "${MAR_NORMAL_ADMIN_SUB:?Set MAR_NORMAL_ADMIN_SUB to a disposable educator/superadmin profile UUID}"
-: "${MAR_NORMAL_STUDENT_SUB:?Set MAR_NORMAL_STUDENT_SUB to a disposable learner profile UUID}"
-: "${MAR_NORMAL_UNLISTED_SUB:?Set MAR_NORMAL_UNLISTED_SUB to a disposable learner in an unlisted school}"
-: "${MAR_NORMAL_ROOM_ID:?Set MAR_NORMAL_ROOM_ID to a disposable room ID}"
+MAR_NORMAL_ADMIN_SUB="${MAR_NORMAL_ADMIN_SUB:-00000000-0000-0000-0000-000000000002}"
+MAR_NORMAL_STUDENT_SUB="${MAR_NORMAL_STUDENT_SUB:-00000000-0000-0000-0000-000000000001}"
+MAR_NORMAL_UNLISTED_SUB="${MAR_NORMAL_UNLISTED_SUB:-00000000-0000-0000-0000-000000000003}"
+MAR_NORMAL_ROOM_ID="${MAR_NORMAL_ROOM_ID:-1}"
 
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 log_file="${MAR_NORMAL_RAW_LOG:-$root_dir/artifacts/mar_normal_materialization_raw_$(date -u +%Y%m%dT%H%M%SZ).log}"
@@ -28,19 +28,30 @@ assert_hash supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql 24e3
 assert_hash supabase/migrations/20261019100013_mar_revoke_split_mutators.sql 5f4a0461fbd681eabb58df0bfec348061ce2c3717fea365c6f66f287b3850ea8
 assert_hash supabase/migrations/20261019100014_mar_normal_assignment_materialization.sql fac9d122c86545d4e9e6e68bbb424fb4d38f2dc0bcec5a70e53ce25d5b7f60b4
 assert_hash supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql 5c16453d6cd3c883cd1b83cebeb3466a4f80473f71621289abd2496efc4f622a
+assert_hash supabase/migrations/20261019100016_mar_scope_and_publication_hardening.sql 55757099739e277b2409f6d102a5b067db2ab863b0a601f74964eaeb9a686bf1
+assert_hash supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql e3ec5f606c6fd3437ab50f00647554f3a32c823d030625d9dfd68da4ba061853
 
 echo 'Applying only the append-only reviewed dependency set to the disposable database.'
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root_dir/supabase/tests/mar_normal_materialization_schema.sql"
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'grant authenticated to postgres'
 for migration in \
   supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql \
   supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql \
-  supabase/migrations/20261019100011_mar_read_scope_and_versions.sql \
-  supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql \
-  supabase/migrations/20261019100013_mar_revoke_split_mutators.sql \
-  supabase/migrations/20261019100014_mar_normal_assignment_materialization.sql \
-  supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql; do
+  supabase/migrations/20261019100011_mar_read_scope_and_versions.sql; do
   echo "APPLY $migration"
   psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f "$root_dir/$migration"
 done
+echo 'APPLY 100012+100013 as one reviewed transaction unit'
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -1 \
+  -f "$root_dir/supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql" \
+  -f "$root_dir/supabase/migrations/20261019100013_mar_revoke_split_mutators.sql"
+echo 'APPLY 100014+100015+100016+100017 as one coordinated materialization/publication unit'
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -1 \
+  -f "$root_dir/supabase/migrations/20261019100014_mar_normal_assignment_materialization.sql" \
+  -f "$root_dir/supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql" \
+  -f "$root_dir/supabase/migrations/20261019100016_mar_scope_and_publication_hardening.sql" \
+  -f "$root_dir/supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql"
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root_dir/supabase/tests/mar_normal_materialization_seed.sql"
 
 echo 'READINESS'
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "select public.get_mar_normal_materialization_readiness();"
@@ -51,6 +62,13 @@ psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v admin_sub="$MAR_NORMAL_ADMIN_SUB" -v student_sub="$MAR_NORMAL_STUDENT_SUB" -v room_id="$MAR_NORMAL_ROOM_ID" \
   -v assignment_id="$assignment_id" -v request_id="$request_id" \
   -f "$root_dir/supabase/tests/mar_normal_assignment_materialization_v2.sql"
+echo 'PUBLICATION RETRY/REVISION FIXTURE'
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -v admin_sub="$MAR_NORMAL_ADMIN_SUB" -v room_id="$MAR_NORMAL_ROOM_ID" \
+  -f "$root_dir/supabase/tests/mar_publication_idempotency.sql"
+echo 'PUBLICATION CONCURRENCY'
+MAR_NORMAL_ROOM_ID="$MAR_NORMAL_ROOM_ID" MAR_NORMAL_ADMIN_SUB="$MAR_NORMAL_ADMIN_SUB" \
+  bash "$root_dir/scripts/run-mar-publication-concurrent.sh"
 echo 'AUTH_SCOPE_NEGATIVES'
 missing_output="$(psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=0 -Atc "select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000099',false); select public.create_assignment_with_mar_materialization(gen_random_uuid(),gen_random_uuid(),'$MAR_NORMAL_STUDENT_SUB'::uuid,$MAR_NORMAL_ROOM_ID,(select school_id from public.profiles where id='$MAR_NORMAL_STUDENT_SUB'::uuid),(select case_version from public.mar_authored_case_versions where room_id=$MAR_NORMAL_ROOM_ID order by created_at desc limit 1),now(),now(),now()+interval '1 hour');" 2>&1 || true)"
 echo "$missing_output"
@@ -61,4 +79,12 @@ echo "$anon_output"
 unlisted_output="$(psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=0 -Atc "select set_config('request.jwt.claim.sub','$MAR_NORMAL_ADMIN_SUB',false); select public.create_assignment_with_mar_materialization(gen_random_uuid(),gen_random_uuid(),'$MAR_NORMAL_UNLISTED_SUB'::uuid,$MAR_NORMAL_ROOM_ID,(select school_id from public.profiles where id='$MAR_NORMAL_UNLISTED_SUB'::uuid),(select case_version from public.mar_authored_case_versions where room_id=$MAR_NORMAL_ROOM_ID order by created_at desc limit 1),now(),now(),now()+interval '1 hour');" 2>&1 || true)"
 echo "$unlisted_output"
 [[ "$unlisted_output" == *'MAR_STUDENT_ROOM_UNAVAILABLE'* ]] || { echo 'unlisted-school denial assertion failed' >&2; exit 1; }
+echo 'SCHOOL_AVAILABILITY_SEMANTICS'
+availability_output="$(psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "select public.mar_effective_school_allowed('00000000-0000-0000-0000-0000000000a1'::uuid, null, '00000000-0000-0000-0000-0000000000a2'::uuid), public.mar_effective_school_allowed('00000000-0000-0000-0000-0000000000a1'::uuid, array['00000000-0000-0000-0000-0000000000a2']::uuid[], '00000000-0000-0000-0000-0000000000a2'::uuid), public.mar_effective_school_allowed('00000000-0000-0000-0000-0000000000a1'::uuid, '{}'::uuid[], '00000000-0000-0000-0000-0000000000a2'::uuid);")"
+echo "$availability_output"
+[[ "$availability_output" == 'f|t|t' ]] || { echo 'effective school availability semantics assertion failed' >&2; exit 1; }
+echo 'LEGACY_MUTATOR_DENIAL'
+legacy_output="$(psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=0 -Atc "set role authenticated; select set_config('request.jwt.claim.sub','$MAR_NORMAL_ADMIN_SUB',false); select public.publish_mar_case_version($MAR_NORMAL_ROOM_ID::integer,null);" 2>&1 || true)"
+echo "$legacy_output"
+[[ "$legacy_output" == *'permission denied'* ]] || { echo 'legacy publication mutator denial assertion failed' >&2; exit 1; }
 echo "RAW_LOG $log_file"

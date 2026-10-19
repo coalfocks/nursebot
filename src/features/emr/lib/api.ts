@@ -1019,7 +1019,32 @@ export const emrApi = {
         order.assignmentId ?? null,
         assignmentId,
       ));
-    return currentOrders;
+    if (!assignmentId) return currentOrders;
+
+    // Only assignments with an explicit pinned case version use the frozen
+    // medication reader. Legacy/reserved assignments never call the MAR RPC.
+    const { data: assignmentMeta, error: assignmentMetaError } = await supabase
+      .from('student_room_assignments')
+      .select('case_key_version')
+      .eq('id', assignmentId)
+      .maybeSingle();
+    if (assignmentMetaError || !assignmentMeta?.case_key_version) return currentOrders;
+
+    const { data: snapshot, error: snapshotError } = await supabase.rpc('get_mar_assignment_order_snapshot', {
+      p_assignment_id: assignmentId,
+    });
+    if (snapshotError || !Array.isArray(snapshot)) {
+      onError?.('Unable to load the pinned medication orders for this assignment. Refresh the chart and try again.');
+      // Do not fall back to mutable baseline medication metadata for a pinned
+      // assignment. Preserve non-medication clinical orders and this learner's
+      // own assignment orders so the failure is not rendered as empty data.
+      return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+    }
+    const frozenMedicationOrders = (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
+    const preservedOrders = currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+    const byId = new Map(preservedOrders.map((order) => [order.id, order]));
+    frozenMedicationOrders.forEach((order) => byId.set(order.id, order));
+    return Array.from(byId.values());
   },
 
   /**
@@ -1040,7 +1065,25 @@ export const emrApi = {
       onError?.('Pinned medication orders are unavailable for this assignment.');
       return [];
     }
-    return (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
+    const frozen = (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
+    const { data: learnerOrders, error: learnerOrderError } = await supabase
+      .from('medical_orders')
+      .select('*')
+      .eq('patient_id', patientId)
+      .eq('assignment_id', assignmentId)
+      .eq('category', 'Medication')
+      .is('deleted_at', null)
+      .order('order_time', { ascending: false });
+    if (learnerOrderError) {
+      console.error('Error fetching learner medication orders', learnerOrderError);
+      onError?.('Unable to load learner medication orders for this assignment.');
+      return frozen;
+    }
+    const byId = new Map(frozen.map((order) => [order.id, order]));
+    (learnerOrders ?? []).map((row) => mapMedicalOrder(row, patientId)).forEach((order) => {
+      if (!byId.has(order.id)) byId.set(order.id, order);
+    });
+    return Array.from(byId.values());
   },
 
   async listMarEvents(
@@ -1099,15 +1142,28 @@ export const emrApi = {
     return typeof value.caseVersion === 'string' && value.caseVersion.trim() ? value.caseVersion : null;
   },
 
-  async publishMarCaseVersion(roomId: number, requestedVersion?: string): Promise<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number }> {
-    const { data, error } = await supabase.rpc('publish_mar_case_version', {
+  async publishMarCaseVersion(
+    roomId: number,
+    options: { requestId: string; expectedRevision: number; expectedContentHash?: string | null; requestedVersion?: string | null },
+  ): Promise<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number; revision: number; requestId: string }> {
+    const { data, error } = await supabase.rpc('publish_mar_case_version_atomic', {
+      p_request_id: options.requestId,
       p_room_id: roomId,
-      p_case_version: requestedVersion ?? null,
+      p_expected_revision: options.expectedRevision,
+      p_expected_content_hash: options.expectedContentHash ?? null,
+      p_case_version: options.requestedVersion ?? null,
     });
     if (error) throw error;
-    const value = data as Partial<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number }> | null;
+    const value = data as Partial<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number; revision: number; requestId: string }> | null;
     if (!value?.caseVersion || !value.contentHash) throw new Error('MAR version publication returned no immutable version.');
-    return { caseVersion: value.caseVersion, contentHash: value.contentHash, orderCount: Number(value.orderCount ?? 0), eventCount: Number(value.eventCount ?? 0) };
+    return {
+      caseVersion: value.caseVersion,
+      contentHash: value.contentHash,
+      orderCount: Number(value.orderCount ?? 0),
+      eventCount: Number(value.eventCount ?? 0),
+      revision: Number(value.revision ?? options.expectedRevision),
+      requestId: value.requestId ?? options.requestId,
+    };
   },
 
   async saveMarHistory(

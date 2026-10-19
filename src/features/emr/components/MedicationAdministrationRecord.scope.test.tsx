@@ -5,7 +5,7 @@ import type { Patient } from '../lib/types';
 
 const { api, profileState } = vi.hoisted(() => ({
   api: {
-    getMarReadiness: vi.fn(),
+    getMarNormalMaterializationReadiness: vi.fn(),
     listMarEvents: vi.fn(),
     listOrders: vi.fn(),
     listMarMedicationOrders: vi.fn(),
@@ -28,7 +28,7 @@ describe('MedicationAdministrationRecord scope fencing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     profileState.current = { id: 'actor-a', role: 'school_admin', school_id: 'school-a', full_name: 'Author A' };
-    api.getMarReadiness.mockResolvedValue(true);
+    api.getMarNormalMaterializationReadiness.mockResolvedValue({ ready: true, materializationVersion: 4, atomic: true });
     api.listMarEvents.mockResolvedValue([]);
     api.listOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
     api.listMarMedicationOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
