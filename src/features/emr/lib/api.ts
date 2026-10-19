@@ -367,7 +367,12 @@ export const emrApi = {
     });
   },
 
-  async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
+  async listClinicalNotes(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+    onError?: (event: { source: 'clinical_notes' | 'assignment' | 'room'; message: string }) => void,
+  ): Promise<ClinicalNote[]> {
     const targetRooms = await getRoomLineage(roomId);
     const [{ data, error }, assignmentResult] = await Promise.all([
       supabase.from('clinical_notes').select('*').eq('patient_id', patientId).is('deleted_at', null).order('timestamp', { ascending: false }),
@@ -378,7 +383,27 @@ export const emrApi = {
 
     if (error) {
       console.error('Error fetching clinical notes', error);
-      return [];
+      onError?.({ source: 'clinical_notes', message: 'Unable to load saved clinical notes. Refresh the chart and try again.' });
+    }
+
+    if (assignmentResult.error) {
+      console.error('Error fetching assignment completion note', assignmentResult.error);
+      onError?.({ source: 'assignment', message: 'Unable to load the completed assignment note. Refresh the chart and try again.' });
+    }
+
+    let assignmentMatchesContext = false;
+    if (assignmentId && assignmentResult.data && !assignmentResult.error) {
+      const roomResult = await supabase
+        .from('rooms')
+        .select('id, patient_id')
+        .eq('id', assignmentResult.data.room_id)
+        .maybeSingle();
+      if (roomResult.error) {
+        console.error('Error verifying assignment note context', roomResult.error);
+        onError?.({ source: 'room', message: 'Unable to verify the assignment note belongs to this patient. Refresh the chart and try again.' });
+      } else {
+        assignmentMatchesContext = (!roomId || roomResult.data?.id === roomId) && roomResult.data?.patient_id === patientId;
+      }
     }
 
     const notes = (data ?? [])
@@ -402,9 +427,9 @@ export const emrApi = {
         ),
       );
     const progressNote = assignmentResult.data?.student_progress_note?.trim();
-    if (assignmentId && progressNote) {
+    if (assignmentId && assignmentMatchesContext && progressNote) {
       const projectedId = `progress-note-${assignmentId}`;
-      return [{
+      const projectedNote: ClinicalNote = {
         id: projectedId,
         patientId,
         assignmentId,
@@ -413,10 +438,17 @@ export const emrApi = {
         type: 'Progress',
         title: 'Progress Note',
         content: progressNote,
-        author: 'Student',
-        timestamp: assignmentResult.data.completed_at ?? assignmentResult.data.updated_at ?? undefined,
+        author: 'Simulation Physician',
+        timestamp: assignmentResult.data.completed_at ?? undefined,
         signed: true,
-      }, ...notes.filter((note) => note.id !== projectedId)];
+      };
+      return [projectedNote, ...notes.filter((note) => {
+        const isLegacyMirror = note.assignmentId === assignmentId
+          && note.type === 'Progress'
+          && /^progress note$/i.test(note.title.trim())
+          && note.content.trim() === progressNote;
+        return note.id !== projectedId && !isLegacyMirror;
+      })];
     }
     return notes;
   },

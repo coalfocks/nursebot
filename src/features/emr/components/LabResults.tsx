@@ -15,7 +15,7 @@ import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { isResultProducingStatLab } from '../lib/labOrderEligibility';
 import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
-import { clampToMinimumPrior, formatScenarioPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from '../lib/scenarioTime';
+import { clampToMinimumPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from '../lib/scenarioTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -24,6 +24,7 @@ interface LabResultsProps {
   isSandbox?: boolean;
   sandboxLabs?: LabResult[];
   onSandboxLabsChange?: (labs: LabResult[]) => void;
+  readOnly?: boolean;
 }
 
 type LabTrendPoint = {
@@ -32,7 +33,7 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
+export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, readOnly = false }: LabResultsProps) {
   const normalizeForPatient = useCallback(
     (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender, patient.dateOfBirth)),
     [patient.gender, patient.dateOfBirth],
@@ -178,7 +179,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   // predate the order-placement callback, so reconcile them when the Labs tab
   // opens instead of leaving an order stranded with no result forever.
   useEffect(() => {
-    if (!roomMetaLoaded) return;
+    if (!roomMetaLoaded || readOnly) return;
     const request = capture();
     void (async () => {
       const [orders, existingLabs, clinicalNotes, vitals] = await Promise.all([
@@ -297,10 +298,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         }
       }
     })();
-  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient]);
+  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient, readOnly]);
 
   const handleGenerateLabResults = async () => {
-    if (!aiLabName.trim()) return;
+    if (readOnly || !aiLabName.trim()) return;
     const orderName = aiLabName.trim();
     const requestDetails = aiLabRequest.trim();
     setIsGenerating(true);
@@ -684,7 +685,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   };
 
   const handleDeleteLab = async (labId: string) => {
-    if (!canEdit) return;
+    if (!canEdit || readOnly) return;
     const deletedLab = labResults.find((lab) => lab.id === labId);
     setLabSaveError(null);
     if (!deletedLab) return;
@@ -706,7 +707,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           {labSaveError}
         </p>
       )}
-      {canEdit && (
+      {canEdit && !readOnly && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>

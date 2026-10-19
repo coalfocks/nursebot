@@ -61,7 +61,11 @@ export default function EmrDashboard() {
   const effectiveAssignmentId = forceBaseline
     ? undefined
     : assignmentId ?? (selectedPatient?.roomId === derivedAssignmentRoomId ? derivedAssignmentId : undefined);
-  const completedStudentReview = !forceBaseline && assignmentStatus === 'completed' && !isSuperAdmin(profile);
+  const educatorAccess = hasAdminAccess(profile);
+  const writableAssignmentStatuses = new Set(['assigned', 'in_progress', 'bedside']);
+  const studentEmrReadOnly = !educatorAccess && (
+    !effectiveAssignmentId || !assignmentStatus || !writableAssignmentStatuses.has(assignmentStatus)
+  );
   const patientRequest = useRequestIdentity(
     `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
   );
@@ -1138,6 +1142,7 @@ export default function EmrDashboard() {
                 sandboxLabs={sandboxLabs}
                 refreshToken={labsRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
+                readOnly={studentEmrReadOnly}
               />
             </TabsContent>
 
@@ -1155,7 +1160,7 @@ export default function EmrDashboard() {
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
                 forceBaseline={forceBaseline}
-                readOnly={completedStudentReview}
+                readOnly={studentEmrReadOnly}
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
                 onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}

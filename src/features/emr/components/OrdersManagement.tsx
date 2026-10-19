@@ -848,11 +848,15 @@ export function OrdersManagement({
             Active Orders
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
+            {isLoadingOrders ? 'Loading saved medical orders…' : orderLoadError ? 'Unable to load saved medical orders' : `${activeOrders.length} Active • ${pendingOrders.length} Pending • ${filteredOrders.length} Total`}
           </p>
         </CardHeader>
         <CardContent>
-          {activeOrders.length ? (
+          {isLoadingOrders ? (
+            <p className="text-sm text-muted-foreground">Loading saved medical orders…</p>
+          ) : orderLoadError ? (
+            <p role="alert" className="text-sm text-red-700">{orderLoadError}</p>
+          ) : activeOrders.length ? (
             <div className="rounded-md border">
               <Table>
                 <TableHeader>

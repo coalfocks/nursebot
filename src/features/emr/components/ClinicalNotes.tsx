@@ -24,6 +24,8 @@ interface ClinicalNotesProps {
 
 export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoom = false }: ClinicalNotesProps) {
   const [notes, setNotes] = useState<ClinicalNote[]>([]);
+  const [isLoadingNotes, setIsLoadingNotes] = useState(true);
+  const [noteLoadError, setNoteLoadError] = useState<string | null>(null);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
   const canWriteNotes = isSuperAdmin(profile);
@@ -47,12 +49,24 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
 
   useEffect(() => {
     const request = requestIdentity.capture();
+    setIsLoadingNotes(true);
+    setNoteLoadError(null);
     setNotes([]);
     setEditingNoteId(null);
     void (async () => {
-      const data = await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null);
-      if (!requestIdentity.isCurrent(request)) return;
-      setNotes(data);
+      try {
+        const data = await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null, (event) => {
+          if (requestIdentity.isCurrent(request)) setNoteLoadError(event.message);
+        });
+        if (!requestIdentity.isCurrent(request)) return;
+        setNotes(data);
+      } catch (error) {
+        if (requestIdentity.isCurrent(request)) {
+          setNoteLoadError(error instanceof Error ? error.message : 'Unable to load saved clinical notes. Refresh the chart and try again.');
+        }
+      } finally {
+        if (requestIdentity.isCurrent(request)) setIsLoadingNotes(false);
+      }
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
@@ -351,6 +365,17 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
         </p>
       )}
 
+      {isLoadingNotes && (
+        <p role="status" className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          Loading saved clinical notes…
+        </p>
+      )}
+      {noteLoadError && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {noteLoadError}
+        </p>
+      )}
+
       <Tabs defaultValue="all" className="w-full">
         <TabsList>
           <TabsTrigger value="all">All Notes ({visibleNotes.length})</TabsTrigger>
@@ -363,6 +388,7 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
 
         <TabsContent value="all" className="mt-6">
           <div className="space-y-4">
+            {!isLoadingNotes && !visibleNotes.length && !noteLoadError && <p className="text-sm text-muted-foreground">No clinical notes yet.</p>}
             {visibleNotes.map(renderNoteCard)}
           </div>
         </TabsContent>

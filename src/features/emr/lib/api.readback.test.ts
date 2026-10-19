@@ -17,7 +17,7 @@ describe('completed EMR read-back', () => {
 
   it('projects the canonical completion note with stable ID and completion time', async () => {
     from.mockImplementation((table: string) => {
-      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      if (table === 'rooms') return chain({ data: { continues_from: null, id: 7, patient_id: 'patient-1' }, error: null });
       if (table === 'clinical_notes') return chain({ data: [], error: null });
       return chain({ data: { room_id: 7, student_progress_note: 'Canonical note', completed_at: '2026-10-19T06:10:32Z', updated_at: '2026-10-19T06:10:33Z' }, error: null });
     });
@@ -48,5 +48,26 @@ describe('completed EMR read-back', () => {
     expect(settled).toBe(false);
     resolveOrders({ data: [], error: null });
     await expect(result).resolves.toEqual([]);
+  });
+
+  it('does not project a completion note when the assignment room belongs to another patient', async () => {
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null, id: 7, patient_id: 'other-patient' }, error: null });
+      if (table === 'clinical_notes') return chain({ data: [], error: null });
+      return chain({ data: { room_id: 7, student_progress_note: 'Do not leak', completed_at: '2026-10-19T06:10:32Z' }, error: null });
+    });
+    await expect(emrApi.listClinicalNotes('patient-1', 'assignment-1', 7)).resolves.toEqual([]);
+  });
+
+  it('retains the canonical completion note when the legacy notes table fails', async () => {
+    const onError = vi.fn();
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null, id: 7, patient_id: 'patient-1' }, error: null });
+      if (table === 'clinical_notes') return chain({ data: null, error: { message: 'notes unavailable' } });
+      return chain({ data: { room_id: 7, student_progress_note: 'Still readable', completed_at: '2026-10-19T06:10:32Z' }, error: null });
+    });
+    const notes = await emrApi.listClinicalNotes('patient-1', 'assignment-1', 7, onError);
+    expect(notes[0]).toMatchObject({ content: 'Still readable', author: 'Simulation Physician' });
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ source: 'clinical_notes' }));
   });
 });

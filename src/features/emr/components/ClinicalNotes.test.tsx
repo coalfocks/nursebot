@@ -74,7 +74,7 @@ describe('ClinicalNotes patient request identity', () => {
     });
     await waitFor(() => expect(screen.queryByText('A note')).not.toBeInTheDocument());
     expect(screen.getByText('B content')).toBeInTheDocument();
-    expect(listClinicalNotes).toHaveBeenNthCalledWith(1, 'A', undefined, null);
-    expect(listClinicalNotes).toHaveBeenNthCalledWith(2, 'B', undefined, null);
+    expect(listClinicalNotes).toHaveBeenNthCalledWith(1, 'A', undefined, null, expect.any(Function));
+    expect(listClinicalNotes).toHaveBeenNthCalledWith(2, 'B', undefined, null, expect.any(Function));
   });
 });
