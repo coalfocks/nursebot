@@ -83,7 +83,7 @@ language plpgsql
 set search_path = public
 as $$
 begin
-  if current_setting('feedback.evaluator_activation', true) <> '1'
+  if current_setting('feedback.evaluator_activation', true) is distinct from '1'
      or new.id is distinct from old.id
      or new.scope is distinct from old.scope
      or new.room_id is distinct from old.room_id
@@ -146,7 +146,7 @@ begin
   end if;
   -- Both the archive and activation updates are part of this audited RPC.
   -- Set the trigger guard before either status transition.
-  perform set_config('feedback.evaluator_activation', '1', false);
+  perform set_config('feedback.evaluator_activation', '1', true);
   update public.feedback_evaluator_configs
     set status = 'archived', updated_at = now()
     where scope = selected.scope and room_id is not distinct from selected.room_id and status = 'active';

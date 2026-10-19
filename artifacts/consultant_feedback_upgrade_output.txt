@@ -1,0 +1,26 @@
+Redacted raw output from:
+CONSULTANT_UPGRADE_DISPOSABLE=1 CONSULTANT_UPGRADE_PGPORT=54331 ./scripts/run-consultant-feedback-upgrade-db.sh
+
+PIN 20261019000000_consultant_message_transport.sql sha256=cdd01e0ac9f71e16556249dfd622ae6edafc202602c95295985bb1c03283edbe
+PIN 20261019043010_consultant_transport_contract.sql sha256=cbe55d5b32f7dd4a3abcafe128ed621d5e9e45b6f287f2007ec64fcc309b3b5b
+PIN 20261019060000_atomic_consultant_transport_v2.sql sha256=eecb8b33ef1c69281e9062ce22cace21929d4ebb1795caa973b38cfffb0d78b7
+PIN 20261019073000_feedback_evaluator_studio.sql sha256=dca6f9d94267a268082f58f3ef511c2ffd4a580c5f919c2cd8ea0cb696b10553
+PIN 20261019080000_qa_integrity_repairs.sql sha256=99bb81ac707aeedd48f2572e543c73cc86a0de21ff681ed7a1674314a9d6d5c8
+PIN 20261019083000_consultant_transport_sequence_upgrade.sql sha256=13f474bb47c43d58dd452bb89c58a3eca6659b00b0214b29c65f963b079f834a
+
+APPLY 19000000
+APPLY 19043010
+APPLY 19060000
+APPLY 19073000
+APPLY 19080000
+APPLY 19083000
+BACKFILL COUNTS
+2|2
+1
+{"ready": true, "schemaVersion": 4, "functionVersion": 4, "atomicPersistence": true}
+
+feedback evaluator upgrade constraints passed
+consultant transport DB integration assertions passed
+concurrent activation passed: exactly one active version; fresh-connection status update rejected
+concurrent retry passed: one order, two messages
+PASS disposable upgrade runner

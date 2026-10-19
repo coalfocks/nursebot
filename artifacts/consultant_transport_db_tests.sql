@@ -34,12 +34,26 @@ end $$;
 \set req3 '53333333-3333-4333-8333-333333333333'
 \set client3 '63333333-3333-4333-8333-333333333333'
 \set oldtoken '73333333-3333-4333-8333-333333333333'
-\set newtoken '73333333-3333-4333-8333-333333333333'
+\set newtoken '83333333-3333-4333-8333-333333333333'
 insert into public.consultant_requests (id, assignment_id, patient_id, room_id, specialty, summary, clinical_question, reason, urgency, client_request_id, message, audience, payload_hash, lease_token, lease_expires_at)
 values (:'req3', :'assignment', :'patient', :'room', 'Cardiology', '', '', '', 'routine', :'client3', 'take over', 'adult', 'hash-3', :'oldtoken', now() - interval '1 minute');
 update public.consultant_requests set lease_token = :'newtoken', lease_expires_at = now() + interval '5 minutes'
 where id = :'req3' and status = 'requested' and (lease_expires_at is null or lease_expires_at <= now());
+do $$
+begin
+  begin
+    perform * from public.persist_consultant_response_v2('11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333333', '63333333-3333-4333-8333-333333333333', '22222222-2222-4222-8222-222222222222', 7001, 'adult', 'Cardiology', 'take over', 'hash-3', 'stale owner must reject', 'routine_review', '73333333-3333-4333-8333-333333333333');
+    raise exception 'stale lease owner unexpectedly finalized';
+  exception when sqlstate '55P03' then null;
+  end;
+end $$;
 select * from public.persist_consultant_response_v2(:'student', :'assignment', :'client3', :'patient', :'room', 'adult', 'Cardiology', 'take over', 'hash-3', 'takeover response', 'routine_review', :'newtoken');
+select * from public.persist_consultant_response_v2(:'student', :'assignment', :'client3', :'patient', :'room', 'adult', 'Cardiology', 'take over', 'hash-3', 'different replay response', 'routine_review', :'newtoken');
+do $$
+begin
+  if (select count(*) from public.consultant_chat_messages where request_id = '53333333-3333-4333-8333-333333333333') <> 2 then raise exception 'lease takeover replay duplicated messages'; end if;
+  if (select status from public.consultant_requests where id = '53333333-3333-4333-8333-333333333333') <> 'answered' then raise exception 'lease takeover did not answer request'; end if;
+end $$;
 
 \set req4 '54444444-4444-4444-8444-444444444444'
 \set client4 '64444444-4444-4444-8444-444444444444'
@@ -73,7 +87,8 @@ begin
   perform set_config('consultant.test_failure', 'order', true);
   begin
     perform * from public.persist_consultant_response_v2('11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333333', '65555555-5555-4555-8555-555555555555', '22222222-2222-4222-8222-222222222222', 7001, 'adult', 'Neurology', 'rollback order', 'hash-5', 'not committed', 'routine_review', '75555555-5555-4555-8555-555555555555');
-  exception when others then null;
+  exception when others then
+    if sqlerrm <> 'injected order failure' then raise; end if;
   end;
 end $$;
 do $$
@@ -93,7 +108,8 @@ begin
   perform set_config('consultant.test_failure', 'message', true);
   begin
     perform * from public.persist_consultant_response_v2('11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333333', '66666666-6666-4666-8666-666666666666', '22222222-2222-4222-8222-222222222222', 7001, 'adult', 'Nephrology', 'rollback message', 'hash-6', 'not committed', 'routine_review', '76666666-6666-4666-8666-666666666666');
-  exception when others then null;
+  exception when others then
+    if sqlerrm <> 'injected message failure' then raise; end if;
   end;
 end $$;
 do $$
