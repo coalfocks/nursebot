@@ -59,7 +59,7 @@ export default function FeedbackStudio() {
     ]);
     if (roomResult.error) setError(roomResult.error.message);
     else setRooms((roomResult.data ?? []) as Room[]);
-    if (configResult.error) setError(configResult.error.message);
+    if (configResult.error) setError(`Feedback Studio is schema-not-ready: ${configResult.error.message}. Apply the reviewed evaluator migration before saving or activating.`);
     else setConfigs((configResult.data ?? []) as Config[]);
   };
 
