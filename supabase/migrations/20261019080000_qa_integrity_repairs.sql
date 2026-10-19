@@ -17,6 +17,20 @@ where m.request_id = r.id
   and m.request_id is not null
   and m.request_receipt_at is null;
 
+do $$
+begin
+  if exists (
+    select request_id, message_sequence
+    from public.consultant_chat_messages
+    where request_id is not null and message_sequence is not null
+    group by request_id, message_sequence
+    having count(*) > 1
+  ) then
+    raise exception 'CONSULTANT_SEQUENCE_COLLISION: resolve duplicate request/sequence rows before applying the deterministic message index';
+  end if;
+end;
+$$;
+
 create unique index if not exists consultant_chat_messages_request_sequence_key
   on public.consultant_chat_messages(request_id, message_sequence)
   where request_id is not null and message_sequence is not null;
