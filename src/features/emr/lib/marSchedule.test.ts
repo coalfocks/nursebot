@@ -42,5 +42,7 @@ describe('MAR schedule expansion', () => {
 
   it('does not create administrations for infusions or learner orders', () => {
     expect(expandMarSchedule({ medicationName: 'Infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 12, status: 'Started', rate: '50 mL/h' }, { offsetHours: 4, status: 'Rate changed', rate: '75 mL/h' }] })).toHaveLength(2);
+    expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 13, status: 'Started' }] })).toThrow('MAR_TIME_OUTSIDE_STAY');
+    expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 8, status: 'Stopped' }, { offsetHours: 4, status: 'Started' }] })).toThrow('MAR_INFUSION_START_STOP_CONFLICT');
   });
 });
