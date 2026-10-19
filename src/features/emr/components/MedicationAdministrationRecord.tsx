@@ -47,6 +47,8 @@ const readPendingMarSave = (key: string): PendingMarSave | null => {
 
 const statusOptions: MarStatus[] = ['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented'];
 const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
+const emptyManual = { medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '', reason: '', prnIndication: '', response: '', infusionDetails: '' };
+const defaultPopulate = { orderId: '', stayHours: '24', startPriorHours: '12', stopPriorHours: '1', frequency: 'q4h', explicitPriorHours: '', category: 'scheduled' as typeof categories[number], assumePrnGiven: false, infusionStartPriorHours: '12', infusionChangePriorHours: '', infusionStopPriorHours: '', infusionRate: '', infusionChangeRate: '', infusionStopRate: '' };
 
 export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
@@ -80,13 +82,8 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [pendingSave, setPendingSave] = useState<PendingMarSave | null>(() => readPendingMarSave(recoveryKey));
   const [populateOpen, setPopulateOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '', prnIndication: '', response: '', infusionDetails: '' });
-  const [populate, setPopulate] = useState({
-    orderId: '', stayHours: '24', startPriorHours: '12', stopPriorHours: '1',
-    frequency: 'q4h', explicitPriorHours: '', category: 'scheduled' as typeof categories[number], assumePrnGiven: false,
-    infusionStartPriorHours: '12', infusionChangePriorHours: '', infusionStopPriorHours: '',
-    infusionRate: '', infusionChangeRate: '', infusionStopRate: '',
-  });
+  const [manual, setManual] = useState(emptyManual);
+  const [populate, setPopulate] = useState(defaultPopulate);
 
   useEffect(() => {
     setPendingSave(readPendingMarSave(recoveryKey));
@@ -107,6 +104,8 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setPreviewMessage(null);
     setPopulateOpen(false);
     setManualOpen(false);
+    setManual(emptyManual);
+    setPopulate(defaultPopulate);
   }, [assignmentId, forceBaseline, recoveryKey, scopeKey]);
 
   const load = useCallback(async () => {
@@ -352,7 +351,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> {adminContext ? 'Medication Administration Record' : 'Medications'}</CardTitle>
-            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>{forceBaseline && <Button variant="outline" onClick={() => void emrApi.publishMarCaseVersion(patient.roomId as number).then((published) => setPreviewMessage(`Published ${published.caseVersion}: ${published.orderCount} medication orders and ${published.eventCount} administrations are frozen for future assignments.`)).catch((publishError) => setSaveError(publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.'))}>Publish MAR version</Button>}<Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
           {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}

@@ -995,6 +995,22 @@ export const emrApi = {
 
   async listOrders(patientId: string, assignmentId?: string, roomId?: number | null, onError?: (message: string) => void): Promise<MedicalOrder[]> {
     const targetRooms = await getRoomLineage(roomId);
+    let frozenOrders: MedicalOrder[] = [];
+    if (assignmentId) {
+      const { data: snapshot, error: snapshotError } = await supabase.rpc('get_mar_assignment_order_snapshot', {
+        p_assignment_id: assignmentId,
+      });
+      if (snapshotError) {
+        console.error('Error fetching pinned MAR order snapshot', snapshotError);
+        onError?.('Unable to load the pinned medication orders for this assignment. Refresh the chart and try again.');
+        return [];
+      }
+      if (!Array.isArray(snapshot)) {
+        onError?.('Pinned medication orders are unavailable for this assignment.');
+        return [];
+      }
+      frozenOrders = (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
+    }
     const { data, error } = await supabase
       .from('medical_orders')
       .select('*')
@@ -1008,12 +1024,12 @@ export const emrApi = {
       return [];
     }
 
-    return (data ?? [])
+    const currentOrders = (data ?? [])
       .map((row) => {
         return mapMedicalOrder(row, patientId);
       })
       .filter((order) =>
-        scopeMatchesContext(
+        assignmentId ? order.assignmentId === assignmentId : scopeMatchesContext(
           order.overrideScope ?? 'baseline',
           order.roomId ?? null,
           targetRooms,
@@ -1021,6 +1037,7 @@ export const emrApi = {
           assignmentId,
         ),
       );
+    return assignmentId ? [...frozenOrders, ...currentOrders] : currentOrders;
   },
 
   async listMarEvents(
@@ -1063,6 +1080,31 @@ export const emrApi = {
     const { data, error } = await supabase.rpc('get_mar_readiness');
     if (error) return false;
     return Boolean((data as { ready?: boolean } | null)?.ready);
+  },
+
+  async getMarNormalMaterializationReadiness(): Promise<{ ready: boolean; materializationVersion: number; atomic: boolean }> {
+    const { data, error } = await supabase.rpc('get_mar_normal_materialization_readiness');
+    if (error || !data || typeof data !== 'object') return { ready: false, materializationVersion: 0, atomic: false };
+    const value = data as { ready?: boolean; materializationVersion?: number; atomic?: boolean };
+    return { ready: Boolean(value.ready), materializationVersion: Number(value.materializationVersion ?? 0), atomic: Boolean(value.atomic) };
+  },
+
+  async getPublishedMarCaseVersion(roomId: number): Promise<string | null> {
+    const { data, error } = await supabase.rpc('get_mar_published_case_version', { p_room_id: roomId });
+    if (error || !data || typeof data !== 'object') return null;
+    const value = data as { caseVersion?: unknown };
+    return typeof value.caseVersion === 'string' && value.caseVersion.trim() ? value.caseVersion : null;
+  },
+
+  async publishMarCaseVersion(roomId: number, requestedVersion?: string): Promise<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number }> {
+    const { data, error } = await supabase.rpc('publish_mar_case_version', {
+      p_room_id: roomId,
+      p_case_version: requestedVersion ?? null,
+    });
+    if (error) throw error;
+    const value = data as Partial<{ caseVersion: string; contentHash: string; orderCount: number; eventCount: number }> | null;
+    if (!value?.caseVersion || !value.contentHash) throw new Error('MAR version publication returned no immutable version.');
+    return { caseVersion: value.caseVersion, contentHash: value.contentHash, orderCount: Number(value.orderCount ?? 0), eventCount: Number(value.eventCount ?? 0) };
   },
 
   async saveMarHistory(

@@ -1,0 +1,38 @@
+MAR_NORMAL_MATERIALIZATION_V2_DISPOSABLE_RUN
+database: PostgreSQL 15.3, localhost-only disposable container mar-normal-manual-54359
+schema: 100009,100010,100011,100012,100013,100014,100015 applied transactionally per file for this local harness
+seed: North primary room; UofA explicitly allowed learner; one authored order with zero doses; one authored Given administration
+
+READINESS
+{"ready": true, "atomic": true, "baseReadiness": {"ready": true, "schemaVersion": 4, "functionVersion": 4, "atomicPersistence": true}, "oldMutatorsRevoked": true, "materializationVersion": 2, "requiresPublishedVersion": true}
+
+PUBLISH_AND_NEW_ASSIGNMENT
+{"reused": false, "eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v5", "contentHash": "e540f1cc4fac0a8bd56be0107029ae2bc4c7484f2184b8f214188f41b2a06c43"}
+{"eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v5", "contentHash": "e540f1cc4fac0a8bd56be0107029ae2bc4c7484f2184b8f214188f41b2a06c43", "assignmentId": "40000000-0000-0000-0000-000000000006"}
+
+EXACT_REPLAY
+same request/assignment returned the identical committed result
+
+CHANGED_ENVELOPE
+same request with changed effective date rejected: MAR_MATERIALIZATION_RETRY_MISMATCH
+
+DIFFERENT_REQUEST_EXISTING_ASSIGNMENT
+rejected: MAR_ASSIGNMENT_ALREADY_EXISTS
+
+READBACK
+MAR_V2_FIXTURE_PASS | assignments=1 | snapshots=1 | events=1 | operations=1
+
+LEARNER_SNAPSHOT
+frozen order snapshot rows: 1 (authenticated learner read)
+
+MISSING_PROFILE
+rejected: MAR_ADMIN_REQUIRED
+
+ANONYMOUS
+rejected: MAR_AUTH_REQUIRED
+
+UNLISTED_SCHOOL
+rejected: MAR_STUDENT_ROOM_UNAVAILABLE
+
+NOTE
+This is disposable source validation only. No production migration, function, assignment, attempt, pin, chart, or clinical record was changed.

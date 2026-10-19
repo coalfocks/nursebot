@@ -14,7 +14,6 @@ import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 import { assessOrdersConfig } from '../lib/ordersConfig';
 import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
-import { authoredMarCaseVersion } from '../lib/marMaterialization';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -334,7 +333,7 @@ export default function AssignmentManager() {
 
   const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
     const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
-    if (readinessError || !(readiness as { ready?: boolean } | null)?.ready) {
+    if (readinessError || !(readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null)?.ready || Number((readiness as { materializationVersion?: number } | null)?.materializationVersion) < 2) {
       const error = new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed MAR snapshot/materialization setup is required before creating a new assignment.');
       (error as Error & { code?: string }).code = 'MAR_NORMAL_MATERIALIZATION_NOT_READY';
       throw error;
@@ -587,6 +586,7 @@ export default function AssignmentManager() {
 
       // Create N x M assignments (each student gets each room)
       const assignments: PendingAssignmentCreate['assignments'] = [];
+      const publishedVersions = new Map<number, string>();
       const requestId = pendingAssignmentCreate?.requestId ?? crypto.randomUUID();
       activeRequestId = requestId;
       for (const studentId of studentsToAssign) {
@@ -623,17 +623,29 @@ export default function AssignmentManager() {
         let currentCaseMs = firstCaseMs;
         for (const [roomIndex, roomId] of scheduledRooms.entries()) {
           if (roomIndex > 0) currentCaseMs += gapMs[roomIndex - 1];
+          const numericRoomId = parseInt(roomId);
+          let publishedVersion = publishedVersions.get(numericRoomId);
+          if (!publishedVersion) {
+            const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: numericRoomId });
+            publishedVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+              ? (published as { caseVersion: string }).caseVersion
+              : '';
+            if (publishedError || !publishedVersion) {
+              throw new Error(`MAR_AUTHORED_VERSION_NOT_PUBLISHED: publish an authored Orders + MAR version for room ${numericRoomId} before creating an assignment.`);
+            }
+            publishedVersions.set(numericRoomId, publishedVersion);
+          }
           assignments.push({
             id: crypto.randomUUID(),
             student_id: studentId,
-            room_id: parseInt(roomId),
+            room_id: numericRoomId,
             assigned_by: user.id,
             status: 'assigned',
             effective_date: new Date(currentCaseMs).toISOString(),
             window_start: windowStartUTC,
             window_end: windowEndUTC,
             school_id: assignmentSchoolId,
-            case_key_version: authoredMarCaseVersion(parseInt(roomId)),
+            case_key_version: publishedVersion,
           });
         }
       }
