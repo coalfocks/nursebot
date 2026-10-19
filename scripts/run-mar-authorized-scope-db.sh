@@ -11,7 +11,12 @@ PORT="${MAR_SCOPE_PGPORT:-54341}"
 NAME="mar-scope-${PORT}"
 PASSWORD='mar-scope-local'
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+created_by_this_run=0
+cleanup() {
+  if [[ "$created_by_this_run" == 1 ]]; then
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+  fi
+}
 trap cleanup EXIT
 assert_hash() {
   local file="$1" expected="$2" actual
@@ -29,12 +34,14 @@ if docker ps -a --format '{{.Names}}' | grep -Fxq "$NAME"; then
   exit 2
 fi
 docker run -d --name "$NAME" -p "127.0.0.1:${PORT}:5432" -e POSTGRES_PASSWORD="$PASSWORD" postgres:15.3 >/dev/null
+created_by_this_run=1
 for _ in {1..60}; do
   if PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc 'select 1' >/dev/null 2>&1; then break; fi
   sleep 1
 done
 
 PG=(psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1)
+PG_TX=(psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -1 -v ON_ERROR_STOP=1)
 export PGPASSWORD="$PASSWORD"
 "${PG[@]}" <<'SQL'
 create extension if not exists pgcrypto;
@@ -67,8 +74,10 @@ SQL
 # Exercise the historical split mutators before the atomic upgrade. Their
 # authenticated execute grants are intentionally revoked by 100013 below.
 PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/mar_authorized_scope.sql >/tmp/mar-authorized-scope-$PORT.log
-"${PG[@]}" -f supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql >/dev/null
-"${PG[@]}" -f supabase/migrations/20261019100013_mar_revoke_split_mutators.sql >/dev/null
+# These two files are one reviewed rollout unit. --single-transaction means
+# readiness cannot become true with the atomic RPC installed but legacy
+# mutators still executable if the revocation fails.
+"${PG_TX[@]}" -f supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql -f supabase/migrations/20261019100013_mar_revoke_split_mutators.sql >/dev/null
 "${PG[@]}" <<'SQL'
 grant usage on schema public, auth to authenticated;
 grant authenticated to mar_scope_user;
