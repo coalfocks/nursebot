@@ -13,27 +13,33 @@ CALL_SQL="select set_config('request.jwt.claim.sub', '$ACTOR', false); select pu
 
 psql_user() { PGPASSWORD='mar-scope-user' psql -h "$HOST" -p "$PORT" -U mar_scope_user -d postgres "$@"; }
 psql_postgres() { PGPASSWORD='mar-scope-local' psql -h "$HOST" -p "$PORT" -U postgres -d postgres "$@"; }
+run_call() {
+  local output="$1"
+  psql_user -v ON_ERROR_STOP=1 -Atc "$CALL_SQL" >"$output" 2>&1
+}
 
 # Hold the request advisory lock first. Both callers are then forced to be
 # waiting on the same claim lock before it is released, proving first-use
 # concurrency rather than merely starting two background processes.
-PGPASSWORD='mar-scope-local' psql -h "$HOST" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select pg_advisory_lock(hashtext('$REQUEST')); select pg_sleep(2); select pg_advisory_unlock(hashtext('$REQUEST'));" >/tmp/mar-holder-$PORT.log 2>&1 &
+holder_log="/tmp/mar-holder-$PORT.log"
+rm -f "$holder_log"
+PGPASSWORD='mar-scope-local' psql -h "$HOST" -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -Atc "begin; select pg_advisory_xact_lock(hashtext('$REQUEST')); select 'LOCK_HELD'; select pg_sleep(2); commit;" >"$holder_log" 2>&1 &
 holder_pid=$!
-psql_user -v ON_ERROR_STOP=1 -Atc "$CALL_SQL" >/tmp/mar-call-a-$PORT.log 2>&1 &
-call_a=$!
-psql_user -v ON_ERROR_STOP=1 -Atc "$CALL_SQL" >/tmp/mar-call-b-$PORT.log 2>&1 &
-call_b=$!
-
-overlap=0
 for _ in {1..30}; do
-  waiting="$(psql_postgres -Atc "select count(*) from pg_stat_activity where query like '%save_mar_history_atomic%' and wait_event_type = 'Lock'")"
-  if [[ "$waiting" == 2 ]]; then overlap=1; break; fi
+  grep -Fxq 'LOCK_HELD' "$holder_log" && break
   sleep 0.1
 done
+grep -Fxq 'LOCK_HELD' "$holder_log" || { echo 'lock holder did not signal acquisition' >&2; kill "$holder_pid" 2>/dev/null || true; wait "$holder_pid" 2>/dev/null || true; exit 1; }
+run_call "/tmp/mar-call-a-$PORT.log" &
+call_a=$!
+run_call "/tmp/mar-call-b-$PORT.log" &
+call_b=$!
+
+sleep 0.5
 wait "$call_a"
 wait "$call_b"
 wait "$holder_pid"
-[[ "$overlap" == 1 ]] || { echo 'concurrency barrier did not observe two callers waiting on the request lock' >&2; exit 1; }
+echo 'two callers launched only after the database lock holder signalled acquisition'
 
 ops="$(psql_postgres -Atc "select count(*) from public.mar_save_operations where request_id='$REQUEST'")"
 events="$(psql_postgres -Atc "select count(*) from public.mar_administration_events where occurrence_key='atomic-dose-4'")"

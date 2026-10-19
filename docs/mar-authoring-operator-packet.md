@@ -10,6 +10,7 @@ On a disposable database, or production only after the operator verifies the led
 2. `20261019100010_mar_authorized_scope_materialization.sql`
 3. `20261019100011_mar_read_scope_and_versions.sql`
 4. `20261019100012_mar_atomic_snapshot_save.sql`
+5. `20261019100013_mar_revoke_split_mutators.sql`
 
 The first three are historical MAR files; `100012` is the new append-only atomic-save/preflight dependency. Do not replay any file already recorded in the target ledger. Exact source hashes on the reviewed branch:
 
@@ -17,7 +18,8 @@ The first three are historical MAR files; `100012` is the new append-only atomic
 100009  6f60888b3177dc750e0c8762c90ef0ecec62644f98299217570e3dc6b1555d88
 100010  d2ad577476c2d42daa88015786210abf8822c3c7f22aec1a95ada6e90c001a16
 100011  ce3ac9202ccd5a2e8aa0c19de1dfcc23035531a9b25d4c2352e1400356efe302
-100012  8d6007ff055bf8ce52f7c3f333169a66c16a9ad3e4dbd900a6f528d4c923dfa1
+100012  24e38096a83a8da0c368a1fd66f86ea1f8087f3c1e9e648088c7a1ea741efbc3
+100013  5f4a0461fbd681eabb58df0bfec348061ce2c3717fea365c6f66f287b3850ea8
 ```
 
 ## Disposable reproduction
@@ -34,11 +36,15 @@ The runner requires Bash 4+, Docker, and `psql`; it binds its disposable Postgre
 
 Observed disposable result on the reviewed source: prerequisite fixtures/backfill `2|2`; preflight `ready=true/schemaVersion=4/functionVersion=4/atomicPersistence=true`; same-ID concurrency `one operation/one event`; rollback `0|0|0`; MAR schedule suite `5 tests passed`; TypeScript, build, and focused ESLint passed.
 
+The successful redacted raw transcript is committed at
+`artifacts/mar_authorized_scope_upgrade_raw_20261019T122821Z.log`; it is the
+runner output for the exact five pinned migration bodies above, not a summary.
+
 ## Production stop/reconcile
 
-Before each file, verify the migration ledger and exact file SHA-256. Verify the prerequisite schema, `pgcrypto`, authenticated RPC execution grants, and expected school/assignment/patient/order backfill counts. Apply each file in its own `--single-transaction -v ON_ERROR_STOP=1` transaction, in the order above. Stop immediately on any error; do not rerun a partially applied file. Record the failing migration and reconcile its transaction/ledger state before any further action. After every file, re-read the ledger; after `100011`, inspect both actual `pg_policies` bodies; after `100012`, inspect RPC privileges and `get_mar_readiness()`.
+Before each file, verify the migration ledger and exact file SHA-256. Verify the prerequisite schema, `pgcrypto`, authenticated RPC execution grants, and expected school/assignment/patient/order backfill counts. Apply each file in its own `--single-transaction -v ON_ERROR_STOP=1` transaction, in the order above. Stop immediately on any error; do not rerun a partially applied file. Record the failing migration and reconcile its transaction/ledger state before any further action. After every file, re-read the ledger; after `100011`, inspect both actual `pg_policies` bodies; after `100012`, inspect atomic RPC privileges; after `100013`, inspect legacy-mutator revocations and `get_mar_readiness()`.
 
-After `100012`, verify that a failed atomic save leaves no snapshot, revision, event, or operation row; two first-use same-ID calls serialize and return one committed result; a same-request retry returns the original result only when the complete actor/scope/revision/payload envelope matches; a changed payload or revision with the same request ID is rejected; and a new case version requires an explicit preview/diff rather than overwriting the old snapshot. Keep the complete redacted runner log as an operator artifact; the committed harness output is a reproducible summary, not a substitute for that raw log.
+After `100013`, verify that the legacy mutators `save_mar_history(...)` and `create_mar_baseline_version(...)` return `permission denied` for authenticated callers; their read counterparts remain available. Verify that a failed atomic save after snapshot insertion leaves no snapshot, revision, event, or operation row; two first-use same-ID calls serialize and return one committed result; a same-request retry returns the original result only when the complete actor/scope/revision/payload envelope matches; a changed payload or revision with the same request ID is rejected; and a new case version requires an explicit preview/diff rather than overwriting the old snapshot. Keep the complete redacted runner log as an operator artifact; the committed harness output is a reproducible summary, not a substitute for that raw log.
 
 ## Code compatibility and rollback
 

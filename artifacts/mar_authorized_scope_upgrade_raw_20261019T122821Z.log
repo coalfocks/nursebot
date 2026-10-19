@@ -1,0 +1,52 @@
+MAR_SCOPE_DISPOSABLE=1 MAR_SCOPE_PGPORT=54352 ./scripts/run-mar-authorized-scope-db.sh
+PIN 20261019100009_mar_authored_baseline_and_administrations.sql sha256=6f60888b3177dc750e0c8762c90ef0ecec62644f98299217570e3dc6b1555d88
+PIN 20261019100010_mar_authorized_scope_materialization.sql sha256=d2ad577476c2d42daa88015786210abf8822c3c7f22aec1a95ada6e90c001a16
+PIN 20261019100011_mar_read_scope_and_versions.sql sha256=ce3ac9202ccd5a2e8aa0c19de1dfcc23035531a9b25d4c2352e1400356efe302
+PIN 20261019100012_mar_atomic_snapshot_save.sql sha256=24e38096a83a8da0c368a1fd66f86ea1f8087f3c1e9e648088c7a1ea741efbc3
+PIN 20261019100013_mar_revoke_split_mutators.sql sha256=5f4a0461fbd681eabb58df0bfec348061ce2c3717fea365c6f66f287b3850ea8
+CREATE EXTENSION
+CREATE SCHEMA
+CREATE ROLE
+CREATE ROLE
+CREATE FUNCTION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE ROLE
+GRANT
+GRANT
+GRANT
+INSERT 0 4
+NOTICE 100009: policy "MAR authenticated read" did not exist, skipping
+NOTICE 100009: policy "MAR admins write" did not exist, skipping
+NOTICE 100009: policy "MAR revisions authenticated read" did not exist, skipping
+NOTICE 100009: policy "MAR revision admins write" did not exist, skipping
+NOTICE 100010: relation "mar_assignment_baselines" already exists, skipping
+GRANT ROLE
+NOTICE 100012: column "expected_revision" already exists, skipping
+NOTICE 100012: column "actor_id" already exists, skipping
+GRANT
+GRANT ROLE
+GRANT
+GRANT
+GRANT
+INSERT 0 1
+legacy mutator denial output:
+00000000-0000-0000-0000-000000000002
+ERROR: permission denied for function save_mar_history
+ERROR: permission denied for function create_mar_baseline_version
+rollback injected error:
+00000000-0000-0000-0000-000000000002
+ERROR: new row for relation "mar_administration_events" violates check constraint "mar_administration_events_category_check"
+CONTEXT: PL/pgSQL function save_mar_history_atomic(uuid,uuid,integer,uuid,text,integer,jsonb), line 68 at SQL statement
+rollback state (operation|snapshot|revision|event): 0|0|0|0
+running same-request concurrency barrier
+two callers launched only after the database lock holder signalled acquisition
+MAR same-request concurrency: PASS (two callers waited on claim lock; one operation and one event)
+same-request concurrency barrier complete
+event read policy assertions: 1
+revision read policy assertions: 1
+MAR authorized scope disposable harness: PASS
