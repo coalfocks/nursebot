@@ -84,6 +84,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState(emptyManual);
   const [populate, setPopulate] = useState(defaultPopulate);
+  const [publishInFlight, setPublishInFlight] = useState(false);
 
   useEffect(() => {
     setPendingSave(readPendingMarSave(recoveryKey));
@@ -102,6 +103,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setExpandedMedicationKeys(new Set());
     setObsoleteKeys(new Set());
     setPreviewMessage(null);
+    setPublishInFlight(false);
     setPopulateOpen(false);
     setManualOpen(false);
     setManual(emptyManual);
@@ -132,7 +134,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     }
     const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
       emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => { if (isCurrent(request)) setError(message); }),
-      emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
+      scopeAssignmentId
+        ? emrApi.listMarMedicationOrders(patient.id, scopeAssignmentId, (message) => { if (isCurrent(request)) setError(message); })
+        : emrApi.listOrders(patient.id, undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
     ]);
@@ -252,6 +256,25 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     window.localStorage.removeItem(recoveryKey);
   };
 
+  const publishVersion = async () => {
+    if (!forceBaseline || !patient.roomId || dirty || pendingSave || publishInFlight) {
+      setSaveError('Save the current MAR preview and resolve any pending save before publishing a new immutable version.');
+      return;
+    }
+    setPublishInFlight(true);
+    setSaveError(null);
+    const request = capture();
+    try {
+      const published = await emrApi.publishMarCaseVersion(patient.roomId);
+      if (!isCurrent(request)) return;
+      setPreviewMessage(`Published ${published.caseVersion}: ${published.orderCount} medication orders and ${published.eventCount} administrations are frozen for future assignments.`);
+    } catch (publishError) {
+      if (isCurrent(request)) setSaveError(publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.');
+    } finally {
+      if (isCurrent(request)) setPublishInFlight(false);
+    }
+  };
+
   const addManual = () => {
     if (!patient.roomId || !manual.medicationName.trim()) return;
     const relativeOffsetHours = Number(manual.relativeOffsetHours);
@@ -351,7 +374,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> {adminContext ? 'Medication Administration Record' : 'Medications'}</CardTitle>
-            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>{forceBaseline && <Button variant="outline" onClick={() => void emrApi.publishMarCaseVersion(patient.roomId as number).then((published) => setPreviewMessage(`Published ${published.caseVersion}: ${published.orderCount} medication orders and ${published.eventCount} administrations are frozen for future assignments.`)).catch((publishError) => setSaveError(publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.'))}>Publish MAR version</Button>}<Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>{forceBaseline && <Button variant="outline" disabled={dirty || Boolean(pendingSave) || publishInFlight} onClick={() => void publishVersion()}>Publish MAR version</Button>}<Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
           {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}

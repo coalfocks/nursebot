@@ -8,6 +8,7 @@ const { api, profileState } = vi.hoisted(() => ({
     getMarReadiness: vi.fn(),
     listMarEvents: vi.fn(),
     listOrders: vi.fn(),
+    listMarMedicationOrders: vi.fn(),
     getMarHistoryRevision: vi.fn(),
     getMarBaselineVersion: vi.fn(),
     saveMarHistory: vi.fn(),
@@ -30,6 +31,7 @@ describe('MedicationAdministrationRecord scope fencing', () => {
     api.getMarReadiness.mockResolvedValue(true);
     api.listMarEvents.mockResolvedValue([]);
     api.listOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
+    api.listMarMedicationOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
     api.getMarHistoryRevision.mockResolvedValue(0);
     api.getMarBaselineVersion.mockResolvedValue(null);
   });

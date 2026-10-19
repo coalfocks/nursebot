@@ -995,22 +995,6 @@ export const emrApi = {
 
   async listOrders(patientId: string, assignmentId?: string, roomId?: number | null, onError?: (message: string) => void): Promise<MedicalOrder[]> {
     const targetRooms = await getRoomLineage(roomId);
-    let frozenOrders: MedicalOrder[] = [];
-    if (assignmentId) {
-      const { data: snapshot, error: snapshotError } = await supabase.rpc('get_mar_assignment_order_snapshot', {
-        p_assignment_id: assignmentId,
-      });
-      if (snapshotError) {
-        console.error('Error fetching pinned MAR order snapshot', snapshotError);
-        onError?.('Unable to load the pinned medication orders for this assignment. Refresh the chart and try again.');
-        return [];
-      }
-      if (!Array.isArray(snapshot)) {
-        onError?.('Pinned medication orders are unavailable for this assignment.');
-        return [];
-      }
-      frozenOrders = (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
-    }
     const { data, error } = await supabase
       .from('medical_orders')
       .select('*')
@@ -1028,16 +1012,35 @@ export const emrApi = {
       .map((row) => {
         return mapMedicalOrder(row, patientId);
       })
-      .filter((order) =>
-        assignmentId ? order.assignmentId === assignmentId : scopeMatchesContext(
-          order.overrideScope ?? 'baseline',
-          order.roomId ?? null,
-          targetRooms,
-          order.assignmentId ?? null,
-          assignmentId,
-        ),
-      );
-    return assignmentId ? [...frozenOrders, ...currentOrders] : currentOrders;
+      .filter((order) => scopeMatchesContext(
+        order.overrideScope ?? 'baseline',
+        order.roomId ?? null,
+        targetRooms,
+        order.assignmentId ?? null,
+        assignmentId,
+      ));
+    return currentOrders;
+  },
+
+  /**
+   * MAR-only frozen medication reader. General Orders/Labs/Imaging consumers
+   * must continue reading their own assignment-scoped orders, including
+   * legacy assignments that predate MAR snapshots.
+   */
+  async listMarMedicationOrders(patientId: string, assignmentId: string, onError?: (message: string) => void): Promise<MedicalOrder[]> {
+    const { data: snapshot, error } = await supabase.rpc('get_mar_assignment_order_snapshot', {
+      p_assignment_id: assignmentId,
+    });
+    if (error) {
+      console.error('Error fetching pinned MAR medication orders', error);
+      onError?.('Unable to load the pinned medication orders for this assignment. Refresh the chart and try again.');
+      return [];
+    }
+    if (!Array.isArray(snapshot)) {
+      onError?.('Pinned medication orders are unavailable for this assignment.');
+      return [];
+    }
+    return (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
   },
 
   async listMarEvents(

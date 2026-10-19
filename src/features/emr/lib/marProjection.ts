@@ -37,7 +37,9 @@ export function projectMedicationRows(
   });
   const normalizedSearch = search.trim().toLowerCase();
   orders
-    .filter((order) => categoryFilter === 'all' || medicationOrderCategory(order) === categoryFilter)
+    // Keep every authored order as a row. Category filtering applies to the
+    // resulting medication row, not to the order before its metadata is
+    // joined with administrations; otherwise a q4h PRN order disappears.
     .filter((order) => !normalizedSearch || order.orderName.toLowerCase().includes(normalizedSearch))
     .forEach((order) => {
       const row = grouped.get(order.id) ?? { administrations: [] };
@@ -96,5 +98,6 @@ export function projectMedicationRows(
       administrations: [...row.administrations].sort((a, b) => (b.relativeOffsetHours ?? -1) - (a.relativeOffsetHours ?? -1)),
       orderOnly: row.administrations.length === 0 && Boolean(row.order),
     };
-  }).sort((a, b) => a.representative.medicationName.localeCompare(b.representative.medicationName));
+  }).filter((row) => categoryFilter === 'all' || row.representative.category === categoryFilter)
+    .sort((a, b) => a.representative.medicationName.localeCompare(b.representative.medicationName));
 }
