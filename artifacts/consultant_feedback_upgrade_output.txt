@@ -1,5 +1,13 @@
-Redacted raw output from:
+This committed file is a redacted summary. The runner's complete PostgreSQL
+log is generated under CONSULTANT_UPGRADE_OUTPUT_DIR and must be retained as
+the execution artifact.
+
+Redacted summary from:
 CONSULTANT_UPGRADE_DISPOSABLE=1 CONSULTANT_UPGRADE_PGPORT=54331 ./scripts/run-consultant-feedback-upgrade-db.sh
+
+Prerequisites: Bash 4+, docker, git, psql, sha256sum; disposable PostgreSQL
+bind is 127.0.0.1 only. The runner asserts v4 preflight values; the two
+concurrency scripts synchronize starts with database barriers.
 
 PIN 20261019000000_consultant_message_transport.sql sha256=cdd01e0ac9f71e16556249dfd622ae6edafc202602c95295985bb1c03283edbe
 PIN 20261019043010_consultant_transport_contract.sql sha256=cbe55d5b32f7dd4a3abcafe128ed621d5e9e45b6f287f2007ec64fcc309b3b5b
@@ -17,10 +25,11 @@ APPLY 19083000
 BACKFILL COUNTS
 2|2
 1
-{"ready": true, "schemaVersion": 4, "functionVersion": 4, "atomicPersistence": true}
+PREFLIGHT ready=t schemaVersion=4 functionVersion=4 atomicPersistence=t
+ASSERT preflight passed
 
 feedback evaluator upgrade constraints passed
 consultant transport DB integration assertions passed
-concurrent activation passed: exactly one active version; fresh-connection status update rejected
-concurrent retry passed: one order, two messages
+concurrent activation passed: synchronized two-session start; exactly one active version; fresh-connection status update rejected
+concurrent retry passed: synchronized two-session start; one order, two messages
 PASS disposable upgrade runner

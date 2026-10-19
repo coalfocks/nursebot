@@ -5,6 +5,10 @@ if [[ ${CONSULTANT_UPGRADE_DISPOSABLE:-} != 1 ]]; then
   echo 'Refusing to run: set CONSULTANT_UPGRADE_DISPOSABLE=1 for disposable-only execution.' >&2
   exit 2
 fi
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo 'Refusing to run: Bash 4+ is required.' >&2
+  exit 2
+fi
 for command in docker git psql sha256sum; do command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 2; }; done
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -52,7 +56,7 @@ for name in "${!expected[@]}"; do
   echo "PIN $name sha256=$actual"
 done
 
-docker run -d --name "$container" -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=postgres -p "$port:5432" postgres:15.3 >/dev/null
+docker run -d --name "$container" -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=postgres -p "127.0.0.1:$port:5432" postgres:15.3 >/dev/null
 for _ in $(seq 1 30); do psql "postgresql://postgres:postgres@127.0.0.1:$port/postgres" -Atc 'select 1' >/dev/null 2>&1 && break; sleep 1; done
 DB_URL="postgresql://postgres:postgres@127.0.0.1:$port/postgres"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "create role anon nologin; create role authenticated nologin; create role service_role nologin; create role supabase_admin nologin; create role dashboard_user nologin; create role authenticator nologin;"
@@ -60,13 +64,21 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$repo_root/artifacts/consultant_feedback_u
 
 for name in 20261019000000_consultant_message_transport.sql 20261019043010_consultant_transport_contract.sql 20261019060000_atomic_consultant_transport_v2.sql 20261019073000_feedback_evaluator_studio.sql 20261019080000_qa_integrity_repairs.sql 20261019083000_consultant_transport_sequence_upgrade.sql; do
   echo "APPLY $name"
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$workdir/$name"
+  psql "$DB_URL" --single-transaction -v ON_ERROR_STOP=1 -f "$workdir/$name"
 done
 
 echo 'BACKFILL COUNTS'
 psql "$DB_URL" -At -c "select count(*) filter (where message_sequence is not null), count(*) filter (where request_receipt_at is not null) from public.consultant_chat_messages;"
 psql "$DB_URL" -At -c "select count(*) from pg_proc where oid = 'public.persist_consultant_response_v2(uuid,uuid,uuid,uuid,bigint,text,text,text,text,text,text,uuid)'::regprocedure;"
-psql "$DB_URL" -At -c 'select public.consultant_transport_preflight();'
+IFS='|' read -r preflight_ready preflight_schema preflight_function preflight_atomic < <(
+  psql "$DB_URL" -At -v ON_ERROR_STOP=1 -c "select (p->>'ready')::boolean, p->>'schemaVersion', p->>'functionVersion', (p->>'atomicPersistence')::boolean from (select public.consultant_transport_preflight() as p) q;"
+)
+echo "PREFLIGHT ready=$preflight_ready schemaVersion=$preflight_schema functionVersion=$preflight_function atomicPersistence=$preflight_atomic"
+[[ "$preflight_ready" == t && "$preflight_schema" == 4 && "$preflight_function" == 4 && "$preflight_atomic" == t ]] || {
+  echo 'STOP: v4 preflight assertion failed; reconcile before proceeding.' >&2
+  exit 1
+}
+echo 'ASSERT preflight passed'
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$repo_root/artifacts/consultant_feedback_upgrade_db_tests.sql"
 psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$repo_root/artifacts/consultant_transport_db_tests.sql"
 bash "$repo_root/artifacts/consultant_feedback_concurrent_activation.sh" "$DB_URL"
