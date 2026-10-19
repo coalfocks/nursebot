@@ -79,4 +79,27 @@ describe('MAR frozen medication routing', () => {
     await expect(emrApi.listOrders('patient-1', 'legacy-assignment', 7)).resolves.toMatchObject([{ id: 'legacy-med', dose: '10 mg' }]);
     expect(rpc).not.toHaveBeenCalled();
   });
+
+  it('fails closed on assignment metadata errors instead of treating a pinned contract as legacy', async () => {
+    const onError = vi.fn();
+    const mutableMedication = orderRow({ id: 'baseline-med', dose: '20 mg' });
+    const nonMedication = orderRow({ id: 'lab-order', category: 'Lab', order_name: 'CBC', dose: null });
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      if (table === 'student_room_assignments') return chain({ data: null, error: { message: 'network' } });
+      return chain({ data: [mutableMedication, nonMedication], error: null });
+    });
+
+    await expect(emrApi.listOrders('patient-1', 'assignment-1', 7, onError)).resolves.toEqual([
+      expect.objectContaining({ id: 'lab-order', category: 'Lab' }),
+    ]);
+    expect(onError).toHaveBeenCalledWith('Unable to resolve this assignment\'s order contract. Refresh the chart and try again.');
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('reads the composite Orders+MAR publication preview contract', async () => {
+    rpc.mockResolvedValue({ data: { revision: 2, contentHash: 'hash-v5', orderCount: 2, eventCount: 3 }, error: null });
+    await expect(emrApi.getMarPublicationPreview(7)).resolves.toEqual({ revision: 2, contentHash: 'hash-v5', orderCount: 2, eventCount: 3 });
+    expect(rpc).toHaveBeenCalledWith('get_mar_publication_preview', { p_room_id: 7 });
+  });
 });

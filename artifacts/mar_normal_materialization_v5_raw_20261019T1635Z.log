@@ -1,0 +1,382 @@
+PIN supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql sha256=6f60888b3177dc750e0c8762c90ef0ecec62644f98299217570e3dc6b1555d88
+PIN supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql sha256=d2ad577476c2d42daa88015786210abf8822c3c7f22aec1a95ada6e90c001a16
+PIN supabase/migrations/20261019100011_mar_read_scope_and_versions.sql sha256=ce3ac9202ccd5a2e8aa0c19de1dfcc23035531a9b25d4c2352e1400356efe302
+PIN supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql sha256=24e38096a83a8da0c368a1fd66f86ea1f8087f3c1e9e648088c7a1ea741efbc3
+PIN supabase/migrations/20261019100013_mar_revoke_split_mutators.sql sha256=5f4a0461fbd681eabb58df0bfec348061ce2c3717fea365c6f66f287b3850ea8
+PIN supabase/migrations/20261019100014_mar_normal_assignment_materialization.sql sha256=fac9d122c86545d4e9e6e68bbb424fb4d38f2dc0bcec5a70e53ce25d5b7f60b4
+PIN supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql sha256=5c16453d6cd3c883cd1b83cebeb3466a4f80473f71621289abd2496efc4f622a
+PIN supabase/migrations/20261019100016_mar_scope_and_publication_hardening.sql sha256=55757099739e277b2409f6d102a5b067db2ab863b0a601f74964eaeb9a686bf1
+PIN supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql sha256=e3ec5f606c6fd3437ab50f00647554f3a32c823d030625d9dfd68da4ba061853
+PIN supabase/migrations/20261019160000_mar_publication_contract_v5.sql sha256=edbabeb3b82346d456f5e04e3597aae001e5ec00aebd616f54d0fa73c21ae223
+Applying only the append-only reviewed dependency set to the disposable database.
+CREATE EXTENSION
+CREATE SCHEMA
+DO
+CREATE FUNCTION
+CREATE TABLE
+CREATE TABLE
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+INSERT 0 3
+INSERT 0 4
+INSERT 0 4
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+GRANT
+GRANT ROLE
+APPLY supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+GRANT
+CREATE POLICY
+ALTER TABLE
+ALTER TABLE
+GRANT
+REVOKE
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql:99: NOTICE:  policy "MAR authenticated read" for relation "public.mar_administration_events" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql:120: NOTICE:  policy "MAR admins write" for relation "public.mar_administration_events" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql:138: NOTICE:  policy "MAR revisions authenticated read" for relation "public.mar_history_revisions" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql:148: NOTICE:  policy "MAR revision admins write" for relation "public.mar_history_revisions" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+APPLY supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql
+DO
+ALTER TABLE
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql:21: NOTICE:  relation "mar_assignment_baselines" already exists, skipping
+CREATE TABLE
+ALTER TABLE
+GRANT
+DROP POLICY
+CREATE POLICY
+DROP INDEX
+CREATE INDEX
+REVOKE
+REVOKE
+DROP POLICY
+CREATE POLICY
+DROP POLICY
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+COMMENT
+APPLY supabase/migrations/20261019100011_mar_read_scope_and_versions.sql
+DROP POLICY
+CREATE POLICY
+DROP POLICY
+CREATE POLICY
+CREATE TABLE
+ALTER TABLE
+REVOKE
+GRANT
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+COMMENT
+APPLY 100012+100013 as one reviewed transaction unit
+CREATE TABLE
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql:19: NOTICE:  column "expected_revision" of relation "mar_save_operations" already exists, skipping
+ALTER TABLE
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql:20: NOTICE:  column "actor_id" of relation "mar_save_operations" already exists, skipping
+ALTER TABLE
+DO
+ALTER TABLE
+ALTER TABLE
+COMMENT
+COMMENT
+ALTER TABLE
+REVOKE
+GRANT
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+REVOKE
+REVOKE
+CREATE FUNCTION
+REVOKE
+GRANT
+APPLY 100014+100015+100016+155910+160000 as one coordinated materialization/publication unit
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+REVOKE
+GRANT
+CREATE POLICY
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+ALTER TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+REVOKE
+REVOKE
+REVOKE
+GRANT
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE TABLE
+ALTER TABLE
+REVOKE
+GRANT
+psql:/tmp/nursebot-8b3b/supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql:27: NOTICE:  policy "MAR publication operation scoped read" for relation "public.mar_publication_operations" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+CREATE FUNCTION
+REVOKE
+GRANT
+REVOKE
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+CREATE FUNCTION
+REVOKE
+GRANT
+INSERT 0 1
+READINESS
+{"ready": true, "atomic": true, "scopeVersion": 3, "baseReadiness": {"ready": true, "schemaVersion": 4, "functionVersion": 4, "atomicPersistence": true}, "oldMutatorsRevoked": true, "publicationVersion": 2, "materializationVersion": 5, "requiresPublishedVersion": true, "publicationPreviewVersion": 5}
+FIXTURE
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000002
+(1 row)
+
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000001
+(1 row)
+
+ set_config 
+------------
+ 1
+(1 row)
+
+SET
+DO
+                                                                                                      publish_mar_case_version_atomic                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"reused": false, "revision": 0, "requestId": "fda794e7-b6c2-4a50-b2de-5cdafa41325c", "eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v1", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e"}
+(1 row)
+
+              set_config              
+--------------------------------------
+ 436331b8-4dbe-4841-99e1-55cf490f53d3
+(1 row)
+
+              set_config              
+--------------------------------------
+ 04512f2a-7503-420f-9095-00b6f2fcf137
+(1 row)
+
+      set_config      
+----------------------
+ 2026-10-19T12:00:00Z
+(1 row)
+
+      set_config      
+----------------------
+ 2026-10-19T12:00:00Z
+(1 row)
+
+      set_config      
+----------------------
+ 2026-10-19T13:00:00Z
+(1 row)
+
+                                                                                  create_assignment_with_mar_materialization                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v1", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e", "assignmentId": "436331b8-4dbe-4841-99e1-55cf490f53d3"}
+(1 row)
+
+DO
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000001
+(1 row)
+
+DO
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000002
+(1 row)
+
+                                                                                  create_assignment_with_mar_materialization                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v1", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e", "assignmentId": "436331b8-4dbe-4841-99e1-55cf490f53d3"}
+(1 row)
+
+DO
+DO
+       result        | assignments | snapshots | events | operations 
+---------------------+-------------+-----------+--------+------------
+ MAR_V2_FIXTURE_PASS |           1 |         1 |      1 |          1
+(1 row)
+
+RESET
+PUBLICATION RETRY/REVISION FIXTURE
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000002
+(1 row)
+
+ set_config 
+------------
+ 1
+(1 row)
+
+              set_config              
+--------------------------------------
+ 697467cd-64d4-4907-9ed4-9e30ad77d4e4
+(1 row)
+
+DO
+SET
+                                                                                                      publish_mar_case_version_atomic                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"reused": false, "revision": 0, "requestId": "697467cd-64d4-4907-9ed4-9e30ad77d4e4", "eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v2", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e"}
+(1 row)
+
+                                                                                                      publish_mar_case_version_atomic                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"reused": false, "revision": 0, "requestId": "697467cd-64d4-4907-9ed4-9e30ad77d4e4", "eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v2", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e"}
+(1 row)
+
+RESET
+DO
+SET
+                                                                                     save_mar_history_atomic                                                                                     
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"revision": 1, "scopeKey": "10000000-0000-0000-0000-000000000001:1:baseline", "caseVersion": "baseline-v1", "contentHash": "c8f4232632cc5d37e59d466edab86ffe816b89ddc807041df8138b4ce5b2f125"}
+(1 row)
+
+                                                                                                      publish_mar_case_version_atomic                                                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"reused": false, "revision": 0, "requestId": "697467cd-64d4-4907-9ed4-9e30ad77d4e4", "eventCount": 1, "orderCount": 1, "caseVersion": "room-1-mar-v2", "contentHash": "98e3fa0f20d15b5f49f3e417a245ffa1519192cc1297e09c0f5e4bb993e59f0e"}
+(1 row)
+
+RESET
+DO
+SET
+DO
+RESET
+            result            | operations | authored_versions 
+------------------------------+------------+-------------------
+ MAR_PUBLICATION_FIXTURE_PASS |          1 |                 2
+(1 row)
+
+PUBLICATION STALE ORDERS+MAR PREVIEW FIXTURE
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000002
+(1 row)
+
+ set_config 
+------------
+ 1
+(1 row)
+
+              set_config              
+--------------------------------------
+ f96e0f57-1298-49e3-96dc-1b4ac5de1011
+(1 row)
+
+                                                                                                          set_config                                                                                                          
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"roomId": 1, "revision": 1, "patientId": "10000000-0000-0000-0000-000000000001", "eventCount": 2, "orderCount": 1, "contentHash": "853860c06272713547e3568e3d71b0c8a5b2f536ee8d39c7027550e159926a69", "contractVersion": 5}
+(1 row)
+
+ set_config 
+------------
+ 1
+(1 row)
+
+                            set_config                            
+------------------------------------------------------------------
+ 853860c06272713547e3568e3d71b0c8a5b2f536ee8d39c7027550e159926a69
+(1 row)
+
+UPDATE 1
+SET
+DO
+RESET
+DO
+              result              |                             old_hash                             |                           current_hash                           
+----------------------------------+------------------------------------------------------------------+------------------------------------------------------------------
+ MAR_PUBLICATION_STALE_ORDER_PASS | 853860c06272713547e3568e3d71b0c8a5b2f536ee8d39c7027550e159926a69 | fb07d60ca27602f5448243ef57ac7045e10a70002a5c8cb0e52862fd91895149
+(1 row)
+
+PUBLICATION CONCURRENCY
+two named publication callers observed waiting on the held room lock
+CALL_A 00000000-0000-0000-0000-000000000002 {"reused": false, "revision": 1, "requestId": "7d1ef093-5740-4639-aaad-e5f00180875e", "eventCount": 2, "orderCount": 1, "caseVersion": "room-1-mar-v3", "contentHash": "fb07d60ca27602f5448243ef57ac7045e10a70002a5c8cb0e52862fd91895149"} 
+CALL_B 00000000-0000-0000-0000-000000000002 {"reused": false, "revision": 1, "requestId": "7d1ef093-5740-4639-aaad-e5f00180875e", "eventCount": 2, "orderCount": 1, "caseVersion": "room-1-mar-v3", "contentHash": "fb07d60ca27602f5448243ef57ac7045e10a70002a5c8cb0e52862fd91895149"} 
+MAR publication concurrency: PASS (operations=1 versions=1 request_id=7d1ef093-5740-4639-aaad-e5f00180875e)
+AUTH_SCOPE_NEGATIVES
+00000000-0000-0000-0000-000000000099
+ERROR:  MAR_ADMIN_REQUIRED
+CONTEXT:  PL/pgSQL function create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone) line 9 at RAISE
+
+ERROR:  MAR_AUTH_REQUIRED
+CONTEXT:  PL/pgSQL function create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone) line 7 at RAISE
+00000000-0000-0000-0000-000000000002
+ERROR:  MAR_STUDENT_ROOM_UNAVAILABLE
+CONTEXT:  PL/pgSQL function create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamp with time zone,timestamp with time zone,timestamp with time zone) line 16 at RAISE
+SCHOOL_AVAILABILITY_SEMANTICS
+f|t|t
+LEGACY_MUTATOR_DENIAL
+SET
+00000000-0000-0000-0000-000000000002
+ERROR:  permission denied for function publish_mar_case_version
+RAW_LOG artifacts/mar_normal_materialization_v5_raw_20261019T1635Z.log

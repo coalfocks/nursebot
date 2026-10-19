@@ -1028,7 +1028,15 @@ export const emrApi = {
       .select('case_key_version')
       .eq('id', assignmentId)
       .maybeSingle();
-    if (assignmentMetaError || !assignmentMeta?.case_key_version) return currentOrders;
+    if (assignmentMetaError) {
+      console.error('Error resolving assignment MAR contract', assignmentMetaError);
+      onError?.('Unable to resolve this assignment\'s order contract. Refresh the chart and try again.');
+      // A failed contract lookup is not evidence that this is a legacy
+      // assignment. Keep own/non-medical rows readable, but never expose a
+      // mutable baseline medication as a pinned medication.
+      return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+    }
+    if (!assignmentMeta?.case_key_version) return currentOrders;
 
     const { data: snapshot, error: snapshotError } = await supabase.rpc('get_mar_assignment_order_snapshot', {
       p_assignment_id: assignmentId,
@@ -1140,6 +1148,19 @@ export const emrApi = {
     if (error || !data || typeof data !== 'object') return null;
     const value = data as { caseVersion?: unknown };
     return typeof value.caseVersion === 'string' && value.caseVersion.trim() ? value.caseVersion : null;
+  },
+
+  async getMarPublicationPreview(roomId: number): Promise<{ revision: number; contentHash: string; orderCount: number; eventCount: number }> {
+    const { data, error } = await supabase.rpc('get_mar_publication_preview', { p_room_id: roomId });
+    if (error) throw error;
+    const value = data as Partial<{ revision: number; contentHash: string; orderCount: number; eventCount: number }> | null;
+    if (!value?.contentHash) throw new Error('MAR publication preview is unavailable. Reload the authored Orders and MAR history.');
+    return {
+      revision: Number(value.revision ?? 0),
+      contentHash: value.contentHash,
+      orderCount: Number(value.orderCount ?? 0),
+      eventCount: Number(value.eventCount ?? 0),
+    };
   },
 
   async publishMarCaseVersion(

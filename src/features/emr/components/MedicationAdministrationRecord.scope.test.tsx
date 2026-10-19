@@ -11,6 +11,8 @@ const { api, profileState } = vi.hoisted(() => ({
     listMarMedicationOrders: vi.fn(),
     getMarHistoryRevision: vi.fn(),
     getMarBaselineVersion: vi.fn(),
+    getMarPublicationPreview: vi.fn(),
+    publishMarCaseVersion: vi.fn(),
     saveMarHistory: vi.fn(),
   },
   profileState: { current: { id: 'actor-a', role: 'school_admin', school_id: 'school-a', full_name: 'Author A' } },
@@ -34,6 +36,8 @@ describe('MedicationAdministrationRecord scope fencing', () => {
     api.listMarMedicationOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
     api.getMarHistoryRevision.mockResolvedValue(0);
     api.getMarBaselineVersion.mockResolvedValue(null);
+    api.getMarPublicationPreview.mockResolvedValue({ revision: 0, contentHash: 'preview-hash', orderCount: 1, eventCount: 0 });
+    api.publishMarCaseVersion.mockResolvedValue({ caseVersion: 'room-7-mar-v2', contentHash: 'preview-hash', orderCount: 1, eventCount: 0, revision: 0, requestId: 'publication-1' });
   });
 
   it('clears an open manual draft when patient scope changes', async () => {
@@ -56,5 +60,15 @@ describe('MedicationAdministrationRecord scope fencing', () => {
     view.rerender(<MedicationAdministrationRecord patient={patient('patient-b')} assignmentId="assignment-b" caseVersion="room-7-mar-v2" />);
     resolveEvents?.([{ id: 'old-event', patientId: 'patient-a', roomId: 7, assignmentId: 'assignment-a', orderId: null, caseVersion: 'room-7-mar-v1', occurrenceKey: 'old', relativeOffsetHours: 12, administeredAt: null, medicationName: 'Old', orderedDose: '1', administeredDose: '1', unit: 'mg', route: 'PO', frequency: 'once', category: 'one_time', status: 'Given', source: 'authored_scenario' }]);
     await waitFor(() => expect(view.queryByText('Old')).not.toBeInTheDocument());
+  });
+
+  it('binds publication to the composite preview and releases a confirmed revision conflict', async () => {
+    api.publishMarCaseVersion.mockRejectedValueOnce(new Error('MAR_PUBLICATION_REVISION_CONFLICT'));
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(api.publishMarCaseVersion).toHaveBeenCalledWith(7, expect.objectContaining({ expectedRevision: 0, expectedContentHash: 'preview-hash' })));
+    await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent(/No version was published/));
+    expect(view.queryByText(/awaiting confirmation/i)).not.toBeInTheDocument();
   });
 });

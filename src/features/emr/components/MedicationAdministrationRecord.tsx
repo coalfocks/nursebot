@@ -296,12 +296,18 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setPublishInFlight(true);
     setSaveError(null);
     const request = capture();
-    const publication = pendingPublication && pendingPublication.roomId === patient.roomId && pendingPublication.actorId === actorId
-      ? pendingPublication
-      : { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: revision, expectedContentHash: null };
-    setPendingPublication(publication);
-    window.localStorage.setItem(publicationKey, JSON.stringify(publication));
     try {
+      let publication = pendingPublication && pendingPublication.roomId === patient.roomId && pendingPublication.actorId === actorId
+        ? pendingPublication
+        : null;
+      if (!publication) {
+        const preview = await emrApi.getMarPublicationPreview(patient.roomId);
+        publication = { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: preview.revision, expectedContentHash: preview.contentHash };
+      } else if (!publication.expectedContentHash) {
+        throw new Error('This publication has no frozen Orders+MAR preview. Reload the authored case and start a new publication request.');
+      }
+      setPendingPublication(publication);
+      window.localStorage.setItem(publicationKey, JSON.stringify(publication));
       const published = await emrApi.publishMarCaseVersion(patient.roomId, publication);
       if (!isCurrent(request)) return;
       setRevision(published.revision);
@@ -309,10 +315,30 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       setPendingPublication(null);
       window.localStorage.removeItem(publicationKey);
     } catch (publishError) {
-      if (isCurrent(request)) setSaveError(publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.');
+      if (isCurrent(request)) {
+        const message = publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.';
+        if (/MAR_PUBLICATION_(REVISION|CONTENT)_CONFLICT/.test(message)) {
+          // These errors prove that no publication was committed. Do not keep
+          // an obsolete request frozen forever; the author can reload the
+          // current preview and deliberately start a new request.
+          setPendingPublication(null);
+          window.localStorage.removeItem(publicationKey);
+          setSaveError(`${message} No version was published. Reload the authored Orders and MAR preview before retrying.`);
+        } else {
+          // Unknown transport outcomes retain the exact request for Resume.
+          setSaveError(`${message} The outcome is unknown; resume the exact publication before editing.`);
+        }
+      }
     } finally {
       if (isCurrent(request)) setPublishInFlight(false);
     }
+  };
+
+  const reconcilePublication = () => {
+    setPendingPublication(null);
+    setPublishInFlight(false);
+    window.localStorage.removeItem(publicationKey);
+    setSaveError('Confirmed publication conflict cleared. Reload the authored Orders and MAR preview before starting a new request.');
   };
 
   const addManual = () => {
@@ -422,7 +448,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
           {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}
-          {pendingPublication && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">A MAR publication is awaiting confirmation. Resume the exact publication before editing or saving new case content.</p>}
+          {pendingPublication && adminContext && <div role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p>A MAR publication is awaiting confirmation. Resume the exact publication before editing or saving new case content.</p><Button className="mt-2" size="sm" variant="outline" onClick={reconcilePublication}>Reload preview / reconcile</Button></div>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && (

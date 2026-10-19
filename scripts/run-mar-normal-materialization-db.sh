@@ -5,6 +5,10 @@ set -euo pipefail
 [[ "${MAR_NORMAL_DISPOSABLE:-}" == 1 ]] || { echo 'Refusing without MAR_NORMAL_DISPOSABLE=1' >&2; exit 2; }
 command -v psql >/dev/null || { echo 'psql required' >&2; exit 2; }
 : "${MAR_NORMAL_DATABASE_URL:?Set MAR_NORMAL_DATABASE_URL to an isolated disposable PostgreSQL URL}"
+: "${MAR_NORMAL_DISPOSABLE_ID:?Set MAR_NORMAL_DISPOSABLE_ID to an isolated fixture identity (for example mar-normal-v4-<run>)}"
+[[ "$MAR_NORMAL_DISPOSABLE_ID" =~ ^mar-normal-[a-z0-9-]+$ ]] || { echo 'Refusing non-disposable fixture identity' >&2; exit 2; }
+db_host="$(printf '%s' "$MAR_NORMAL_DATABASE_URL" | sed -E 's#^[^:]+://##; s#^[^@]*@##; s#[:/?].*$##')"
+[[ "$db_host" == '127.0.0.1' || "$db_host" == 'localhost' ]] || { echo 'Refusing non-local database host for disposable runner' >&2; exit 2; }
 MAR_NORMAL_ADMIN_SUB="${MAR_NORMAL_ADMIN_SUB:-00000000-0000-0000-0000-000000000002}"
 MAR_NORMAL_STUDENT_SUB="${MAR_NORMAL_STUDENT_SUB:-00000000-0000-0000-0000-000000000001}"
 MAR_NORMAL_UNLISTED_SUB="${MAR_NORMAL_UNLISTED_SUB:-00000000-0000-0000-0000-000000000003}"
@@ -30,6 +34,7 @@ assert_hash supabase/migrations/20261019100014_mar_normal_assignment_materializa
 assert_hash supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql 5c16453d6cd3c883cd1b83cebeb3466a4f80473f71621289abd2496efc4f622a
 assert_hash supabase/migrations/20261019100016_mar_scope_and_publication_hardening.sql 55757099739e277b2409f6d102a5b067db2ab863b0a601f74964eaeb9a686bf1
 assert_hash supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql e3ec5f606c6fd3437ab50f00647554f3a32c823d030625d9dfd68da4ba061853
+assert_hash supabase/migrations/20261019160000_mar_publication_contract_v5.sql edbabeb3b82346d456f5e04e3597aae001e5ec00aebd616f54d0fa73c21ae223
 
 echo 'Applying only the append-only reviewed dependency set to the disposable database.'
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root_dir/supabase/tests/mar_normal_materialization_schema.sql"
@@ -45,16 +50,19 @@ echo 'APPLY 100012+100013 as one reviewed transaction unit'
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -1 \
   -f "$root_dir/supabase/migrations/20261019100012_mar_atomic_snapshot_save.sql" \
   -f "$root_dir/supabase/migrations/20261019100013_mar_revoke_split_mutators.sql"
-echo 'APPLY 100014+100015+100016+100017 as one coordinated materialization/publication unit'
+echo 'APPLY 100014+100015+100016+155910+160000 as one coordinated materialization/publication unit'
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -1 \
   -f "$root_dir/supabase/migrations/20261019100014_mar_normal_assignment_materialization.sql" \
   -f "$root_dir/supabase/migrations/20261019100015_mar_materialization_scope_and_snapshot_reader.sql" \
   -f "$root_dir/supabase/migrations/20261019100016_mar_scope_and_publication_hardening.sql" \
-  -f "$root_dir/supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql"
+  -f "$root_dir/supabase/migrations/20261019155910_mar_publication_idempotency_and_order_merge.sql" \
+  -f "$root_dir/supabase/migrations/20261019160000_mar_publication_contract_v5.sql"
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$root_dir/supabase/tests/mar_normal_materialization_seed.sql"
 
 echo 'READINESS'
-psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "select public.get_mar_normal_materialization_readiness();"
+readiness_json="$(psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "select public.get_mar_normal_materialization_readiness();")"
+echo "$readiness_json"
+[[ "$readiness_json" == *'"ready": true'* && "$readiness_json" == *'"materializationVersion": 5'* && "$readiness_json" == *'"publicationPreviewVersion": 5'* ]] || { echo 'readiness contract assertion failed' >&2; exit 1; }
 echo 'FIXTURE'
 assignment_id="$(uuidgen)"
 request_id="$(uuidgen)"
@@ -66,6 +74,10 @@ echo 'PUBLICATION RETRY/REVISION FIXTURE'
 psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v admin_sub="$MAR_NORMAL_ADMIN_SUB" -v room_id="$MAR_NORMAL_ROOM_ID" \
   -f "$root_dir/supabase/tests/mar_publication_idempotency.sql"
+echo 'PUBLICATION STALE ORDERS+MAR PREVIEW FIXTURE'
+psql "$MAR_NORMAL_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -v admin_sub="$MAR_NORMAL_ADMIN_SUB" -v room_id="$MAR_NORMAL_ROOM_ID" \
+  -f "$root_dir/supabase/tests/mar_publication_stale_order.sql"
 echo 'PUBLICATION CONCURRENCY'
 MAR_NORMAL_ROOM_ID="$MAR_NORMAL_ROOM_ID" MAR_NORMAL_ADMIN_SUB="$MAR_NORMAL_ADMIN_SUB" \
   bash "$root_dir/scripts/run-mar-publication-concurrent.sh"
