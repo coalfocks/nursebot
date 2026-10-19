@@ -80,6 +80,55 @@ describe('MAR frozen medication routing', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
+  it('does not query assignment metadata for baseline room authoring', async () => {
+    const baselineMedication = orderRow({ id: 'baseline-med', dose: '10 mg' });
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      return chain({ data: [baselineMedication], error: null });
+    });
+
+    await expect(emrApi.listOrders('patient-1', undefined, 7)).resolves.toMatchObject([{ id: 'baseline-med', dose: '10 mg' }]);
+    expect(from).not.toHaveBeenCalledWith('student_room_assignments');
+  });
+
+  it('fails closed when receipt or authored-version lookup errors', async () => {
+    const onError = vi.fn();
+    const mutableMedication = orderRow({ id: 'baseline-med', dose: '20 mg' });
+    const ownLearnerMedication = orderRow({ id: 'learner-med', dose: '5 mg', assignment_id: 'assignment-1' });
+    const nonMedication = orderRow({ id: 'baseline-lab', category: 'Lab', order_name: 'CBC' });
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      if (table === 'student_room_assignments') return chain({ data: { case_key_version: 'room-7-mar-v2' }, error: null });
+      if (table === 'mar_assignment_materialization_operations') return chain({ data: null, error: { message: 'receipt unavailable' } });
+      return chain({ data: [mutableMedication, ownLearnerMedication, nonMedication], error: null });
+    });
+
+    await expect(emrApi.listOrders('patient-1', 'assignment-1', 7, onError)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'learner-med', dose: '5 mg' }),
+      expect.objectContaining({ id: 'baseline-lab', orderName: 'CBC' }),
+    ]));
+    await expect(emrApi.listOrders('patient-1', 'assignment-1', 7, onError)).resolves.not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'baseline-med' })]));
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('MAR materialization'));
+  });
+
+  it('does not treat authored-version query errors as legacy', async () => {
+    const onError = vi.fn();
+    const mutableMedication = orderRow({ id: 'baseline-med', dose: '20 mg' });
+    const nonMedication = orderRow({ id: 'baseline-lab', category: 'Lab', order_name: 'CBC' });
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      if (table === 'student_room_assignments') return chain({ data: { case_key_version: 'room-7-mar-v2' }, error: null });
+      if (table === 'mar_assignment_materialization_operations') return chain({ data: null, error: null });
+      if (table === 'mar_authored_case_versions') return chain({ data: null, error: { message: 'version unavailable' } });
+      return chain({ data: [mutableMedication, nonMedication], error: null });
+    });
+
+    await expect(emrApi.listOrders('patient-1', 'assignment-1', 7, onError)).resolves.toEqual([
+      expect.objectContaining({ id: 'baseline-lab', orderName: 'CBC' }),
+    ]);
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('authored MAR version'));
+  });
+
   it('does not treat a non-MAR case key as a frozen medication receipt', async () => {
     const legacyMedication = orderRow({ id: 'legacy-med', dose: '20 mg' });
     from.mockImplementation((table: string) => {

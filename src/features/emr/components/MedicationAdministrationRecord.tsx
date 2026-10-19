@@ -40,6 +40,8 @@ interface PendingMarPublication {
   actorId: string;
   expectedRevision: number;
   expectedContentHash: string | null;
+  /** false means only a preview was captured; true means the RPC was sent. */
+  submitted?: boolean;
 }
 
 const marPayloadHash = (events: MarAdministrationEvent[]) => JSON.stringify(events);
@@ -56,7 +58,11 @@ const readPendingMarPublication = (key: string): PendingMarPublication | null =>
   if (typeof window === 'undefined') return null;
   try {
     const value = JSON.parse(window.localStorage.getItem(key) ?? 'null') as PendingMarPublication | null;
-    return value && typeof value.requestId === 'string' && typeof value.roomId === 'number' && typeof value.expectedRevision === 'number' ? value : null;
+    if (!value || typeof value.requestId !== 'string' || typeof value.roomId !== 'number' || typeof value.expectedRevision !== 'number') return null;
+    // Records written before the explicit two-step capture marker represent an
+    // already-submitted/unknown operation. Treat them conservatively as
+    // submitted so reload cannot cancel a possibly committed publication.
+    return { ...value, submitted: value.submitted !== false };
   } catch {
     return null;
   }
@@ -303,7 +309,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       if (!publication) {
         const preview = await emrApi.getMarPublicationPreview(patient.roomId);
         if (!isCurrent(request)) return;
-        publication = { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: preview.revision, expectedContentHash: preview.contentHash };
+        publication = { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: preview.revision, expectedContentHash: preview.contentHash, submitted: false };
         // Capture the exact saved Orders+MAR identity first. Publication is a
         // deliberate second action, so an edit made before the click cannot
         // be silently adopted by a fresh preview.
@@ -319,6 +325,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       setPendingPublication(publication);
       window.localStorage.setItem(publicationKey, JSON.stringify(publication));
       if (!isCurrent(request)) return;
+      publication = { ...publication, submitted: true };
+      setPendingPublication(publication);
+      window.localStorage.setItem(publicationKey, JSON.stringify(publication));
       const published = await emrApi.publishMarCaseVersion(patient.roomId, publication);
       if (!isCurrent(request)) return;
       setRevision(published.revision);
@@ -347,17 +356,31 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   const reconcilePublication = async () => {
     if (!pendingPublication) return;
-    try {
-      const status = await emrApi.getMarPublicationStatus(pendingPublication.requestId);
-      if (status.committed) {
-        setSaveError('This publication already committed. Reload the authored case before editing or publishing another version.');
-        return;
-      }
+    const request = capture();
+    // A preview that has never been submitted is safe to cancel. It is not an
+    // unknown outcome and must not be confused with an operation receipt.
+    if (!pendingPublication.submitted) {
+      if (!isCurrent(request)) return;
       setPendingPublication(null);
       setPublishInFlight(false);
       window.localStorage.removeItem(publicationKey);
-      setSaveError('No committed publication was found. Reload the authored Orders and MAR preview before starting a new request.');
+      setSaveError('The captured preview was cancelled. Reload the authored Orders and MAR history before starting a new publication.');
+      return;
+    }
+    try {
+      const status = await emrApi.getMarPublicationStatus(pendingPublication.requestId);
+      if (!isCurrent(request)) return;
+      if (status.committed) {
+        setPendingPublication(null);
+        window.localStorage.removeItem(publicationKey);
+        setSaveError('This publication already committed. Reload the authored case before editing or publishing another version.');
+        return;
+      }
+      // A missing row is not authoritative: the operation may still be
+      // uncommitted, in flight, or hidden by RLS. Preserve the same identity.
+      setSaveError('Publication outcome is not yet authoritative. Resume the same request; do not start a new publication.');
     } catch (error) {
+      if (!isCurrent(request)) return;
       setSaveError(`Publication outcome is still unknown: ${marRpcErrorMessage(error)} Resume the same request.`);
     }
   };

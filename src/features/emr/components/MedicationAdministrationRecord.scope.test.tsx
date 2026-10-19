@@ -33,6 +33,7 @@ const patient = (id: string): Patient => ({
 describe('MedicationAdministrationRecord scope fencing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
     profileState.current = { id: 'actor-a', role: 'school_admin', school_id: 'school-a', full_name: 'Author A' };
     api.getMarNormalMaterializationReadiness.mockResolvedValue({ ready: true, materializationVersion: 5, publicationPreviewVersion: 5, atomic: true });
     api.listMarEvents.mockResolvedValue([]);
@@ -66,6 +67,13 @@ describe('MedicationAdministrationRecord scope fencing', () => {
     await waitFor(() => expect(view.queryByText('Old')).not.toBeInTheDocument());
   });
 
+  it('renders current scoped medication data after deferred event and order reads settle', async () => {
+    profileState.current = { id: 'learner-a', role: 'student', school_id: 'school-a', full_name: 'Learner A' };
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByText('Medication A')).toBeInTheDocument());
+    expect(view.queryByText(/unable to load mar history/i)).not.toBeInTheDocument();
+  });
+
   it('binds publication to the composite preview and releases a confirmed revision conflict', async () => {
     api.publishMarCaseVersion.mockRejectedValueOnce({ message: 'MAR_PUBLICATION_REVISION_CONFLICT', code: 'P0001' });
     const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
@@ -90,6 +98,48 @@ describe('MedicationAdministrationRecord scope fencing', () => {
     fireEvent.click(view.getByRole('button', { name: /reload preview/i }));
     await waitFor(() => expect(view.getByText(/outcome is still unknown/i)).toBeInTheDocument());
     expect(window.localStorage.length).toBeGreaterThan(0);
+  });
+
+  it('does not clear a submitted publication when status has no visible receipt row', async () => {
+    api.publishMarCaseVersion.mockRejectedValueOnce(new Error('Failed to fetch'));
+    api.getMarPublicationStatus.mockResolvedValueOnce({ committed: false });
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByText(/outcome is unknown/i)).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /reload preview/i }));
+    await waitFor(() => expect(view.getByText(/not yet authoritative/i)).toBeInTheDocument());
+    expect(window.localStorage.length).toBeGreaterThan(0);
+    expect(view.getByText(/awaiting confirmation/i)).toBeInTheDocument();
+  });
+
+  it('cancels a captured but never-submitted preview without querying a receipt', async () => {
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByText(/preview captured/i)).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /reload preview/i }));
+    await waitFor(() => expect(view.getByText(/captured preview was cancelled/i)).toBeInTheDocument());
+    expect(api.getMarPublicationStatus).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+  });
+
+  it('does not apply an old reconciliation result after the publication scope changes', async () => {
+    let resolveStatus: ((value: { committed: boolean }) => void) | undefined;
+    api.publishMarCaseVersion.mockRejectedValueOnce(new Error('Failed to fetch'));
+    api.getMarPublicationStatus.mockImplementationOnce(() => new Promise((resolve) => { resolveStatus = resolve; }));
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByText(/outcome is unknown/i)).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /reload preview/i }));
+    view.rerender(<MedicationAdministrationRecord patient={patient('patient-b')} forceBaseline />);
+    resolveStatus?.({ committed: true });
+    await waitFor(() => expect(view.queryByText(/already committed/i)).not.toBeInTheDocument());
   });
 
   it('fails closed for the v4 partial upgrade until the publication-preview contract is present', async () => {

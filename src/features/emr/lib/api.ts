@@ -1031,6 +1031,11 @@ export const emrApi = {
         order.assignmentId ?? null,
         assignmentId,
       ));
+    // Room/EMR authoring and other baseline consumers intentionally have no
+    // assignment contract. Do not query student_room_assignments with an
+    // undefined id; that is an invalid PostgREST request and can hide the
+    // authored baseline orders.
+    if (!assignmentId) return currentOrders;
     const { data: assignmentMeta, error: assignmentMetaError } = await supabase
       .from('student_room_assignments')
       .select('case_key_version')
@@ -1050,7 +1055,13 @@ export const emrApi = {
       .select('assignment_id,published_content_hash')
       .eq('assignment_id', assignmentId)
       .maybeSingle();
-    if (receiptError || !receipt) {
+    if (receiptError) {
+      // A failed receipt lookup is not evidence that this is a legacy case.
+      // Never fall back to mutable medication metadata for a pinned contract.
+      onError?.('Unable to verify this assignment\'s MAR materialization. Refresh the chart and try again.');
+      return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+    }
+    if (!receipt) {
       // A non-MAR legacy case key has no authored MAR version. Preserve its
       // established Orders behavior; a published MAR version without a
       // materialization receipt is instead an incomplete new contract.
@@ -1060,7 +1071,11 @@ export const emrApi = {
         .eq('room_id', roomId ?? -1)
         .eq('case_version', assignmentMeta.case_key_version)
         .maybeSingle();
-      if (authoredVersionError || !authoredVersion) return currentOrders;
+      if (authoredVersionError) {
+        onError?.('Unable to resolve this assignment\'s authored MAR version. Refresh the chart and try again.');
+        return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+      }
+      if (!authoredVersion) return currentOrders;
       onError?.('Pinned medication orders are unavailable until this assignment has a MAR materialization receipt.');
       return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
     }
