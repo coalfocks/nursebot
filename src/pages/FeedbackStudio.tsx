@@ -14,6 +14,14 @@ type Config = {
   created_at: string;
 };
 type Room = { id: number; room_number: string; expected_diagnosis?: string | null };
+const ANCHOR_KEYS = [
+  'focused_information_gathering',
+  'closed_loop_team_communication',
+  'efficiency_deduction',
+  'orders_monitoring_quality',
+  'clinical_reasoning_documentation',
+  'safety_deduction',
+] as const;
 
 // The generated database types predate this additive migration.
 // Keep the narrow adapter local until generated types are refreshed.
@@ -32,6 +40,8 @@ export default function FeedbackStudio() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { prompt: string; anchors: string }>>({});
+  const draftKey = scope === 'global' ? 'global' : `room:${roomId || 'unselected'}`;
 
   const visibleConfigs = useMemo(
     () => configs.filter((item) => item.scope === scope && (scope === 'global' || item.room_id === Number(roomId))),
@@ -59,27 +69,43 @@ export default function FeedbackStudio() {
     setSelectedId(selected.id);
     setPrompt(selected.evaluator_prompt ?? '');
     setAnchors(JSON.stringify(selected.scoring_anchors ?? {}, null, 2));
-  }, [selected]);
+  }, [selected?.id]);
+  useEffect(() => {
+    if (selected) return;
+    setSelectedId('');
+    setPrompt(drafts[draftKey]?.prompt ?? '');
+    setAnchors(drafts[draftKey]?.anchors ?? '');
+    setPreview(null);
+  }, [draftKey, selected?.id, drafts]);
+
+  const rememberDraft = (nextPrompt: string, nextAnchors: string) => {
+    setDrafts((current) => ({ ...current, [draftKey]: { prompt: nextPrompt, anchors: nextAnchors } }));
+  };
 
   const parseAnchors = () => {
-    try { return JSON.parse(anchors) as Record<string, unknown>; }
-    catch { throw new Error('Scoring anchors must be valid JSON.'); }
+    let parsed: unknown;
+    try { parsed = JSON.parse(anchors); } catch { throw new Error('Scoring anchors must be valid JSON.'); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Scoring anchors must be a JSON object.');
+    const missing = ANCHOR_KEYS.filter((key) => {
+      const value = (parsed as Record<string, unknown>)[key];
+      return value == null || (typeof value === 'string' && !value.trim()) || (typeof value !== 'string' && (typeof value !== 'object' || Array.isArray(value)));
+    });
+    if (missing.length) throw new Error(`Scoring anchors are missing the six-component contract: ${missing.join(', ')}.`);
+    if (!prompt.trim()) throw new Error('Evaluator prompt cannot be empty.');
+    return parsed as Record<string, unknown>;
   };
 
   const saveDraft = async () => {
     setSaving(true); setError(''); setNotice('');
     try {
-      const nextVersion = Math.max(0, ...visibleConfigs.map((item) => item.version)) + 1;
-      const result = await configsTable().insert({
-        scope,
-        room_id: scope === 'room' ? Number(roomId) : null,
-        version: nextVersion,
-        status: 'draft',
-        evaluator_prompt: prompt,
-        scoring_anchors: parseAnchors(),
-      }).select().single();
+      const result = await supabase.rpc('create_feedback_evaluator_draft' as never, {
+        p_scope: scope,
+        p_room_id: scope === 'room' ? Number(roomId) : null,
+        p_evaluator_prompt: prompt.trim(),
+        p_scoring_anchors: parseAnchors(),
+      } as never);
       if (result.error) throw result.error;
-      setNotice(`Saved draft version ${nextVersion}. Activate it only after preview.`);
+      setNotice(`Saved draft version ${result.data.version}. Activate it only after synthetic preview.`);
       await load();
       setSelectedId(result.data.id);
     } catch (value) {
@@ -112,9 +138,9 @@ export default function FeedbackStudio() {
             <div className="border-t pt-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><History className="h-4 w-4" />Versions</h2><div className="mt-2 space-y-2">{visibleConfigs.length === 0 ? <p className="text-xs text-slate-500">No saved versions.</p> : visibleConfigs.map((item) => <button type="button" key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full rounded border p-2 text-left text-xs ${selected?.id === item.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}><span className="font-semibold">v{item.version}</span><span className="ml-2 uppercase text-slate-500">{item.status}</span><span className="mt-1 block text-slate-500">{new Date(item.created_at).toLocaleString()}</span></button>)}</div></div>
           </aside>
           <div className="space-y-6">
-            <section className="rounded-lg border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold text-slate-900">Evaluator prompt</h2><p className="mt-1 text-xs text-slate-500">Codex supplies the evaluator text. This field is separate from patient/consultant room prompts.</p></div>{selected && <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium">Current selection v{selected.version} · {selected.status}</span>}</div><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="Paste the evaluator instructions here…" /></section>
-            <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Scoring anchors</h2><p className="mt-1 text-xs text-slate-500">Keep the six component ranges and anchor language here as JSON for exact versioned read-back.</p><textarea value={anchors} onChange={(event) => setAnchors(event.target.value)} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="{ &quot;communication&quot;: { ... } }" /></section>
-            <div className="flex flex-wrap justify-end gap-3"><button type="button" onClick={() => { try { setPreview(parseAnchors()); setNotice('Preview valid: evaluator prompt and scoring anchors are ready to pin.'); setError(''); } catch (value) { setError(value instanceof Error ? value.message : 'Invalid anchors.'); } }} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm"><Eye className="h-4 w-4" />Preview</button><button type="button" disabled={saving || (scope === 'room' && !roomId)} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><Save className="h-4 w-4" />Save new version</button>{selected && selected.status !== 'active' && <button type="button" disabled={saving} onClick={() => void activate(selected.id)} className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Pin v{selected.version}</button>}</div>
+            <section className="rounded-lg border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold text-slate-900">Evaluator prompt</h2><p className="mt-1 text-xs text-slate-500">Codex supplies the evaluator text. This field is separate from patient/consultant room prompts.</p></div>{selected && <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium">Current selection v{selected.version} · {selected.status}</span>}</div><textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); rememberDraft(event.target.value, anchors); }} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="Paste the evaluator instructions here…" /></section>
+            <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Scoring anchors</h2><p className="mt-1 text-xs text-slate-500">Keep the six component ranges and anchor language here as JSON for exact versioned read-back.</p><textarea value={anchors} onChange={(event) => { setAnchors(event.target.value); rememberDraft(prompt, event.target.value); }} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="{ &quot;focused_information_gathering&quot;: { ... } }" /></section>
+            <div className="flex flex-wrap justify-end gap-3"><button type="button" onClick={() => { try { const parsed = parseAnchors(); setPreview({ fixture: 'synthetic-evaluator-input-v1', prompt: prompt.trim(), scoring_anchors: parsed, evidence: ['synthetic.patient-message.1', 'synthetic.order.1', 'synthetic.progress-note.1'] }); setNotice('Synthetic preview valid: prompt and all six anchors are ready to pin.'); setError(''); } catch (value) { setError(value instanceof Error ? value.message : 'Invalid evaluator configuration.'); } }} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm"><Eye className="h-4 w-4" />Synthetic preview</button><button type="button" disabled={saving || (scope === 'room' && !roomId)} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><Save className="h-4 w-4" />Save new version</button>{selected && selected.status !== 'active' && <button type="button" disabled={saving} onClick={() => void activate(selected.id)} className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Pin v{selected.version}</button>}</div>
             {preview && <section className="rounded-lg border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between"><h3 className="font-semibold text-blue-950">Preview of pinned evaluator input</h3><button type="button" className="text-xs text-blue-800 underline" onClick={() => setPreview(null)}>Close preview</button></div><p className="mt-3 whitespace-pre-wrap text-sm text-blue-950">{prompt || 'No evaluator prompt authored yet.'}</p><pre className="mt-3 overflow-x-auto rounded bg-white p-3 text-xs text-slate-700">{JSON.stringify(preview, null, 2)}</pre></section>}
           </div>
         </section>

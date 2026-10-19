@@ -17,6 +17,35 @@ const sanitizeFeedbackTree = (value: unknown): unknown => {
 };
 
 const emptyEvaluator = { id: null, version: null, evaluator_prompt: '', scoring_anchors: {} };
+const schemaNotReady = (detail: string): Error => new Error(`FEEDBACK_SCHEMA_NOT_READY: ${detail}. Apply the reviewed evaluator/integrity migrations, then retry.`);
+
+const assertFeedbackSchemaReady = async (client: any) => {
+  const probes = await Promise.all([
+    client.from('feedback_evaluator_configs').select('id').limit(1),
+    client.from('consultant_chat_messages').select('request_receipt_at, message_sequence').limit(1),
+    client.from('medical_orders').select('result_failure_reason, result_attempt_key, result_generation_status').limit(1),
+  ]);
+  const failed = probes.find((probe) => probe.error);
+  if (failed) throw schemaNotReady(failed.error.message);
+};
+
+const hasValidEvaluationShape = (raw: Record<string, unknown>) => {
+  const communication = raw.communication_breakdown as Record<string, unknown> | undefined;
+  const reasoning = (raw.clinical_reasoning_breakdown ?? raw.mdm_breakdown) as Record<string, unknown> | undefined;
+  const components: Array<[unknown, number, number]> = [
+    [communication?.focused_information_gathering, 0, 2],
+    [communication?.closed_loop_team_communication, 0, 3],
+    [communication?.efficiency_deduction, -2, 0],
+    [reasoning?.orders_monitoring_quality, 0, 3],
+    [reasoning?.clinical_reasoning_documentation, 0, 2],
+    [reasoning?.safety_deduction, -2, 0],
+  ];
+  return components.every(([value, min, max]) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const score = Number((value as Record<string, unknown>).score ?? (value as Record<string, unknown>).value ?? (value as Record<string, unknown>).points);
+    return Number.isFinite(score) && score >= min && score <= max;
+  });
+};
 
 const lineage = async (client: any, roomId: number) => {
   const result: number[] = []; const seen = new Set<number>(); let current: number | null = roomId;
@@ -35,6 +64,7 @@ Deno.serve(async (req) => {
       const { data: assignment, error: assignmentError } = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', assignmentId).single();
       if (assignmentError) throw assignmentError;
       if (!isFeedbackEligibleStatus(assignment.status)) throw new Error('Cannot generate feedback for incomplete assignment');
+      await assertFeedbackSchemaReady(client);
       const room = (assignment.room ?? {}) as Record<string, unknown>;
       const roomId = Number(assignment.room_id);
       const { data: roomEvaluator, error: roomEvaluatorError } = await client
@@ -81,14 +111,16 @@ Deno.serve(async (req) => {
       const requestEvaluation = async (validationNote = '') => {
         const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
+        if (!hasValidEvaluationShape(parsed as Record<string, unknown>)) throw new Error('Evaluator returned malformed six-component scoring output');
         return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) as Array<Record<string, unknown>> };
       };
-      let { evaluation, actionReview } = await requestEvaluation();
-      if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
-        ({ evaluation, actionReview } = await requestEvaluation('\n\nVALIDATION RETRY: This attempt contains a non-empty post-page evidence manifest. Re-evaluate the observed events and do not return both composite scores as zero unless every post-page event is genuinely non-clinical. Preserve the anchored component ranges and cite manifest IDs.'));
-      }
-      if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
-        throw new Error('Evaluator returned an invalid all-zero result for an evidence-bearing attempt after validation retry');
+      let evaluation: EvaluationScoringResponse;
+      let actionReview: Array<Record<string, unknown>>;
+      try {
+        ({ evaluation, actionReview } = await requestEvaluation());
+      } catch (firstError) {
+        const validationNote = `\n\nVALIDATION RETRY: The prior response failed the six-component schema contract (${firstError instanceof Error ? firstError.message : 'invalid output'}). Return every required component with a numeric score in its declared range; legitimate zero scores are valid.`;
+        ({ evaluation, actionReview } = await requestEvaluation(validationNote));
       }
       const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
         .filter((entry) => kinds.includes(entry.kind))
@@ -137,7 +169,7 @@ Deno.serve(async (req) => {
             })),
         ],
       };
-      const debrief = { case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 3), improvements: evaluation.improvements.slice(0, 3), recommendations: evaluation.recommendations, growth_areas: [], action_review: actionReviewWithKey, evidence_manifest: scoredEntries.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, occurred_at: entry.timestamp })), safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
+      const debrief = { case_diagnosis: typeof room.expected_diagnosis === 'string' ? room.expected_diagnosis : null, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 3), improvements: evaluation.improvements.slice(0, 3), recommendations: evaluation.recommendations, growth_areas: [], action_review: actionReviewWithKey, evidence_manifest: scoredEntries.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, occurred_at: entry.timestamp })), safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
       const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, evaluator_config_id: evaluator.id, evaluator_version: evaluator.version, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
       if (run.error) throw run.error;
