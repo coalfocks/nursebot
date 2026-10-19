@@ -67,13 +67,49 @@ begin
 end
 $test$;
 
+-- A service Edge path may have NULL auth.uid(), but only an explicit,
+-- transaction-local finalization context may write an active assignment.
+select set_config('request.jwt.claim.role', 'service_role', true);
+select set_config('app.emr_finalization', '1', true);
+do $test$
+declare affected integer;
+begin
+  update public.medical_orders
+     set instructions = coalesce(instructions, '') || ' null-auth-service-finalization-test'
+   where id = current_setting('app.test.writable_order_id')::uuid;
+  get diagnostics affected = row_count;
+  if affected <> 1 then raise exception 'EXPECTED_NULL_AUTH_SERVICE_ACTIVE_WRITE'; end if;
+end
+$test$;
+do $test$
+begin
+  begin
+    update public.medical_orders
+       set instructions = coalesce(instructions, '') || ' null-auth-service-completed-test'
+     where id = current_setting('app.test.completed_order_id')::uuid;
+    raise exception 'EXPECTED_NULL_AUTH_SERVICE_COMPLETED_ERROR';
+  exception when sqlstate '42501' then
+    if sqlerrm not like 'COMPLETED_ASSIGNMENT_READ_ONLY%' then raise; end if;
+  end;
+end
+$test$;
+
+select set_config('app.emr_finalization', '0', true);
+
 -- An authenticated learner may write only to its own active assignment.
 select set_config('request.jwt.claim.sub', current_setting('app.test.student_id'), true);
 select set_config('request.jwt.claim.role', 'authenticated', true);
-update public.medical_orders
-   set instructions = coalesce(instructions, '') || ' active-learner-test'
- where id = current_setting('app.test.writable_order_id')::uuid
-   and assignment_id = current_setting('app.test.writable_assignment_id')::uuid;
+do $test$
+declare affected integer;
+begin
+  update public.medical_orders
+     set instructions = coalesce(instructions, '') || ' active-learner-test'
+   where id = current_setting('app.test.writable_order_id')::uuid
+     and assignment_id = current_setting('app.test.writable_assignment_id')::uuid;
+  get diagnostics affected = row_count;
+  if affected <> 1 then raise exception 'EXPECTED_ACTIVE_LEARNER_ROW_COUNT'; end if;
+end
+$test$;
 
 -- Service finalization is permitted only for an active assignment and is
 -- transaction-local; completed rows remain protected.

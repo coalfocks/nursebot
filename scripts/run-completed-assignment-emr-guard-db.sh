@@ -45,15 +45,15 @@ grant select, update on public.medical_orders to emr_guard_user;
 grant select, update on public.lab_results, public.clinical_notes, public.vital_signs, public.imaging_studies to emr_guard_user;
 alter table public.medical_orders enable row level security;
 create policy emr_read on public.medical_orders for select to public using (
-  exists (select 1 from public.student_room_assignments a join public.profiles p on p.id = auth.uid()
+  current_setting('request.jwt.claim.role', true) = 'service_role'
+  or exists (select 1 from public.student_room_assignments a join public.profiles p on p.id = auth.uid()
     where a.id = medical_orders.assignment_id and (
-      a.student_id = auth.uid() or (p.role in ('school_admin','super_admin') and p.school_id = a.school_id)
-      or current_setting('request.jwt.claim.role', true) = 'service_role')));
+      a.student_id = auth.uid() or (p.role in ('school_admin','super_admin') and p.school_id = a.school_id))));
 create policy emr_update on public.medical_orders for update to public using (
-  exists (select 1 from public.student_room_assignments a join public.profiles p on p.id = auth.uid()
+  current_setting('request.jwt.claim.role', true) = 'service_role'
+  or exists (select 1 from public.student_room_assignments a join public.profiles p on p.id = auth.uid()
     where a.id = medical_orders.assignment_id and (
-      a.student_id = auth.uid() or (p.role in ('school_admin','super_admin') and p.school_id = a.school_id)
-      or current_setting('request.jwt.claim.role', true) = 'service_role')))
+      a.student_id = auth.uid() or (p.role in ('school_admin','super_admin') and p.school_id = a.school_id))))
   with check (true);
 insert into public.profiles values
  ('00000000-0000-0000-0000-000000000001','student','00000000-0000-0000-0000-0000000000a1','Student'),
@@ -95,7 +95,11 @@ trap 'cleanup_interleave; cleanup' EXIT
 APP_SESSION="PGPASSWORD=emr-guard-user psql -h 127.0.0.1 -p $PORT -U emr_guard_user -d postgres -v ON_ERROR_STOP=1"
 eval "$APP_SESSION" -v writable_assignment_id=10000000-0000-0000-0000-000000000002 -v writable_order_id=20000000-0000-0000-0000-000000000002 -f supabase/tests/completed_assignment_emr_guard_write_session.sql >"$OUT_DIR/writer.log" 2>&1 &
 WRITER_PID=$!
-sleep 0.25
+for _ in {1..40}; do
+  grep -q 'WRITER_LOCK_HELD' "$OUT_DIR/writer.log" && break
+  sleep 0.1
+done
+grep -q 'WRITER_LOCK_HELD' "$OUT_DIR/writer.log" || { echo 'writer did not reach synchronization barrier' >&2; cat "$OUT_DIR/writer.log" >&2; exit 1; }
 PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -v writable_assignment_id=10000000-0000-0000-0000-000000000002 \
   -f supabase/tests/completed_assignment_emr_guard_completion_session.sql >"$OUT_DIR/completion.log" 2>&1 &
@@ -104,4 +108,6 @@ wait "$WRITER_PID"
 wait "$COMPLETION_PID"
 FINAL_STATUS="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select status from public.student_room_assignments where id='10000000-0000-0000-0000-000000000002'")"
 [[ "$FINAL_STATUS" == completed ]] || { echo "interleaving final status was $FINAL_STATUS" >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
+FINAL_INSTRUCTIONS="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select instructions from public.medical_orders where id='20000000-0000-0000-0000-000000000002'")"
+[[ "$FINAL_INSTRUCTIONS" == *serialized-write-test* ]] || { echo 'writer update did not commit' >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
 echo 'completed EMR guard two-session write/completion interleaving: PASS'

@@ -40,6 +40,8 @@ export interface MarScheduleInput {
   firstDosePriorHours: number;
   assumePrnGiven?: boolean;
   stopPriorHours?: number | null;
+  /** Author-confirmed occurrence offsets for BID/TID/QID or explicit PRN times. */
+  explicitPriorHours?: number[];
   caseVersion?: string | null;
   infusionEvents?: Array<{ offsetHours: number; status: Extract<MarStatus, 'Started' | 'Rate changed' | 'Stopped'>; rate?: string; volume?: string }>;
 }
@@ -55,14 +57,49 @@ const frequencyHours = (frequency: string): number | null => {
   return null;
 };
 
+const finiteHours = (value: number, label: string): number => {
+  if (!Number.isFinite(value) || value < 0) throw new RangeError(`MAR_INVALID_${label.toUpperCase()}`);
+  return value;
+};
+
+const normalizeHistoryHours = (input: MarScheduleInput): number => {
+  const requested = input.stayHours ?? input.historyHours;
+  finiteHours(requested, 'history_hours');
+  // The product contract is a maximum three-day authored encounter window.
+  return Math.min(72, requested);
+};
+
+const explicitOffsets = (input: MarScheduleInput, historyHours: number, first: number, stop: number | null): number[] => {
+  const values = input.explicitPriorHours ?? [];
+  if (!values.length) throw new RangeError('MAR_EXPLICIT_TIMES_REQUIRED');
+  const offsets = values.map((value) => finiteHours(value, 'explicit_time'));
+  if (offsets.some((value) => value > historyHours)) throw new RangeError('MAR_TIME_OUTSIDE_STAY');
+  if (offsets.some((value) => stop !== null && value < stop)) throw new RangeError('MAR_TIME_AFTER_STOP');
+  if (offsets.some((value) => value > first)) throw new RangeError('MAR_TIME_BEFORE_START');
+  return [...new Set(offsets)].sort((a, b) => b - a);
+};
+
 export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[] => {
-  const historyHours = Math.min(72, Math.max(0, input.stayHours ?? input.historyHours));
-  const first = Math.min(historyHours, Math.max(0, input.startPriorHours ?? input.firstDosePriorHours));
+  const historyHours = normalizeHistoryHours(input);
+  const requestedFirst = input.startPriorHours ?? input.firstDosePriorHours;
+  finiteHours(requestedFirst, 'start_hours');
+  const first = Math.min(historyHours, requestedFirst);
+  if (input.stopPriorHours !== null && input.stopPriorHours !== undefined) finiteHours(input.stopPriorHours, 'stop_hours');
+  const stop = input.stopPriorHours === null || input.stopPriorHours === undefined ? null : input.stopPriorHours;
+  if (stop !== null && stop > first) throw new RangeError('MAR_STOP_BEFORE_START');
   const category = input.category ?? 'scheduled';
+  if (first === 0 && category !== 'one_time' && !/^once$/i.test(input.frequency.trim())) {
+    throw new RangeError('MAR_ZERO_HOUR_BASELINE');
+  }
   if (category === 'prn') {
-    return input.assumePrnGiven ? [{
-      occurrenceKey: `${input.orderId ?? input.medicationName}:prn:${first}`,
-      relativeOffsetHours: first,
+    if (!input.assumePrnGiven) return [];
+    const interval = frequencyHours(input.frequency);
+    const offsets = interval
+      ? Array.from({ length: Math.floor((first - (stop ?? 1)) / interval) + 1 }, (_, index) => first - index * interval)
+      : explicitOffsets(input, historyHours, first, stop);
+    return offsets.map((offset) => ({
+      occurrenceKey: `${input.orderId ?? input.medicationName}:prn:${offset}`,
+      relativeOffsetHours: offset,
       medicationName: input.medicationName,
       orderId: input.orderId,
       orderedDose: input.orderedDose,
@@ -71,10 +108,10 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
       route: input.route,
       frequency: input.frequency,
       category,
-      status: 'Given',
+      status: 'Given' as const,
       caseVersion: input.caseVersion,
-      source: 'authored_scenario',
-    }] : [];
+      source: 'authored_scenario' as const,
+    }));
   }
   if (category === 'one_time' || /^once$/i.test(input.frequency.trim())) {
     return [{
@@ -113,13 +150,30 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
         source: 'authored_scenario' as const,
       }));
   }
+  const normalizedFrequency = input.frequency.trim().toLowerCase();
   const interval = frequencyHours(input.frequency);
   if (!interval || interval <= 0) return [];
+  const requiresExplicit = ['bid', 'tid', 'qid'].includes(normalizedFrequency);
+  if (requiresExplicit) {
+    return explicitOffsets(input, historyHours, first, stop).map((offset) => ({
+      occurrenceKey: `${input.orderId ?? input.medicationName}:scheduled:${offset}`,
+      relativeOffsetHours: offset,
+      medicationName: input.medicationName,
+      orderId: input.orderId,
+      orderedDose: input.orderedDose,
+      administeredDose: input.orderedDose,
+      unit: input.unit,
+      route: input.route,
+      frequency: input.frequency,
+      category: 'scheduled' as const,
+      status: 'Given' as const,
+      caseVersion: input.caseVersion,
+      source: 'authored_scenario' as const,
+    }));
+  }
   const occurrences: MarDraftOccurrence[] = [];
-  const stop = input.stopPriorHours === null || input.stopPriorHours === undefined
-    ? 1
-    : Math.max(0, input.stopPriorHours);
-  for (let offset = first; offset >= stop && offset <= historyHours; offset -= interval) {
+  const effectiveStop = stop ?? 1;
+  for (let offset = first; offset >= effectiveStop && offset <= historyHours; offset -= interval) {
     occurrences.push({
       occurrenceKey: `${input.orderId ?? input.medicationName}:scheduled:${offset}`,
       relativeOffsetHours: offset,

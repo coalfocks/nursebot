@@ -1,5 +1,5 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LabResults } from './LabResults';
 import type { Patient } from '../lib/types';
 
@@ -25,6 +25,10 @@ vi.mock('../lib/api', () => ({
     addLabResults,
   },
 }));
+vi.mock('../lib/aiLabGenerator', () => ({
+  resolveLabTemplates: vi.fn(() => [{ testName: 'CBC', unit: 'x', referenceRange: '1-2' }]),
+  validateGeneratedLabResults: vi.fn((results: unknown[]) => results),
+}));
 
 const patient: Patient = {
   id: 'patient-1', roomId: 7, mrn: 'MRN-1', firstName: 'Test', lastName: 'Patient',
@@ -32,6 +36,12 @@ const patient: Patient = {
 };
 
 describe('LabResults completed-review write barrier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listOrders.mockResolvedValue([]);
+    addLabResults.mockResolvedValue({ ok: true });
+    invoke.mockResolvedValue({ data: { labs: [{ testName: 'CBC', value: 1, unit: 'x', referenceRange: '1-2' }] }, error: null });
+  });
   it('does not invoke or persist when mounted read-only', async () => {
     render(<LabResults patient={patient} assignmentId="assignment-1" readOnly />);
     await waitFor(() => expect(invoke).not.toHaveBeenCalled());
@@ -58,5 +68,29 @@ describe('LabResults completed-review write barrier', () => {
     resolveOrders?.([]);
     await waitFor(() => expect(invoke).not.toHaveBeenCalled());
     expect(addLabResults).not.toHaveBeenCalled();
+  });
+
+  it('proves an eligible writable order invokes and persists exactly once', async () => {
+    listOrders.mockResolvedValueOnce([{
+      id: 'order-1', patientId: 'patient-1', assignmentId: 'assignment-1', roomId: 7,
+      category: 'Lab', orderName: 'CBC', priority: 'STAT', status: 'Active', orderedBy: 'Doctor', orderTime: new Date().toISOString(),
+    }]);
+    render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(addLabResults).toHaveBeenCalledTimes(1));
+  });
+
+  it('pauses at the in-flight generator and never persists after read-only transition', async () => {
+    let resolveInvoke: ((value: unknown) => void) | undefined;
+    invoke.mockImplementationOnce(() => new Promise((resolve) => { resolveInvoke = resolve; }));
+    listOrders.mockResolvedValueOnce([{
+      id: 'order-2', patientId: 'patient-1', assignmentId: 'assignment-1', roomId: 7,
+      category: 'Lab', orderName: 'CBC', priority: 'STAT', status: 'Active', orderedBy: 'Doctor', orderTime: new Date().toISOString(),
+    }]);
+    const view = render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    view.rerender(<LabResults patient={patient} assignmentId="assignment-1" readOnly />);
+    resolveInvoke?.({ data: { labs: [{ testName: 'CBC', value: 1, unit: 'x', referenceRange: '1-2' }] }, error: null });
+    await waitFor(() => expect(addLabResults).not.toHaveBeenCalled());
   });
 });

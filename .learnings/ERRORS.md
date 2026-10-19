@@ -101,3 +101,31 @@ CACError: Unknown option `--runInBand`
 - Re-ran with `npm run test:run`; all 146 tests passed.
 
 ---
+## [ERR-20261019-VITEST]
+
+**Logged**: 2026-10-19T10:53:47Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Vitest rejected the Jest-only `--runInBand` option during the first targeted MAR test invocation.
+
+### Error
+```text
+CACError: Unknown option `--runInBand`
+```
+
+### Context
+- First command: `npx vitest run src/features/emr/lib/marSchedule.test.ts --runInBand`
+- Correct command: `npx vitest run src/features/emr/lib/marSchedule.test.ts`
+
+### Suggested Fix
+Use Vitest's native single-file command without Jest flags.
+
+### Metadata
+- Reproducible: yes
+- Related Files: src/features/emr/lib/marSchedule.test.ts
+- Tags: vitest, cli
+
+---

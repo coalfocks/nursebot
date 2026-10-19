@@ -16,16 +16,28 @@ describe('MAR schedule expansion', () => {
   });
 
   it('keeps BID/TID/QID as explicit preview frequencies', () => {
-    expect(expandMarSchedule({ medicationName: 'TID', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12 }))
+    expect(expandMarSchedule({ medicationName: 'TID', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12, explicitPriorHours: [12, 4] }))
       .toHaveLength(2);
-    expect(expandMarSchedule({ medicationName: 'QID', frequency: 'QID', historyHours: 12, firstDosePriorHours: 12 }))
+    expect(expandMarSchedule({ medicationName: 'QID', frequency: 'QID', historyHours: 12, firstDosePriorHours: 12, explicitPriorHours: [12, 6] }))
       .toHaveLength(2);
+    expect(() => expandMarSchedule({ medicationName: 'TID', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12 }))
+      .toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
   });
 
   it('supports PRN assumed use and a single bolus', () => {
     expect(expandMarSchedule({ medicationName: 'PRN', frequency: 'PRN', category: 'prn', historyHours: 12, firstDosePriorHours: 8, assumePrnGiven: false })).toHaveLength(0);
-    expect(expandMarSchedule({ medicationName: 'PRN', frequency: 'PRN', category: 'prn', historyHours: 12, firstDosePriorHours: 8, assumePrnGiven: true })).toHaveLength(1);
+    expect(expandMarSchedule({ medicationName: 'PRN', frequency: 'q4h', category: 'prn', historyHours: 12, firstDosePriorHours: 12, assumePrnGiven: true })).toHaveLength(3);
+    expect(() => expandMarSchedule({ medicationName: 'PRN', frequency: 'PRN', category: 'prn', historyHours: 12, firstDosePriorHours: 8, assumePrnGiven: true }))
+      .toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
     expect(expandMarSchedule({ medicationName: 'Bolus', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 12 })).toHaveLength(1);
+    expect(expandMarSchedule({ medicationName: 'Bolus now', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 0 })[0]).toMatchObject({ relativeOffsetHours: 0 });
+  });
+
+  it('rejects invalid schedule relationships and caps only the authored stay window', () => {
+    expect(expandMarSchedule({ medicationName: 'Long', frequency: 'q4h', historyHours: 96, firstDosePriorHours: 96 })).toHaveLength(18);
+    expect(expandMarSchedule({ medicationName: 'Late', frequency: 'q4h', historyHours: 48, stayHours: 48, firstDosePriorHours: 60 })).toHaveLength(12);
+    expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: 12, firstDosePriorHours: 12, stopPriorHours: 16 })).toThrow('MAR_STOP_BEFORE_START');
+    expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: Number.NaN, firstDosePriorHours: 12 })).toThrow('MAR_INVALID_HISTORY_HOURS');
   });
 
   it('does not create administrations for infusions or learner orders', () => {

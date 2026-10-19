@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+(( BASH_VERSINFO[0] >= 4 )) || { echo 'Bash 4+ required' >&2; exit 2; }
+: "${MAR_SCOPE_DISPOSABLE:?Set MAR_SCOPE_DISPOSABLE=1}"
+[[ "$MAR_SCOPE_DISPOSABLE" == 1 ]] || { echo 'Refusing without disposable opt-in' >&2; exit 2; }
+command -v docker >/dev/null || { echo 'docker required' >&2; exit 2; }
+command -v psql >/dev/null || { echo 'psql required' >&2; exit 2; }
+
+PORT="${MAR_SCOPE_PGPORT:-54341}"
+NAME="mar-scope-${PORT}"
+PASSWORD='mar-scope-local'
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+if docker ps -a --format '{{.Names}}' | grep -Fxq "$NAME"; then
+  echo "refusing occupied disposable container $NAME" >&2
+  exit 2
+fi
+docker run -d --name "$NAME" -p "127.0.0.1:${PORT}:5432" -e POSTGRES_PASSWORD="$PASSWORD" postgres:15.3 >/dev/null
+for _ in {1..60}; do
+  if PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc 'select 1' >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+
+PG=(psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1)
+export PGPASSWORD="$PASSWORD"
+"${PG[@]}" <<'SQL'
+create extension if not exists pgcrypto;
+create schema auth;
+create role authenticated nologin;
+create role anon nologin;
+create or replace function auth.uid() returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+$$;
+create table public.patients (id uuid primary key, school_id uuid);
+create table public.rooms (id integer primary key, patient_id uuid, school_id uuid);
+create table public.profiles (id uuid primary key, role text not null, school_id uuid);
+create table public.student_room_assignments (id uuid primary key, student_id uuid, room_id integer, school_id uuid, case_key_version text, scenario_baseline_version integer, status text);
+create table public.medical_orders (id uuid primary key, patient_id uuid, room_id integer, assignment_id uuid);
+create table auth.users (id uuid primary key);
+create role mar_scope_user login password 'mar-scope-user' nosuperuser noreplication;
+grant usage on schema public, auth to mar_scope_user;
+grant select on public.patients, public.rooms, public.profiles, public.student_room_assignments, public.medical_orders to mar_scope_user;
+grant insert on public.patients, public.rooms, public.profiles, public.student_room_assignments, public.medical_orders to mar_scope_user;
+insert into auth.users(id) values
+  ('00000000-0000-0000-0000-000000000001'),
+  ('00000000-0000-0000-0000-000000000002'),
+  ('00000000-0000-0000-0000-000000000003');
+SQL
+"${PG[@]}" -f supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql >/dev/null
+"${PG[@]}" <<'SQL'
+grant usage on schema public, auth to authenticated;
+grant authenticated to mar_scope_user;
+grant execute on function public.save_mar_history(uuid, integer, uuid, text, integer, jsonb) to mar_scope_user;
+grant execute on function public.get_mar_history_revision(uuid, integer, uuid) to mar_scope_user;
+SQL
+
+PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/mar_authorized_scope.sql
+echo 'MAR authorized scope disposable harness: PASS'

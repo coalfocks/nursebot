@@ -56,6 +56,7 @@ export default function EmrDashboard() {
   const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [assignmentStatusKey, setAssignmentStatusKey] = useState<string | null>(null);
+  const [assignmentCaseVersion, setAssignmentCaseVersion] = useState<string | null>(null);
   const [, setIsEnsuringAssignment] = useState(false);
   const [, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -384,11 +385,12 @@ export default function EmrDashboard() {
   useEffect(() => {
     setAssignmentStatus(null);
     setAssignmentStatusKey(null);
+    setAssignmentCaseVersion(null);
     if (!effectiveAssignmentId || forceBaseline) {
       return;
     }
     let active = true;
-    void supabase.from('student_room_assignments').select('status').eq('id', effectiveAssignmentId).maybeSingle().then(({ data, error }) => {
+    void supabase.from('student_room_assignments').select('status, case_key_version, scenario_baseline_version').eq('id', effectiveAssignmentId).maybeSingle().then(({ data, error }) => {
       if (!active) return;
       if (error) {
         console.error('Failed to load assignment status', error);
@@ -398,6 +400,7 @@ export default function EmrDashboard() {
       }
       setAssignmentStatus(data?.status ?? null);
       setAssignmentStatusKey(effectiveAssignmentId);
+      setAssignmentCaseVersion(data?.case_key_version ?? (data?.scenario_baseline_version != null ? String(data.scenario_baseline_version) : null));
     });
     return () => { active = false; };
   }, [effectiveAssignmentId, forceBaseline]);
@@ -1180,6 +1183,7 @@ export default function EmrDashboard() {
               <MedicationAdministrationRecord
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
+                caseVersion={assignmentCaseVersion}
                 forceBaseline={forceBaseline}
                 readOnly={studentEmrReadOnly}
               />

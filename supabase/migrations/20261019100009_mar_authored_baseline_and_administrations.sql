@@ -7,7 +7,7 @@ create table if not exists public.mar_administration_events (
   room_id integer references public.rooms(id) on delete cascade,
   assignment_id uuid references public.student_room_assignments(id) on delete cascade,
   order_id uuid references public.medical_orders(id) on delete set null,
-  case_version text,
+  case_version text not null,
   occurrence_key text not null,
   relative_offset_hours numeric(5,2),
   administered_at timestamptz,
@@ -46,6 +46,7 @@ create unique index if not exists mar_event_occurrence_identity
     coalesce(room_id, 0),
     coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid),
     coalesce(order_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    case_version,
     occurrence_key
   )
   where deleted_at is null;
@@ -63,32 +64,85 @@ create table if not exists public.mar_history_revisions (
   updated_at timestamptz not null default now()
 );
 
+-- First explicit save for a NEW assignment creates the immutable MAR
+-- materialization record. Learner reads use assignment events only; they never
+-- fall back to this room's mutable baseline.
+create table if not exists public.mar_assignment_baselines (
+  assignment_id uuid primary key references public.student_room_assignments(id) on delete cascade,
+  patient_id uuid not null references public.patients(id) on delete cascade,
+  room_id integer not null references public.rooms(id) on delete cascade,
+  case_version text not null,
+  source text not null default 'authored_scenario' check (source = 'authored_scenario'),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.mar_assignment_baselines enable row level security;
+grant select on public.mar_assignment_baselines to authenticated;
+create policy "MAR assignment baseline scoped read" on public.mar_assignment_baselines
+for select to authenticated using (
+  exists (select 1 from public.student_room_assignments a where a.id = assignment_id and a.student_id = auth.uid())
+  or exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_assignment_baselines.room_id
+    where p.id = auth.uid() and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+  )
+);
+
 alter table public.mar_administration_events enable row level security;
 alter table public.mar_history_revisions enable row level security;
 grant select, insert, update on public.mar_administration_events, public.mar_history_revisions to authenticated;
 
+-- Direct table writes are deliberately unavailable. The RPC below is the only
+-- path that can establish assignment/patient/order/version lineage and bump a
+-- revision atomically.
+revoke insert, update, delete on public.mar_administration_events, public.mar_history_revisions from authenticated;
+
 drop policy if exists "MAR authenticated read" on public.mar_administration_events;
 create policy "MAR authenticated read" on public.mar_administration_events
 for select to authenticated using (
-  exists (select 1 from public.student_room_assignments a where a.id = mar_administration_events.assignment_id and a.student_id = auth.uid())
-  or exists (select 1 from public.student_room_assignments a where a.room_id = mar_administration_events.room_id and a.student_id = auth.uid())
-  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (
+    select 1 from public.student_room_assignments a
+    join public.rooms r on r.id = a.room_id
+    where a.id = mar_administration_events.assignment_id
+      and a.student_id = auth.uid()
+      and r.patient_id = mar_administration_events.patient_id
+      and r.id = mar_administration_events.room_id
+      and coalesce(a.case_key_version, a.scenario_baseline_version::text) = mar_administration_events.case_version
+  )
+  or exists (
+    select 1 from public.profiles p
+    join public.rooms r on r.id = mar_administration_events.room_id
+    where p.id = auth.uid()
+      and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+      and r.patient_id = mar_administration_events.patient_id
+  )
 );
 
 drop policy if exists "MAR admins write" on public.mar_administration_events;
 create policy "MAR admins write" on public.mar_administration_events
 for all to authenticated using (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_administration_events.room_id
+    where p.id = auth.uid()
+      and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+      and r.patient_id = mar_administration_events.patient_id
+  )
 ) with check (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_administration_events.room_id
+    where p.id = auth.uid()
+      and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+      and r.patient_id = mar_administration_events.patient_id
+  )
 );
 
 drop policy if exists "MAR revisions authenticated read" on public.mar_history_revisions;
 create policy "MAR revisions authenticated read" on public.mar_history_revisions
 for select to authenticated using (
-  exists (select 1 from public.student_room_assignments a where a.id = mar_history_revisions.assignment_id and a.student_id = auth.uid())
-  or exists (select 1 from public.student_room_assignments a where a.room_id = mar_history_revisions.room_id and a.student_id = auth.uid())
-  or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (select 1 from public.student_room_assignments a where a.id = mar_history_revisions.assignment_id and a.student_id = auth.uid() and a.room_id = mar_history_revisions.room_id)
+  or exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_history_revisions.room_id
+    where p.id = auth.uid() and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+  )
 );
 
 drop policy if exists "MAR revision admins write" on public.mar_history_revisions;
@@ -108,7 +162,7 @@ create or replace function public.save_mar_history(
   p_events jsonb
 ) returns jsonb
 language plpgsql
-security invoker
+security definer
 set search_path = public
 as $$
 declare
@@ -121,15 +175,47 @@ begin
   if actor_role not in ('school_admin', 'super_admin') then
     raise exception 'MAR_ADMIN_REQUIRED';
   end if;
-  if p_room_id is null or jsonb_typeof(p_events) <> 'array' then
+  if p_room_id is null or jsonb_typeof(p_events) <> 'array' or p_case_version is null or btrim(p_case_version) = '' then
     raise exception 'MAR_INVALID_BATCH';
+  end if;
+  if not exists (select 1 from public.rooms r where r.id = p_room_id and r.patient_id = p_patient_id
+    and (actor_role = 'super_admin' or exists (select 1 from public.profiles p where p.id = auth.uid() and p.school_id = r.school_id))) then
+    raise exception 'MAR_ROOM_PATIENT_MISMATCH';
   end if;
   if p_assignment_id is not null and not exists (
     select 1 from public.student_room_assignments a
-    where a.id = p_assignment_id and a.room_id = p_room_id and a.student_id is not null
+    join public.rooms r on r.id = a.room_id
+    where a.id = p_assignment_id and a.room_id = p_room_id and r.patient_id = p_patient_id
+      and coalesce(a.case_key_version, a.scenario_baseline_version::text) = p_case_version and a.school_id = r.school_id
   ) then
     raise exception 'MAR_ASSIGNMENT_ROOM_MISMATCH';
   end if;
+
+  if p_assignment_id is null and actor_role <> 'super_admin' and not exists (
+    select 1 from public.rooms r join public.profiles p on p.id = auth.uid()
+    where r.id = p_room_id and r.school_id = p.school_id
+  ) then raise exception 'MAR_SCHOOL_SCOPE_MISMATCH'; end if;
+
+  if p_assignment_id is not null and exists (
+    select 1 from public.mar_assignment_baselines b
+    where b.assignment_id = p_assignment_id and b.case_version is distinct from p_case_version
+  ) then raise exception 'MAR_CASE_VERSION_IMMUTABLE'; end if;
+  if p_assignment_id is not null then
+    insert into public.mar_assignment_baselines(assignment_id, patient_id, room_id, case_version, created_by)
+    values (p_assignment_id, p_patient_id, p_room_id, p_case_version, auth.uid())
+    on conflict (assignment_id) do nothing;
+  end if;
+
+  if exists (
+    select 1 from jsonb_array_elements(p_events) value
+    where (value->>'caseVersion') is null or coalesce(value->>'caseVersion', p_case_version) <> p_case_version
+      or nullif(value->>'orderId','') is not null and not exists (
+        select 1 from public.medical_orders o
+        where o.id = (value->>'orderId')::uuid and o.patient_id = p_patient_id
+          and o.room_id = p_room_id and (o.assignment_id = p_assignment_id or p_assignment_id is null)
+      )
+      or nullif(value->>'relativeOffsetHours','') is not null and ((value->>'relativeOffsetHours')::numeric < 0 or (value->>'relativeOffsetHours')::numeric > 72)
+  ) then raise exception 'MAR_LINEAGE_MISMATCH'; end if;
 
   insert into public.mar_history_revisions(patient_id, room_id, assignment_id, scope_key)
   values (p_patient_id, p_room_id, p_assignment_id, scope_key_value)
@@ -155,7 +241,7 @@ begin
     value->>'simulatedClinician', value->>'reason', value->>'prnIndication', value->>'response', value->'infusionDetails',
     coalesce(value->>'source','authored_scenario'), auth.uid(), value->>'actorLabel', next_revision
   from jsonb_array_elements(p_events) value
-  on conflict (patient_id, coalesce(room_id, 0), coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid), coalesce(order_id, '00000000-0000-0000-0000-000000000000'::uuid), occurrence_key)
+  on conflict (patient_id, coalesce(room_id, 0), coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid), coalesce(order_id, '00000000-0000-0000-0000-000000000000'::uuid), case_version, occurrence_key)
   where deleted_at is null
   do update set
     case_version = excluded.case_version,

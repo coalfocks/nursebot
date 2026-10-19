@@ -1027,12 +1027,14 @@ export const emrApi = {
     patientId: string,
     assignmentId?: string,
     roomId?: number | null,
+    caseVersion?: string | null,
     onError?: (message: string) => void,
   ): Promise<MarAdministrationEvent[]> {
     const targetRooms = await getRoomLineage(roomId);
     let query = supabase.from('mar_administration_events').select('*').eq('patient_id', patientId).is('deleted_at', null);
     if (assignmentId) query = query.or(`assignment_id.eq.${assignmentId},assignment_id.is.null`);
     else query = query.is('assignment_id', null);
+    if (caseVersion) query = query.eq('case_version', caseVersion);
     const { data, error } = await query.order('relative_offset_hours', { ascending: true }).order('administered_at', { ascending: true });
     if (error) {
       console.error('Error fetching MAR history', error);

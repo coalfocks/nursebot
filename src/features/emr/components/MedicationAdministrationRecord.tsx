@@ -14,6 +14,8 @@ import { hasAdminAccess } from '../../../lib/roles';
 interface MedicationAdministrationRecordProps {
   patient: Patient;
   assignmentId?: string;
+  /** Immutable assignment-pinned case version. Assignment MAR is read-only until present. */
+  caseVersion?: string | null;
   readOnly?: boolean;
   forceBaseline?: boolean;
 }
@@ -21,9 +23,10 @@ interface MedicationAdministrationRecordProps {
 const statusOptions: MarStatus[] = ['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented'];
 const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
 
-export function MedicationAdministrationRecord({ patient, assignmentId, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
+export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
-  const canEdit = hasAdminAccess(profile) && !readOnly;
+  const canEdit = hasAdminAccess(profile) && !readOnly && (forceBaseline || Boolean(caseVersion));
+  const effectiveCaseVersion = caseVersion ?? (forceBaseline ? 'baseline-v1' : null);
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
   const [events, setEvents] = useState<MarAdministrationEvent[]>([]);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
@@ -35,12 +38,16 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
   const [saveError, setSaveError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState<Partial<MarAdministrationEvent>>({});
+  const [obsoleteKeys, setObsoleteKeys] = useState<Set<string>>(new Set());
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [populateOpen, setPopulateOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '' });
+  const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '', prnIndication: '', response: '', infusionDetails: '' });
   const [populate, setPopulate] = useState({
     orderId: '', stayHours: '24', startPriorHours: '12', stopPriorHours: '1',
-    frequency: 'q4h', category: 'scheduled' as typeof categories[number], assumePrnGiven: false,
+    frequency: 'q4h', explicitPriorHours: '', category: 'scheduled' as typeof categories[number], assumePrnGiven: false,
     infusionStartPriorHours: '12', infusionChangePriorHours: '', infusionStopPriorHours: '',
     infusionRate: '', infusionChangeRate: '', infusionStopRate: '',
   });
@@ -50,7 +57,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
     setLoading(true);
     setError(null);
     const [loadedEvents, loadedOrders, loadedRevision] = await Promise.all([
-      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, (message) => setError(message)),
+      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => setError(message)),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
     ]);
@@ -59,7 +66,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
     setRevision(loadedRevision);
     setDirty(false);
     setLoading(false);
-  }, [patient.id, patient.roomId, scopeAssignmentId]);
+  }, [patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -77,7 +84,8 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
   const handlePopulate = () => {
     const order = orders.find((item) => item.id === populate.orderId);
     if (!order) return;
-    const generated = expandMarSchedule({
+    try {
+      const generated = expandMarSchedule({
       medicationName: order.orderName,
       orderId: order.id,
       orderedDose: order.dose,
@@ -89,13 +97,14 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
       startPriorHours: Number(populate.startPriorHours),
       firstDosePriorHours: Number(populate.startPriorHours),
       stopPriorHours: Number(populate.stopPriorHours),
+      explicitPriorHours: populate.explicitPriorHours.split(',').map((value) => value.trim()).filter(Boolean).map(Number),
       assumePrnGiven: populate.assumePrnGiven,
       infusionEvents: populate.category === 'infusion' ? [
         { offsetHours: Number(populate.infusionStartPriorHours), status: 'Started' as const, rate: populate.infusionRate || undefined },
         ...(populate.infusionChangePriorHours ? [{ offsetHours: Number(populate.infusionChangePriorHours), status: 'Rate changed' as const, rate: populate.infusionChangeRate || undefined }] : []),
         ...(populate.infusionStopPriorHours ? [{ offsetHours: Number(populate.infusionStopPriorHours), status: 'Stopped' as const, rate: populate.infusionStopRate || undefined }] : []),
       ] : undefined,
-    });
+      });
     const mapped = generated.map((draft, index) => ({
       ...draft,
       id: crypto.randomUUID(),
@@ -105,15 +114,25 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
       recordVersion: 1,
       source: 'authored_scenario' as const,
       actorLabel: profile?.full_name ?? 'Scenario author',
-      caseVersion: null,
+      caseVersion: effectiveCaseVersion,
       administeredAt: null,
       occurrenceKey: draft.occurrenceKey || `${order.id}:${index}`,
     }));
     setEvents((current) => {
       const byKey = new Map(current.map((event) => [event.occurrenceKey, event]));
-      mapped.forEach((event) => byKey.set(event.occurrenceKey, event));
+      const generatedKeys = new Set(mapped.map((event) => event.occurrenceKey));
+      const removed = new Set(current.filter((event) => event.orderId === order.id && !generatedKeys.has(event.occurrenceKey)).map((event) => event.occurrenceKey));
+      setObsoleteKeys(removed);
+      mapped.forEach((event) => {
+        // Never overwrite an explicit Held/Refused/Not given edit during regeneration.
+        if (!byKey.has(event.occurrenceKey)) byKey.set(event.occurrenceKey, event);
+      });
       return Array.from(byKey.values());
     });
+      setPreviewMessage('Preview updated. Existing manual exceptions were preserved; obsolete occurrences remain visible until explicitly removed.');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Unable to expand this MAR schedule.');
+    }
     setDirty(true);
     setPopulateOpen(false);
   };
@@ -121,7 +140,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
   const save = async () => {
     if (!patient.roomId || !canEdit) return;
     setSaveError(null);
-    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, null, revision, events);
+    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, revision, events);
     if (!result.ok) {
       setSaveError(result.error);
       return;
@@ -139,7 +158,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
       roomId: patient.roomId as number,
       assignmentId: scopeAssignmentId,
       orderId: null,
-      caseVersion: null,
+      caseVersion: effectiveCaseVersion,
       occurrenceKey: `manual:${id}`,
       relativeOffsetHours: Math.min(72, Math.max(0, Number(manual.relativeOffsetHours) || 0)),
       administeredAt: null,
@@ -153,9 +172,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
       status: manual.status,
       simulatedClinician: profile?.full_name ?? 'Scenario author',
       reason: manual.reason || null,
-      prnIndication: null,
-      response: null,
-      infusionDetails: null,
+      prnIndication: manual.prnIndication || null,
+      response: manual.response || null,
+      infusionDetails: manual.infusionDetails ? { note: manual.infusionDetails } : null,
       source: 'authored_scenario',
       actorLabel: profile?.full_name ?? 'Scenario author',
       recordVersion: 1,
@@ -163,6 +182,27 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
     setManualOpen(false);
     setDirty(true);
   };
+
+  const beginEdit = (event: MarAdministrationEvent) => {
+    setEditingId(event.id);
+    setEditingDraft({ ...event });
+  };
+
+  const commitEdit = () => {
+    if (!editingId) return;
+    updateEvent(editingId, editingDraft);
+    setEditingId(null);
+    setEditingDraft({});
+  };
+
+  const lastGivenByMedication = useMemo(() => {
+    const result = new Map<string, MarAdministrationEvent>();
+    events.filter((event) => event.status === 'Given').forEach((event) => {
+      const previous = result.get(event.medicationName);
+      if (!previous || (event.relativeOffsetHours ?? -1) > (previous.relativeOffsetHours ?? -1)) result.set(event.medicationName, event);
+    });
+    return result;
+  }, [events]);
 
   return (
     <div className="space-y-4">
@@ -173,6 +213,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
             {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">Blank means undocumented. Learner medication orders do not become Given automatically.</p>
+          {assignmentId && !caseVersion && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR is unavailable until this attempt has an immutable pinned case version. No baseline is materialized or written here.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && (
@@ -186,6 +227,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
                 <Input aria-label="Medication start prior hours" type="number" min="0" max="72" value={populate.startPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, startPriorHours: event.target.value }))} placeholder="Medication start prior hours" />
                 <Input aria-label="Medication stop prior hours" type="number" min="1" max="72" value={populate.stopPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, stopPriorHours: event.target.value }))} placeholder="Stop before page (hours)" />
                 <Input aria-label="Frequency" value={populate.frequency} onChange={(event) => setPopulate((current) => ({ ...current, frequency: event.target.value }))} placeholder="q4h, TID, Once" />
+                <Input aria-label="Author confirmed prior hours" value={populate.explicitPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, explicitPriorHours: event.target.value }))} placeholder="Explicit times: 12, 4" />
                 <Select value={populate.category} onValueChange={(value: typeof categories[number]) => setPopulate((current) => ({ ...current, category: value }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent>
                 </Select>
@@ -208,13 +250,14 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
                 <Input aria-label="Medication name" value={manual.medicationName} onChange={(event) => setManual((current) => ({ ...current, medicationName: event.target.value }))} placeholder="Medication" />
                 <Input aria-label="Ordered dose" value={manual.orderedDose} onChange={(event) => setManual((current) => ({ ...current, orderedDose: event.target.value }))} placeholder="Ordered dose" />
                 <Input aria-label="Administered dose" value={manual.administeredDose} onChange={(event) => setManual((current) => ({ ...current, administeredDose: event.target.value }))} placeholder="Given dose" />
+                <Input aria-label="Unit" value={manual.unit} onChange={(event) => setManual((current) => ({ ...current, unit: event.target.value }))} placeholder="Unit" />
                 <Input aria-label="Route" value={manual.route} onChange={(event) => setManual((current) => ({ ...current, route: event.target.value }))} placeholder="Route" />
                 <Input aria-label="Frequency" value={manual.frequency} onChange={(event) => setManual((current) => ({ ...current, frequency: event.target.value }))} placeholder="Frequency" />
                 <Input aria-label="Prior hours" type="number" min="0" max="72" value={manual.relativeOffsetHours} onChange={(event) => setManual((current) => ({ ...current, relativeOffsetHours: event.target.value }))} placeholder="Prior hours" />
                 <Select value={manual.category} onValueChange={(value: typeof categories[number]) => setManual((current) => ({ ...current, category: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent></Select>
                 <Select value={manual.status} onValueChange={(value: MarStatus) => setManual((current) => ({ ...current, status: value }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select>
               </div>
-              <Input aria-label="Reason" value={manual.reason} onChange={(event) => setManual((current) => ({ ...current, reason: event.target.value }))} placeholder="Reason / PRN indication / infusion note" />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3"><Input aria-label="Reason" value={manual.reason} onChange={(event) => setManual((current) => ({ ...current, reason: event.target.value }))} placeholder="Reason" /><Input aria-label="PRN indication" value={manual.prnIndication} onChange={(event) => setManual((current) => ({ ...current, prnIndication: event.target.value }))} placeholder="PRN indication" /><Input aria-label="PRN response" value={manual.response} onChange={(event) => setManual((current) => ({ ...current, response: event.target.value }))} placeholder="PRN response" /><Input aria-label="Infusion details" value={manual.infusionDetails} onChange={(event) => setManual((current) => ({ ...current, infusionDetails: event.target.value }))} placeholder="Infusion details" /></div>
               <Button onClick={addManual} disabled={!manual.medicationName.trim()}>Add to preview</Button>
             </div>
           )}
@@ -225,8 +268,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
           </div>
           {error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
+          {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
           {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading MAR history…</div> : filteredEvents.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No documented administrations in this view.</div> : (
-            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <tr key={event.id} className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{event.relativeOffsetHours != null ? `${event.relativeOffsetHours}h prior` : event.administeredAt ? new Date(event.administeredAt).toLocaleString() : '—'}</td><td className="p-3">{canEdit ? <Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select> : <Badge variant="outline">{event.status}</Badge>}</td><td className="p-3">{canEdit ? <Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => updateEvent(event.id, { reason: event.reason ? undefined : 'Documented by scenario author' })}><Edit3 className="h-4 w-4" /></Button> : <span className="text-xs text-muted-foreground">{event.administeredDose || 'Dose not documented'}{event.route ? ` • ${event.route}` : ''}</span>}</td></tr>)}</tbody></table></div>
+            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenByMedication.get(event.medicationName)?.id === event.id ? (event.relativeOffsetHours != null ? `${event.relativeOffsetHours}h prior` : event.administeredAt ? new Date(event.administeredAt).toLocaleString() : '—') : '—'}</td><td className="p-3">{canEdit ? <Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select> : <Badge variant="outline">{event.status}</Badge>}</td><td className="p-3">{canEdit ? <Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button> : <span className="text-xs text-muted-foreground">{event.administeredDose || 'Dose not documented'}{event.route ? ` • ${event.route}` : ''}</span>}</td></tr>{editingId === event.id && canEdit && <tr className="border-b bg-muted/10"><td colSpan={5} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['orderedDose','administeredDose','unit','route','frequency','reason','prnIndication','response'] as const).map((field) => <Input key={field} aria-label={field} value={String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, [field]: e.target.value }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           )}
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" /> Authored baseline times are shown as prior-hour offsets; real attempt administrations use persisted server times.</div>
         </CardContent>
