@@ -14,6 +14,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { minimumPriorTimestamp } from '../lib/scenarioTime';
+import { generateCoherentStatLabPanel } from '../lib/labResultGeneration';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -45,6 +46,18 @@ const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] =>
   return Array.isArray(packageOrders?.imaging)
     ? packageOrders.imaging.filter((item): item is string => typeof item === 'string')
     : [];
+};
+
+const functionErrorMessage = async (error: unknown) => {
+  const fallback = error instanceof Error ? error.message : 'Lab result generation failed.';
+  const response = (error as { context?: Response } | null)?.context;
+  if (!response?.clone) return fallback;
+  try {
+    const body = await response.clone().json() as { error?: string; reason?: string };
+    return body.error ?? body.reason ?? fallback;
+  } catch {
+    return fallback;
+  }
 };
 
 export function OrdersManagement({
@@ -288,6 +301,20 @@ export function OrdersManagement({
     setOrders((prev) => [saved, ...prev]);
     setShowOrderEntry(false);
 
+    let resultOrder = saved;
+    if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
+      const attemptKey = saved.resultAttemptKey ?? crypto.randomUUID();
+      const marked = await emrApi.updateOrder(saved.id, {
+        resultAttemptKey: attemptKey,
+        resultGenerationStatus: 'generating',
+        resultFailureReason: null,
+      }, saved.recordVersion);
+      if (marked && !('conflict' in marked)) {
+        resultOrder = marked;
+        setOrders((prev) => prev.map((order) => order.id === saved.id ? marked : order));
+      }
+    }
+
     if (adjustedOrder.category === 'Imaging') {
       void createImagingStudyForOrder(
         orderForState,
@@ -369,7 +396,7 @@ export function OrdersManagement({
         });
 
         if (aiResponse.error) {
-          throw aiResponse.error;
+          throw new Error(await functionErrorMessage(aiResponse.error));
         }
 
         const generationContext = {
@@ -424,9 +451,24 @@ export function OrdersManagement({
         if (!writeResult.ok) {
           throw new Error(`Could not save generated labs: ${writeResult.error}`);
         }
+        const completed = await emrApi.updateOrder(resultOrder.id, {
+          resultGenerationStatus: 'completed',
+          resultFailureReason: null,
+        }, resultOrder.recordVersion);
+        if (completed && !('conflict' in completed)) {
+          setOrders((prev) => prev.map((order) => order.id === completed.id ? completed : order));
+        }
         onLabsGenerated?.();
       } catch (err) {
-        setOrderSaveError(err instanceof Error ? err.message : 'Unable to generate a coherent result panel. Refresh and retry.');
+        const reason = err instanceof Error ? err.message : 'Unable to generate a coherent result panel. Refresh and retry.';
+        const failed = await emrApi.updateOrder(resultOrder.id, {
+          resultGenerationStatus: 'failed',
+          resultFailureReason: reason,
+        }, resultOrder.recordVersion);
+        if (failed && !('conflict' in failed)) {
+          setOrders((prev) => prev.map((order) => order.id === failed.id ? failed : order));
+        }
+        setOrderSaveError(reason);
         console.error('Failed to generate STAT labs', err);
       }
     }
@@ -492,6 +534,61 @@ export function OrdersManagement({
         }
         onLabsGenerated?.();
       }
+    }
+  };
+
+  const retryFailedLabResult = async (order: MedicalOrder) => {
+    if (order.category !== 'Lab' || order.priority !== 'STAT' || !assignmentId || !patient.roomId) return;
+    setOrderSaveError(null);
+    const marked = await emrApi.updateOrder(order.id, {
+      resultGenerationStatus: 'generating',
+      resultFailureReason: null,
+      resultAttemptKey: order.resultAttemptKey ?? crypto.randomUUID(),
+    }, order.recordVersion);
+    const working = marked && !('conflict' in marked) ? marked : order;
+    setOrders((prev) => prev.map((item) => item.id === order.id ? working : item));
+    try {
+      const [previousLabs, clinicalNotes, vitals] = await Promise.all([
+        emrApi.listLabResults(patient.id, assignmentId, patient.roomId),
+        emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId),
+        emrApi.listVitals(patient.id, assignmentId, patient.roomId),
+      ]);
+      const generated = await generateCoherentStatLabPanel({
+        patient,
+        orderName: order.orderName,
+        assignmentId,
+        roomId: patient.roomId,
+        room: {
+          emrContext: roomMeta?.emr_context,
+          nurseContext: roomMeta?.nurse_context ?? roomMeta?.context,
+          expectedDiagnosis: roomMeta?.expected_diagnosis,
+          expectedTreatment: roomMeta?.expected_treatment,
+          caseGoals: roomMeta?.case_goals,
+          objective: roomMeta?.objective,
+          progressNote: roomMeta?.progress_note,
+          completionHint: roomMeta?.completion_hint,
+        },
+        previousLabs,
+        clinicalNotes,
+        vitals,
+        orders,
+      });
+      const existingNames = new Set(previousLabs
+        .filter((lab) => lab.assignmentId === assignmentId)
+        .map((lab) => lab.testName.trim().toLowerCase()));
+      const missing = generated.filter((lab) => !existingNames.has(lab.testName.trim().toLowerCase()));
+      if (missing.length) {
+        const writeResult = await emrApi.addLabResults(missing, patient.roomId);
+        if (!writeResult.ok) throw new Error(`Could not save generated labs: ${writeResult.error}`);
+      }
+      const completed = await emrApi.updateOrder(order.id, { resultGenerationStatus: 'completed', resultFailureReason: null }, working.recordVersion);
+      if (completed && !('conflict' in completed)) setOrders((prev) => prev.map((item) => item.id === order.id ? completed : item));
+      onLabsGenerated?.();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unable to generate a coherent result panel. Refresh and retry.';
+      const failed = await emrApi.updateOrder(order.id, { resultGenerationStatus: 'failed', resultFailureReason: reason }, working.recordVersion);
+      if (failed && !('conflict' in failed)) setOrders((prev) => prev.map((item) => item.id === order.id ? failed : item));
+      setOrderSaveError(reason);
     }
   };
 
@@ -765,6 +862,7 @@ export function OrdersManagement({
                           {order.frequency && <div>Frequency: {order.frequency}</div>}
                           {order.route && <div>Route: {order.route}</div>}
                           {order.instructions && <div>Notes: {order.instructions}</div>}
+                          {order.resultFailureReason && <div className="mt-1 text-xs text-red-700">Result generation failed: {order.resultFailureReason}</div>}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -784,8 +882,13 @@ export function OrdersManagement({
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
+                          <TableCell>
+                            <div className="flex gap-1">
+                          {order.resultGenerationStatus === 'failed' && order.category === 'Lab' && order.priority === 'STAT' && (
+                            <Button size="sm" variant="outline" onClick={() => void retryFailedLabResult(order)}>
+                              Retry result
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"

@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Loader2, Send, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CONSULTANT_TRANSPORT_FUNCTION_VERSION, preflightConsultantTransport } from '../lib/consultantTransport';
-import { CONSULTANT_DIRECTORY, filterConsultantMessages, getConsultantThreadKey } from './consultantPortalModel';
+import { CONSULTANT_DIRECTORY, filterConsultantMessages, getConsultantThreadKey, sortConsultantMessages } from './consultantPortalModel';
 import type { Audience, Message } from './consultantPortalModel';
 
 type Props = { assignmentId: string; open: boolean; onClose: () => void };
@@ -15,7 +15,7 @@ type RecoveryState = { status: 'idle' | 'loading' | 'ready' | 'error'; error: st
 type MessageQuery = {
   select: (columns: string) => MessageQuery;
   eq: (column: string, value: string) => MessageQuery;
-  order: (column: string, options?: { ascending?: boolean }) => MessageQuery;
+  order: (column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) => MessageQuery;
   then: (resolve: (value: { data: unknown; error: { message: string } | null }) => unknown) => Promise<unknown>;
 };
 
@@ -37,7 +37,7 @@ const getErrorMessage = async (cause: unknown) => {
 const mergeStoredMessages = (current: Message[], stored: Message[]) => {
   const byId = new Map(current.map((message) => [message.id, message]));
   stored.forEach((message) => byId.set(message.id, message));
-  return Array.from(byId.values()).sort((left, right) => (left.created_at ?? '').localeCompare(right.created_at ?? '') || left.id.localeCompare(right.id));
+  return sortConsultantMessages(Array.from(byId.values()));
 };
 
 export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
@@ -88,8 +88,10 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
         }
         const messageClient = supabase as unknown as { from: (table: string) => MessageQuery };
         const { data, error: loadError } = await messageClient.from('consultant_chat_messages')
-          .select('id, role, content, specialty, audience, created_at, request_id, consult_order_id')
+          .select('id, role, content, specialty, audience, created_at, request_receipt_at, message_sequence, request_id, consult_order_id')
           .eq('assignment_id', assignmentId)
+          .order('request_receipt_at', { ascending: true, nullsFirst: false })
+          .order('message_sequence', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: true })
           .order('id', { ascending: true });
         if (!active || currentAssignmentRef.current !== assignmentId) return;

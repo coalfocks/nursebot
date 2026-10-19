@@ -47,6 +47,9 @@ type PersistedMessage = {
   specialty: string | null;
   audience: ConsultantAudience | null;
   created_at: string;
+  request_receipt_at: string | null;
+  message_sequence: number | null;
+  request_created_at?: string | null;
   request_id: string | null;
   consult_order_id: string | null;
 };
@@ -62,8 +65,9 @@ const errorCode = (value: unknown) => record(value).code;
 const readRequestMessages = async (requestId: string) => {
   const { data, error } = await admin
     .from('consultant_chat_messages')
-    .select('id, role, content, specialty, audience, created_at, request_id, consult_order_id')
+    .select('id, role, content, specialty, audience, created_at, request_receipt_at, message_sequence, request_id, consult_order_id')
     .eq('request_id', requestId)
+    .order('message_sequence', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true })
     .order('id', { ascending: true });
   if (error) throw error;

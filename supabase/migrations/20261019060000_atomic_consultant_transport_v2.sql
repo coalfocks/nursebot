@@ -132,12 +132,12 @@ begin
 
   insert into public.consultant_chat_messages (
     assignment_id, request_id, role, content, specialty, urgency,
-    audience, consult_order_id
+    audience, consult_order_id, message_sequence, request_receipt_at
   ) values
     (p_assignment_id, existing.id, 'student', p_message, trim(p_specialty), null,
-     p_audience, episode.id),
+     p_audience, episode.id, 1, existing.created_at),
     (p_assignment_id, existing.id, 'consultant', trim(p_response), trim(p_specialty), null,
-     p_audience, episode.id)
+     p_audience, episode.id, 2, existing.created_at)
   on conflict (request_id, role) where request_id is not null do nothing;
 
   persisted_status := case when p_disposition = 'assumes_care' then 'assumes_care' else 'answered' end;

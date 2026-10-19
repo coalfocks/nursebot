@@ -1335,6 +1335,8 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          message_sequence: number | null
+          request_receipt_at: string | null
           role: string
         }
         Insert: {
@@ -1342,6 +1344,8 @@ export type Database = {
           content: string
           created_at?: string
           id?: string
+          message_sequence?: number | null
+          request_receipt_at?: string | null
           role: string
         }
         Update: {
@@ -1349,6 +1353,8 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          message_sequence?: number | null
+          request_receipt_at?: string | null
           role?: string
         }
         Relationships: [
@@ -1706,6 +1712,9 @@ export type Database = {
           frequency: string | null
           id: string
           instructions: string | null
+          result_attempt_key: string | null
+          result_failure_reason: string | null
+          result_generation_status: string
           order_name: string
           order_time: string | null
           ordered_by: string | null
@@ -1729,6 +1738,9 @@ export type Database = {
           frequency?: string | null
           id?: string
           instructions?: string | null
+          result_attempt_key?: string | null
+          result_failure_reason?: string | null
+          result_generation_status?: string
           order_name: string
           order_time?: string | null
           ordered_by?: string | null
@@ -1752,6 +1764,9 @@ export type Database = {
           frequency?: string | null
           id?: string
           instructions?: string | null
+          result_attempt_key?: string | null
+          result_failure_reason?: string | null
+          result_generation_status?: string
           order_name?: string
           order_time?: string | null
           ordered_by?: string | null

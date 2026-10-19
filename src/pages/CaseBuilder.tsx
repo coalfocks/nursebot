@@ -703,6 +703,28 @@ export default function CaseBuilder() {
 
       let patientId = roomRecord.patient_id ?? blueprint.source_patient_id;
       let patientSkippedForMissingDob = false;
+      const authoredIdentity = getStructuredPatientIdentity(patient);
+      if (roomRecord.patient_id && !blueprint.source_patient_id) {
+        const { data: linkedPatient, error: linkedPatientError } = await supabase
+          .from('patients')
+          .select('id, first_name, last_name, date_of_birth, gender')
+          .eq('id', roomRecord.patient_id)
+          .maybeSingle();
+        if (linkedPatientError) throw linkedPatientError;
+        if (linkedPatient) {
+          const linkedIdentity = getStructuredPatientIdentity(linkedPatient);
+          const mismatches = [
+            ['first name', authoredIdentity.firstName, linkedIdentity.firstName],
+            ['last name', authoredIdentity.lastName, linkedIdentity.lastName],
+            ['date of birth', authoredIdentity.dateOfBirth, linkedIdentity.dateOfBirth],
+            ['gender', authoredIdentity.gender, linkedIdentity.gender],
+          ].filter(([, authored, linked]) => authored && linked && authored !== linked);
+          if (mismatches.length) {
+            const diff = mismatches.map(([field, authored, linked]) => `${field}: authored=${authored}; linked=${linked}`).join(' | ');
+            throw new Error(`[CASE_CHART_BASELINE_MISMATCH] Room ${roomRecord.id} already links patient/chart ${linkedPatient.id}, but the authored package differs. No chart was replaced. Review this audited diff and use an explicit synthetic-chart repair/materialization action: ${diff}`);
+          }
+        }
+      }
       if (blueprint.source_patient_id) {
         const { data: sourcePatient, error: sourcePatientError } = await supabase
           .from('patients')

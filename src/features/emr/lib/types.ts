@@ -145,6 +145,9 @@ export interface MedicalOrder {
   orderTime: string;
   scheduledTime?: string;
   instructions?: string;
+  resultFailureReason?: string | null;
+  resultAttemptKey?: string | null;
+  resultGenerationStatus?: 'not_started' | 'generating' | 'failed' | 'completed';
   deletedAt?: string | null;
   recordVersion?: number;
 }

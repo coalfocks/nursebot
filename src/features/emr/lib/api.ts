@@ -126,6 +126,9 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     orderTime: row.order_time ?? new Date().toISOString(),
     scheduledTime: row.scheduled_time ?? undefined,
     instructions: row.instructions ?? undefined,
+    resultFailureReason: row.result_failure_reason ?? null,
+    resultAttemptKey: row.result_attempt_key ?? null,
+    resultGenerationStatus: row.result_generation_status ?? 'not_started',
     deletedAt: row.deleted_at,
     recordVersion: row.record_version,
   };
@@ -958,6 +961,9 @@ export const emrApi = {
       order_time: order.orderTime,
       scheduled_time: order.scheduledTime,
       instructions: order.instructions,
+      result_failure_reason: order.resultFailureReason ?? null,
+      result_attempt_key: order.resultAttemptKey ?? null,
+      result_generation_status: order.resultGenerationStatus ?? 'not_started',
     }).select('*').maybeSingle();
     if (error) {
       console.error('Error inserting order', error);
@@ -982,6 +988,9 @@ export const emrApi = {
         status: updates.status,
         instructions: updates.instructions,
         ordered_by: updates.orderedBy,
+        result_failure_reason: updates.resultFailureReason,
+        result_attempt_key: updates.resultAttemptKey,
+        result_generation_status: updates.resultGenerationStatus,
       })
       .eq('id', orderId);
     if (expectedVersion !== undefined) query = query.eq('record_version', expectedVersion);
