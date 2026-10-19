@@ -38,6 +38,7 @@
 - **chat** (`supabase/functions/chat`): Nurse chatbot backend used by `ChatInterface`.
 - **generate-case-package** (`supabase/functions/generate-case-package`): Admin case-builder generator that turns a structured blueprint into a previewable v2 package for patient demographics, EMR artifacts, event context, orders, bedside interaction, nurse-chat rules, and hidden evaluation data.
 - **patient-chat** (`supabase/functions/patient-chat`): Bedside patient conversation backend. It returns patient replies without writing to the main nurse-chat timeline, so bedside Q&A stays separate from nurse messages.
+- **consultant-chat** (`supabase/functions/consultant-chat`): Assignment-scoped consultant handoff transport. Contract v2 keys a trusted active consult episode by authenticated assignment, audience, and canonical directory service; follow-up request IDs link to that order. It freezes the exact one-box payload and SHA-256 hash, returns persisted message rows for replay, and never treats urgency as an authoritative transport field.
 - **superadmin-report** (`supabase/functions/superadmin-report`): Curated operations wrapper that verifies `profiles.role = 'super_admin'` before returning cross-school summary/report data plus assignment evaluation rows joined with student/assigned-by profiles.
 - Local generators (`aiLabGenerator.ts`) remain as fallbacks only.
 
@@ -58,6 +59,11 @@
 - Completion hints in the finish-case modal are hidden by default; revealing one records a timestamp in `student_room_assignments.completion_hint_views`, and evaluation includes the viewed hints as part of grading context.
 - Test users create self-serve room sessions (assignment-scoped) for sandboxing; reset clears assignment-scoped labs, orders, vitals, notes, imaging, and chat for that user.
 - Context sent to AI includes patient info, room/assignment ids, clinical notes, vitals, prior labs, current orders, and room metadata (emr_context, nurse_context, expected diagnosis/treatment, goals, difficulty, objective, progress note, completion hint).
+- Consultant Portal scope is `assignment_id + audience + canonical service`. Audience-null messages remain a read-only **Legacy / unclassified transcript** and are never guessed, backfilled, or mixed into a current thread. The portal first calls `consultant_transport_preflight()` and then the Edge Function preflight; schema version 2 and function contract version 2 must both be reported before it reads audience columns or sends a message. The migration and function are coordinated dependencies; atomic request/order/message persistence is explicitly separate and is not claimed solved by this slice.
+
+### Consultant transport migration contract
+
+`supabase/migrations/20261019043010_consultant_transport_contract.sql` is intentionally unapplied in this worktree. It adds nullable payload/order keys, a partial unique active-episode index, and the authenticated preflight RPC without rewriting legacy rows. Apply it before deploying the v2 `consultant-chat` function; deploy the matching function before enabling the portal. Before enabling the portal, rollback is the documented drop of the partial index, `urgency` not-null relaxation, nullable v2 columns, and `consultant_transport_preflight()`; preserve all existing consultant requests, messages, and orders. A future reviewed transaction/RPC remains required for atomic persistence across the request, order, and two message rows.
 - Room creation seeds initial labs; vitals seeding is still manual (via baseline edits/AI). If you need initial vitals at room creation, add an insert into `vital_signs` using `emr_context.initial_vitals`.
 
 ## Commands
