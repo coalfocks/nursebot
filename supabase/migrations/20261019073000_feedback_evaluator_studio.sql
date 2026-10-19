@@ -39,6 +39,24 @@ $$;
 create unique index if not exists feedback_evaluator_configs_scope_identity_version_key
   on public.feedback_evaluator_configs(scope_identity, version);
 
+do $$
+begin
+  if exists (
+    select 1
+    from public.feedback_evaluator_configs
+    where status = 'active'
+    group by scope_identity
+    having count(*) > 1
+  ) then
+    raise exception 'EVALUATOR_ACTIVE_COLLISION: resolve multiple active rows per scope before applying Feedback Studio migration';
+  end if;
+end;
+$$;
+
+create unique index if not exists feedback_evaluator_configs_one_active_scope_key
+  on public.feedback_evaluator_configs(scope_identity)
+  where status = 'active';
+
 create index if not exists feedback_evaluator_configs_lookup_idx
   on public.feedback_evaluator_configs(scope, room_id, status, version desc);
 
@@ -54,11 +72,37 @@ create policy "Super admins can create evaluator configs"
   on public.feedback_evaluator_configs for insert to authenticated
   with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'super_admin'));
 
+-- Config identity and authored content are immutable after insert. Status changes
+-- are performed only by the audited activation RPC below; there is intentionally
+-- no direct UPDATE policy for evaluator configs.
 drop policy if exists "Super admins can update evaluator configs" on public.feedback_evaluator_configs;
-create policy "Super admins can update evaluator configs"
-  on public.feedback_evaluator_configs for update to authenticated
-  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'super_admin'))
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'super_admin'));
+
+create or replace function public.prevent_feedback_evaluator_mutation()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if current_setting('feedback.evaluator_activation', true) <> '1'
+     or new.id is distinct from old.id
+     or new.scope is distinct from old.scope
+     or new.room_id is distinct from old.room_id
+     or new.version is distinct from old.version
+     or new.evaluator_prompt is distinct from old.evaluator_prompt
+     or new.scoring_anchors is distinct from old.scoring_anchors
+     or new.created_by is distinct from old.created_by
+     or new.created_at is distinct from old.created_at
+     or new.status not in ('draft', 'active', 'archived') then
+    raise exception 'EVALUATOR_VERSION_IMMUTABLE: create a new draft; only audited activation may change status';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists feedback_evaluator_configs_immutable on public.feedback_evaluator_configs;
+create trigger feedback_evaluator_configs_immutable
+before update on public.feedback_evaluator_configs
+for each row execute function public.prevent_feedback_evaluator_mutation();
 
 create or replace function public.activate_feedback_evaluator_config(p_config_id uuid)
 returns public.feedback_evaluator_configs
@@ -73,10 +117,16 @@ begin
   if not exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'super_admin') then
     raise exception 'Only super administrators can activate evaluator versions';
   end if;
+  -- Serialize by normalized scope before taking the row lock. Locking the row
+  -- first permits stale/concurrent activation to deadlock while archiving the
+  -- previously-active row.
+  select scope_identity into scope_lock
+    from public.feedback_evaluator_configs
+    where id = p_config_id;
+  if scope_lock is null then raise exception 'Evaluator version not found'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(scope_lock, 0));
   select * into selected from public.feedback_evaluator_configs where id = p_config_id for update;
   if selected.id is null then raise exception 'Evaluator version not found'; end if;
-  scope_lock := selected.scope_identity;
-  perform pg_advisory_xact_lock(hashtextextended(scope_lock, 0));
   if selected.status = 'archived' then
     raise exception 'Cannot activate an archived evaluator version; create a new immutable draft';
   end if;
@@ -94,6 +144,9 @@ begin
      ]) then
     raise exception 'Scoring anchors must contain the six canonical component keys';
   end if;
+  -- Both the archive and activation updates are part of this audited RPC.
+  -- Set the trigger guard before either status transition.
+  perform set_config('feedback.evaluator_activation', '1', false);
   update public.feedback_evaluator_configs
     set status = 'archived', updated_at = now()
     where scope = selected.scope and room_id is not distinct from selected.room_id and status = 'active';
