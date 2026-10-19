@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasMeaningfulEvidence, hasValidSixComponentEvaluation, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -27,43 +27,6 @@ const assertFeedbackSchemaReady = async (client: any) => {
   ]);
   const failed = probes.find((probe) => probe.error);
   if (failed) throw schemaNotReady(failed.error.message);
-};
-
-const hasValidEvaluationShape = (raw: Record<string, unknown>) => {
-  const communication = raw.communication_breakdown as Record<string, unknown> | undefined;
-  const reasoning = (raw.clinical_reasoning_breakdown ?? raw.mdm_breakdown) as Record<string, unknown> | undefined;
-  const components: Array<[unknown, number, number]> = [
-    [communication?.focused_information_gathering, 0, 2],
-    [communication?.closed_loop_team_communication, 0, 3],
-    [communication?.efficiency_deduction, -2, 0],
-    [reasoning?.orders_monitoring_quality, 0, 3],
-    [reasoning?.clinical_reasoning_documentation, 0, 2],
-    [reasoning?.safety_deduction, -2, 0],
-  ];
-  const parseScore = (value: unknown) => {
-    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-    if (typeof value === 'string' && value.trim() !== '' && /^[+-]?(?:\d+|\d+\.\d+)$/.test(value.trim())) {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  };
-  const componentsValid = components.every(([value, min, max], index) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const component = value as Record<string, unknown>;
-    const score = parseScore(component.score ?? component.value ?? component.points);
-    if (score === null || !Number.isInteger(score) || score < min || score > max) return false;
-    if (typeof component.feedback !== 'string' || component.feedback.trim() === '') return false;
-    if (!Array.isArray(component.evidence_event_ids) || !component.evidence_event_ids.every((id) => typeof id === 'string')) return false;
-    if (index === 5 && ![0, -1, -2].includes(score)) return false;
-    return true;
-  });
-  const safety = raw.safety_result;
-  const safetyValid = Boolean(safety && typeof safety === 'object' && !Array.isArray(safety)
-    && ['none', 'concern', 'critical'].includes(String((safety as Record<string, unknown>).level))
-    && Array.isArray((safety as Record<string, unknown>).evidence_event_ids)
-    && ((safety as Record<string, unknown>).evidence_event_ids as unknown[]).every((id) => typeof id === 'string'));
-  return componentsValid && safetyValid;
 };
 
 const lineage = async (client: any, roomId: number) => {
@@ -130,7 +93,7 @@ Deno.serve(async (req) => {
       const requestEvaluation = async (validationNote = '') => {
         const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
-        if (!hasValidEvaluationShape(parsed as Record<string, unknown>)) throw new Error('Evaluator returned malformed six-component scoring output');
+        if (!hasValidSixComponentEvaluation(parsed as Record<string, unknown>)) throw new Error('Evaluator returned malformed six-component scoring output');
         return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) as Array<Record<string, unknown>> };
       };
       let evaluation: EvaluationScoringResponse;

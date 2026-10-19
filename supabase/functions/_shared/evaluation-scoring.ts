@@ -82,6 +82,43 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
 };
 
 export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventIds.length > 0;
+
+export const hasValidSixComponentEvaluation = (raw: Record<string, unknown>) => {
+  const communication = raw.communication_breakdown as Record<string, unknown> | undefined;
+  const reasoning = (raw.clinical_reasoning_breakdown ?? raw.mdm_breakdown) as Record<string, unknown> | undefined;
+  const components: Array<[unknown, number, number]> = [
+    [communication?.focused_information_gathering, 0, 2],
+    [communication?.closed_loop_team_communication, 0, 3],
+    [communication?.efficiency_deduction, -2, 0],
+    [reasoning?.orders_monitoring_quality, 0, 3],
+    [reasoning?.clinical_reasoning_documentation, 0, 2],
+    [reasoning?.safety_deduction, -2, 0],
+  ];
+  const parseScore = (value: unknown) => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string' && value.trim() !== '' && /^[+-]?(?:\d+|\d+\.\d+)$/.test(value.trim())) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+  const componentsValid = components.every(([value, min, max], index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const component = value as Record<string, unknown>;
+    const score = parseScore(component.score ?? component.value ?? component.points);
+    if (score === null || !Number.isInteger(score) || score < min || score > max) return false;
+    if (typeof component.feedback !== 'string' || component.feedback.trim() === '') return false;
+    if (!Array.isArray(component.evidence_event_ids) || !component.evidence_event_ids.every((id) => typeof id === 'string')) return false;
+    return index !== 5 || [0, -1, -2].includes(score);
+  });
+  const safety = raw.safety_result;
+  const safetyValid = Boolean(safety && typeof safety === 'object' && !Array.isArray(safety)
+    && ['none', 'concern', 'critical'].includes(String((safety as Record<string, unknown>).level))
+    && Array.isArray((safety as Record<string, unknown>).evidence_event_ids)
+    && ((safety as Record<string, unknown>).evidence_event_ids as unknown[]).every((id) => typeof id === 'string'));
+  return componentsValid && safetyValid;
+};
+
 type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
 const learnerActionKinds = new Set(['learner-action']);
 const learnerCommunicationKinds = new Set(['learner-action']);

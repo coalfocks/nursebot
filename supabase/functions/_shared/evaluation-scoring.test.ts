@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText } from './evaluation-scoring';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, hasValidSixComponentEvaluation, sanitizeSimulationText } from './evaluation-scoring';
 
 describe('feedback v2 canonical contract', () => {
   it('preserves the two anchored composites and never subtracts safety', () => {
@@ -20,6 +20,19 @@ describe('feedback v2 canonical contract', () => {
     expect(result.mdm_score).toBe(5);
     expect(result.safety_result.level).toBe('critical');
     expect(result.safety_result.evidence_event_ids).toEqual(['order-1']);
+  });
+
+  it('accepts legitimate zero components but rejects malformed numeric and safety values', () => {
+    const component = (score: unknown) => ({ score, feedback: 'not observed', evidence_event_ids: [] });
+    const valid = {
+      communication_breakdown: { focused_information_gathering: component(0), closed_loop_team_communication: component('0'), efficiency_deduction: component(0) },
+      clinical_reasoning_breakdown: { orders_monitoring_quality: component(0), clinical_reasoning_documentation: component(0), safety_deduction: component(0) },
+      safety_result: { level: 'none', evidence_event_ids: [] },
+    };
+    expect(hasValidSixComponentEvaluation(valid)).toBe(true);
+    expect(hasValidSixComponentEvaluation({ ...valid, communication_breakdown: { ...valid.communication_breakdown, focused_information_gathering: component(true) } })).toBe(false);
+    expect(hasValidSixComponentEvaluation({ ...valid, clinical_reasoning_breakdown: { ...valid.clinical_reasoning_breakdown, safety_deduction: component(-1.5) } })).toBe(false);
+    expect(hasValidSixComponentEvaluation({ ...valid, safety_result: { level: 'none', evidence_event_ids: ['event-1'] }, clinical_reasoning_breakdown: { ...valid.clinical_reasoning_breakdown, safety_deduction: component('') } })).toBe(false);
   });
 
   it('clamps only anchored components and reports missing evidence instead of inventing zeros', () => {
