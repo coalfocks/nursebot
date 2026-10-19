@@ -694,7 +694,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       }
       const baselineCollectionTime = baselineOffset === null
         ? labEditForm.collectionTime
-        : new Date(new Date(patient.admissionDate ?? Date.now()).getTime() - baselineOffset * 60 * 60 * 1000).toISOString();
+        : patient.admissionDate
+          ? new Date(new Date(patient.admissionDate).getTime() - baselineOffset * 60 * 60 * 1000).toISOString()
+          : labEditForm.collectionTime;
       const updated = await emrApi.updateLabResult(
         editingLab.id,
         {
