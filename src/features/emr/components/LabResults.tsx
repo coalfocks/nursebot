@@ -791,14 +791,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {labSaveError && !isLoadingLabs ? (
-                <p role="alert" className="text-sm text-red-700">{labSaveError}</p>
-              ) : isLoadingLabs ? (
+              {isLoadingLabs ? (
                 <p className="text-sm text-muted-foreground">Loading saved lab results…</p>
               ) : labResults.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
+                <div className="space-y-2">
+                  {labSaveError && <p role="alert" className="text-sm text-red-700">{labSaveError}</p>}
+                  <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
+                </div>
               ) : (
                 <div className="rounded-md border overflow-x-auto">
+                  {labSaveError && <p role="alert" className="border-b px-3 py-2 text-sm text-red-700">{labSaveError}</p>}
                   <Table>
                     <TableHeader>
                       <TableRow>

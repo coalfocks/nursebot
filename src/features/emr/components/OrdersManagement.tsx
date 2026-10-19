@@ -20,6 +20,7 @@ interface OrdersManagementProps {
   patient: Patient;
   assignmentId?: string;
   forceBaseline?: boolean;
+  readOnly?: boolean;
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
@@ -64,6 +65,7 @@ export function OrdersManagement({
   patient,
   assignmentId,
   forceBaseline,
+  readOnly = false,
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
@@ -71,6 +73,8 @@ export function OrdersManagement({
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [orderLoadError, setOrderLoadError] = useState<string | null>(null);
   const [showOrderEntry, setShowOrderEntry] = useState(false);
   const [orderSaveError, setOrderSaveError] = useState<string | null>(null);
   const [isPlacingIv, setIsPlacingIv] = useState(false);
@@ -91,11 +95,16 @@ export function OrdersManagement({
 
   useEffect(() => {
     const request = requestIdentity.capture();
+    setIsLoadingOrders(true);
+    setOrderLoadError(null);
     setOrders([]);
     void (async () => {
-      const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null);
+      const data = await emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null, (message) => {
+        if (requestIdentity.isCurrent(request)) setOrderLoadError(message);
+      });
       if (!requestIdentity.isCurrent(request)) return;
       setOrders(data);
+      setIsLoadingOrders(false);
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
@@ -274,6 +283,7 @@ export function OrdersManagement({
   };
 
   const handleOrderPlaced = async (newOrder: MedicalOrder): Promise<boolean> => {
+    if (readOnly) return false;
     const adjustedOrder: MedicalOrder = {
       ...newOrder,
       assignmentId: forceBaseline ? null : newOrder.assignmentId,
@@ -514,6 +524,7 @@ export function OrdersManagement({
   };
 
   const handleOrderStatusChange = async (orderId: string, newStatus: MedicalOrder['status']) => {
+    if (readOnly) return;
     const existing = orders.find((order) => order.id === orderId);
     if (!existing) return;
     const updated = await emrApi.updateOrder(orderId, { status: newStatus }, existing.recordVersion);
@@ -593,7 +604,7 @@ export function OrdersManagement({
   };
 
   const handlePlaceIvOrder = async () => {
-    if (isPlacingIv) return;
+    if (readOnly || isPlacingIv) return;
     setIsPlacingIv(true);
     setIvSuccess(null);
     const quickIvOrder: MedicalOrder = {
@@ -770,7 +781,7 @@ export function OrdersManagement({
             {activeOrders.length} Active • {pendingOrders.length} Pending • {filteredOrders.length} Total
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        {!readOnly && <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => void handlePlaceIvOrder()} disabled={isPlacingIv}>
             {isPlacingIv ? 'Saving…' : 'Order peripheral IV access'}
           </Button>
@@ -778,8 +789,10 @@ export function OrdersManagement({
             <Plus className="h-4 w-4" />
             New Order
           </Button>
-        </div>
+        </div>}
       </div>
+
+      {readOnly && <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">Completed student review is read-only. Educator audit controls remain available to authorized staff.</p>}
 
       {orderSaveError && (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -802,7 +815,7 @@ export function OrdersManagement({
         </TabsList>
       </Tabs>
 
-      {showOrderEntry && (
+      {showOrderEntry && !readOnly && (
         <OrderEntry
           patient={patient}
           assignmentId={assignmentId}
@@ -816,7 +829,11 @@ export function OrdersManagement({
           <CardTitle>All Orders</CardTitle>
         </CardHeader>
         <CardContent>
-          {filteredOrders.length ? (
+          {isLoadingOrders ? (
+            <p className="text-sm text-muted-foreground">Loading saved medical orders…</p>
+          ) : orderLoadError ? (
+            <p role="alert" className="text-sm text-red-700">{orderLoadError}</p>
+          ) : filteredOrders.length ? (
             renderOrdersTable(filteredOrders)
           ) : (
             <p className="text-sm text-muted-foreground">No orders yet.</p>
@@ -884,25 +901,15 @@ export function OrdersManagement({
                       </TableCell>
                           <TableCell>
                             <div className="flex gap-1">
-                          {order.resultGenerationStatus === 'failed' && order.category === 'Lab' && order.priority === 'STAT' && (
+                          {!readOnly && order.resultGenerationStatus === 'failed' && order.category === 'Lab' && order.priority === 'STAT' && (
                             <Button size="sm" variant="outline" onClick={() => void retryFailedLabResult(order)}>
                               Retry result
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleOrderStatusChange(order.id, 'Completed')}
-                          >
-                            Complete
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}
-                          >
-                            D/C
-                          </Button>
+                          {!readOnly && <>
+                            <Button size="sm" variant="outline" onClick={() => void handleOrderStatusChange(order.id, 'Completed')}>Complete</Button>
+                            <Button size="sm" variant="destructive" onClick={() => void handleOrderStatusChange(order.id, 'Discontinued')}>D/C</Button>
+                          </>}
                           {canEditOrders && order.category === 'Medication' && (
                             <>
                               <Button size="sm" variant="outline" onClick={() => startEdit(order)}>

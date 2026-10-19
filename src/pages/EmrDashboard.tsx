@@ -53,6 +53,7 @@ export default function EmrDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
   const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
+  const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [, setIsEnsuringAssignment] = useState(false);
   const [, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -60,6 +61,7 @@ export default function EmrDashboard() {
   const effectiveAssignmentId = forceBaseline
     ? undefined
     : assignmentId ?? (selectedPatient?.roomId === derivedAssignmentRoomId ? derivedAssignmentId : undefined);
+  const completedStudentReview = !forceBaseline && assignmentStatus === 'completed' && !isSuperAdmin(profile);
   const patientRequest = useRequestIdentity(
     `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
   );
@@ -372,6 +374,24 @@ export default function EmrDashboard() {
   const testAssignmentPending = Boolean(
     isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,
   );
+
+  useEffect(() => {
+    if (!effectiveAssignmentId || forceBaseline) {
+      setAssignmentStatus(null);
+      return;
+    }
+    let active = true;
+    void supabase.from('student_room_assignments').select('status').eq('id', effectiveAssignmentId).maybeSingle().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        console.error('Failed to load assignment status', error);
+        setAssignmentStatus(null);
+        return;
+      }
+      setAssignmentStatus(data?.status ?? null);
+    });
+    return () => { active = false; };
+  }, [effectiveAssignmentId, forceBaseline]);
 
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
@@ -1135,6 +1155,7 @@ export default function EmrDashboard() {
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
                 forceBaseline={forceBaseline}
+                readOnly={completedStudentReview}
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
                 onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}

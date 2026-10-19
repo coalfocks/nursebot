@@ -369,19 +369,19 @@ export const emrApi = {
 
   async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
     const targetRooms = await getRoomLineage(roomId);
-    const { data, error } = await supabase
-      .from('clinical_notes')
-      .select('*')
-      .eq('patient_id', patientId)
-      .is('deleted_at', null)
-      .order('timestamp', { ascending: false });
+    const [{ data, error }, assignmentResult] = await Promise.all([
+      supabase.from('clinical_notes').select('*').eq('patient_id', patientId).is('deleted_at', null).order('timestamp', { ascending: false }),
+      assignmentId
+        ? supabase.from('student_room_assignments').select('id, room_id, student_progress_note, completed_at, updated_at').eq('id', assignmentId).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
 
     if (error) {
       console.error('Error fetching clinical notes', error);
       return [];
     }
 
-    return (data ?? [])
+    const notes = (data ?? [])
       .map((row) => mapClinicalNote(row, patientId))
       .filter(
         (note) =>
@@ -401,6 +401,24 @@ export const emrApi = {
           assignmentId,
         ),
       );
+    const progressNote = assignmentResult.data?.student_progress_note?.trim();
+    if (assignmentId && progressNote) {
+      const projectedId = `progress-note-${assignmentId}`;
+      return [{
+        id: projectedId,
+        patientId,
+        assignmentId,
+        roomId: assignmentResult.data.room_id ?? roomId ?? null,
+        overrideScope: 'assignment',
+        type: 'Progress',
+        title: 'Progress Note',
+        content: progressNote,
+        author: 'Student',
+        timestamp: assignmentResult.data.completed_at ?? assignmentResult.data.updated_at ?? undefined,
+        signed: true,
+      }, ...notes.filter((note) => note.id !== projectedId)];
+    }
+    return notes;
   },
 
   async addClinicalNote(note: ClinicalNote): Promise<ClinicalNote | null> {
@@ -914,7 +932,7 @@ export const emrApi = {
     }
   },
 
-  async listOrders(patientId: string, assignmentId?: string, roomId?: number | null): Promise<MedicalOrder[]> {
+  async listOrders(patientId: string, assignmentId?: string, roomId?: number | null, onError?: (message: string) => void): Promise<MedicalOrder[]> {
     const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('medical_orders')
@@ -925,6 +943,7 @@ export const emrApi = {
 
     if (error) {
       console.error('Error fetching orders', error);
+      onError?.('Unable to load saved medical orders. Refresh the chart and try again.');
       return [];
     }
 
