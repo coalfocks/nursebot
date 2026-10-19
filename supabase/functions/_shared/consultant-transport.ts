@@ -3,8 +3,8 @@ import { CONSULTANT_DIRECTORY } from './consultant-directory.ts';
 // This contract is coordinated with the consultant_transport_contract migration
 // and the consultant-chat Edge Function. The portal must remain unavailable if
 // either side does not report this exact version.
-export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 3;
-export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 3;
+export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 4;
+export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 4;
 
 export type ConsultantAudience = 'adult' | 'pediatric';
 

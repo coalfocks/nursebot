@@ -37,9 +37,9 @@ const installMessageQuery = () => {
 };
 
 const readyPreflight = () => {
-  mocks.rpc.mockResolvedValue({ data: { ready: true, schemaVersion: 3 }, error: null });
+  mocks.rpc.mockResolvedValue({ data: { ready: true, schemaVersion: 4 }, error: null });
   mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-    if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+    if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
     if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
     return Promise.resolve({ data: null, error: new Error('No response configured') });
   });
@@ -61,7 +61,7 @@ describe('consultant portal transport integration', () => {
   it('renders exact stored successful messages and does not reconstruct from the draft', async () => {
     const stored = [message('1', 'student', 'server-stored request', 'adult', 'Medicine'), message('2', 'consultant', 'server-stored answer', 'adult', 'Medicine')];
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight'
-      ? Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null })
+      ? Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null })
       : options.body.mode === 'recover' ? Promise.resolve({ data: { requests: [] }, error: null })
       : Promise.resolve({ data: { message: 'server-stored answer', messages: stored, orderId: 'order-a' }, error: null }));
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
@@ -80,7 +80,7 @@ describe('consultant portal transport integration', () => {
       { message: 'follow-up answer', messages: [message('3', 'student', 'follow-up', 'adult', 'Medicine', 'request-2', 'shared-order'), message('4', 'consultant', 'follow-up answer', 'adult', 'Medicine', 'request-2', 'shared-order')], orderId: 'shared-order' },
     ];
     const responsesToServe = [...responses];
-    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight' ? Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null }) : options.body.mode === 'recover' ? Promise.resolve({ data: { requests: [] }, error: null }) : Promise.resolve({ data: responsesToServe.shift(), error: null }));
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => options.body.mode === 'preflight' ? Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null }) : options.body.mode === 'recover' ? Promise.resolve({ data: { requests: [] }, error: null }) : Promise.resolve({ data: responsesToServe.shift(), error: null }));
     render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
@@ -104,7 +104,7 @@ describe('consultant portal transport integration', () => {
   it('freezes an attempted draft, retries the exact same ID and text, then clears only after stored messages arrive', async () => {
     let attempt = 0;
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string; request?: { message: string } } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       attempt += 1;
       if (attempt === 1) return Promise.resolve({ data: null, error: new Error('Request outcome unknown') });
@@ -159,7 +159,7 @@ describe('consultant portal transport integration', () => {
   it('keeps service transcripts and pending replies isolated during a service switch', async () => {
     let resolveReply: ((value: { data: unknown; error: null }) => void) | undefined;
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       return new Promise((resolve) => { resolveReply = resolve; });
     });
@@ -245,7 +245,7 @@ describe('consultant portal transport integration', () => {
   it('offers Resume for an authenticated pending request without changing its frozen ID or text', async () => {
     const pending = { id: 'server-request', client_request_id: 'frozen-request', audience: 'adult' as const, specialty: 'Medicine', message: 'resume this exact request', status: 'requested' as const, lease_expires_at: null };
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [pending] }, error: null });
       return Promise.resolve({ data: { error: 'request still leased' }, error: new Error('request still leased') });
     });
@@ -263,7 +263,7 @@ describe('consultant portal transport integration', () => {
   it('keeps sending gated until pending-request recovery resolves', async () => {
     let resolveRecovery: ((value: { data: { requests: [] }; error: null }) => void) | undefined;
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return new Promise((resolve) => { resolveRecovery = resolve; });
       return Promise.resolve({ data: null, error: new Error('send should remain gated') });
     });
@@ -276,7 +276,7 @@ describe('consultant portal transport integration', () => {
 
   it('surfaces recovery failure and offers retry instead of treating it as no pending work', async () => {
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: null, error: new Error('recovery unavailable') });
       return Promise.resolve({ data: null, error: new Error('send should remain gated') });
     });
@@ -292,7 +292,7 @@ describe('consultant portal transport integration', () => {
       'assignment-b': [{ id: 'pending-b', client_request_id: 'client-b', audience: 'adult' as const, specialty: 'Medicine', message: 'assignment B', status: 'requested' as const, lease_expires_at: null }],
     };
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string; assignmentId?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: pendingByAssignment[options.body.assignmentId as keyof typeof pendingByAssignment] }, error: null });
       return Promise.resolve({ data: null, error: new Error('not expected') });
     });
@@ -326,7 +326,7 @@ describe('consultant portal transport integration', () => {
       return query;
     });
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       return new Promise((resolve) => { resolveReply = resolve; });
     });
@@ -363,7 +363,7 @@ describe('consultant portal transport integration', () => {
       return query;
     });
     mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
-      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 4, functionVersion: 4, atomicPersistence: true }, error: null });
       if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
       return new Promise((resolve) => { resolveReply = resolve; });
     });
