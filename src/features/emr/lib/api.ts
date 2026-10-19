@@ -1059,6 +1059,14 @@ export const emrApi = {
     return { caseVersion: data.case_version, contentHash: data.content_hash };
   },
 
+  async getMarReadiness(): Promise<boolean> {
+    const { error } = await supabase
+      .from('mar_assignment_baseline_versions')
+      .select('assignment_id')
+      .limit(1);
+    return !error;
+  },
+
   async saveMarHistory(
     patientId: string,
     roomId: number,

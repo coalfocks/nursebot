@@ -25,7 +25,8 @@ const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
 
 export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
-  const canEdit = hasAdminAccess(profile) && !readOnly && (forceBaseline || Boolean(caseVersion));
+  const [schemaReady, setSchemaReady] = useState(false);
+  const canEdit = hasAdminAccess(profile) && !readOnly && schemaReady && (forceBaseline || Boolean(caseVersion));
   const effectiveCaseVersion = caseVersion ?? (forceBaseline ? 'baseline-v1' : null);
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
   const [events, setEvents] = useState<MarAdministrationEvent[]>([]);
@@ -57,16 +58,18 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     if (!patient.roomId) return;
     setLoading(true);
     setError(null);
-    const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
+    const [loadedEvents, loadedOrders, loadedRevision, baseline, marReady] = await Promise.all([
       emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => setError(message)),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
+      emrApi.getMarReadiness(),
     ]);
     setEvents(loadedEvents);
     setOrders(loadedOrders.filter((order) => order.category === 'Medication'));
     setRevision(loadedRevision);
     setBaselineReady(forceBaseline || !assignmentId || Boolean(baseline && baseline.caseVersion === effectiveCaseVersion));
+    setSchemaReady(marReady);
     setDirty(false);
     setLoading(false);
   }, [assignmentId, forceBaseline, patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
@@ -248,7 +251,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
             {canEdit && baselineReady && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">Blank means undocumented. Learner medication orders do not become Given automatically.</p>
-          {assignmentId && (!caseVersion || !baselineReady) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR writes are unavailable until this attempt has an immutable materialized case-version snapshot. No baseline is materialized or written on chart open.</p>}
+          {(!schemaReady || (assignmentId && (!caseVersion || !baselineReady))) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR editing is unavailable until the reviewed MAR schema is installed and this attempt has an immutable materialized case-version snapshot. This view performs no baseline generation or write on open.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && baselineReady && (
