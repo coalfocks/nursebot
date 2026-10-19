@@ -20,15 +20,40 @@ interface MedicationAdministrationRecordProps {
   forceBaseline?: boolean;
 }
 
+interface PendingMarSave {
+  requestId: string;
+  payloadHash: string;
+  expectedRevision: number;
+  events: MarAdministrationEvent[];
+  patientId: string;
+  roomId: number;
+  assignmentId: string | null;
+  caseVersion: string | null;
+}
+
+const marPayloadHash = (events: MarAdministrationEvent[]) => JSON.stringify(events);
+const readPendingMarSave = (key: string): PendingMarSave | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) ?? 'null') as PendingMarSave | null;
+    return value && typeof value.requestId === 'string' && Array.isArray(value.events) ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 const statusOptions: MarStatus[] = ['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented'];
 const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
 
 export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
   const [schemaReady, setSchemaReady] = useState(false);
+  // Admin authoring may create the first immutable assignment snapshot. Learner
+  // reads still require the already-pinned version and never enter this path.
   const canEdit = hasAdminAccess(profile) && !readOnly && schemaReady && (forceBaseline || Boolean(caseVersion));
   const effectiveCaseVersion = caseVersion ?? (forceBaseline ? 'baseline-v1' : null);
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
+  const recoveryKey = `mar-save:${patient.id}:${patient.roomId ?? 'none'}:${scopeAssignmentId ?? 'baseline'}:${effectiveCaseVersion ?? 'unversioned'}`;
   const [events, setEvents] = useState<MarAdministrationEvent[]>([]);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [historyHours, setHistoryHours] = useState('12');
@@ -44,7 +69,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [editingDraft, setEditingDraft] = useState<Partial<MarAdministrationEvent>>({});
   const [obsoleteKeys, setObsoleteKeys] = useState<Set<string>>(new Set());
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
-  const [saveRequestId, setSaveRequestId] = useState(() => crypto.randomUUID());
+  const [pendingSave, setPendingSave] = useState<PendingMarSave | null>(() => readPendingMarSave(recoveryKey));
   const [populateOpen, setPopulateOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '', prnIndication: '', response: '', infusionDetails: '' });
@@ -54,6 +79,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     infusionStartPriorHours: '12', infusionChangePriorHours: '', infusionStopPriorHours: '',
     infusionRate: '', infusionChangeRate: '', infusionStopRate: '',
   });
+
+  useEffect(() => {
+    setPendingSave(readPendingMarSave(recoveryKey));
+  }, [recoveryKey]);
 
   const load = useCallback(async () => {
     if (!patient.roomId) return;
@@ -76,14 +105,26 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
     ]);
-    setEvents(loadedEvents);
+    const loadedHash = marPayloadHash(loadedEvents);
+    const recovered = pendingSave && pendingSave.patientId === patient.id && pendingSave.roomId === patient.roomId
+      && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === effectiveCaseVersion
+      && pendingSave.payloadHash !== loadedHash
+      ? pendingSave.events
+      : loadedEvents;
+    if (pendingSave && recovered === loadedEvents && pendingSave.payloadHash === loadedHash) {
+      window.localStorage.removeItem(recoveryKey);
+      setPendingSave(null);
+    } else if (pendingSave && recovered !== loadedEvents) {
+      setPreviewMessage('Recovered a frozen MAR save for this assignment. Resume saves the original request; edit the preview to create a new request.');
+    }
+    setEvents(recovered);
     setOrders(loadedOrders.filter((order) => order.category === 'Medication'));
-    setRevision(loadedRevision);
+    setRevision(pendingSave && recovered !== loadedEvents ? pendingSave.expectedRevision : loadedRevision);
     setBaselineReady(forceBaseline || !assignmentId || Boolean(baseline && baseline.caseVersion === effectiveCaseVersion));
     setSchemaReady(true);
-    setDirty(false);
+    setDirty(Boolean(pendingSave && recovered !== loadedEvents));
     setLoading(false);
-  }, [assignmentId, forceBaseline, patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
+  }, [assignmentId, effectiveCaseVersion, forceBaseline, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -156,16 +197,24 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const save = async () => {
-    if (!patient.roomId || !canEdit || !baselineReady) return;
+    if (!patient.roomId || !canEdit) return;
     setSaveError(null);
-    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, revision, events, saveRequestId);
+    const payloadHash = marPayloadHash(events);
+    const requestId = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.requestId : crypto.randomUUID();
+    const expectedRevision = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.expectedRevision : revision;
+    const envelope: PendingMarSave = { requestId, payloadHash, expectedRevision, events, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion };
+    setPendingSave(envelope);
+    window.localStorage.setItem(recoveryKey, JSON.stringify(envelope));
+    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, events, requestId);
     if (!result.ok) {
-      setSaveError(result.error);
+      setSaveError(`${result.error} Resume the same MAR save after reload; editing creates a new request.`);
       return;
     }
     setRevision(result.revision);
+    setBaselineReady(true);
     setDirty(false);
-    setSaveRequestId(crypto.randomUUID());
+    setPendingSave(null);
+    window.localStorage.removeItem(recoveryKey);
   };
 
   const addManual = () => {
@@ -260,13 +309,13 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> Medication Administration Record</CardTitle>
-            {canEdit && baselineReady && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">Blank means undocumented. Learner medication orders do not become Given automatically.</p>
-          {(!schemaReady || (assignmentId && (!caseVersion || !baselineReady))) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: this view is read-only until the reviewed schema, authorization policies, and immutable case-version snapshot are installed. No MAR history generation or write occurs on open.</p>}
+          {(!schemaReady || (assignmentId && (!caseVersion || !baselineReady))) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: learner history remains read-only until the reviewed schema, authorization policies, and immutable case-version snapshot are installed. An authorized superadmin may create the first disposable snapshot explicitly; opening this view never generates or writes MAR history.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
-          {populateOpen && canEdit && baselineReady && (
+          {populateOpen && canEdit && (
             <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <Select value={populate.orderId} onValueChange={(value) => setPopulate((current) => ({ ...current, orderId: value }))}>
@@ -294,7 +343,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
               <Button onClick={handlePopulate} disabled={!populate.orderId}>Preview occurrences</Button>
             </div>
           )}
-          {manualOpen && canEdit && baselineReady && (
+          {manualOpen && canEdit && (
             <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <Input aria-label="Medication name" value={manual.medicationName} onChange={(event) => setManual((current) => ({ ...current, medicationName: event.target.value }))} placeholder="Medication" />

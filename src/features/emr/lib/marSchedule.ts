@@ -101,7 +101,8 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     const requiresExplicit = ['bid', 'tid', 'qid'].includes(normalizedFrequency);
     const interval = requiresExplicit ? null : frequencyHours(input.frequency);
     const offsets = interval
-      ? Array.from({ length: Math.floor((first - Math.max(stop ?? 1, 1)) / interval) + 1 }, (_, index) => first - index * interval)
+      ? Array.from({ length: Math.floor((first - (stop ?? 0)) / interval) + 1 }, (_, index) => first - index * interval)
+        .filter((offset) => offset > 0 && (stop === null || offset >= stop))
       : explicitOffsets(input, historyHours, first, stop);
     return offsets.map((offset) => ({
       occurrenceKey: `${input.orderId ?? input.medicationName}:prn:${offset}`,
@@ -193,8 +194,9 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     }));
   }
   const occurrences: MarDraftOccurrence[] = [];
-  const effectiveStop = Math.max(stop ?? 1, 1);
+  const effectiveStop = stop ?? 0;
   for (let offset = first; offset >= effectiveStop && offset <= historyHours; offset -= interval) {
+    if (offset <= 0) continue;
     occurrences.push({
       occurrenceKey: `${input.orderId ?? input.medicationName}:scheduled:${offset}`,
       relativeOffsetHours: offset,

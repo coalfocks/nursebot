@@ -10,6 +10,7 @@ command -v psql >/dev/null || { echo 'psql required' >&2; exit 2; }
 PORT="${MAR_SCOPE_PGPORT:-54341}"
 NAME="mar-scope-${PORT}"
 PASSWORD='mar-scope-local'
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 if docker ps -a --format '{{.Names}}' | grep -Fxq "$NAME"; then
@@ -66,10 +67,27 @@ PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d po
 ATOMIC_OUTPUT="$(PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
 select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 1, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-4', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
-select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 999, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-4', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
+select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 1, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-4', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
 SQL
 )"
 [[ "$ATOMIC_OUTPUT" == *'"revision": 2'* && "$ATOMIC_OUTPUT" == *'"caseVersion": "case-v1-other"'* ]] || { echo "atomic MAR RPC assertion failed: $ATOMIC_OUTPUT" >&2; exit 1; }
+MISMATCH_OUTPUT="$(PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=0 -At 2>&1 <<'SQL'
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
+select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, '20000000-0000-0000-0000-000000000003'::uuid, 'case-v1-other', 1, jsonb_build_array(jsonb_build_object('orderId', '30000000-0000-0000-0000-000000000003', 'caseVersion', 'case-v1-other', 'occurrenceKey', 'atomic-dose-changed', 'relativeOffsetHours', 4, 'medicationName', 'Atomic fixture', 'status', 'Given')));
+SQL
+)"
+[[ "$MISMATCH_OUTPUT" == *'MAR_RETRY_PAYLOAD_MISMATCH'* ]] || { echo "same-ID changed-payload assertion failed: $MISMATCH_OUTPUT" >&2; exit 1; }
+ROLLBACK_OUTPUT="$(PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=0 -At 2>&1 <<'SQL'
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
+select public.save_mar_history_atomic('40000000-0000-0000-0000-000000000098'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 1, null, 'rollback-case', 0, jsonb_build_array(jsonb_build_object('caseVersion', 'rollback-case', 'occurrenceKey', 'rollback', 'relativeOffsetHours', 4, 'medicationName', 'Rollback fixture', 'category', 'invalid')));
+SQL
+)"
+[[ "$ROLLBACK_OUTPUT" == *'invalid input value for enum'* || "$ROLLBACK_OUTPUT" == *'violates check constraint'* ]] || { echo "rollback injection did not reach the event insert: $ROLLBACK_OUTPUT" >&2; exit 1; }
+ROLLBACK_STATE="$(${PG[@]} -Atc "select (select count(*) from public.mar_save_operations where request_id='40000000-0000-0000-0000-000000000098'), (select count(*) from public.mar_history_revisions where scope_key='10000000-0000-0000-0000-000000000001:1:baseline'), (select count(*) from public.mar_administration_events where occurrence_key='rollback')")"
+[[ "$ROLLBACK_STATE" == '0|0|0' ]] || { echo "atomic rollback left state: $ROLLBACK_STATE" >&2; exit 1; }
+echo 'running same-request concurrency barrier'
+bash "$script_dir/run-mar-concurrent-save.sh" "$PORT"
+echo 'same-request concurrency barrier complete'
 POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_administration_events' and policyname='MAR authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
 [[ "$POLICY_ASSERT" == 1 ]] || { echo 'MAR read-scope policy replacement was not installed' >&2; exit 1; }
 REVISION_POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_history_revisions' and policyname='MAR revisions authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
@@ -77,5 +95,5 @@ REVISION_POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where 
 VERSION_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_proc where proname='create_mar_baseline_version'")"
 [[ "$VERSION_ASSERT" == 1 ]] || { echo 'MAR immutable baseline version RPC missing' >&2; exit 1; }
 READINESS="$(${PG[@]} -Atc "select public.get_mar_readiness()")"
-[[ "$READINESS" == *'"ready": true'* && "$READINESS" == *'"schemaVersion": 4'* && "$READINESS" == *'"atomicPersistence": true'* ]] || { echo "MAR readiness assertion failed: $READINESS" >&2; exit 1; }
+[[ "$READINESS" == *'"ready": true'* && "$READINESS" == *'"schemaVersion": 4'* && "$READINESS" == *'"functionVersion": 4'* && "$READINESS" == *'"atomicPersistence": true'* ]] || { echo "MAR readiness assertion failed: $READINESS" >&2; exit 1; }
 echo 'MAR authorized scope disposable harness: PASS'
