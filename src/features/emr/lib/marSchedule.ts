@@ -131,8 +131,15 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     }];
   }
   if (category === 'infusion') {
-    return (input.infusionEvents ?? [])
-      .filter((event) => event.offsetHours >= 0 && event.offsetHours <= historyHours)
+    const infusionEvents = input.infusionEvents ?? [];
+    const normalizedEvents = infusionEvents.map((event) => ({ ...event, offsetHours: finiteHours(event.offsetHours, 'infusion_time') }));
+    if (normalizedEvents.some((event) => event.offsetHours > historyHours)) throw new RangeError('MAR_TIME_OUTSIDE_STAY');
+    const orderedEvents = [...normalizedEvents].sort((a, b) => b.offsetHours - a.offsetHours);
+    const startIndex = orderedEvents.findIndex((event) => event.status === 'Started');
+    const stopIndex = orderedEvents.findIndex((event) => event.status === 'Stopped');
+    if (startIndex < 0 || (stopIndex >= 0 && stopIndex < startIndex)) throw new RangeError('MAR_INFUSION_START_STOP_CONFLICT');
+    if (orderedEvents.filter((event) => event.status === 'Started').length > 1) throw new RangeError('MAR_DUPLICATE_INFUSION_START');
+    return orderedEvents
       .map((event) => ({
         occurrenceKey: `${input.orderId ?? input.medicationName}:infusion:${event.status}:${event.offsetHours}`,
         relativeOffsetHours: event.offsetHours,

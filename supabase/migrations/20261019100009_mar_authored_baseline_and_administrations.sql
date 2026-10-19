@@ -148,9 +148,17 @@ for select to authenticated using (
 drop policy if exists "MAR revision admins write" on public.mar_history_revisions;
 create policy "MAR revision admins write" on public.mar_history_revisions
 for all to authenticated using (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_history_revisions.room_id
+    where p.id = auth.uid()
+      and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+  )
 ) with check (
-  exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('school_admin','super_admin'))
+  exists (
+    select 1 from public.profiles p join public.rooms r on r.id = mar_history_revisions.room_id
+    where p.id = auth.uid()
+      and (p.role = 'super_admin' or (p.role = 'school_admin' and p.school_id = r.school_id))
+  )
 );
 
 create or replace function public.save_mar_history(
@@ -212,7 +220,7 @@ begin
       or nullif(value->>'orderId','') is not null and not exists (
         select 1 from public.medical_orders o
         where o.id = (value->>'orderId')::uuid and o.patient_id = p_patient_id
-          and o.room_id = p_room_id and (o.assignment_id = p_assignment_id or p_assignment_id is null)
+          and o.room_id = p_room_id and (o.assignment_id is null or o.assignment_id = p_assignment_id)
       )
       or nullif(value->>'relativeOffsetHours','') is not null and ((value->>'relativeOffsetHours')::numeric < 0 or (value->>'relativeOffsetHours')::numeric > 72)
   ) then raise exception 'MAR_LINEAGE_MISMATCH'; end if;

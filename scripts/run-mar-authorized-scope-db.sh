@@ -48,6 +48,7 @@ insert into auth.users(id) values
   ('00000000-0000-0000-0000-000000000003');
 SQL
 "${PG[@]}" -f supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql >/dev/null
+"${PG[@]}" -f supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql >/dev/null
 "${PG[@]}" <<'SQL'
 grant usage on schema public, auth to authenticated;
 grant authenticated to mar_scope_user;

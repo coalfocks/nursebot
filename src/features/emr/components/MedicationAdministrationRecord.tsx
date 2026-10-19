@@ -132,6 +132,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       setPreviewMessage('Preview updated. Existing manual exceptions were preserved; obsolete occurrences remain visible until explicitly removed.');
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Unable to expand this MAR schedule.');
+      return;
     }
     setDirty(true);
     setPopulateOpen(false);
