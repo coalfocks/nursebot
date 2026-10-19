@@ -11,6 +11,7 @@ type Draft = { text: string; clientRequestId: string | null };
 type ThreadStatus = { loading: boolean; error: string | null; disposition: string | null };
 type GateState = { status: 'idle' | 'checking' | 'ready' | 'blocked'; reason?: string };
 type RecoveredRequest = { id: string; client_request_id: string; audience: Audience; specialty: string; message: string; status: 'requested'; lease_expires_at: string | null };
+type RecoveryState = { status: 'idle' | 'loading' | 'ready' | 'error'; error: string | null };
 type MessageQuery = {
   select: (columns: string) => MessageQuery;
   eq: (column: string, value: string) => MessageQuery;
@@ -50,8 +51,11 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
   const [threadStatuses, setThreadStatuses] = useState<Record<string, ThreadStatus>>({});
   const [gate, setGate] = useState<GateState>({ status: 'idle' });
   const [recoveredRequests, setRecoveredRequests] = useState<RecoveredRequest[]>([]);
+  const [recovery, setRecovery] = useState<RecoveryState>({ status: 'idle', error: null });
+  const [recoveryRetry, setRecoveryRetry] = useState(0);
   const currentAssignmentRef = useRef(assignmentId);
   currentAssignmentRef.current = assignmentId;
+  const loadedAssignmentRef = useRef<string | null>(null);
 
   const filteredSpecialties = useMemo(() => CONSULTANT_DIRECTORY.filter((item) => (item.audiences as readonly Audience[]).includes(audience) && `${item.label} ${item.value}`.toLowerCase().includes(search.trim().toLowerCase())), [audience, search]);
   const threadKey = getConsultantThreadKey(assignmentId, audience, specialty);
@@ -66,9 +70,14 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
     }
     let active = true;
     setGate({ status: 'checking' });
-    setMessages([]);
-    setLegacyMessages([]);
+    if (loadedAssignmentRef.current !== assignmentId) {
+      setMessages([]);
+      setLegacyMessages([]);
+      loadedAssignmentRef.current = assignmentId;
+    }
     setHistoryErrors((current) => ({ ...current, [assignmentId]: null }));
+    setRecoveredRequests([]);
+    setRecovery({ status: 'loading', error: null });
     void (async () => {
       try {
         const result = await preflightConsultantTransport(supabase as unknown as Parameters<typeof preflightConsultantTransport>[0]);
@@ -90,18 +99,25 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
           return;
         }
         const loaded = (data ?? []) as Message[];
-        setMessages(loaded.filter((message) => message.audience !== null));
+        setMessages((current) => mergeStoredMessages(current, loaded.filter((message) => message.audience !== null)));
         setLegacyMessages(loaded.filter((message) => message.audience === null));
+        const { data: recovered, error: recoveryError } = await supabase.functions.invoke<{ requests?: RecoveredRequest[] }>('consultant-chat', { body: { mode: 'recover', transportContractVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, assignmentId } });
+        if (!active || currentAssignmentRef.current !== assignmentId) return;
+        if (recoveryError) {
+          const message = await getErrorMessage(recoveryError);
+          setRecovery({ status: 'error', error: message });
+          setGate({ status: 'blocked', reason: 'Pending consultant requests could not be recovered. Retry recovery before sending.' });
+          return;
+        }
+        setRecoveredRequests(Array.isArray(recovered?.requests) ? recovered.requests : []);
+        setRecovery({ status: 'ready', error: null });
         setGate({ status: 'ready' });
-        void supabase.functions.invoke<{ requests?: RecoveredRequest[] }>('consultant-chat', { body: { mode: 'recover', transportContractVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, assignmentId } }).then(({ data: recovery }) => {
-          if (active && currentAssignmentRef.current === assignmentId) setRecoveredRequests(Array.isArray(recovery?.requests) ? recovery.requests : []);
-        });
       } catch {
         if (active) setGate({ status: 'blocked', reason: 'Consultant transport readiness could not be checked. Close and reopen the portal to retry.' });
       }
     })();
     return () => { active = false; };
-  }, [assignmentId, audience, open]);
+  }, [assignmentId, audience, open, recoveryRetry]);
 
   const updateThreadStatus = (key: string, update: Partial<ThreadStatus>) => setThreadStatuses((current) => ({ ...current, [key]: { ...(current[key] ?? emptyThreadStatus()), ...update } }));
 
@@ -178,6 +194,7 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
       <div className="flex items-center justify-between border-b p-4"><div><h2 id="consultant-portal-title" className="text-lg font-semibold">Consultant Portal</h2><p className="text-xs text-slate-500">Choose the patient population and consultant before sending a message.</p></div><button type="button" onClick={onClose} aria-label="Close consultant portal"><X className="h-5 w-5" /></button></div>
       {gate.status !== 'ready' && <div role="status" className="border-b bg-amber-50 px-4 py-3 text-sm text-amber-900">{gate.status === 'checking' ? 'Checking consultant transport readiness…' : gate.reason ?? 'Consultant Portal is unavailable until the coordinated schema and function contract are ready.'}</div>}
       {historyErrors[assignmentId] && <p role="alert" className="border-b bg-red-50 px-4 py-2 text-sm text-red-800">Transcript history could not be loaded: {historyErrors[assignmentId]}</p>}
+      {recovery.status === 'error' && <div className="border-b bg-red-50 px-4 py-3 text-sm text-red-800" role="alert"><p>Pending consultant requests could not be recovered: {recovery.error}</p><button type="button" className="mt-2 rounded border border-red-300 bg-white px-2 py-1 text-xs font-semibold" onClick={() => setRecoveryRetry((current) => current + 1)}>Retry recovery</button></div>}
       {gate.status === 'ready' && <>
         {recoveredRequests.length > 0 && <section className="border-b bg-amber-50 px-4 py-3" aria-label="Recover pending consultant requests"><h3 className="text-sm font-semibold text-amber-900">Pending consultant request</h3><p className="mt-1 text-xs text-amber-800">A prior request was interrupted. Resume the exact frozen message; editing it requires a new request.</p><div className="mt-2 space-y-2">{recoveredRequests.map((request) => <button key={request.id} type="button" onClick={() => resumeRequest(request)} className="block w-full rounded border border-amber-300 bg-white px-3 py-2 text-left text-sm text-amber-950">Resume {request.audience} {request.specialty}: “{request.message}”</button>)}</div></section>}
         <div className="grid gap-3 border-b p-4">

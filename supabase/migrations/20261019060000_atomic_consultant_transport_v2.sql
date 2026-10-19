@@ -16,6 +16,11 @@ create unique index if not exists consultant_chat_messages_request_role_key
   on public.consultant_chat_messages(request_id, role)
   where request_id is not null;
 
+-- OUT parameter names are part of the function definition in PostgreSQL. Drop
+-- the never-deployed v2 shape so this migration also upgrades a disposable
+-- database that already applied an earlier copy of this migration.
+drop function if exists public.persist_consultant_response_v2(uuid, uuid, uuid, uuid, bigint, text, text, text, text, text, text, uuid);
+
 create or replace function public.persist_consultant_response_v2(
   p_student_id uuid,
   p_assignment_id uuid,
@@ -31,12 +36,12 @@ create or replace function public.persist_consultant_response_v2(
   p_lease_token uuid
 )
 returns table(
-  request_id uuid,
-  order_id uuid,
-  status text,
-  disposition text,
-  response text,
-  idempotent boolean
+  result_request_id uuid,
+  result_order_id uuid,
+  result_status text,
+  result_disposition text,
+  result_response text,
+  result_idempotent boolean
 )
 language plpgsql
 security definer
@@ -136,14 +141,14 @@ begin
   on conflict (request_id, role) where request_id is not null do nothing;
 
   persisted_status := case when p_disposition = 'assumes_care' then 'assumes_care' else 'answered' end;
-  update public.consultant_requests
+  update public.consultant_requests as cr
   set response = trim(p_response), disposition = p_disposition,
       consult_order_id = episode.id, status = persisted_status,
       answered_at = timezone('utc', now()), lease_token = null, lease_expires_at = null
-  where id = existing.id and status = 'requested' and lease_token = p_lease_token;
+  where cr.id = existing.id and cr.status = 'requested' and cr.lease_token = p_lease_token;
 
   if not found then
-    select cr.* into existing from public.consultant_requests cr where cr.id = existing.id;
+    select cr.* into existing from public.consultant_requests as cr where cr.id = existing.id;
     if existing.status in ('answered', 'assumes_care') then
       return query select existing.id, existing.consult_order_id, existing.status,
         existing.disposition, existing.response, true;

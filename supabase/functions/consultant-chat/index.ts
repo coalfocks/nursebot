@@ -286,9 +286,9 @@ Deno.serve(async (req) => {
     });
     if (persistError) throw persistError;
     const persistedRow = Array.isArray(persisted) ? persisted[0] as Record<string, unknown> | undefined : undefined;
-    if (!persistedRow?.request_id) throw new Error('Consultant persistence returned no stored request');
+    if (!persistedRow?.result_request_id) throw new Error('Consultant persistence returned no stored request');
     const messages = await readRequestMessages(requestRecord.id);
-    return json({ message: messages.find((message) => message.role === 'consultant')?.content ?? answer, messages, disposition: persistedRow.disposition, orderId: persistedRow.order_id, requestId: requestRecord.id });
+    return json({ message: messages.find((message) => message.role === 'consultant')?.content ?? answer, messages, disposition: persistedRow.result_disposition, orderId: persistedRow.result_order_id, requestId: requestRecord.id });
   } catch (error) {
     // Never compensate-delete after finalize. A read-back/network failure must
     // leave the committed outcome replayable by the same frozen request ID.

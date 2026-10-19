@@ -40,6 +40,7 @@ const readyPreflight = () => {
   mocks.rpc.mockResolvedValue({ data: { ready: true, schemaVersion: 3 }, error: null });
   mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
     if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+    if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
     return Promise.resolve({ data: null, error: new Error('No response configured') });
   });
 };
@@ -257,5 +258,124 @@ describe('consultant portal transport integration', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('request still leased'));
     const request = mocks.invoke.mock.calls.find(([, options]) => (options as { body: { request?: unknown } }).body.request);
     expect((request?.[1] as { body: { request: { clientRequestId: string; message: string } } }).body.request).toMatchObject({ clientRequestId: 'frozen-request', message: 'resume this exact request' });
+  });
+
+  it('keeps sending gated until pending-request recovery resolves', async () => {
+    let resolveRecovery: ((value: { data: { requests: [] }; error: null }) => void) | undefined;
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return new Promise((resolve) => { resolveRecovery = resolve; });
+      return Promise.resolve({ data: null, error: new Error('send should remain gated') });
+    });
+    render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Checking consultant transport readiness'));
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    resolveRecovery?.({ data: { requests: [] }, error: null });
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+  });
+
+  it('surfaces recovery failure and offers retry instead of treating it as no pending work', async () => {
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: null, error: new Error('recovery unavailable') });
+      return Promise.resolve({ data: null, error: new Error('send should remain gated') });
+    });
+    render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('recovery unavailable'));
+    expect(screen.getByRole('button', { name: 'Retry recovery' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('clears recovered rows when the assignment changes', async () => {
+    const pendingByAssignment = {
+      'assignment-a': [{ id: 'pending-a', client_request_id: 'client-a', audience: 'adult' as const, specialty: 'Medicine', message: 'assignment A', status: 'requested' as const, lease_expires_at: null }],
+      'assignment-b': [{ id: 'pending-b', client_request_id: 'client-b', audience: 'adult' as const, specialty: 'Medicine', message: 'assignment B', status: 'requested' as const, lease_expires_at: null }],
+    };
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string; assignmentId?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: pendingByAssignment[options.body.assignmentId as keyof typeof pendingByAssignment] }, error: null });
+      return Promise.resolve({ data: null, error: new Error('not expected') });
+    });
+    const { rerender } = render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Resume adult Medicine/ })).toHaveTextContent('assignment A'));
+    rerender(<ConsultantPortal assignmentId="assignment-b" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Resume adult Medicine/ })).toHaveTextContent('assignment B'));
+    expect(screen.queryByText('assignment A')).not.toBeInTheDocument();
+  });
+
+  it('merges a late adult reply when audience switch triggers an older history load', async () => {
+    let historyCall = 0;
+    let resolvePediatricHistory: ((value: { data: Message[]; error: null }) => void) | undefined;
+    let resolveReply: ((value: { data: unknown; error: null }) => void) | undefined;
+    mocks.from.mockImplementation(() => {
+      historyCall += 1;
+      const currentCall = historyCall;
+      const query = {
+        select: vi.fn(() => query),
+        eq: vi.fn(() => query),
+        order: vi.fn(() => query),
+        then: (resolve: (value: { data: Message[]; error: null }) => unknown) => {
+          if (currentCall === 1) return Promise.resolve(resolve({ data: [], error: null }));
+          if (currentCall === 2) {
+            resolvePediatricHistory = resolve;
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve(resolve({ data: [message('adult-1', 'student', 'adult request', 'adult', 'Medicine'), message('adult-2', 'consultant', 'adult reply', 'adult', 'Medicine')], error: null }));
+        },
+      };
+      return query;
+    });
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
+      return new Promise((resolve) => { resolveReply = resolve; });
+    });
+    render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'adult request' } });
+    fireEvent.submit(screen.getByLabelText('Message').closest('form')!);
+    fireEvent.click(screen.getByRole('radio', { name: 'Pediatric' }));
+    await waitFor(() => expect(historyCall).toBe(2));
+    resolveReply?.({ data: { message: 'adult reply', messages: [message('adult-1', 'student', 'adult request', 'adult', 'Medicine'), message('adult-2', 'consultant', 'adult reply', 'adult', 'Medicine')] }, error: null });
+    resolvePediatricHistory?.({ data: [], error: null });
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('radio', { name: 'Adult' }));
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
+    await waitFor(() => expect(screen.getByText('adult reply')).toBeInTheDocument());
+  });
+
+  it('keeps a committed reply across close and reopen when reopened history is older', async () => {
+    let historyCall = 0;
+    let resolveReply: ((value: { data: unknown; error: null }) => void) | undefined;
+    mocks.from.mockImplementation(() => {
+      historyCall += 1;
+      const query = {
+        select: vi.fn(() => query),
+        eq: vi.fn(() => query),
+        order: vi.fn(() => query),
+        then: (resolve: (value: { data: Message[]; error: null }) => unknown) => Promise.resolve(resolve({
+          data: historyCall === 1 ? [] : [message('reopen-old', 'student', 'reopen request', 'adult', 'Medicine')],
+          error: null,
+        })),
+      };
+      return query;
+    });
+    mocks.invoke.mockImplementation((_name: string, options: { body: { mode?: string } }) => {
+      if (options.body.mode === 'preflight') return Promise.resolve({ data: { ready: true, schemaVersion: 3, functionVersion: 3, atomicPersistence: true }, error: null });
+      if (options.body.mode === 'recover') return Promise.resolve({ data: { requests: [] }, error: null });
+      return new Promise((resolve) => { resolveReply = resolve; });
+    });
+    const { rerender } = render(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument());
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Medicine' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'reopen request' } });
+    fireEvent.submit(screen.getByLabelText('Message').closest('form')!);
+    rerender(<ConsultantPortal assignmentId="assignment-a" open={false} onClose={vi.fn()} />);
+    resolveReply?.({ data: { message: 'reopen reply', messages: [message('reopen-old', 'student', 'reopen request', 'adult', 'Medicine'), message('reopen-new', 'consultant', 'reopen reply', 'adult', 'Medicine')] }, error: null });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    rerender(<ConsultantPortal assignmentId="assignment-a" open onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('reopen reply')).toBeInTheDocument());
   });
 });
