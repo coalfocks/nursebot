@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -16,9 +16,11 @@ const sanitizeFeedbackTree = (value: unknown): unknown => {
   return value;
 };
 
-const lineage = async (client: ReturnType<typeof createClient>, roomId: number) => {
+const emptyEvaluator = { id: null, version: null, evaluator_prompt: '', scoring_anchors: {} };
+
+const lineage = async (client: any, roomId: number) => {
   const result: number[] = []; const seen = new Set<number>(); let current: number | null = roomId;
-  while (current && !seen.has(current)) { seen.add(current); result.push(current); const { data, error } = await client.from('rooms').select('continues_from').eq('id', current).maybeSingle(); if (error) throw error; current = data?.continues_from ?? null; }
+  while (current && !seen.has(current)) { seen.add(current); result.push(current); const response = await client.from('rooms').select('continues_from').eq('id', current).maybeSingle(); if (response.error) throw response.error; const data = response.data as { continues_from?: number | null } | null; current = data?.continues_from ?? null; }
   return result;
 };
 
@@ -34,10 +36,21 @@ Deno.serve(async (req) => {
       if (assignmentError) throw assignmentError;
       if (!isFeedbackEligibleStatus(assignment.status)) throw new Error('Cannot generate feedback for incomplete assignment');
       const room = (assignment.room ?? {}) as Record<string, unknown>;
+      const roomId = Number(assignment.room_id);
+      const { data: roomEvaluator, error: roomEvaluatorError } = await client
+        .from('feedback_evaluator_configs')
+        .select('id, version, evaluator_prompt, scoring_anchors')
+        .eq('scope', 'room').eq('room_id', roomId).eq('status', 'active').order('version', { ascending: false }).limit(1).maybeSingle();
+      if (roomEvaluatorError) throw roomEvaluatorError;
+      const { data: globalEvaluator, error: globalEvaluatorError } = await client
+        .from('feedback_evaluator_configs')
+        .select('id, version, evaluator_prompt, scoring_anchors')
+        .eq('scope', 'global').eq('status', 'active').order('version', { ascending: false }).limit(1).maybeSingle();
+      if (globalEvaluatorError) throw globalEvaluatorError;
+      const evaluator = roomEvaluator ?? globalEvaluator ?? emptyEvaluator;
       const { data: messages, error: messageError } = await client.from('chat_messages').select('id, assignment_id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true });
       if (messageError) throw messageError;
       const start = deriveScoringStart(messages ?? []);
-      const roomId = Number(assignment.room_id);
       const patientId = typeof room.patient_id === 'string' ? room.patient_id : null;
       const [ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes, patientMessagesRes, consultantMessagesRes] = await Promise.all([
         patientId ? client.from('medical_orders').select('id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
@@ -63,21 +76,19 @@ Deno.serve(async (req) => {
       }
       if (!hasMeaningfulEvidence(sourceEventIds)) throw new Error('Evidence-bearing attempt produced an empty post-page source event manifest');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
-      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths, improvements, recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
+      const prompt = `${CANONICAL_RUBRIC}\n\n${evaluator.evaluator_prompt || ''}\n\nSCORING ANCHORS (administrator-authored, version ${evaluator.version ?? 'built-in'}):\n${JSON.stringify(evaluator.scoring_anchors ?? {}, null, 2)}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths (maximum 3), improvements (maximum 3), recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
       const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
       const requestEvaluation = async (validationNote = '') => {
         const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
-        return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
+        return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) as Array<Record<string, unknown>> };
       };
       let { evaluation, actionReview } = await requestEvaluation();
       if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
         ({ evaluation, actionReview } = await requestEvaluation('\n\nVALIDATION RETRY: This attempt contains a non-empty post-page evidence manifest. Re-evaluate the observed events and do not return both composite scores as zero unless every post-page event is genuinely non-clinical. Preserve the anchored component ranges and cite manifest IDs.'));
       }
       if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
-        const recovered = buildEvidenceBackedFallback(evaluation, scoredEntries, assignment.student_progress_note);
-        if (!recovered) throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry with no learner-authored post-page action to recover');
-        evaluation = recovered;
+        throw new Error('Evaluator returned an invalid all-zero result for an evidence-bearing attempt after validation retry');
       }
       const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
         .filter((entry) => kinds.includes(entry.kind))
@@ -116,7 +127,7 @@ Deno.serve(async (req) => {
           ...actionReview,
           ...scoredEntries
             .filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind))
-            .filter((entry) => !actionReview.some((item: any) => Array.isArray(item?.evidence_event_ids) && item.evidence_event_ids.includes(entry.id)))
+            .filter((entry) => !actionReview.some((item) => Array.isArray(item.evidence_event_ids) && item.evidence_event_ids.includes(entry.id)))
             .map((entry) => ({
               label: entry.title,
               action: entry.title,
@@ -126,21 +137,9 @@ Deno.serve(async (req) => {
             })),
         ],
       };
-      const growthEvidence = scoredEntries
-        .filter((entry) => ['learner-action', 'order', 'progress-note'].includes(entry.kind))
-        .filter((entry) => /monitor|reassess|vital|perfusion|senior|escalat|document/i.test(`${entry.title} ${entry.body ?? ''}`))
-        .slice(0, 4)
-        .map((entry) => ({ event_id: entry.id, occurred_at: entry.timestamp, label: `${entry.title}: ${entry.body ?? 'Observed post-page action.'}` }));
-      const growthAreas = [{
-        title: 'Close the loop after urgent monitoring',
-        case_goal: key.goals.find((goal) => /monitor|reassess|escalat/i.test(goal)) ?? key.goals[0] ?? 'Link actions to the case goals and observable reassessment.',
-        practice_example: 'After urgent monitoring, state when you will repeat vital signs and reassess perfusion, then document the observed result and communicate whether the plan changed.',
-        evidence: growthEvidence,
-        scoring_start_at: start.scoring_start_at,
-      }];
-      const debrief = { case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 2), improvements: evaluation.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
+      const debrief = { case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 3), improvements: evaluation.improvements.slice(0, 3), recommendations: evaluation.recommendations, growth_areas: [], action_review: actionReviewWithKey, evidence_manifest: scoredEntries.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, occurred_at: entry.timestamp })), safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
       const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
-      const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
+      const run = await client.from('feedback_assessment_runs').insert({ ...provenance, evaluator_config_id: evaluator.id, evaluator_version: evaluator.version, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
       if (run.error) throw run.error;
       // mdm_* are retained database compatibility names; the canonical API/UI label is Clinical Reasoning.
       const { error: updateError } = await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, communication_score: evaluation.communication_score, mdm_score: evaluation.clinical_reasoning_score, communication_breakdown: evaluation.communication_breakdown, mdm_breakdown: evaluation.clinical_reasoning_breakdown, learning_objectives: evaluation.learning_objectives, grade: null, nurse_feedback: legacy, feedback_generated_at: new Date().toISOString(), scoring_start_at: start.scoring_start_at, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: sourceEventIds, technical_incomplete: false, safety_result: evaluation.safety_result, feedback_debrief: debrief }).eq('id', assignmentId);

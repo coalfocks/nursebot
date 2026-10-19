@@ -150,6 +150,15 @@ describe('feedback v2 canonical contract', () => {
     expect(result.clinical_reasoning_breakdown.safety_deduction.score).toBe(-2);
   });
 
+  it('bounds displayed strengths and improvements to three authored items', () => {
+    const result = canonicalizeEvaluation({
+      strengths: ['one', 'two', 'three', 'four'],
+      improvements: ['one', 'two', 'three', 'four'],
+    });
+    expect(result.strengths).toHaveLength(3);
+    expect(result.improvements).toHaveLength(3);
+  });
+
   it('does not impose an efficiency deduction for bedside-first care or missing nurse chat', () => {
     const result = canonicalizeEvaluation({
       communication_breakdown: {

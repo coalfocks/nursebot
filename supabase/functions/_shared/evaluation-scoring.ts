@@ -75,8 +75,8 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
     mdm_breakdown: clinicalReasoningBreakdown,
     clinical_reasoning_breakdown: clinicalReasoningBreakdown,
     safety_result: { level: safety, action: raw.safety_result?.action ?? null, rationale: raw.safety_result?.rationale ?? null, evidence_event_ids: ids(raw.safety_result?.evidence_event_ids) },
-    strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 2) : [],
-    improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
+    strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 3) : [],
+    improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 3) : [],
     recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
   };
 };
