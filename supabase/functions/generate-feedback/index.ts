@@ -40,11 +40,30 @@ const hasValidEvaluationShape = (raw: Record<string, unknown>) => {
     [reasoning?.clinical_reasoning_documentation, 0, 2],
     [reasoning?.safety_deduction, -2, 0],
   ];
-  return components.every(([value, min, max]) => {
+  const parseScore = (value: unknown) => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string' && value.trim() !== '' && /^[+-]?(?:\d+|\d+\.\d+)$/.test(value.trim())) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+  const componentsValid = components.every(([value, min, max], index) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const score = Number((value as Record<string, unknown>).score ?? (value as Record<string, unknown>).value ?? (value as Record<string, unknown>).points);
-    return Number.isFinite(score) && score >= min && score <= max;
+    const component = value as Record<string, unknown>;
+    const score = parseScore(component.score ?? component.value ?? component.points);
+    if (score === null || !Number.isInteger(score) || score < min || score > max) return false;
+    if (typeof component.feedback !== 'string' || component.feedback.trim() === '') return false;
+    if (!Array.isArray(component.evidence_event_ids) || !component.evidence_event_ids.every((id) => typeof id === 'string')) return false;
+    if (index === 5 && ![0, -1, -2].includes(score)) return false;
+    return true;
   });
+  const safety = raw.safety_result;
+  const safetyValid = Boolean(safety && typeof safety === 'object' && !Array.isArray(safety)
+    && ['none', 'concern', 'critical'].includes(String((safety as Record<string, unknown>).level))
+    && Array.isArray((safety as Record<string, unknown>).evidence_event_ids)
+    && ((safety as Record<string, unknown>).evidence_event_ids as unknown[]).every((id) => typeof id === 'string'));
+  return componentsValid && safetyValid;
 };
 
 const lineage = async (client: any, roomId: number) => {

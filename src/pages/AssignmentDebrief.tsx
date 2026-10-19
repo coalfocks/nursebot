@@ -13,13 +13,12 @@ const nonEmpty = (value: unknown): string[] => {
   const blocked = /reveal this goal only in post-case feedback|do not disclose the target diagnosis|do not reveal .*goal|review the evidence-linked strengths|you are evaluating|after the simulation, you should be able to|goals of (?:this )?case|target diagnosis\s*[—:-]/i;
   const cleaned: string[] = [];
   for (const entry of raw) {
-    const parts = entry.split(/(?<=[.!?])\s+/).map((part) => part
+    const cleanedEntry = entry
       .replace(/reveal this goal only in post-case feedback\.?/gi, '')
       .replace(/do not disclose the target diagnosis or goals through nurse or patient conversation before case completion\.?/gi, '')
       .replace(/review the evidence-linked strengths and next steps below\.?/gi, '')
-      .replace(/\s+/g, ' ').trim())
-      .filter((part) => part.length >= 12 && part.length <= 220 && !blocked.test(part));
-    cleaned.push(...parts);
+      .replace(/\s+/g, ' ').trim();
+    if (cleanedEntry.length >= 12 && !blocked.test(cleanedEntry)) cleaned.push(cleanedEntry);
   }
   return Array.from(new Set(cleaned)).slice(0, 5);
 };
@@ -46,7 +45,7 @@ function PrintSheet({ assignment, comm, mdm, actionReview, goals, strengths, imp
   const applicableActions = asArray<any>(actionReview?.items).filter((item) => firstText(item?.label, item?.action, item?.assessment, item?.explanation, item?.status));
   return <article id="feedback-print-sheet" className="print-sheet">
     <header className="print-sheet-header"><p className="print-kicker">Formative feedback · attempt-specific debrief</p><h1>Review your feedback</h1><p className="print-meta">Room {assignment.room?.room_number || '—'} · Diagnosis {diagnosis || 'Not disclosed'}</p></header>
-    <section className="print-goals"><h2>Case goals</h2>{goals.length > 0 && <ul>{goals.slice(0, 2).map((goal: string) => <li key={goal}>{goal}</li>)}</ul>}{assignment.scoring_start_at && <small>Scoring begins at the first nurse page: {new Date(assignment.scoring_start_at).toLocaleString()}.</small>}</section>
+    <section className="print-goals"><h2>Case goals</h2>{goals.length > 0 && <ul>{goals.slice(0, 5).map((goal: string) => <li key={goal}>{goal}</li>)}</ul>}{assignment.scoring_start_at && <small>Scoring begins at the first nurse page: {new Date(assignment.scoring_start_at).toLocaleString()}.</small>}</section>
     <div className="print-score-grid"><div className="print-score"><h2>Communication <strong>{typeof assignment.communication_score === 'number' ? `${assignment.communication_score}/5` : '—'}</strong></h2><p><b>Focused information gathering (0–2):</b> {comm.focused_information_gathering?.score ?? 'Not observed'} — {comm.focused_information_gathering?.feedback || 'Insufficient evidence.'}</p><p><b>Closed-loop team communication (0–3):</b> {comm.closed_loop_team_communication?.score ?? 'Not observed'} — {comm.closed_loop_team_communication?.feedback || 'Insufficient evidence.'}</p><p><b>Efficiency deduction (−2–0):</b> {comm.efficiency_deduction?.score ?? 0} — {comm.efficiency_deduction?.feedback || 'No case-specific deduction; message count and timing are not scored.'}</p></div><div className="print-score"><h2>Clinical Reasoning <strong>{typeof (assignment.clinical_reasoning_score ?? assignment.mdm_score) === 'number' ? `${assignment.clinical_reasoning_score ?? assignment.mdm_score}/5` : '—'}</strong></h2><p><b>Orders/monitoring quality (0–3):</b> {mdm.orders_monitoring_quality?.score ?? 'Not observed'} — {mdm.orders_monitoring_quality?.feedback || 'Insufficient evidence.'}</p><p><b>Clinical reasoning/documentation (0–2):</b> {mdm.clinical_reasoning_documentation?.score ?? 'Not observed'} — {mdm.clinical_reasoning_documentation?.feedback || 'Insufficient evidence.'}</p><p><b>Safety deduction (0, −1, −2):</b> {mdm.safety_deduction?.score ?? 0} — {mdm.safety_deduction?.feedback || 'No actual unsafe learner action/order observed.'}</p></div></div>
     {assignment.safety_result?.level && assignment.safety_result.level !== 'none' && <section className="print-safety"><h2>Safety result: {assignment.safety_result.level}</h2><p>{assignment.safety_result.rationale || assignment.safety_result.action || 'Safety concern observed.'}</p></section>}
     {applicableActions.length > 0 && <section className="print-actions"><h2>Observed actions and orders</h2>{applicableActions.slice(0, 3).map((item, index) => <p key={index}><b>{firstText(item.label, item.action, 'Observed action')}:</b> {firstText(item.assessment, item.explanation, item.status, 'Evidence-linked review.')}</p>)}</section>}

@@ -39,6 +39,8 @@ export default function FeedbackStudio() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [schemaReady, setSchemaReady] = useState(false);
+  const [schemaWarning, setSchemaWarning] = useState('');
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { prompt: string; anchors: string }>>({});
   const draftKey = scope === 'global' ? 'global' : `room:${roomId || 'unselected'}`;
@@ -59,8 +61,14 @@ export default function FeedbackStudio() {
     ]);
     if (roomResult.error) setError(roomResult.error.message);
     else setRooms((roomResult.data ?? []) as Room[]);
-    if (configResult.error) setError(`Feedback Studio is schema-not-ready: ${configResult.error.message}. Apply the reviewed evaluator migration before saving or activating.`);
-    else setConfigs((configResult.data ?? []) as Config[]);
+    if (configResult.error) {
+      setSchemaReady(false);
+      setSchemaWarning(`Feedback Studio is schema-not-ready: ${configResult.error.message}. Apply the reviewed evaluator migration before saving or activating.`);
+    } else {
+      setSchemaReady(true);
+      setSchemaWarning('');
+      setConfigs((configResult.data ?? []) as Config[]);
+    }
   };
 
   useEffect(() => { void load(); }, []);
@@ -96,6 +104,7 @@ export default function FeedbackStudio() {
   };
 
   const saveDraft = async () => {
+    if (!schemaReady) { setError('Feedback Studio is schema-not-ready; saving is disabled until the reviewed migration is applied.'); return; }
     setSaving(true); setError(''); setNotice('');
     try {
       const result = await supabase.rpc('create_feedback_evaluator_draft' as never, {
@@ -129,6 +138,7 @@ export default function FeedbackStudio() {
           <h1 className="mt-1 text-2xl font-bold text-slate-900">Feedback Studio</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">Author and pin evaluator instructions and scoring anchors independently from clinical room prompts. Saving or activating this configuration never changes an assignment status or learner record.</p>
         </header>
+        {schemaWarning && <div role="status" className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><AlertCircle className="h-4 w-4" />{schemaWarning}</div>}
         {notice && <div role="status" className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"><CheckCircle2 className="h-4 w-4" />{notice}</div>}
         {error && <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900"><AlertCircle className="h-4 w-4" />{error}</div>}
         <section className="grid gap-6 lg:grid-cols-[260px_1fr]">
@@ -140,8 +150,8 @@ export default function FeedbackStudio() {
           <div className="space-y-6">
             <section className="rounded-lg border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold text-slate-900">Evaluator prompt</h2><p className="mt-1 text-xs text-slate-500">Codex supplies the evaluator text. This field is separate from patient/consultant room prompts.</p></div>{selected && <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium">Current selection v{selected.version} · {selected.status}</span>}</div><textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); rememberDraft(event.target.value, anchors); }} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="Paste the evaluator instructions here…" /></section>
             <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold text-slate-900">Scoring anchors</h2><p className="mt-1 text-xs text-slate-500">Keep the six component ranges and anchor language here as JSON for exact versioned read-back.</p><textarea value={anchors} onChange={(event) => { setAnchors(event.target.value); rememberDraft(prompt, event.target.value); }} rows={12} className="mt-4 w-full rounded border p-3 font-mono text-sm" placeholder="{ &quot;focused_information_gathering&quot;: { ... } }" /></section>
-            <div className="flex flex-wrap justify-end gap-3"><button type="button" onClick={() => { try { const parsed = parseAnchors(); setPreview({ fixture: 'synthetic-evaluator-input-v1', prompt: prompt.trim(), scoring_anchors: parsed, evidence: ['synthetic.patient-message.1', 'synthetic.order.1', 'synthetic.progress-note.1'] }); setNotice('Synthetic preview valid: prompt and all six anchors are ready to pin.'); setError(''); } catch (value) { setError(value instanceof Error ? value.message : 'Invalid evaluator configuration.'); } }} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm"><Eye className="h-4 w-4" />Synthetic preview</button><button type="button" disabled={saving || (scope === 'room' && !roomId)} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><Save className="h-4 w-4" />Save new version</button>{selected && selected.status !== 'active' && <button type="button" disabled={saving} onClick={() => void activate(selected.id)} className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Pin v{selected.version}</button>}</div>
-            {preview && <section className="rounded-lg border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between"><h3 className="font-semibold text-blue-950">Preview of pinned evaluator input</h3><button type="button" className="text-xs text-blue-800 underline" onClick={() => setPreview(null)}>Close preview</button></div><p className="mt-3 whitespace-pre-wrap text-sm text-blue-950">{prompt || 'No evaluator prompt authored yet.'}</p><pre className="mt-3 overflow-x-auto rounded bg-white p-3 text-xs text-slate-700">{JSON.stringify(preview, null, 2)}</pre></section>}
+            <div className="flex flex-wrap justify-end gap-3"><button type="button" onClick={() => { try { const parsed = parseAnchors(); setPreview({ fixture: 'synthetic-evaluator-input-v1', prompt: prompt.trim(), scoring_anchors: parsed, evidence: ['synthetic.patient-message.1', 'synthetic.order.1', 'synthetic.progress-note.1'] }); setNotice('Synthetic input preview valid. This validates the payload only; it does not run the model.'); } catch (value) { setError(value instanceof Error ? value.message : 'Invalid evaluator configuration.'); } }} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm"><Eye className="h-4 w-4" />Synthetic input preview</button><button type="button" disabled={!schemaReady || saving || (scope === 'room' && !roomId)} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><Save className="h-4 w-4" />Save new version</button>{selected && selected.status !== 'active' && <button type="button" disabled={!schemaReady || saving} onClick={() => void activate(selected.id)} className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Pin v{selected.version}</button>}</div>
+            {preview && <section className="rounded-lg border border-blue-200 bg-blue-50 p-4"><div className="flex items-center justify-between"><h3 className="font-semibold text-blue-950">Synthetic evaluator input preview</h3><button type="button" className="text-xs text-blue-800 underline" onClick={() => setPreview(null)}>Close preview</button></div><p className="mt-3 whitespace-pre-wrap text-sm text-blue-950">{prompt || 'No evaluator prompt authored yet.'}</p><pre className="mt-3 overflow-x-auto rounded bg-white p-3 text-xs text-slate-700">{JSON.stringify(preview, null, 2)}</pre></section>}
           </div>
         </section>
       </main>
