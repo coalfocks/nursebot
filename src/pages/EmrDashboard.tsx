@@ -29,6 +29,7 @@ import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
 import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
 import { useRequestIdentity } from '../hooks/useRequestIdentity';
+import { resolveAssignmentEncounterAnchor } from '../lib/assignmentEncounterAnchor';
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -57,6 +58,7 @@ export default function EmrDashboard() {
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [assignmentStatusKey, setAssignmentStatusKey] = useState<string | null>(null);
   const [assignmentCaseVersion, setAssignmentCaseVersion] = useState<string | null>(null);
+  const [assignmentEncounterAnchor, setAssignmentEncounterAnchor] = useState<string | null>(null);
   const [, setIsEnsuringAssignment] = useState(false);
   const [, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -386,11 +388,12 @@ export default function EmrDashboard() {
     setAssignmentStatus(null);
     setAssignmentStatusKey(null);
     setAssignmentCaseVersion(null);
+    setAssignmentEncounterAnchor(null);
     if (!effectiveAssignmentId || forceBaseline) {
       return;
     }
     let active = true;
-    void supabase.from('student_room_assignments').select('status, case_key_version, scenario_baseline_version').eq('id', effectiveAssignmentId).maybeSingle().then(({ data, error }) => {
+    void supabase.from('student_room_assignments').select('status, case_key_version, scenario_baseline_version, scoring_start_at').eq('id', effectiveAssignmentId).maybeSingle().then(({ data, error }) => {
       if (!active) return;
       if (error) {
         console.error('Failed to load assignment status', error);
@@ -401,6 +404,7 @@ export default function EmrDashboard() {
       setAssignmentStatus(data?.status ?? null);
       setAssignmentStatusKey(effectiveAssignmentId);
       setAssignmentCaseVersion(data?.case_key_version ?? (data?.scenario_baseline_version != null ? String(data.scenario_baseline_version) : null));
+      setAssignmentEncounterAnchor(resolveAssignmentEncounterAnchor(data?.scoring_start_at));
     });
     return () => { active = false; };
   }, [effectiveAssignmentId, forceBaseline]);
@@ -1154,7 +1158,10 @@ export default function EmrDashboard() {
                 sandboxLabs={sandboxLabs}
                 refreshToken={labsRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
-                encounterAnchor={roomMeta?.encounterDate ?? null}
+                // scoring_start_at is the persisted first nurse-page boundary
+                // for this assignment. Room encounter/admission metadata is
+                // reusable authored case data, not a trusted page anchor.
+                encounterAnchor={forceBaseline ? null : assignmentEncounterAnchor}
                 readOnly={studentEmrReadOnly}
                 assignmentStatus={assignmentStatus}
                 assignmentStatusKey={assignmentStatusKey}

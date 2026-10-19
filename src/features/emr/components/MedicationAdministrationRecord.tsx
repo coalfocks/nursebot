@@ -9,6 +9,9 @@ import { emrApi } from '../lib/api';
 import { expandMarSchedule } from '../lib/marSchedule';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
+import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { projectMedicationRows } from '../lib/marProjection';
+import { marScopeKey } from '../lib/marScope';
 
 interface MedicationAdministrationRecordProps {
   patient: Patient;
@@ -28,6 +31,7 @@ interface PendingMarSave {
   roomId: number;
   assignmentId: string | null;
   caseVersion: string | null;
+  actorId: string;
 }
 
 const marPayloadHash = (events: MarAdministrationEvent[]) => JSON.stringify(events);
@@ -46,13 +50,16 @@ const categories = ['scheduled', 'prn', 'one_time', 'infusion'] as const;
 
 export function MedicationAdministrationRecord({ patient, assignmentId, caseVersion, readOnly = false, forceBaseline = false }: MedicationAdministrationRecordProps) {
   const { profile } = useAuthStore();
+  const actorId = profile?.id ?? 'anonymous';
   const [schemaReady, setSchemaReady] = useState(false);
   // Admin authoring may create the first immutable assignment snapshot. Learner
   // reads still require the already-pinned version and never enter this path.
   const canEdit = hasAdminAccess(profile) && !readOnly && schemaReady && (forceBaseline || Boolean(caseVersion));
   const effectiveCaseVersion = caseVersion ?? (forceBaseline ? 'baseline-v1' : null);
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
-  const recoveryKey = `mar-save:${patient.id}:${patient.roomId ?? 'none'}:${scopeAssignmentId ?? 'baseline'}:${effectiveCaseVersion ?? 'unversioned'}`;
+  const scopeKey = marScopeKey({ patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion, actorId });
+  const recoveryKey = `mar-save:${scopeKey}`;
+  const { capture, isCurrent } = useRequestIdentity(scopeKey);
   const [events, setEvents] = useState<MarAdministrationEvent[]>([]);
   const [orders, setOrders] = useState<MedicalOrder[]>([]);
   const [historyHours, setHistoryHours] = useState('12');
@@ -82,13 +89,23 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   useEffect(() => {
     setPendingSave(readPendingMarSave(recoveryKey));
-  }, [recoveryKey]);
+    setEvents([]);
+    setOrders([]);
+    setError(null);
+    setSaveError(null);
+    setRevision(0);
+    setDirty(false);
+    setSchemaReady(false);
+    setBaselineReady(forceBaseline || !assignmentId);
+  }, [assignmentId, forceBaseline, recoveryKey, scopeKey]);
 
   const load = useCallback(async () => {
     if (!patient.roomId) return;
+    const request = capture();
     setLoading(true);
     setError(null);
     const marReady = await emrApi.getMarReadiness();
+    if (!isCurrent(request)) return;
     if (!marReady) {
       setEvents([]);
       setOrders([]);
@@ -100,14 +117,16 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       return;
     }
     const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
-      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => setError(message)),
+      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => { if (isCurrent(request)) setError(message); }),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
     ]);
+    if (!isCurrent(request)) return;
     const loadedHash = marPayloadHash(loadedEvents);
     const recovered = pendingSave && pendingSave.patientId === patient.id && pendingSave.roomId === patient.roomId
       && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === effectiveCaseVersion
+      && pendingSave.actorId === actorId
       && pendingSave.payloadHash !== loadedHash
       ? pendingSave.events
       : loadedEvents;
@@ -124,7 +143,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setSchemaReady(true);
     setDirty(Boolean(pendingSave && recovered !== loadedEvents));
     setLoading(false);
-  }, [assignmentId, effectiveCaseVersion, forceBaseline, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
+  }, [actorId, assignmentId, capture, effectiveCaseVersion, forceBaseline, isCurrent, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -198,14 +217,16 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   const save = async () => {
     if (!patient.roomId || !canEdit) return;
+    const request = capture();
     setSaveError(null);
     const payloadHash = marPayloadHash(events);
     const requestId = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.requestId : crypto.randomUUID();
     const expectedRevision = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.expectedRevision : revision;
-    const envelope: PendingMarSave = { requestId, payloadHash, expectedRevision, events, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion };
+    const envelope: PendingMarSave = { requestId, payloadHash, expectedRevision, events, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion, actorId };
     setPendingSave(envelope);
     window.localStorage.setItem(recoveryKey, JSON.stringify(envelope));
     const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, events, requestId);
+    if (!isCurrent(request)) return;
     if (!result.ok) {
       setSaveError(`${result.error} Resume the same MAR save after reload; editing creates a new request.`);
       return;
@@ -293,9 +314,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     return result;
   }, [events]);
 
-  const eventTimeLabel = (event: MarAdministrationEvent) => event.administeredAt
-    ? new Date(event.administeredAt).toLocaleString()
-    : event.relativeOffsetHours != null ? `${event.relativeOffsetHours}h prior` : '—';
+  const eventTimeLabel = (event: MarAdministrationEvent) => event.relativeOffsetHours != null
+    ? (event.relativeOffsetHours <= 0 ? 'During encounter' : `${event.relativeOffsetHours}h prior`)
+    : event.administeredAt ? (adminContext ? new Date(event.administeredAt).toLocaleString() : 'During encounter') : '—';
 
   const lastGivenLabel = (event: MarAdministrationEvent) => {
     const key = `${event.orderId ?? 'manual'}:${event.medicationName}`;
@@ -304,53 +325,8 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const medicationSummaries = useMemo(() => {
-    const grouped = new Map<string, MarAdministrationEvent[]>();
-    filteredEvents.forEach((event) => {
-      const key = event.orderId ?? `manual:${event.medicationName}`;
-      const current = grouped.get(key) ?? [];
-      current.push(event);
-      grouped.set(key, current);
-    });
-
-    // Orders are the authored medication list. Keep an order visible even
-    // when no administration has been documented yet.
-    orders
-      .filter((order) => categoryFilter === 'all' || categoryFilter === 'scheduled')
-      .filter((order) => !search.trim() || order.orderName.toLowerCase().includes(search.trim().toLowerCase()))
-      .forEach((order) => {
-        if (!grouped.has(order.id)) {
-          grouped.set(order.id, [{
-            id: `order-${order.id}`,
-            patientId: order.patientId,
-            roomId: order.roomId ?? patient.roomId ?? 0,
-            assignmentId: order.assignmentId,
-            orderId: order.id,
-            caseVersion,
-            occurrenceKey: `order:${order.id}`,
-            relativeOffsetHours: null,
-            administeredAt: null,
-            medicationName: order.orderName,
-            orderedDose: order.dose,
-            administeredDose: null,
-            unit: null,
-            route: order.route,
-            frequency: order.frequency,
-            category: 'scheduled',
-            status: 'Not documented',
-            source: 'authored_scenario',
-          }]);
-        }
-      });
-
-    return Array.from(grouped.entries()).map(([key, medicationEvents]) => {
-      const representative = medicationEvents.find((event) => event.status === 'Given') ?? medicationEvents[0];
-      return {
-        key,
-        representative,
-        events: [...medicationEvents].sort((a, b) => (b.relativeOffsetHours ?? -1) - (a.relativeOffsetHours ?? -1)),
-      };
-    }).sort((a, b) => a.representative.medicationName.localeCompare(b.representative.medicationName));
-  }, [caseVersion, categoryFilter, filteredEvents, orders, patient.roomId, search]);
+    return projectMedicationRows(filteredEvents, orders, patient, effectiveCaseVersion, categoryFilter, search);
+  }, [categoryFilter, effectiveCaseVersion, filteredEvents, orders, patient, search]);
 
   const setupBlocked = !schemaReady || Boolean(assignmentId && (!caseVersion || !baselineReady));
   const adminContext = hasAdminAccess(profile) && !readOnly;
@@ -423,7 +399,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'MAR authoring will appear after the reviewed setup is installed and this attempt is materialized.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
             <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           ) : (
-            <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, events: medicationEvents }) => { const expanded = expandedMedicationKeys.has(key); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{medicationEvents.map((event) => <div key={event.id} className="flex flex-wrap gap-x-3 gap-y-1"><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.reason && <span>{event.reason}</span>}</div>)}</div>}</div>; })}</div>
+            <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, administrations }) => { const expanded = expandedMedicationKeys.has(key); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{administrations.length ? administrations.map((event) => <div key={event.id} className="flex flex-wrap gap-x-3 gap-y-1"><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.reason && <span>{event.reason}</span>}</div>) : <p className="text-muted-foreground">No documented doses.</p>}</div>}</div>; })}</div>
           )}
           {adminContext && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" /> Authored baseline times are shown as prior-hour offsets; real attempt administrations use persisted server times.</div>}
         </CardContent>

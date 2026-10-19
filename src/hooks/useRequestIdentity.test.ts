@@ -5,17 +5,22 @@ import { useRequestIdentity } from './useRequestIdentity';
 describe('useRequestIdentity', () => {
   it('rejects delayed responses after A→B→A switches', () => {
     const { result, rerender } = renderHook(({ key }) => useRequestIdentity(key), {
-      initialProps: { key: 'patient-a:room-a:assignment-a' },
+      initialProps: { key: 'patient-a:room-a:assignment-a:version-a:actor-a' },
     });
 
     const firstA = result.current.capture();
-    rerender({ key: 'patient-b:room-b:assignment-b' });
+    rerender({ key: 'patient-b:room-b:assignment-b:version-b:actor-a' });
     expect(result.current.isCurrent(firstA)).toBe(false);
 
     const b = result.current.capture();
     expect(result.current.isCurrent(b)).toBe(true);
 
-    rerender({ key: 'patient-a:room-a:assignment-a' });
+    rerender({ key: 'patient-b:room-b:assignment-b:version-b:actor-b' });
+    expect(result.current.isCurrent(b)).toBe(false);
+    const actorB = result.current.capture();
+    expect(result.current.isCurrent(actorB)).toBe(true);
+
+    rerender({ key: 'patient-a:room-a:assignment-a:version-a:actor-a' });
     expect(result.current.isCurrent(firstA)).toBe(false);
     expect(result.current.isCurrent(b)).toBe(false);
     expect(result.current.isCurrent(result.current.capture())).toBe(true);
