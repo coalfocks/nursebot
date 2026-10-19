@@ -24,6 +24,8 @@ interface LabResultsProps {
   isSandbox?: boolean;
   sandboxLabs?: LabResult[];
   onSandboxLabsChange?: (labs: LabResult[]) => void;
+  /** Trusted first-page/encounter anchor. Admission date is not a page anchor. */
+  encounterAnchor?: string | null;
   readOnly?: boolean;
   assignmentStatus?: string | null;
   assignmentStatusKey?: string | null;
@@ -36,7 +38,7 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, readOnly = false, assignmentStatus = null, assignmentStatusKey = null, forceBaseline = false }: LabResultsProps) {
+export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, encounterAnchor = null, readOnly = false, assignmentStatus = null, assignmentStatusKey = null, forceBaseline = false }: LabResultsProps) {
   const normalizeForPatient = useCallback(
     (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender, patient.dateOfBirth)),
     [patient.gender, patient.dateOfBirth],
@@ -623,7 +625,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const formatCollectionLabel = (value: string) => {
     const lab = labResults.find((entry) => entry.collectionTime === value);
-    return formatScopedEmrTimestamp(value, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours);
+    return formatScopedEmrTimestamp(value, lab?.overrideScope, encounterAnchor, lab?.relativeOffsetHours);
   };
 
   // Group labs by category for trending
@@ -652,7 +654,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           const lab = labResults.find((candidate) => candidate.collectionTime === entry.time);
           return {
             ...entry,
-            time: formatScopedEmrTimestamp(entry.time, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours),
+            time: formatScopedEmrTimestamp(entry.time, lab?.overrideScope, encounterAnchor, lab?.relativeOffsetHours),
           };
         }),
     ]),

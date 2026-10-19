@@ -1154,6 +1154,7 @@ export default function EmrDashboard() {
                 sandboxLabs={sandboxLabs}
                 refreshToken={labsRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
+                encounterAnchor={roomMeta?.encounterDate ?? null}
                 readOnly={studentEmrReadOnly}
                 assignmentStatus={assignmentStatus}
                 assignmentStatusKey={assignmentStatusKey}

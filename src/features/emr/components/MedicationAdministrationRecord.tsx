@@ -311,6 +311,37 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       current.push(event);
       grouped.set(key, current);
     });
+
+    // Orders are the authored medication list. Keep an order visible even
+    // when no administration has been documented yet.
+    orders
+      .filter((order) => categoryFilter === 'all' || categoryFilter === 'scheduled')
+      .filter((order) => !search.trim() || order.orderName.toLowerCase().includes(search.trim().toLowerCase()))
+      .forEach((order) => {
+        if (!grouped.has(order.id)) {
+          grouped.set(order.id, [{
+            id: `order-${order.id}`,
+            patientId: order.patientId,
+            roomId: order.roomId ?? patient.roomId ?? 0,
+            assignmentId: order.assignmentId,
+            orderId: order.id,
+            caseVersion,
+            occurrenceKey: `order:${order.id}`,
+            relativeOffsetHours: null,
+            administeredAt: null,
+            medicationName: order.orderName,
+            orderedDose: order.dose,
+            administeredDose: null,
+            unit: null,
+            route: order.route,
+            frequency: order.frequency,
+            category: 'scheduled',
+            status: 'Not documented',
+            source: 'authored_scenario',
+          }]);
+        }
+      });
+
     return Array.from(grouped.entries()).map(([key, medicationEvents]) => {
       const representative = medicationEvents.find((event) => event.status === 'Given') ?? medicationEvents[0];
       return {
@@ -319,7 +350,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         events: [...medicationEvents].sort((a, b) => (b.relativeOffsetHours ?? -1) - (a.relativeOffsetHours ?? -1)),
       };
     }).sort((a, b) => a.representative.medicationName.localeCompare(b.representative.medicationName));
-  }, [filteredEvents]);
+  }, [caseVersion, categoryFilter, filteredEvents, orders, patient.roomId, search]);
 
   const setupBlocked = !schemaReady || Boolean(assignmentId && (!caseVersion || !baselineReady));
   const adminContext = hasAdminAccess(profile) && !readOnly;
@@ -333,7 +364,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
             {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
-          {setupBlocked && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{adminContext ? 'Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.' : 'Medication history is unavailable for this case.'}</p>}
+          {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && (
@@ -389,7 +420,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {schemaReady && error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
           {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
-          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'MAR authoring will appear after the reviewed setup is installed and this attempt is materialized.' : 'Medication history is unavailable for this case.'}</div> : filteredEvents.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
+          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'MAR authoring will appear after the reviewed setup is installed and this attempt is materialized.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
             <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           ) : (
             <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, events: medicationEvents }) => { const expanded = expandedMedicationKeys.has(key); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{medicationEvents.map((event) => <div key={event.id} className="flex flex-wrap gap-x-3 gap-y-1"><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.reason && <span>{event.reason}</span>}</div>)}</div>}</div>; })}</div>
