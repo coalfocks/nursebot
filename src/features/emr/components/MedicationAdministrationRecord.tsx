@@ -38,7 +38,12 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
   const [populateOpen, setPopulateOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ medicationName: '', orderedDose: '', administeredDose: '', unit: '', route: '', frequency: '', status: 'Not documented' as MarStatus, category: 'scheduled' as typeof categories[number], relativeOffsetHours: '0', reason: '' });
-  const [populate, setPopulate] = useState({ orderId: '', firstDosePriorHours: '12', frequency: 'q4h', category: 'scheduled' as typeof categories[number], assumePrnGiven: false });
+  const [populate, setPopulate] = useState({
+    orderId: '', stayHours: '24', startPriorHours: '12', stopPriorHours: '1',
+    frequency: 'q4h', category: 'scheduled' as typeof categories[number], assumePrnGiven: false,
+    infusionStartPriorHours: '12', infusionChangePriorHours: '', infusionStopPriorHours: '',
+    infusionRate: '', infusionChangeRate: '', infusionStopRate: '',
+  });
 
   const load = useCallback(async () => {
     if (!patient.roomId) return;
@@ -80,8 +85,16 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
       frequency: populate.frequency || order.frequency || 'q4h',
       category: populate.category,
       historyHours: Number(historyHours),
-      firstDosePriorHours: Number(populate.firstDosePriorHours),
+      stayHours: Number(populate.stayHours),
+      startPriorHours: Number(populate.startPriorHours),
+      firstDosePriorHours: Number(populate.startPriorHours),
+      stopPriorHours: Number(populate.stopPriorHours),
       assumePrnGiven: populate.assumePrnGiven,
+      infusionEvents: populate.category === 'infusion' ? [
+        { offsetHours: Number(populate.infusionStartPriorHours), status: 'Started' as const, rate: populate.infusionRate || undefined },
+        ...(populate.infusionChangePriorHours ? [{ offsetHours: Number(populate.infusionChangePriorHours), status: 'Rate changed' as const, rate: populate.infusionChangeRate || undefined }] : []),
+        ...(populate.infusionStopPriorHours ? [{ offsetHours: Number(populate.infusionStopPriorHours), status: 'Stopped' as const, rate: populate.infusionStopRate || undefined }] : []),
+      ] : undefined,
     });
     const mapped = generated.map((draft, index) => ({
       ...draft,
@@ -169,12 +182,22 @@ export function MedicationAdministrationRecord({ patient, assignmentId, readOnly
                   <SelectTrigger><SelectValue placeholder="Medication order" /></SelectTrigger>
                   <SelectContent>{orders.map((order) => <SelectItem key={order.id} value={order.id}>{order.orderName}</SelectItem>)}</SelectContent>
                 </Select>
-                <Input aria-label="First dose prior hours" type="number" min="0" max="72" value={populate.firstDosePriorHours} onChange={(event) => setPopulate((current) => ({ ...current, firstDosePriorHours: event.target.value }))} placeholder="First dose prior hours" />
+                <Input aria-label="Admission or encounter hours" type="number" min="1" max="72" value={populate.stayHours} onChange={(event) => setPopulate((current) => ({ ...current, stayHours: event.target.value }))} placeholder="Stay hours (24/48/72)" />
+                <Input aria-label="Medication start prior hours" type="number" min="0" max="72" value={populate.startPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, startPriorHours: event.target.value }))} placeholder="Medication start prior hours" />
+                <Input aria-label="Medication stop prior hours" type="number" min="1" max="72" value={populate.stopPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, stopPriorHours: event.target.value }))} placeholder="Stop before page (hours)" />
                 <Input aria-label="Frequency" value={populate.frequency} onChange={(event) => setPopulate((current) => ({ ...current, frequency: event.target.value }))} placeholder="q4h, TID, Once" />
                 <Select value={populate.category} onValueChange={(value: typeof categories[number]) => setPopulate((current) => ({ ...current, category: value }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
+              {populate.category === 'infusion' && <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Input aria-label="Infusion start prior hours" type="number" min="0" max="72" value={populate.infusionStartPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, infusionStartPriorHours: event.target.value }))} placeholder="Start prior hours" />
+                <Input aria-label="Infusion start rate" value={populate.infusionRate} onChange={(event) => setPopulate((current) => ({ ...current, infusionRate: event.target.value }))} placeholder="Start rate" />
+                <Input aria-label="Infusion rate change prior hours" type="number" min="0" max="72" value={populate.infusionChangePriorHours} onChange={(event) => setPopulate((current) => ({ ...current, infusionChangePriorHours: event.target.value }))} placeholder="Rate change prior hours" />
+                <Input aria-label="Infusion changed rate" value={populate.infusionChangeRate} onChange={(event) => setPopulate((current) => ({ ...current, infusionChangeRate: event.target.value }))} placeholder="Changed rate" />
+                <Input aria-label="Infusion stop prior hours" type="number" min="0" max="72" value={populate.infusionStopPriorHours} onChange={(event) => setPopulate((current) => ({ ...current, infusionStopPriorHours: event.target.value }))} placeholder="Stop prior hours" />
+                <Input aria-label="Infusion stop rate" value={populate.infusionStopRate} onChange={(event) => setPopulate((current) => ({ ...current, infusionStopRate: event.target.value }))} placeholder="Stop rate / note" />
+              </div>}
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={populate.assumePrnGiven} onChange={(event) => setPopulate((current) => ({ ...current, assumePrnGiven: event.target.checked }))} /> Assume each PRN occurrence was given</label>
               <Button onClick={handlePopulate} disabled={!populate.orderId}>Preview occurrences</Button>
             </div>

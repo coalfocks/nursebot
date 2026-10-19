@@ -55,6 +55,7 @@ export default function EmrDashboard() {
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
   const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
+  const [assignmentStatusKey, setAssignmentStatusKey] = useState<string | null>(null);
   const [, setIsEnsuringAssignment] = useState(false);
   const [, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -65,7 +66,7 @@ export default function EmrDashboard() {
   const educatorAccess = hasAdminAccess(profile);
   const writableAssignmentStatuses = new Set(['assigned', 'in_progress', 'bedside']);
   const studentEmrReadOnly = !educatorAccess && (
-    !effectiveAssignmentId || !assignmentStatus || !writableAssignmentStatuses.has(assignmentStatus)
+    !effectiveAssignmentId || assignmentStatusKey !== effectiveAssignmentId || !assignmentStatus || !writableAssignmentStatuses.has(assignmentStatus)
   );
   const patientRequest = useRequestIdentity(
     `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
@@ -381,8 +382,9 @@ export default function EmrDashboard() {
   );
 
   useEffect(() => {
+    setAssignmentStatus(null);
+    setAssignmentStatusKey(null);
     if (!effectiveAssignmentId || forceBaseline) {
-      setAssignmentStatus(null);
       return;
     }
     let active = true;
@@ -391,9 +393,11 @@ export default function EmrDashboard() {
       if (error) {
         console.error('Failed to load assignment status', error);
         setAssignmentStatus(null);
+        setAssignmentStatusKey(effectiveAssignmentId);
         return;
       }
       setAssignmentStatus(data?.status ?? null);
+      setAssignmentStatusKey(effectiveAssignmentId);
     });
     return () => { active = false; };
   }, [effectiveAssignmentId, forceBaseline]);

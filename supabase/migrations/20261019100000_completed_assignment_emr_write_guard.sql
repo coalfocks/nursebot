@@ -26,10 +26,20 @@ begin
 
   -- Check both sides of UPDATE. This prevents moving a row out of a completed
   -- assignment to evade the completed-record boundary.
-  foreach target_assignment in array array_remove(array[old_assignment, new_assignment], null) loop
+  -- Lock every affected assignment in UUID order before reading status. This
+  -- serializes writes against the authoritative completion transition and
+  -- avoids cross-assignment deadlocks when an UPDATE changes provenance.
+  for target_assignment in
+    select assignment_id
+      from unnest(array[old_assignment, new_assignment]) as assignment_id
+     where assignment_id is not null
+     group by assignment_id
+     order by assignment_id
+  loop
     select status into assignment_status
       from public.student_room_assignments
-      where id = target_assignment;
+      where id = target_assignment
+      for update;
     if assignment_status is null or assignment_status not in ('assigned', 'in_progress', 'bedside', 'completed') then
       raise exception 'ASSIGNMENT_WRITE_NOT_AUTHORIZED'
         using errcode = '42501', detail = 'Assignment status is missing or unknown; learner EMR writes fail closed.';

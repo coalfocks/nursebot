@@ -81,7 +81,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   } | null>(null);
   const [roomMetaLoaded, setRoomMetaLoaded] = useState(!patient.roomId);
   const autoResultingOrderIds = useRef(new Set<string>());
-  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
+  // Permission is part of the request identity. A completed/unknown review
+  // transition invalidates an already-running writable reconciliation before
+  // it can invoke the generator or persist results.
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}:${readOnly ? 'readonly' : 'writable'}`);
   const { capture, isCurrent } = requestIdentity;
   const labOptions = useMemo(
     () => [...instantLabs, ...pendingLabs].sort((a, b) => a.localeCompare(b)),
@@ -195,6 +198,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       );
 
       for (const order of candidates) {
+        if (!isCurrent(request) || readOnly) return;
         if (autoResultingOrderIds.current.has(order.id)) continue;
         const requestedTests = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
         const hasResult = requestedTests.every((test) =>
@@ -209,6 +213,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         autoResultingOrderIds.current.add(order.id);
 
         try {
+          if (!isCurrent(request) || readOnly) return;
           const aiResponse = await supabase.functions.invoke('lab-results', {
             body: {
               orderName: order.orderName,
@@ -284,6 +289,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             resultTime: runTimestamp,
             orderedBy: order.orderedBy,
           }));
+          if (!isCurrent(request) || readOnly) return;
           const writeResult = await emrApi.addLabResults(labsWithScope, patient.roomId ?? null);
           if (!writeResult.ok) throw new Error(writeResult.error);
           if (isCurrent(request)) {
@@ -302,6 +308,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const handleGenerateLabResults = async () => {
     if (readOnly || !aiLabName.trim()) return;
+    const request = capture();
     const orderName = aiLabName.trim();
     const requestDetails = aiLabRequest.trim();
     setIsGenerating(true);
@@ -317,6 +324,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const tests = resolveLabTemplates(orderName, patient.gender, patient.dateOfBirth);
       const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender, patient.dateOfBirth);
 
+      if (!isCurrent(request) || readOnly) return;
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
           orderName,
@@ -365,6 +373,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (aiResponse.error) {
         throw aiResponse.error;
       }
+      if (!isCurrent(request) || readOnly) return;
 
       const generationContext = {
         assignmentId,
@@ -421,6 +430,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           return updated;
         });
       } else {
+        if (!isCurrent(request) || readOnly) return;
         // Save to database
         const writeResult = await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
         if (!writeResult.ok) {
@@ -430,6 +440,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         
         // Refresh labs from database to get merged results
         const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
+        if (!isCurrent(request) || readOnly) return;
         setLabResults(normalizeForPatient(refreshedLabs));
       }
       setAiLabName('');
