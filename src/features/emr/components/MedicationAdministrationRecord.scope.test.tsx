@@ -12,13 +12,17 @@ const { api, profileState } = vi.hoisted(() => ({
     getMarHistoryRevision: vi.fn(),
     getMarBaselineVersion: vi.fn(),
     getMarPublicationPreview: vi.fn(),
+    getMarPublicationStatus: vi.fn(),
     publishMarCaseVersion: vi.fn(),
     saveMarHistory: vi.fn(),
   },
   profileState: { current: { id: 'actor-a', role: 'school_admin', school_id: 'school-a', full_name: 'Author A' } },
 }));
 
-vi.mock('../lib/api', () => ({ emrApi: api }));
+vi.mock('../lib/api', () => ({
+  emrApi: api,
+  marRpcErrorMessage: (error: unknown) => error instanceof Error ? error.message : (error as { message?: string })?.message ?? 'Unable to complete the MAR request.',
+}));
 vi.mock('../../../stores/authStore', () => ({ useAuthStore: () => ({ profile: profileState.current }) }));
 
 const patient = (id: string): Patient => ({
@@ -30,7 +34,7 @@ describe('MedicationAdministrationRecord scope fencing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     profileState.current = { id: 'actor-a', role: 'school_admin', school_id: 'school-a', full_name: 'Author A' };
-    api.getMarNormalMaterializationReadiness.mockResolvedValue({ ready: true, materializationVersion: 4, atomic: true });
+    api.getMarNormalMaterializationReadiness.mockResolvedValue({ ready: true, materializationVersion: 5, publicationPreviewVersion: 5, atomic: true });
     api.listMarEvents.mockResolvedValue([]);
     api.listOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
     api.listMarMedicationOrders.mockResolvedValue([{ id: 'order-a', patientId: 'patient-a', roomId: 7, assignmentId: null, category: 'Medication', orderName: 'Medication A', dose: '20', route: 'PO', frequency: 'q4h' }]);
@@ -63,12 +67,36 @@ describe('MedicationAdministrationRecord scope fencing', () => {
   });
 
   it('binds publication to the composite preview and releases a confirmed revision conflict', async () => {
-    api.publishMarCaseVersion.mockRejectedValueOnce(new Error('MAR_PUBLICATION_REVISION_CONFLICT'));
+    api.publishMarCaseVersion.mockRejectedValueOnce({ message: 'MAR_PUBLICATION_REVISION_CONFLICT', code: 'P0001' });
     const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
     await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(api.publishMarCaseVersion).not.toHaveBeenCalled());
     fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
     await waitFor(() => expect(api.publishMarCaseVersion).toHaveBeenCalledWith(7, expect.objectContaining({ expectedRevision: 0, expectedContentHash: 'preview-hash' })));
     await waitFor(() => expect(view.getByRole('alert')).toHaveTextContent(/No version was published/));
     expect(view.queryByText(/awaiting confirmation/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps an unknown publication pending when reconciliation cannot verify a receipt', async () => {
+    api.publishMarCaseVersion.mockRejectedValueOnce(new Error('Failed to fetch'));
+    api.getMarPublicationStatus.mockRejectedValueOnce({ message: 'Failed to fetch', code: 'NETWORK' });
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByRole('button', { name: /publish mar version/i })).toBeEnabled());
+    fireEvent.click(view.getByRole('button', { name: /publish mar version/i }));
+    await waitFor(() => expect(view.getByText(/outcome is unknown/i)).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /reload preview/i }));
+    await waitFor(() => expect(view.getByText(/outcome is still unknown/i)).toBeInTheDocument());
+    expect(window.localStorage.length).toBeGreaterThan(0);
+  });
+
+  it('fails closed for the v4 partial upgrade until the publication-preview contract is present', async () => {
+    api.getMarNormalMaterializationReadiness.mockResolvedValueOnce({ ready: true, materializationVersion: 4, publicationPreviewVersion: 4, atomic: true });
+    const view = render(<MedicationAdministrationRecord patient={patient('patient-a')} forceBaseline />);
+    await waitFor(() => expect(view.getByText(/awaiting mar setup/i)).toBeInTheDocument());
+    expect(view.queryByRole('button', { name: /publish mar version/i })).not.toBeInTheDocument();
+    expect(api.listMarEvents).not.toHaveBeenCalled();
   });
 });

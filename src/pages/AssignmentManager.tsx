@@ -333,7 +333,7 @@ export default function AssignmentManager() {
 
   const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
     const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
-    if (readinessError || !(readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null)?.ready || !(readiness as { atomic?: boolean } | null)?.atomic || Number((readiness as { materializationVersion?: number } | null)?.materializationVersion) < 4) {
+    if (readinessError || !(readiness as { ready?: boolean; materializationVersion?: number; publicationPreviewVersion?: number; atomic?: boolean } | null)?.ready || !(readiness as { atomic?: boolean } | null)?.atomic || Number((readiness as { materializationVersion?: number } | null)?.materializationVersion) < 5 || Number((readiness as { publicationPreviewVersion?: number } | null)?.publicationPreviewVersion) < 5) {
       const error = new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed MAR snapshot/materialization setup is required before creating a new assignment.');
       (error as Error & { code?: string }).code = 'MAR_NORMAL_MATERIALIZATION_NOT_READY';
       throw error;

@@ -5,7 +5,7 @@ import { Input } from './ui/Input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/Select';
 import { Clock3, Edit3, History, Pill, Save, Search } from 'lucide-react';
 import type { MedicalOrder, MarAdministrationEvent, MarStatus, Patient } from '../lib/types';
-import { emrApi } from '../lib/api';
+import { emrApi, marRpcErrorMessage } from '../lib/api';
 import { expandMarSchedule } from '../lib/marSchedule';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
@@ -142,7 +142,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setError(null);
     const marReady = await emrApi.getMarNormalMaterializationReadiness();
     if (!isCurrent(request)) return;
-    if (!marReady.ready || !marReady.atomic || marReady.materializationVersion < 4) {
+    if (!marReady.ready || !marReady.atomic || marReady.materializationVersion < 5 || marReady.publicationPreviewVersion < 5) {
       setEvents([]);
       setOrders([]);
       setRevision(0);
@@ -302,12 +302,23 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         : null;
       if (!publication) {
         const preview = await emrApi.getMarPublicationPreview(patient.roomId);
+        if (!isCurrent(request)) return;
         publication = { requestId: crypto.randomUUID(), roomId: patient.roomId, actorId, expectedRevision: preview.revision, expectedContentHash: preview.contentHash };
+        // Capture the exact saved Orders+MAR identity first. Publication is a
+        // deliberate second action, so an edit made before the click cannot
+        // be silently adopted by a fresh preview.
+        setPendingPublication(publication);
+        window.localStorage.setItem(publicationKey, JSON.stringify(publication));
+        setSaveError('Preview captured. Review the saved Orders and MAR history, then click Publish again to commit this exact snapshot.');
+        setPublishInFlight(false);
+        return;
       } else if (!publication.expectedContentHash) {
         throw new Error('This publication has no frozen Orders+MAR preview. Reload the authored case and start a new publication request.');
       }
+      if (!isCurrent(request)) return;
       setPendingPublication(publication);
       window.localStorage.setItem(publicationKey, JSON.stringify(publication));
+      if (!isCurrent(request)) return;
       const published = await emrApi.publishMarCaseVersion(patient.roomId, publication);
       if (!isCurrent(request)) return;
       setRevision(published.revision);
@@ -316,7 +327,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       window.localStorage.removeItem(publicationKey);
     } catch (publishError) {
       if (isCurrent(request)) {
-        const message = publishError instanceof Error ? publishError.message : 'Unable to publish MAR version.';
+        const message = marRpcErrorMessage(publishError);
         if (/MAR_PUBLICATION_(REVISION|CONTENT)_CONFLICT/.test(message)) {
           // These errors prove that no publication was committed. Do not keep
           // an obsolete request frozen forever; the author can reload the
@@ -334,11 +345,21 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     }
   };
 
-  const reconcilePublication = () => {
-    setPendingPublication(null);
-    setPublishInFlight(false);
-    window.localStorage.removeItem(publicationKey);
-    setSaveError('Confirmed publication conflict cleared. Reload the authored Orders and MAR preview before starting a new request.');
+  const reconcilePublication = async () => {
+    if (!pendingPublication) return;
+    try {
+      const status = await emrApi.getMarPublicationStatus(pendingPublication.requestId);
+      if (status.committed) {
+        setSaveError('This publication already committed. Reload the authored case before editing or publishing another version.');
+        return;
+      }
+      setPendingPublication(null);
+      setPublishInFlight(false);
+      window.localStorage.removeItem(publicationKey);
+      setSaveError('No committed publication was found. Reload the authored Orders and MAR preview before starting a new request.');
+    } catch (error) {
+      setSaveError(`Publication outcome is still unknown: ${marRpcErrorMessage(error)} Resume the same request.`);
+    }
   };
 
   const addManual = () => {

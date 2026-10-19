@@ -23,17 +23,17 @@ const chain = (result: { data: unknown; error: unknown }) => {
 describe('MAR frozen medication routing', () => {
   beforeEach(() => { from.mockReset(); rpc.mockReset(); });
 
-  it('uses frozen medication metadata for pinned general Orders while retaining non-medication orders', async () => {
-    const frozen = orderRow({ id: 'baseline-med', dose: '10 mg', route: 'IV' });
+  it('uses a trusted materialization receipt for pinned medication metadata', async () => {
     const editedMutableBaseline = orderRow({ id: 'baseline-med', dose: '20 mg', route: 'PO' });
+    const frozen = orderRow({ id: 'baseline-med', dose: '10 mg', route: 'IV' });
     const labOrder = orderRow({ id: 'lab-order', category: 'Lab', order_name: 'CBC', dose: null });
     from.mockImplementation((table: string) => {
       if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
       if (table === 'student_room_assignments') return chain({ data: { case_key_version: 'room-7-mar-v2' }, error: null });
+      if (table === 'mar_assignment_materialization_operations') return chain({ data: { assignment_id: 'assignment-1', published_content_hash: 'hash' }, error: null });
       return chain({ data: [editedMutableBaseline, labOrder], error: null });
     });
     rpc.mockResolvedValue({ data: [frozen], error: null });
-
     const orders = await emrApi.listOrders('patient-1', 'assignment-1', 7);
 
     expect(orders.find((order) => order.id === 'baseline-med')).toMatchObject({ dose: '10 mg', route: 'IV' });
@@ -51,17 +51,17 @@ describe('MAR frozen medication routing', () => {
     expect(orders.find((order) => order.id === 'learner-med')).toMatchObject({ assignmentId: 'assignment-1', dose: '5 mg' });
   });
 
-  it('does not hide non-medication Orders or resurrect mutable baseline medication metadata when the frozen reader fails', async () => {
+  it('keeps Orders readable when the optional MAR reader is unavailable', async () => {
     const onError = vi.fn();
     const mutableMedication = orderRow({ id: 'baseline-med', dose: '20 mg' });
     const nonMedication = orderRow({ id: 'lab-order', category: 'Lab', order_name: 'CBC', dose: null });
     from.mockImplementation((table: string) => {
       if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
       if (table === 'student_room_assignments') return chain({ data: { case_key_version: 'room-7-mar-v2' }, error: null });
+      if (table === 'mar_assignment_materialization_operations') return chain({ data: { assignment_id: 'assignment-1', published_content_hash: 'hash' }, error: null });
       return chain({ data: [mutableMedication, nonMedication], error: null });
     });
     rpc.mockResolvedValue({ data: null, error: { message: 'snapshot unavailable' } });
-
     const orders = await emrApi.listOrders('patient-1', 'assignment-1', 7, onError);
 
     expect(orders.map((order) => order.id)).toEqual(['lab-order']);
@@ -77,6 +77,20 @@ describe('MAR frozen medication routing', () => {
     });
 
     await expect(emrApi.listOrders('patient-1', 'legacy-assignment', 7)).resolves.toMatchObject([{ id: 'legacy-med', dose: '10 mg' }]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a non-MAR case key as a frozen medication receipt', async () => {
+    const legacyMedication = orderRow({ id: 'legacy-med', dose: '20 mg' });
+    from.mockImplementation((table: string) => {
+      if (table === 'rooms') return chain({ data: { continues_from: null }, error: null });
+      if (table === 'student_room_assignments') return chain({ data: { case_key_version: 'non-mar-case-v1' }, error: null });
+      if (table === 'mar_assignment_materialization_operations') return chain({ data: null, error: null });
+      if (table === 'mar_authored_case_versions') return chain({ data: null, error: null });
+      return chain({ data: [legacyMedication], error: null });
+    });
+
+    await expect(emrApi.listOrders('patient-1', 'legacy-assignment', 7)).resolves.toMatchObject([{ id: 'legacy-med' }]);
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -101,5 +115,12 @@ describe('MAR frozen medication routing', () => {
     rpc.mockResolvedValue({ data: { revision: 2, contentHash: 'hash-v5', orderCount: 2, eventCount: 3 }, error: null });
     await expect(emrApi.getMarPublicationPreview(7)).resolves.toEqual({ revision: 2, contentHash: 'hash-v5', orderCount: 2, eventCount: 3 });
     expect(rpc).toHaveBeenCalledWith('get_mar_publication_preview', { p_room_id: 7 });
+  });
+
+  it('normalizes PostgREST-shaped publication errors', async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: 'MAR_PUBLICATION_CONTENT_CONFLICT', code: 'P0001' } });
+    await expect(emrApi.publishMarCaseVersion(7, {
+      requestId: '00000000-0000-0000-0000-000000000001', expectedRevision: 0, expectedContentHash: 'hash',
+    })).rejects.toEqual({ message: 'MAR_PUBLICATION_CONTENT_CONFLICT', code: 'P0001' });
   });
 });

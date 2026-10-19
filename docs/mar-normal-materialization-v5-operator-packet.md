@@ -10,11 +10,14 @@ The historical files are unchanged and must not be replayed if the ledger alread
 
 1. Verify `100009`, `100010`, and `100011` are applied with their existing ledger hashes.
 2. Apply `100012` + `100013` together in one reviewed transaction unit.
-3. Apply `100014` + `100015` + `100016` + `20261019160000_mar_publication_contract_v5.sql` together in one reviewed transaction unit.
+3. Apply `100014` + `100015` + `100016` + `20261019155910_mar_publication_idempotency_and_order_merge.sql` + `20261019160000_mar_publication_contract_v5.sql` together in one reviewed transaction unit. `155910` is required because it creates `mar_publication_operations` and `publish_mar_case_version_atomic`; `160000` only raises the readiness/preview contract.
 4. Verify the ledger, grants, revoked legacy mutators, policy bodies, and v5 readiness before enabling writes.
 5. Deploy the matching frontend candidate only after readiness is true. Until then, the frontend remains read-only/setup-gated.
 
-The append-only publication contract migration is `20261019160000_mar_publication_contract_v5.sql`, SHA-256 `edbabeb3b82346d456f5e04e3597aae001e5ec00aebd616f54d0fa73c21ae223`.
+The required publication migrations are:
+
+- `20261019155910_mar_publication_idempotency_and_order_merge.sql`, SHA-256 `e3ec5f606c6fd3437ab50f00647554f3a32c823d030625d9dfd68da4ba061853`
+- `20261019160000_mar_publication_contract_v5.sql`, SHA-256 `edbabeb3b82346d456f5e04e3597aae001e5ec00aebd616f54d0fa73c21ae223`
 
 ## What v5 closes
 
@@ -36,7 +39,7 @@ MAR_NORMAL_RAW_LOG=artifacts/mar_normal_materialization_v5_raw_YYYYMMDDTHHMMSSZ.
 ./scripts/run-mar-normal-materialization-db.sh
 ```
 
-The runner pins all nine migration hashes, applies the reviewed transaction groups, asserts `ready=true`, `materializationVersion=5`, `publicationPreviewVersion=5`, and `atomic=true`, and records the complete redacted stdout/stderr log.
+The runner pins all ten migration hashes, applies the reviewed transaction groups, asserts `ready=true`, `materializationVersion=5`, `publicationPreviewVersion=5`, and `atomic=true`, and records the complete redacted stdout/stderr log. A v4/absent-preview partial upgrade must fail closed and must not enable client writes.
 
 Observed disposable result from the candidate run:
 

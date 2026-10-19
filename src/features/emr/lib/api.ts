@@ -163,6 +163,18 @@ const mapMarEvent = (row: Database['public']['Tables']['mar_administration_event
   recordVersion: row.record_version,
 });
 
+/** Supabase errors may be Error instances or PostgREST-shaped plain objects. */
+export const marRpcErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const value = error as { message?: unknown; code?: unknown; details?: unknown };
+    if (typeof value.message === 'string' && value.message.trim()) return value.message;
+    if (typeof value.code === 'string' && value.code.trim()) return value.code;
+    if (typeof value.details === 'string' && value.details.trim()) return value.details;
+  }
+  return 'Unable to complete the MAR request.';
+};
+
 const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
   const mapped: LabResult = {
@@ -1019,33 +1031,45 @@ export const emrApi = {
         order.assignmentId ?? null,
         assignmentId,
       ));
-    if (!assignmentId) return currentOrders;
-
-    // Only assignments with an explicit pinned case version use the frozen
-    // medication reader. Legacy/reserved assignments never call the MAR RPC.
     const { data: assignmentMeta, error: assignmentMetaError } = await supabase
       .from('student_room_assignments')
       .select('case_key_version')
       .eq('id', assignmentId)
       .maybeSingle();
     if (assignmentMetaError) {
-      console.error('Error resolving assignment MAR contract', assignmentMetaError);
       onError?.('Unable to resolve this assignment\'s order contract. Refresh the chart and try again.');
-      // A failed contract lookup is not evidence that this is a legacy
-      // assignment. Keep own/non-medical rows readable, but never expose a
-      // mutable baseline medication as a pinned medication.
       return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
     }
     if (!assignmentMeta?.case_key_version) return currentOrders;
+
+    // A case key alone is not a MAR contract. Only an actual materialization
+    // receipt authorizes frozen medication routing; this preserves legacy
+    // non-MAR case-key assignments without falling back for new pinned ones.
+    const { data: receipt, error: receiptError } = await supabase
+      .from('mar_assignment_materialization_operations')
+      .select('assignment_id,published_content_hash')
+      .eq('assignment_id', assignmentId)
+      .maybeSingle();
+    if (receiptError || !receipt) {
+      // A non-MAR legacy case key has no authored MAR version. Preserve its
+      // established Orders behavior; a published MAR version without a
+      // materialization receipt is instead an incomplete new contract.
+      const { data: authoredVersion, error: authoredVersionError } = await supabase
+        .from('mar_authored_case_versions')
+        .select('case_version')
+        .eq('room_id', roomId ?? -1)
+        .eq('case_version', assignmentMeta.case_key_version)
+        .maybeSingle();
+      if (authoredVersionError || !authoredVersion) return currentOrders;
+      onError?.('Pinned medication orders are unavailable until this assignment has a MAR materialization receipt.');
+      return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
+    }
 
     const { data: snapshot, error: snapshotError } = await supabase.rpc('get_mar_assignment_order_snapshot', {
       p_assignment_id: assignmentId,
     });
     if (snapshotError || !Array.isArray(snapshot)) {
       onError?.('Unable to load the pinned medication orders for this assignment. Refresh the chart and try again.');
-      // Do not fall back to mutable baseline medication metadata for a pinned
-      // assignment. Preserve non-medication clinical orders and this learner's
-      // own assignment orders so the failure is not rendered as empty data.
       return currentOrders.filter((order) => order.category !== 'Medication' || order.assignmentId === assignmentId);
     }
     const frozenMedicationOrders = (snapshot as MedicalOrderRow[]).map((row) => mapMedicalOrder(row, patientId));
@@ -1136,11 +1160,11 @@ export const emrApi = {
     return Boolean((data as { ready?: boolean } | null)?.ready);
   },
 
-  async getMarNormalMaterializationReadiness(): Promise<{ ready: boolean; materializationVersion: number; atomic: boolean }> {
+  async getMarNormalMaterializationReadiness(): Promise<{ ready: boolean; materializationVersion: number; publicationPreviewVersion: number; atomic: boolean }> {
     const { data, error } = await supabase.rpc('get_mar_normal_materialization_readiness');
-    if (error || !data || typeof data !== 'object') return { ready: false, materializationVersion: 0, atomic: false };
-    const value = data as { ready?: boolean; materializationVersion?: number; atomic?: boolean };
-    return { ready: Boolean(value.ready), materializationVersion: Number(value.materializationVersion ?? 0), atomic: Boolean(value.atomic) };
+    if (error || !data || typeof data !== 'object') return { ready: false, materializationVersion: 0, publicationPreviewVersion: 0, atomic: false };
+    const value = data as { ready?: boolean; materializationVersion?: number; publicationPreviewVersion?: number; atomic?: boolean };
+    return { ready: Boolean(value.ready), materializationVersion: Number(value.materializationVersion ?? 0), publicationPreviewVersion: Number(value.publicationPreviewVersion ?? 0), atomic: Boolean(value.atomic) };
   },
 
   async getPublishedMarCaseVersion(roomId: number): Promise<string | null> {
@@ -1161,6 +1185,16 @@ export const emrApi = {
       orderCount: Number(value.orderCount ?? 0),
       eventCount: Number(value.eventCount ?? 0),
     };
+  },
+
+  async getMarPublicationStatus(requestId: string): Promise<{ committed: boolean; result?: unknown }> {
+    const { data, error } = await supabase
+      .from('mar_publication_operations')
+      .select('request_id,result')
+      .eq('request_id', requestId)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? { committed: true, result: data.result } : { committed: false };
   },
 
   async publishMarCaseVersion(
@@ -1229,9 +1263,10 @@ export const emrApi = {
     });
     if (error) {
       console.error('Error saving MAR history', error);
-      return { ok: false, error: error.message.includes('MAR_REVISION_CONFLICT')
+      const message = marRpcErrorMessage(error);
+      return { ok: false, error: message.includes('MAR_REVISION_CONFLICT')
         ? 'MAR changed in another window. Reload the preview before saving.'
-        : error.message };
+        : message };
     }
     const revision = Number((data as { revision?: number } | null)?.revision);
     return { ok: true, revision: Number.isFinite(revision) ? revision : expectedRevision + 1 };
