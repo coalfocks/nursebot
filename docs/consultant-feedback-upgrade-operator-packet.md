@@ -17,7 +17,7 @@ verifies these SHA-256 values before applying them:
 20261019083000_consultant_transport_sequence_upgrade.sql 13f474bb47c43d58dd452bb89c58a3eca6659b00b0214b29c65f963b079f834a
 ```
 
-The new source is commit `280e5df030ebb7d6b1610ebf9f76f0caa848207f`.
+The reviewed source and reproducible packet are commit `c2d74dd3654afe4ab69cd538b94a84faab8c91a1`.
 
 ## Disposable reproduction
 
