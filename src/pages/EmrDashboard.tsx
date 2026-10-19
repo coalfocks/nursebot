@@ -15,6 +15,7 @@ import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
 import { LabResults } from '../features/emr/components/LabResults';
 import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
 import { OrdersManagement } from '../features/emr/components/OrdersManagement';
+import { MedicationAdministrationRecord } from '../features/emr/components/MedicationAdministrationRecord';
 import { ImagingStudies } from '../features/emr/components/ImagingStudies';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
 import { Button } from '../features/emr/components/ui/Button';
@@ -609,7 +610,7 @@ export default function EmrDashboard() {
             </div>
           ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
+            <TabsList className="grid w-full grid-cols-7">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
                 Overview
@@ -633,6 +634,10 @@ export default function EmrDashboard() {
               <TabsTrigger value="orders" className="flex items-center gap-2">
                 <Pill className="h-4 w-4" />
                 Orders
+              </TabsTrigger>
+              <TabsTrigger value="mar" className="flex items-center gap-2">
+                <Pill className="h-4 w-4" />
+                MAR
               </TabsTrigger>
             </TabsList>
 
@@ -1164,6 +1169,15 @@ export default function EmrDashboard() {
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}
                 onImagingStudyUpdated={() => setImagingRefreshToken((token) => token + 1)}
+              />
+            </TabsContent>
+
+            <TabsContent value="mar">
+              <MedicationAdministrationRecord
+                patient={selectedPatient}
+                assignmentId={effectiveAssignmentId}
+                forceBaseline={forceBaseline}
+                readOnly={studentEmrReadOnly}
               />
             </TabsContent>
 

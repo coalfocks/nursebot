@@ -16,6 +16,7 @@ import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrCon
 import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
 import { describeRoomAvailabilityChange, normalizeRoomAvailability } from '../lib/roomAvailability';
 import { preserveOrdersConfig } from '../lib/ordersConfig';
+import { useNavigate } from 'react-router-dom';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
@@ -121,6 +122,7 @@ interface RoomEditorProps {
 }
 
 export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: RoomEditorProps) {
+  const navigate = useNavigate();
   const { profile, activeSchoolId } = useAuthStore();
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
@@ -1374,6 +1376,15 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               All labs are available. Instant labs will auto-generate results; pending labs will stay pending.
             </p>
           </div>
+          {room?.id && room.patient_id && (
+            <button
+              type="button"
+              onClick={() => navigate(`/ehr?roomId=${room.id}&patientId=${room.patient_id}`)}
+              className="rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+            >
+              Open MAR history
+            </button>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Orders/Labs notes (optional)</label>

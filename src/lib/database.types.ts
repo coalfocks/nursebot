@@ -1702,6 +1702,102 @@ export type Database = {
           },
         ]
       }
+      mar_administration_events: {
+        Row: {
+          actor_id: string | null
+          actor_label: string | null
+          administered_at: string | null
+          administered_dose: string | null
+          assignment_id: string | null
+          case_version: string | null
+          category: string
+          created_at: string
+          deleted_at: string | null
+          frequency: string | null
+          id: string
+          infusion_details: Json | null
+          medication_name: string
+          order_id: string | null
+          ordered_dose: string | null
+          patient_id: string
+          prn_indication: string | null
+          reason: string | null
+          record_version: number
+          relative_offset_hours: number | null
+          response: string | null
+          room_id: number
+          route: string | null
+          simulated_clinician: string | null
+          source: string
+          status: string
+          unit: string | null
+          updated_at: string
+          occurrence_key: string
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_label?: string | null
+          administered_at?: string | null
+          administered_dose?: string | null
+          assignment_id?: string | null
+          case_version?: string | null
+          category?: string
+          created_at?: string
+          deleted_at?: string | null
+          frequency?: string | null
+          id?: string
+          infusion_details?: Json | null
+          medication_name: string
+          order_id?: string | null
+          ordered_dose?: string | null
+          patient_id: string
+          prn_indication?: string | null
+          reason?: string | null
+          record_version?: number
+          relative_offset_hours?: number | null
+          response?: string | null
+          room_id: number
+          route?: string | null
+          simulated_clinician?: string | null
+          source?: string
+          status?: string
+          unit?: string | null
+          updated_at?: string
+          occurrence_key: string
+        }
+        Update: {
+          actor_id?: string | null
+          actor_label?: string | null
+          administered_at?: string | null
+          administered_dose?: string | null
+          assignment_id?: string | null
+          case_version?: string | null
+          category?: string
+          created_at?: string
+          deleted_at?: string | null
+          frequency?: string | null
+          id?: string
+          infusion_details?: Json | null
+          medication_name?: string
+          order_id?: string | null
+          ordered_dose?: string | null
+          patient_id?: string
+          prn_indication?: string | null
+          reason?: string | null
+          record_version?: number
+          relative_offset_hours?: number | null
+          response?: string | null
+          room_id?: number
+          route?: string | null
+          simulated_clinician?: string | null
+          source?: string
+          status?: string
+          unit?: string | null
+          updated_at?: string
+          occurrence_key?: string
+        }
+        Relationships: []
+      }
       medical_orders: {
         Row: {
           assignment_id: string | null

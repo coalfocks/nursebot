@@ -7,6 +7,7 @@ import type {
   LabResult,
   VitalSigns,
   MedicalOrder,
+  MarAdministrationEvent,
   ImagingStudy,
   ImagingImage,
   RoomOrdersConfig,
@@ -133,6 +134,34 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     recordVersion: row.record_version,
   };
 };
+
+const mapMarEvent = (row: Database['public']['Tables']['mar_administration_events']['Row']): MarAdministrationEvent => ({
+  id: row.id,
+  patientId: row.patient_id,
+  roomId: row.room_id,
+  assignmentId: row.assignment_id,
+  orderId: row.order_id,
+  caseVersion: row.case_version,
+  occurrenceKey: row.occurrence_key,
+  relativeOffsetHours: row.relative_offset_hours,
+  administeredAt: row.administered_at,
+  medicationName: row.medication_name,
+  orderedDose: row.ordered_dose,
+  administeredDose: row.administered_dose,
+  unit: row.unit,
+  route: row.route,
+  frequency: row.frequency,
+  category: row.category as MarAdministrationEvent['category'],
+  status: row.status as MarAdministrationEvent['status'],
+  simulatedClinician: row.simulated_clinician,
+  reason: row.reason,
+  prnIndication: row.prn_indication,
+  response: row.response,
+  infusionDetails: (row.infusion_details as Record<string, unknown> | null) ?? null,
+  source: row.source as MarAdministrationEvent['source'],
+  actorLabel: row.actor_label,
+  recordVersion: row.record_version,
+});
 
 const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
@@ -992,6 +1021,89 @@ export const emrApi = {
           assignmentId,
         ),
       );
+  },
+
+  async listMarEvents(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+    onError?: (message: string) => void,
+  ): Promise<MarAdministrationEvent[]> {
+    const targetRooms = await getRoomLineage(roomId);
+    let query = supabase.from('mar_administration_events').select('*').eq('patient_id', patientId).is('deleted_at', null);
+    if (assignmentId) query = query.or(`assignment_id.eq.${assignmentId},assignment_id.is.null`);
+    else query = query.is('assignment_id', null);
+    const { data, error } = await query.order('relative_offset_hours', { ascending: true }).order('administered_at', { ascending: true });
+    if (error) {
+      console.error('Error fetching MAR history', error);
+      onError?.('Unable to load MAR history. Refresh the chart and try again.');
+      return [];
+    }
+    return (data ?? []).map(mapMarEvent).filter((event) => {
+      if (!roomId) return event.assignmentId === (assignmentId ?? null);
+      return (targetRooms ?? [roomId]).includes(event.roomId) && event.assignmentId === (assignmentId ?? null);
+    });
+  },
+
+  async saveMarHistory(
+    patientId: string,
+    roomId: number,
+    assignmentId: string | null,
+    caseVersion: string | null,
+    expectedRevision: number,
+    events: MarAdministrationEvent[],
+  ): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
+    const { data, error } = await supabase.rpc('save_mar_history', {
+      p_patient_id: patientId,
+      p_room_id: roomId,
+      p_assignment_id: assignmentId,
+      p_case_version: caseVersion,
+      p_expected_revision: expectedRevision,
+      p_events: events.map((event) => ({
+        id: event.id,
+        orderId: event.orderId,
+        caseVersion: event.caseVersion ?? caseVersion,
+        occurrenceKey: event.occurrenceKey,
+        relativeOffsetHours: event.relativeOffsetHours,
+        administeredAt: event.administeredAt,
+        medicationName: event.medicationName,
+        orderedDose: event.orderedDose,
+        administeredDose: event.administeredDose,
+        unit: event.unit,
+        route: event.route,
+        frequency: event.frequency,
+        category: event.category,
+        status: event.status,
+        simulatedClinician: event.simulatedClinician,
+        reason: event.reason,
+        prnIndication: event.prnIndication,
+        response: event.response,
+        infusionDetails: event.infusionDetails,
+        source: event.source,
+        actorLabel: event.actorLabel,
+      })),
+    });
+    if (error) {
+      console.error('Error saving MAR history', error);
+      return { ok: false, error: error.message.includes('MAR_REVISION_CONFLICT')
+        ? 'MAR changed in another window. Reload the preview before saving.'
+        : error.message };
+    }
+    const revision = Number((data as { revision?: number } | null)?.revision);
+    return { ok: true, revision: Number.isFinite(revision) ? revision : expectedRevision + 1 };
+  },
+
+  async getMarHistoryRevision(patientId: string, roomId: number, assignmentId: string | null): Promise<number> {
+    const { data, error } = await supabase.rpc('get_mar_history_revision', {
+      p_patient_id: patientId,
+      p_room_id: roomId,
+      p_assignment_id: assignmentId,
+    });
+    if (error) {
+      console.error('Error fetching MAR revision', error);
+      return 0;
+    }
+    return Number(data ?? 0);
   },
 
   async addOrder(order: MedicalOrder, roomId?: number | null): Promise<MedicalOrder | null> {
