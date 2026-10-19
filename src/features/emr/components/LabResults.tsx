@@ -58,6 +58,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     status: 'Normal' as LabResult['status'],
     collectionTime: '',
     resultTime: '',
+    relativeOffsetHours: '',
   });
   const [isSavingLabEdit, setIsSavingLabEdit] = useState(false);
   const [manualLabForm, setManualLabForm] = useState({
@@ -672,6 +673,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       status: lab.status,
       collectionTime: lab.collectionTime,
       resultTime: lab.resultTime ?? lab.collectionTime,
+      relativeOffsetHours: lab.relativeOffsetHours == null ? '12' : String(lab.relativeOffsetHours),
     });
     setLabSaveError(null);
   };
@@ -683,6 +685,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     try {
       const numericValue = Number(labEditForm.value);
       const valueType = labEditForm.value.trim() !== '' && Number.isFinite(numericValue) ? 'numeric' : 'coded';
+      const baselineOffset = editingLab.overrideScope === 'baseline' || forceBaseline
+        ? Number(labEditForm.relativeOffsetHours)
+        : null;
+      if (baselineOffset !== null && (!Number.isFinite(baselineOffset) || baselineOffset <= 0 || baselineOffset > 72)) {
+        setLabSaveError('Prior hours must be greater than 0 and no more than 72.');
+        return;
+      }
+      const baselineCollectionTime = baselineOffset === null
+        ? labEditForm.collectionTime
+        : new Date(new Date(patient.admissionDate ?? Date.now()).getTime() - baselineOffset * 60 * 60 * 1000).toISOString();
       const updated = await emrApi.updateLabResult(
         editingLab.id,
         {
@@ -692,8 +704,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           unit: labEditForm.unit,
           referenceRange: labEditForm.referenceRange,
           status: labEditForm.status,
-          collectionTime: labEditForm.collectionTime,
-          resultTime: labEditForm.resultTime || labEditForm.collectionTime,
+          collectionTime: baselineCollectionTime,
+          resultTime: baselineOffset === null ? (labEditForm.resultTime || labEditForm.collectionTime) : baselineCollectionTime,
+          relativeOffsetHours: baselineOffset,
           lifecycleStatus: labEditForm.status === 'Pending' ? 'pending' : 'corrected',
         },
         editingLab.recordVersion,
@@ -965,9 +978,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               <label className="block text-sm font-medium">Reference range
                 <input className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.referenceRange} onChange={(event) => setLabEditForm((prev) => ({ ...prev, referenceRange: event.target.value }))} />
               </label>
-              <label className="block text-sm font-medium">Collection time
+              {editingLab.overrideScope === 'baseline' || forceBaseline ? <label className="block text-sm font-medium">Prior hours
+                <input type="number" min="1" max="72" step="0.5" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.relativeOffsetHours} onChange={(event) => setLabEditForm((prev) => ({ ...prev, relativeOffsetHours: event.target.value }))} />
+              </label> : <label className="block text-sm font-medium">Collection time
                 <input type="datetime-local" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.collectionTime.slice(0, 16)} onChange={(event) => setLabEditForm((prev) => ({ ...prev, collectionTime: new Date(event.target.value).toISOString() }))} />
-              </label>
+              </label>}
               <label className="block text-sm font-medium">Status
                 <select className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.status} onChange={(event) => setLabEditForm((prev) => ({ ...prev, status: event.target.value as LabResult['status'] }))}>
                   <option value="Normal">Normal</option>

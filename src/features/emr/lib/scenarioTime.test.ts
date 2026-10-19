@@ -11,8 +11,10 @@ describe('scenario EMR timestamps', () => {
     expect(clampToMinimumPrior('2026-10-13T11:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('2026-10-13T00:00:00.000Z');
   });
 
-  it('shows the relative minimum and exact timestamp together', () => {
-    expect(formatScenarioPrior('2026-10-13T11:00:00.000Z', '2026-10-13T12:00:00.000Z')).toContain('12h prior');
+  it('never exposes calendar dates or clock times for simulation history', () => {
+    const label = formatScenarioPrior('2026-10-13T11:00:00.000Z', '2026-10-13T12:00:00.000Z');
+    expect(label).toBe('Prior to encounter');
+    expect(label).not.toMatch(/\d{4}/);
   });
 
   it('renders sentinel and nonsensically distant timestamps without enormous hour counts', () => {
@@ -21,11 +23,16 @@ describe('scenario EMR timestamps', () => {
     expect(clampToMinimumPrior('2000-01-01T00:00:00.000Z', '2026-10-13T12:00:00.000Z')).toBe('2000-01-01T00:00:00.000Z');
   });
 
-  it('keeps mixed baseline and assignment labels distinct after reload', () => {
+  it('uses stable relative labels for baseline and post-page samples', () => {
     const baseline = formatScopedEmrTimestamp('2026-10-16T03:19:00.000Z', 'baseline', '2026-10-16T15:19:00.000Z');
     const assignment = formatScopedEmrTimestamp('2026-10-16T18:41:00.000Z', 'assignment', '2026-10-16T15:19:00.000Z');
-    expect(baseline).toContain('12h prior');
-    expect(assignment).not.toContain('prior');
-    expect(assignment).toContain('2026');
+    expect(baseline).toBe('Prior to encounter');
+    expect(assignment).toBe('+202 min');
+    expect(assignment).not.toMatch(/\d{4}|:/);
+  });
+
+  it('falls back without inventing an offset when the encounter anchor is absent', () => {
+    expect(formatScopedEmrTimestamp('2026-10-16T18:41:00.000Z', 'assignment')).toBe('During encounter');
+    expect(formatScopedEmrTimestamp('2026-10-16T18:41:00.000Z', 'baseline')).toBe('Prior to encounter');
   });
 });
