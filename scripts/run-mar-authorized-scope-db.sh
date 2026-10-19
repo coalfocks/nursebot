@@ -45,16 +45,25 @@ grant insert on public.patients, public.rooms, public.profiles, public.student_r
 insert into auth.users(id) values
   ('00000000-0000-0000-0000-000000000001'),
   ('00000000-0000-0000-0000-000000000002'),
-  ('00000000-0000-0000-0000-000000000003');
+  ('00000000-0000-0000-0000-000000000003'),
+  ('00000000-0000-0000-0000-000000000004');
 SQL
 "${PG[@]}" -f supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql >/dev/null
 "${PG[@]}" -f supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql >/dev/null
+"${PG[@]}" -f supabase/migrations/20261019100011_mar_read_scope_and_versions.sql >/dev/null
 "${PG[@]}" <<'SQL'
 grant usage on schema public, auth to authenticated;
 grant authenticated to mar_scope_user;
 grant execute on function public.save_mar_history(uuid, integer, uuid, text, integer, jsonb) to mar_scope_user;
 grant execute on function public.get_mar_history_revision(uuid, integer, uuid) to mar_scope_user;
+grant execute on function public.create_mar_baseline_version(uuid, text, jsonb) to mar_scope_user;
 SQL
 
 PGPASSWORD='mar-scope-user' psql -h 127.0.0.1 -p "$PORT" -U mar_scope_user -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/mar_authorized_scope.sql
+POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_administration_events' and policyname='MAR authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
+[[ "$POLICY_ASSERT" == 1 ]] || { echo 'MAR read-scope policy replacement was not installed' >&2; exit 1; }
+REVISION_POLICY_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_policies where schemaname='public' and tablename='mar_history_revisions' and policyname='MAR revisions authenticated read' and lower(qual) like '%student_id = auth.uid()%' and lower(qual) like '%school_id = r.school_id%'")"
+[[ "$REVISION_POLICY_ASSERT" == 1 ]] || { echo 'MAR revision read-scope policy replacement was not installed' >&2; exit 1; }
+VERSION_ASSERT="$(${PG[@]} -Atc "select count(*) from pg_proc where proname='create_mar_baseline_version'")"
+[[ "$VERSION_ASSERT" == 1 ]] || { echo 'MAR immutable baseline version RPC missing' >&2; exit 1; }
 echo 'MAR authorized scope disposable harness: PASS'

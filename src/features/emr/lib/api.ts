@@ -1047,6 +1047,18 @@ export const emrApi = {
     });
   },
 
+  async getMarBaselineVersion(assignmentId: string): Promise<{ caseVersion: string; contentHash: string } | null> {
+    const { data, error } = await supabase
+      .from('mar_assignment_baseline_versions')
+      .select('case_version, content_hash')
+      .eq('assignment_id', assignmentId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return { caseVersion: data.case_version, contentHash: data.content_hash };
+  },
+
   async saveMarHistory(
     patientId: string,
     roomId: number,
@@ -1055,6 +1067,33 @@ export const emrApi = {
     expectedRevision: number,
     events: MarAdministrationEvent[],
   ): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
+    if (assignmentId && caseVersion) {
+      const { error: baselineError } = await supabase.rpc('create_mar_baseline_version', {
+        p_assignment_id: assignmentId,
+        p_case_version: caseVersion,
+        p_event_snapshot: events.map((event) => ({
+          occurrenceKey: event.occurrenceKey,
+          orderId: event.orderId,
+          medicationName: event.medicationName,
+          orderedDose: event.orderedDose,
+          administeredDose: event.administeredDose,
+          unit: event.unit,
+          route: event.route,
+          frequency: event.frequency,
+          category: event.category,
+          relativeOffsetHours: event.relativeOffsetHours,
+          status: event.status,
+          simulatedClinician: event.simulatedClinician,
+          reason: event.reason,
+          prnIndication: event.prnIndication,
+          response: event.response,
+          actorLabel: event.actorLabel,
+          source: event.source,
+          infusionDetails: event.infusionDetails,
+        })),
+      });
+      if (baselineError) return { ok: false, error: baselineError.message };
+    }
     const { data, error } = await supabase.rpc('save_mar_history', {
       p_patient_id: patientId,
       p_room_id: roomId,

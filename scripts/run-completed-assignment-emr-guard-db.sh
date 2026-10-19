@@ -104,10 +104,19 @@ PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -v O
   -v writable_assignment_id=10000000-0000-0000-0000-000000000002 \
   -f supabase/tests/completed_assignment_emr_guard_completion_session.sql >"$OUT_DIR/completion.log" 2>&1 &
 COMPLETION_PID=$!
+for _ in {1..40}; do
+  grep -q 'COMPLETION_ATTEMPTED' "$OUT_DIR/completion.log" && break
+  sleep 0.1
+done
+grep -q 'COMPLETION_ATTEMPTED' "$OUT_DIR/completion.log" || { echo 'completion did not reach synchronization barrier' >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
+BLOCKED_COUNT="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select count(*) from pg_stat_activity where cardinality(pg_blocking_pids(pid)) > 0 and query like '%update public.student_room_assignments%'")"
+[[ "$BLOCKED_COUNT" -ge 1 ]] || { echo 'completion did not observe a database lock wait' >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
 wait "$WRITER_PID"
 wait "$COMPLETION_PID"
 FINAL_STATUS="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select status from public.student_room_assignments where id='10000000-0000-0000-0000-000000000002'")"
 [[ "$FINAL_STATUS" == completed ]] || { echo "interleaving final status was $FINAL_STATUS" >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
 FINAL_INSTRUCTIONS="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select instructions from public.medical_orders where id='20000000-0000-0000-0000-000000000002'")"
 [[ "$FINAL_INSTRUCTIONS" == *serialized-write-test* ]] || { echo 'writer update did not commit' >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
+FINAL_WRITE_COUNT="$(PGPASSWORD="$PASSWORD" psql -h 127.0.0.1 -p "$PORT" -U postgres -d postgres -Atqc "select count(*) from public.medical_orders where id='20000000-0000-0000-0000-000000000002' and instructions like '%serialized-write-test%'")"
+[[ "$FINAL_WRITE_COUNT" == 1 ]] || { echo "expected exactly one serialized writer update, got $FINAL_WRITE_COUNT" >&2; cat "$OUT_DIR"/*.log >&2; exit 1; }
 echo 'completed EMR guard two-session write/completion interleaving: PASS'

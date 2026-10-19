@@ -33,16 +33,19 @@ describe('MAR schedule expansion', () => {
     expect(expandMarSchedule({ medicationName: 'Bolus now', frequency: 'Once', category: 'one_time', historyHours: 12, firstDosePriorHours: 0 })[0]).toMatchObject({ relativeOffsetHours: 0 });
   });
 
-  it('rejects invalid schedule relationships and caps only the authored stay window', () => {
-    expect(expandMarSchedule({ medicationName: 'Long', frequency: 'q4h', historyHours: 96, firstDosePriorHours: 96 })).toHaveLength(18);
-    expect(expandMarSchedule({ medicationName: 'Late', frequency: 'q4h', historyHours: 48, stayHours: 48, firstDosePriorHours: 60 })).toHaveLength(12);
+  it('rejects invalid schedule relationships instead of silently clamping authored values', () => {
+    expect(() => expandMarSchedule({ medicationName: 'Long', frequency: 'q4h', historyHours: 96, firstDosePriorHours: 96 })).toThrow('MAR_HISTORY_EXCEEDS_MAXIMUM');
+    expect(() => expandMarSchedule({ medicationName: 'Late', frequency: 'q4h', historyHours: 48, stayHours: 48, firstDosePriorHours: 60 })).toThrow('MAR_START_OUTSIDE_STAY');
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: 12, firstDosePriorHours: 12, stopPriorHours: 16 })).toThrow('MAR_STOP_BEFORE_START');
     expect(() => expandMarSchedule({ medicationName: 'Bad', frequency: 'q4h', historyHours: Number.NaN, firstDosePriorHours: 12 })).toThrow('MAR_INVALID_HISTORY_HOURS');
+    expect(() => expandMarSchedule({ medicationName: 'PRN TID', frequency: 'TID', category: 'prn', historyHours: 24, firstDosePriorHours: 24, assumePrnGiven: true })).toThrow('MAR_EXPLICIT_TIMES_REQUIRED');
   });
 
   it('does not create administrations for infusions or learner orders', () => {
     expect(expandMarSchedule({ medicationName: 'Infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 12, status: 'Started', rate: '50 mL/h' }, { offsetHours: 4, status: 'Rate changed', rate: '75 mL/h' }] })).toHaveLength(2);
     expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 13, status: 'Started' }] })).toThrow('MAR_TIME_OUTSIDE_STAY');
     expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 8, status: 'Stopped' }, { offsetHours: 4, status: 'Started' }] })).toThrow('MAR_INFUSION_START_STOP_CONFLICT');
+    expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 8, status: 'Started' }, { offsetHours: 6, status: 'Stopped' }, { offsetHours: 4, status: 'Rate changed' }] })).toThrow('MAR_INFUSION_RATE_CHANGE_CONFLICT');
+    expect(() => expandMarSchedule({ medicationName: 'Bad infusion', frequency: 'continuous', category: 'infusion', historyHours: 12, firstDosePriorHours: 4, infusionEvents: [{ offsetHours: 0, status: 'Started' }] })).toThrow('MAR_ZERO_HOUR_BASELINE');
   });
 });

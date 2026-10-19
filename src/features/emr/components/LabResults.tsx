@@ -25,6 +25,9 @@ interface LabResultsProps {
   sandboxLabs?: LabResult[];
   onSandboxLabsChange?: (labs: LabResult[]) => void;
   readOnly?: boolean;
+  assignmentStatus?: string | null;
+  assignmentStatusKey?: string | null;
+  forceBaseline?: boolean;
 }
 
 type LabTrendPoint = {
@@ -33,7 +36,7 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, readOnly = false }: LabResultsProps) {
+export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, readOnly = false, assignmentStatus = null, assignmentStatusKey = null, forceBaseline = false }: LabResultsProps) {
   const normalizeForPatient = useCallback(
     (labs: LabResult[]) => labs.map((lab) => normalizeLabResultForPatient(lab, patient.gender, patient.dateOfBirth)),
     [patient.gender, patient.dateOfBirth],
@@ -44,7 +47,6 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
-  const forceBaseline = isSuperAdmin(profile);
   const [aiLabName, setAiLabName] = useState('');
   const [aiLabRequest, setAiLabRequest] = useState('');
   const [showManualLabModal, setShowManualLabModal] = useState(false);
@@ -84,7 +86,20 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   // Permission is part of the request identity. A completed/unknown review
   // transition invalidates an already-running writable reconciliation before
   // it can invoke the generator or persist results.
-  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}:${readOnly ? 'readonly' : 'writable'}`);
+  const writableAssignmentStatuses = new Set(['assigned', 'in_progress', 'bedside']);
+  const permissionReady = forceBaseline || (!assignmentId
+    ? false
+    : assignmentStatusKey === assignmentId && Boolean(assignmentStatus) && writableAssignmentStatuses.has(assignmentStatus));
+  const canWrite = !readOnly && permissionReady;
+  const canWriteRef = useRef(canWrite);
+  canWriteRef.current = canWrite;
+  const permissionEpochRef = useRef(0);
+  const previousCanWriteRef = useRef(canWrite);
+  if (previousCanWriteRef.current !== canWrite) {
+    permissionEpochRef.current += 1;
+    previousCanWriteRef.current = canWrite;
+  }
+  const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}:${assignmentStatusKey ?? 'unknown'}:${assignmentStatus ?? 'unknown'}:${canWrite ? 'writable' : 'readonly'}`);
   const { capture, isCurrent } = requestIdentity;
   const labOptions = useMemo(
     () => [...instantLabs, ...pendingLabs].sort((a, b) => a.localeCompare(b)),
@@ -182,8 +197,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   // predate the order-placement callback, so reconcile them when the Labs tab
   // opens instead of leaving an order stranded with no result forever.
   useEffect(() => {
-    if (!roomMetaLoaded || readOnly) return;
+    if (!roomMetaLoaded || !canWriteRef.current) return;
+    let cancelled = false;
     const request = capture();
+    const permissionEpoch = permissionEpochRef.current;
     void (async () => {
       const [orders, existingLabs, clinicalNotes, vitals] = await Promise.all([
         emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null),
@@ -191,14 +208,14 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null),
         emrApi.listVitals(patient.id, assignmentId, patient.roomId ?? null),
       ]);
-      if (!isCurrent(request)) return;
+      if (cancelled || permissionEpoch !== permissionEpochRef.current || !isCurrent(request)) return;
 
       const candidates = orders.filter(
         (order) => isResultProducingStatLab(order),
       );
 
       for (const order of candidates) {
-        if (!isCurrent(request) || readOnly) return;
+        if (cancelled || permissionEpoch !== permissionEpochRef.current || !isCurrent(request) || !canWriteRef.current) return;
         if (autoResultingOrderIds.current.has(order.id)) continue;
         const requestedTests = resolveLabTemplates(order.orderName, patient.gender, patient.dateOfBirth);
         const hasResult = requestedTests.every((test) =>
@@ -213,7 +230,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         autoResultingOrderIds.current.add(order.id);
 
         try {
-          if (!isCurrent(request) || readOnly) return;
+          if (cancelled || permissionEpoch !== permissionEpochRef.current || !isCurrent(request) || !canWriteRef.current) return;
           const aiResponse = await supabase.functions.invoke('lab-results', {
             body: {
               orderName: order.orderName,
@@ -289,25 +306,26 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             resultTime: runTimestamp,
             orderedBy: order.orderedBy,
           }));
-          if (!isCurrent(request) || readOnly) return;
+          if (cancelled || permissionEpoch !== permissionEpochRef.current || !isCurrent(request) || !canWriteRef.current) return;
           const writeResult = await emrApi.addLabResults(labsWithScope, patient.roomId ?? null);
           if (!writeResult.ok) throw new Error(writeResult.error);
-          if (isCurrent(request)) {
+          if (!cancelled && isCurrent(request)) {
             setLabResults(normalizeForPatient(await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null)));
           }
         } catch (error) {
           autoResultingOrderIds.current.delete(order.id);
-          if (isCurrent(request)) {
+          if (!cancelled && isCurrent(request)) {
             setLabSaveError(error instanceof Error ? error.message : 'Unable to generate a coherent result panel. Refresh and retry.');
           }
           console.error('Failed to reconcile instant lab order', order.id, error);
         }
       }
     })();
-  }, [assignmentId, capture, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient, readOnly]);
+    return () => { cancelled = true; };
+  }, [assignmentId, assignmentStatus, assignmentStatusKey, canWrite, capture, forceBaseline, isCurrent, isSandbox, patient, roomMeta, roomMetaLoaded, normalizeForPatient]);
 
   const handleGenerateLabResults = async () => {
-    if (readOnly || !aiLabName.trim()) return;
+    if (!canWrite || !aiLabName.trim()) return;
     const request = capture();
     const orderName = aiLabName.trim();
     const requestDetails = aiLabRequest.trim();
@@ -324,7 +342,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       const tests = resolveLabTemplates(orderName, patient.gender, patient.dateOfBirth);
       const requestedTests = tests.length ? tests : resolveLabTemplates('default', patient.gender, patient.dateOfBirth);
 
-      if (!isCurrent(request) || readOnly) return;
+      if (!isCurrent(request) || !canWriteRef.current) return;
       const aiResponse = await supabase.functions.invoke('lab-results', {
         body: {
           orderName,
@@ -373,7 +391,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (aiResponse.error) {
         throw aiResponse.error;
       }
-      if (!isCurrent(request) || readOnly) return;
+      if (!isCurrent(request) || !canWriteRef.current) return;
 
       const generationContext = {
         assignmentId,
@@ -430,7 +448,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           return updated;
         });
       } else {
-        if (!isCurrent(request) || readOnly) return;
+        if (!isCurrent(request) || !canWriteRef.current) return;
         // Save to database
         const writeResult = await emrApi.addLabResults(labsWithAssignment, roomIdForScope);
         if (!writeResult.ok) {
@@ -440,7 +458,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         
         // Refresh labs from database to get merged results
         const refreshedLabs = await emrApi.listLabResults(patient.id, assignmentId, patient.roomId ?? null);
-        if (!isCurrent(request) || readOnly) return;
+        if (!isCurrent(request) || !canWriteRef.current) return;
         setLabResults(normalizeForPatient(refreshedLabs));
       }
       setAiLabName('');
@@ -696,7 +714,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   };
 
   const handleDeleteLab = async (labId: string) => {
-    if (!canEdit || readOnly) return;
+    if (!canEdit || !canWrite) return;
     const deletedLab = labResults.find((lab) => lab.id === labId);
     setLabSaveError(null);
     if (!deletedLab) return;
@@ -718,7 +736,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           {labSaveError}
         </p>
       )}
-      {canEdit && !readOnly && (
+      {canEdit && canWrite && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div>

@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { LabResults } from './LabResults';
 import type { Patient } from '../lib/types';
@@ -51,10 +51,13 @@ describe('LabResults completed-review write barrier', () => {
   it('invalidates a writable reconciliation when review becomes read-only mid-request', async () => {
     let resolveOrders: ((orders: unknown[]) => void) | undefined;
     listOrders.mockImplementationOnce(() => new Promise((resolve) => { resolveOrders = resolve; }));
-    const view = render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    const view = render(<LabResults patient={patient} assignmentId="assignment-1" assignmentStatus="in_progress" assignmentStatusKey="assignment-1" readOnly={false} />);
     await waitFor(() => expect(listOrders).toHaveBeenCalled());
-    view.rerender(<LabResults patient={patient} assignmentId="assignment-1" readOnly />);
-    resolveOrders?.([]);
+    await act(async () => {
+      view.rerender(<LabResults patient={patient} assignmentId="assignment-2" assignmentStatus="completed" assignmentStatusKey="assignment-2" readOnly />);
+      resolveOrders?.([]);
+      await Promise.resolve();
+    });
     await waitFor(() => expect(invoke).not.toHaveBeenCalled());
     expect(addLabResults).not.toHaveBeenCalled();
   });
@@ -62,10 +65,13 @@ describe('LabResults completed-review write barrier', () => {
   it('ignores a writable reconciliation that resolves after assignment switch', async () => {
     let resolveOrders: ((orders: unknown[]) => void) | undefined;
     listOrders.mockImplementationOnce(() => new Promise((resolve) => { resolveOrders = resolve; }));
-    const view = render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    const view = render(<LabResults patient={patient} assignmentId="assignment-1" assignmentStatus="in_progress" assignmentStatusKey="assignment-1" readOnly={false} />);
     await waitFor(() => expect(listOrders).toHaveBeenCalled());
-    view.rerender(<LabResults patient={patient} assignmentId="assignment-2" readOnly />);
-    resolveOrders?.([]);
+    await act(async () => {
+      view.rerender(<LabResults patient={patient} assignmentId="assignment-2" assignmentStatus="completed" assignmentStatusKey="assignment-1" readOnly />);
+      resolveOrders?.([]);
+      await Promise.resolve();
+    });
     await waitFor(() => expect(invoke).not.toHaveBeenCalled());
     expect(addLabResults).not.toHaveBeenCalled();
   });
@@ -75,7 +81,7 @@ describe('LabResults completed-review write barrier', () => {
       id: 'order-1', patientId: 'patient-1', assignmentId: 'assignment-1', roomId: 7,
       category: 'Lab', orderName: 'CBC', priority: 'STAT', status: 'Active', orderedBy: 'Doctor', orderTime: new Date().toISOString(),
     }]);
-    render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    render(<LabResults patient={patient} assignmentId="assignment-1" assignmentStatus="in_progress" assignmentStatusKey="assignment-1" readOnly={false} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(addLabResults).toHaveBeenCalledTimes(1));
   });
@@ -87,10 +93,18 @@ describe('LabResults completed-review write barrier', () => {
       id: 'order-2', patientId: 'patient-1', assignmentId: 'assignment-1', roomId: 7,
       category: 'Lab', orderName: 'CBC', priority: 'STAT', status: 'Active', orderedBy: 'Doctor', orderTime: new Date().toISOString(),
     }]);
-    const view = render(<LabResults patient={patient} assignmentId="assignment-1" readOnly={false} />);
+    const view = render(<LabResults patient={patient} assignmentId="assignment-1" assignmentStatus="in_progress" assignmentStatusKey="assignment-1" readOnly={false} />);
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
-    view.rerender(<LabResults patient={patient} assignmentId="assignment-1" readOnly />);
-    resolveInvoke?.({ data: { labs: [{ testName: 'CBC', value: 1, unit: 'x', referenceRange: '1-2' }] }, error: null });
+    expect(addLabResults).not.toHaveBeenCalled();
+    await act(async () => {
+      view.rerender(<LabResults patient={patient} assignmentId="assignment-1" readOnly />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveInvoke?.({ data: { labs: [{ testName: 'CBC', value: 1, unit: 'x', referenceRange: '1-2' }] }, error: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     await waitFor(() => expect(addLabResults).not.toHaveBeenCalled());
   });
 });

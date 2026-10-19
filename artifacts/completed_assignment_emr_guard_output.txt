@@ -1,0 +1,17 @@
+Redacted disposable runner output — generated 2026-10-19
+
+Command:
+  COMPLETED_EMR_GUARD_DISPOSABLE=1 COMPLETED_EMR_GUARD_PGPORT=54348 \
+    ./scripts/run-completed-assignment-emr-guard-db.sh
+
+Result:
+  completed EMR guard disposable harness: PASS
+  completed EMR guard two-session write/completion interleaving: PASS
+  observed database lock wait before completion transition
+  exactly one serialized writer update committed
+  both write-before-completion and completion-before-write order checks passed
+  post-update barrier observed before the completion transition
+
+The runner used PostgreSQL 15.3 in a disposable container bound to
+127.0.0.1:54348 and removed only that container on exit. No production
+database, QA assignment, chart, prompt, pin, or clinical record was used.

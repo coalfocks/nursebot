@@ -1155,6 +1155,9 @@ export default function EmrDashboard() {
                 refreshToken={labsRefreshToken}
                 onSandboxLabsChange={setSandboxLabs}
                 readOnly={studentEmrReadOnly}
+                assignmentStatus={assignmentStatus}
+                assignmentStatusKey={assignmentStatusKey}
+                forceBaseline={forceBaseline}
               />
             </TabsContent>
 

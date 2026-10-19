@@ -65,8 +65,10 @@ const finiteHours = (value: number, label: string): number => {
 const normalizeHistoryHours = (input: MarScheduleInput): number => {
   const requested = input.stayHours ?? input.historyHours;
   finiteHours(requested, 'history_hours');
-  // The product contract is a maximum three-day authored encounter window.
-  return Math.min(72, requested);
+  // The product contract is a maximum three-day authored encounter window;
+  // authored values outside it are invalid rather than silently truncated.
+  if (requested > 72) throw new RangeError('MAR_HISTORY_EXCEEDS_MAXIMUM');
+  return requested;
 };
 
 const explicitOffsets = (input: MarScheduleInput, historyHours: number, first: number, stop: number | null): number[] => {
@@ -83,7 +85,8 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
   const historyHours = normalizeHistoryHours(input);
   const requestedFirst = input.startPriorHours ?? input.firstDosePriorHours;
   finiteHours(requestedFirst, 'start_hours');
-  const first = Math.min(historyHours, requestedFirst);
+  if (requestedFirst > historyHours) throw new RangeError('MAR_START_OUTSIDE_STAY');
+  const first = requestedFirst;
   if (input.stopPriorHours !== null && input.stopPriorHours !== undefined) finiteHours(input.stopPriorHours, 'stop_hours');
   const stop = input.stopPriorHours === null || input.stopPriorHours === undefined ? null : input.stopPriorHours;
   if (stop !== null && stop > first) throw new RangeError('MAR_STOP_BEFORE_START');
@@ -93,7 +96,9 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
   }
   if (category === 'prn') {
     if (!input.assumePrnGiven) return [];
-    const interval = frequencyHours(input.frequency);
+    const normalizedFrequency = input.frequency.trim().toLowerCase();
+    const requiresExplicit = ['bid', 'tid', 'qid'].includes(normalizedFrequency);
+    const interval = requiresExplicit ? null : frequencyHours(input.frequency);
     const offsets = interval
       ? Array.from({ length: Math.floor((first - (stop ?? 1)) / interval) + 1 }, (_, index) => first - index * interval)
       : explicitOffsets(input, historyHours, first, stop);
@@ -135,9 +140,17 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
     const normalizedEvents = infusionEvents.map((event) => ({ ...event, offsetHours: finiteHours(event.offsetHours, 'infusion_time') }));
     if (normalizedEvents.some((event) => event.offsetHours > historyHours)) throw new RangeError('MAR_TIME_OUTSIDE_STAY');
     const orderedEvents = [...normalizedEvents].sort((a, b) => b.offsetHours - a.offsetHours);
-    const startIndex = orderedEvents.findIndex((event) => event.status === 'Started');
-    const stopIndex = orderedEvents.findIndex((event) => event.status === 'Stopped');
+    if (orderedEvents.some((event) => event.offsetHours === 0)) throw new RangeError('MAR_ZERO_HOUR_BASELINE');
+    const chronologicalEvents = [...normalizedEvents].sort((a, b) => b.offsetHours - a.offsetHours);
+    const starts = chronologicalEvents.filter((event) => event.status === 'Started');
+    const stops = chronologicalEvents.filter((event) => event.status === 'Stopped');
+    if (starts.length !== 1 || stops.length > 1) throw new RangeError('MAR_INFUSION_START_STOP_CONFLICT');
+    const startIndex = chronologicalEvents.findIndex((event) => event.status === 'Started');
+    const stopIndex = chronologicalEvents.findIndex((event) => event.status === 'Stopped');
     if (startIndex < 0 || (stopIndex >= 0 && stopIndex < startIndex)) throw new RangeError('MAR_INFUSION_START_STOP_CONFLICT');
+    if (chronologicalEvents.some((event, index) => event.status === 'Rate changed' && (index < startIndex || (stopIndex >= 0 && index > stopIndex)))) {
+      throw new RangeError('MAR_INFUSION_RATE_CHANGE_CONFLICT');
+    }
     if (orderedEvents.filter((event) => event.status === 'Started').length > 1) throw new RangeError('MAR_DUPLICATE_INFUSION_START');
     return orderedEvents
       .map((event) => ({

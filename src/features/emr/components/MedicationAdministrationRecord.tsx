@@ -37,6 +37,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [baselineReady, setBaselineReady] = useState(forceBaseline || !assignmentId);
   const [dirty, setDirty] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState<Partial<MarAdministrationEvent>>({});
@@ -56,17 +57,19 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     if (!patient.roomId) return;
     setLoading(true);
     setError(null);
-    const [loadedEvents, loadedOrders, loadedRevision] = await Promise.all([
+    const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
       emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => setError(message)),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
+      assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
     ]);
     setEvents(loadedEvents);
     setOrders(loadedOrders.filter((order) => order.category === 'Medication'));
     setRevision(loadedRevision);
+    setBaselineReady(forceBaseline || !assignmentId || Boolean(baseline && baseline.caseVersion === effectiveCaseVersion));
     setDirty(false);
     setLoading(false);
-  }, [patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
+  }, [assignmentId, forceBaseline, patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -139,7 +142,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const save = async () => {
-    if (!patient.roomId || !canEdit) return;
+    if (!patient.roomId || !canEdit || !baselineReady) return;
     setSaveError(null);
     const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, revision, events);
     if (!result.ok) {
@@ -152,6 +155,15 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   const addManual = () => {
     if (!patient.roomId || !manual.medicationName.trim()) return;
+    const relativeOffsetHours = Number(manual.relativeOffsetHours);
+    if (!Number.isFinite(relativeOffsetHours) || relativeOffsetHours < 0 || relativeOffsetHours > 72) {
+      setSaveError('MAR_INVALID_MANUAL_TIME: prior hours must be between 0 and 72.');
+      return;
+    }
+    if (relativeOffsetHours === 0 && manual.category !== 'one_time' && manual.status !== 'Not documented') {
+      setSaveError('MAR_ZERO_HOUR_BASELINE: baseline administrations must be prior-hour events.');
+      return;
+    }
     const id = crypto.randomUUID();
     setEvents((current) => [...current, {
       id,
@@ -161,7 +173,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       orderId: null,
       caseVersion: effectiveCaseVersion,
       occurrenceKey: `manual:${id}`,
-      relativeOffsetHours: Math.min(72, Math.max(0, Number(manual.relativeOffsetHours) || 0)),
+      relativeOffsetHours,
       administeredAt: null,
       medicationName: manual.medicationName.trim(),
       orderedDose: manual.orderedDose || null,
@@ -198,12 +210,34 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
 
   const lastGivenByMedication = useMemo(() => {
     const result = new Map<string, MarAdministrationEvent>();
-    events.filter((event) => event.status === 'Given').forEach((event) => {
-      const previous = result.get(event.medicationName);
-      if (!previous || (event.relativeOffsetHours ?? -1) > (previous.relativeOffsetHours ?? -1)) result.set(event.medicationName, event);
+    const givenEvents = events.filter((event) => event.status === 'Given');
+    const baselineEvents = givenEvents.filter((event) => !event.administeredAt);
+    const attemptEvents = givenEvents.filter((event) => Boolean(event.administeredAt));
+    const orderedEvents = [...baselineEvents, ...attemptEvents];
+    orderedEvents.forEach((event) => {
+      const key = `${event.orderId ?? 'manual'}:${event.medicationName}`;
+      const previous = result.get(key);
+      const candidateTime = event.administeredAt ? Date.parse(event.administeredAt) : null;
+      const previousTime = previous?.administeredAt ? Date.parse(previous.administeredAt) : null;
+      const isAttemptEvent = Boolean(event.administeredAt);
+      const isLater = isAttemptEvent
+        ? candidateTime !== null && (previousTime === null || candidateTime > previousTime)
+        : (event.relativeOffsetHours ?? Number.POSITIVE_INFINITY) > 0
+          && (previous?.relativeOffsetHours == null || previous.relativeOffsetHours <= 0 || event.relativeOffsetHours < previous.relativeOffsetHours);
+      if (!previous || isLater) result.set(key, event);
     });
     return result;
   }, [events]);
+
+  const eventTimeLabel = (event: MarAdministrationEvent) => event.administeredAt
+    ? new Date(event.administeredAt).toLocaleString()
+    : event.relativeOffsetHours != null ? `${event.relativeOffsetHours}h prior` : '—';
+
+  const lastGivenLabel = (event: MarAdministrationEvent) => {
+    const key = `${event.orderId ?? 'manual'}:${event.medicationName}`;
+    const lastGiven = lastGivenByMedication.get(key);
+    return lastGiven ? eventTimeLabel(lastGiven) : '—';
+  };
 
   return (
     <div className="space-y-4">
@@ -211,13 +245,13 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> Medication Administration Record</CardTitle>
-            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && baselineReady && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">Blank means undocumented. Learner medication orders do not become Given automatically.</p>
-          {assignmentId && !caseVersion && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR is unavailable until this attempt has an immutable pinned case version. No baseline is materialized or written here.</p>}
+          {assignmentId && (!caseVersion || !baselineReady) && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">MAR writes are unavailable until this attempt has an immutable materialized case-version snapshot. No baseline is materialized or written on chart open.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
-          {populateOpen && canEdit && (
+          {populateOpen && canEdit && baselineReady && (
             <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <Select value={populate.orderId} onValueChange={(value) => setPopulate((current) => ({ ...current, orderId: value }))}>
@@ -245,7 +279,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
               <Button onClick={handlePopulate} disabled={!populate.orderId}>Preview occurrences</Button>
             </div>
           )}
-          {manualOpen && canEdit && (
+          {manualOpen && canEdit && baselineReady && (
             <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <Input aria-label="Medication name" value={manual.medicationName} onChange={(event) => setManual((current) => ({ ...current, medicationName: event.target.value }))} placeholder="Medication" />
@@ -271,7 +305,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
           {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
           {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading MAR history…</div> : filteredEvents.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No documented administrations in this view.</div> : (
-            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenByMedication.get(event.medicationName)?.id === event.id ? (event.relativeOffsetHours != null ? `${event.relativeOffsetHours}h prior` : event.administeredAt ? new Date(event.administeredAt).toLocaleString() : '—') : '—'}</td><td className="p-3">{canEdit ? <Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select> : <Badge variant="outline">{event.status}</Badge>}</td><td className="p-3">{canEdit ? <Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button> : <span className="text-xs text-muted-foreground">{event.administeredDose || 'Dose not documented'}{event.route ? ` • ${event.route}` : ''}</span>}</td></tr>{editingId === event.id && canEdit && <tr className="border-b bg-muted/10"><td colSpan={5} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['orderedDose','administeredDose','unit','route','frequency','reason','prnIndication','response'] as const).map((field) => <Input key={field} aria-label={field} value={String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, [field]: e.target.value }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
+            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3">{canEdit ? <Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select> : <Badge variant="outline">{event.status}</Badge>}</td><td className="p-3">{canEdit ? <Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button> : <span className="text-xs text-muted-foreground">{event.administeredDose || 'Dose not documented'}{event.route ? ` • ${event.route}` : ''}</span>}</td></tr>{editingId === event.id && canEdit && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           )}
           <div className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-3 w-3" /> Authored baseline times are shown as prior-hour offsets; real attempt administrations use persisted server times.</div>
         </CardContent>
