@@ -21,6 +21,7 @@ import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
 import CaseBuilder from './pages/CaseBuilder';
+import CaseBuilderMarAuthoring from './features/emr/components/CaseBuilderMarAuthoring';
 import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
@@ -112,6 +113,10 @@ function App() {
         <Route 
           path="/ehr" 
           element={user ? <EmrDashboard /> : <Navigate to="/login" replace />} 
+        />
+        <Route
+          path="/case-builder/mar"
+          element={user?.id && hasAdmin ? <CaseBuilderMarAuthoring /> : <Navigate to="/dashboard" replace />}
         />
         <Route 
           path="/admin" 

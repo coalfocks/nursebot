@@ -1623,6 +1623,13 @@ export default function CaseBuilder() {
                               >
                                 Open MAR authoring
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/case-builder/mar?roomId=${publishedLinks[blueprint.id].roomId}`)}
+                                className="mt-2 ml-2 rounded-md border border-blue-300 bg-white px-3 py-1.5 font-medium text-blue-800 hover:bg-blue-50"
+                              >
+                                Open Case Builder MAR setup
+                              </button>
                             </div>
                           )}
                           <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">

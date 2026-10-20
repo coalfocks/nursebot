@@ -1,0 +1,122 @@
+import type { MedicalOrder, MarAdministrationEvent, MarCategory } from './types';
+import { expandMarSchedule, type MarDraftOccurrence } from './marSchedule';
+
+export const MAR_HISTORY_OPTIONS = [12, 24, 36, 48, 60, 72] as const;
+export type MarHistoryHours = typeof MAR_HISTORY_OPTIONS[number];
+
+export type CaseMedicationDraft = {
+  startPriorHours: string;
+  stopPriorHours: string;
+  explicitPriorHours: string;
+  prnGiven: boolean;
+  category: MarCategory;
+  infusionStartPriorHours: string;
+  infusionRate: string;
+  infusionChangePriorHours: string;
+  infusionChangeRate: string;
+  infusionStopPriorHours: string;
+  infusionStopRate: string;
+};
+
+export const defaultCaseMedicationDraft = (order: MedicalOrder): CaseMedicationDraft => ({
+  startPriorHours: '12',
+  stopPriorHours: '',
+  explicitPriorHours: '',
+  prnGiven: false,
+  category: medicationCategory(order),
+  infusionStartPriorHours: '12',
+  infusionRate: '',
+  infusionChangePriorHours: '',
+  infusionChangeRate: '',
+  infusionStopPriorHours: '',
+  infusionStopRate: '',
+});
+
+export const medicationCategory = (order: MedicalOrder): MarCategory => {
+  const frequency = (order.frequency ?? '').trim().toLowerCase();
+  const instructions = (order.instructions ?? '').trim().toLowerCase();
+  if (frequency === 'prn' || frequency.includes(' prn') || instructions.includes('prn')) return 'prn';
+  if (/^once$|one[- ]?time/.test(frequency)) return 'one_time';
+  if (frequency.includes('infusion') || frequency.includes('continuous')) return 'infusion';
+  return 'scheduled';
+};
+
+const parseHours = (value: string, label: string): number | null => {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 72) throw new RangeError(`MAR_INVALID_${label}`);
+  return parsed;
+};
+
+const parseExplicitHours = (value: string): number[] => value.split(',').map((part) => part.trim()).filter(Boolean).map((part) => parseHours(part, 'EXPLICIT_TIME') as number);
+
+export type CaseMarPreview = { events: MarDraftOccurrence[]; errors: string[] };
+
+export const buildCaseMarPreview = (
+  orders: MedicalOrder[],
+  drafts: Record<string, CaseMedicationDraft>,
+  historyHours: MarHistoryHours,
+  caseVersion = 'baseline-v1',
+): CaseMarPreview => {
+  const events: MarDraftOccurrence[] = [];
+  const errors: string[] = [];
+  orders.forEach((order) => {
+    const draft = drafts[order.id] ?? defaultCaseMedicationDraft(order);
+    try {
+      if (draft.category === 'prn' && !draft.prnGiven) throw new RangeError('MAR_PRN_TIMING_REQUIRED');
+      const start = parseHours(draft.startPriorHours, 'START_HOURS');
+      if (start === null) throw new RangeError('MAR_START_REQUIRED');
+      const stop = parseHours(draft.stopPriorHours, 'STOP_HOURS');
+      const explicit = draft.explicitPriorHours.trim() ? parseExplicitHours(draft.explicitPriorHours) : undefined;
+      const infusionEvents = draft.category === 'infusion'
+        ? [
+            { offsetHours: parseHours(draft.infusionStartPriorHours, 'INFUSION_START') ?? start, status: 'Started' as const, rate: draft.infusionRate || undefined },
+            ...(draft.infusionChangePriorHours.trim() ? [{ offsetHours: parseHours(draft.infusionChangePriorHours, 'INFUSION_CHANGE') as number, status: 'Rate changed' as const, rate: draft.infusionChangeRate || undefined }] : []),
+            ...(draft.infusionStopPriorHours.trim() ? [{ offsetHours: parseHours(draft.infusionStopPriorHours, 'INFUSION_STOP') as number, status: 'Stopped' as const, rate: draft.infusionStopRate || undefined }] : []),
+          ]
+        : undefined;
+      events.push(...expandMarSchedule({
+        medicationName: order.orderName,
+        orderId: order.id,
+        orderedDose: order.dose,
+        route: order.route,
+        frequency: order.frequency ?? '',
+        category: draft.category,
+        historyHours,
+        stayHours: historyHours,
+        startPriorHours: start,
+        firstDosePriorHours: start,
+        stopPriorHours: stop,
+        explicitPriorHours: explicit,
+        assumePrnGiven: draft.category === 'prn' ? draft.prnGiven : undefined,
+        caseVersion,
+        infusionEvents,
+      }));
+    } catch (error) {
+      errors.push(`${order.orderName}: ${error instanceof Error ? error.message : 'Invalid MAR timing'}`);
+    }
+  });
+  return { events, errors };
+};
+
+export const authoredEventsToSave = (
+  preview: MarDraftOccurrence[],
+  existing: MarAdministrationEvent[],
+  patientId: string,
+  roomId: number,
+  caseVersion: string,
+  actorLabel: string,
+): MarAdministrationEvent[] => {
+  const existingKeys = new Set(existing.map((event) => event.occurrenceKey));
+  return preview.filter((event) => !existingKeys.has(event.occurrenceKey)).map((event) => ({
+    ...event,
+    id: crypto.randomUUID(),
+    patientId,
+    roomId,
+    assignmentId: null,
+    caseVersion,
+    administeredAt: null,
+    actorLabel,
+    recordVersion: 1,
+  }));
+};
