@@ -40,6 +40,11 @@ describe('MAR schedule expansion', () => {
     expect(new Set(events.map((event) => event.medicationName))).toEqual(new Set(room204.map((medication) => medication.medicationName)));
   });
 
+  it('uses a usable q4h interval for an authored PRN Given', () => {
+    expect(expandMarSchedule({ medicationName: 'PRN q4h', frequency: 'q4h', category: 'prn', assumePrnGiven: true, historyHours: 12, stayHours: 12, firstDosePriorHours: 12 }).map((event) => event.relativeOffsetHours))
+      .toEqual([12, 8, 4]);
+  });
+
   it('keeps BID/TID/QID as explicit preview frequencies', () => {
     expect(expandMarSchedule({ medicationName: 'TID', frequency: 'TID', historyHours: 12, firstDosePriorHours: 12, explicitPriorHours: [12, 4] }))
       .toHaveLength(2);
