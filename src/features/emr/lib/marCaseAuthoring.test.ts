@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authoredEventsToSave, buildCaseMarPreview, defaultCaseMedicationDraft, isRoomScopedAuthoredEvent, isRoomScopedAuthoredOrder, MAR_HISTORY_OPTIONS, mergePreviewWithExisting, updatePreviewEvent } from './marCaseAuthoring';
+import { authoredEventsToSave, buildCaseMarPreview, defaultCaseMedicationDraft, isRoomScopedAuthoredEvent, isRoomScopedAuthoredOrder, MAR_HISTORY_OPTIONS, mergePreviewWithExisting, orderDefinitionFingerprint, updatePreviewEvent } from './marCaseAuthoring';
 import type { MedicalOrder } from './types';
 
 const order = (overrides: Partial<MedicalOrder> = {}): MedicalOrder => ({
@@ -8,6 +8,11 @@ const order = (overrides: Partial<MedicalOrder> = {}): MedicalOrder => ({
 
 describe('Case Builder MAR authoring', () => {
   it('exposes exactly the supported history choices', () => expect(MAR_HISTORY_OPTIONS).toEqual([12, 24, 36, 48, 60, 72]));
+  it('fingerprints the authored medication set deterministically and changes when metadata changes', () => {
+    const first = orderDefinitionFingerprint([order(), order({ id: 'med-2', orderName: 'Second' })]);
+    expect(orderDefinitionFingerprint([order({ id: 'med-2', orderName: 'Second' }), order()])).toBe(first);
+    expect(orderDefinitionFingerprint([order({ dose: '20 mg' }), order({ id: 'med-2', orderName: 'Second' })])).not.toBe(first);
+  });
   it('previews q4h without a zero-hour event and copies order metadata', () => {
     const result = buildCaseMarPreview([order()], { 'med-1': { ...defaultCaseMedicationDraft(order()), startPriorHours: '12' } }, 12);
     expect(result.errors).toEqual([]);
@@ -38,7 +43,7 @@ describe('Case Builder MAR authoring', () => {
   });
   it('upserts an existing authored occurrence, preserving its identity while saving manual edits', () => {
     const result = buildCaseMarPreview([order()], { 'med-1': { ...defaultCaseMedicationDraft(order()), startPriorHours: '12' } }, 12);
-    const existing = [{ ...result.events[0], id: 'saved', status: 'Held' as const, patientId: 'patient-1', roomId: 7, recordVersion: 2 }];
+    const existing = [{ ...result.events[0], id: 'saved', status: 'Held' as const, patientId: 'patient-1', roomId: 7, source: 'authored_scenario' as const, recordVersion: 2 }];
     const saved = authoredEventsToSave(result.events, existing, 'patient-1', 7, 'baseline-v1', 'Author');
     expect(saved).toHaveLength(3);
     expect(saved.find((event) => event.occurrenceKey === existing[0].occurrenceKey)).toMatchObject({ id: 'saved', status: 'Given' });

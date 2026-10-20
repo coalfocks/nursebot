@@ -50,7 +50,30 @@ const parseHours = (value: string, label: string): number | null => {
 
 const parseExplicitHours = (value: string): number[] => value.split(',').map((part) => part.trim()).filter(Boolean).map((part) => parseHours(part, 'EXPLICIT_TIME') as number);
 
-export type CaseMarPreview = { events: MarDraftOccurrence[]; errors: string[] };
+export type CaseMarPreview = { events: MarDraftOccurrence[]; errors: string[]; orderDefinitionFingerprint: string };
+
+const stableSerialize = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const fingerprintHash = (value: string): string => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `mar-order-def-v1:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+};
+
+/** Includes the authored medication set and every field returned for each order. */
+export const orderDefinitionFingerprint = (orders: MedicalOrder[]): string => fingerprintHash(
+  stableSerialize([...orders].sort((left, right) => left.id.localeCompare(right.id))),
+);
 
 export const isRoomScopedAuthoredOrder = (order: MedicalOrder, roomId: number): boolean =>
   order.category === 'Medication'
@@ -67,9 +90,9 @@ export const mergePreviewWithExisting = (
   preferExisting = true,
 ): MarDraftOccurrence[] => {
   const existingByKey = new Map(existing.map((event) => [event.occurrenceKey, event]));
-  return preview.map((event) => preferExisting
+  return preview.map((event) => (preferExisting
     ? { ...event, ...(existingByKey.get(event.occurrenceKey) ?? {}) }
-    : { ...(existingByKey.get(event.occurrenceKey) ?? {}), ...event });
+    : { ...(existingByKey.get(event.occurrenceKey) ?? {}), ...event }) as MarDraftOccurrence);
 };
 
 export const updatePreviewEvent = (
@@ -125,7 +148,7 @@ export const buildCaseMarPreview = (
       errors.push(`${order.orderName}: ${error instanceof Error ? error.message : 'Invalid MAR timing'}`);
     }
   });
-  return { events, errors };
+  return { events, errors, orderDefinitionFingerprint: orderDefinitionFingerprint(orders) };
 };
 
 export const authoredEventsToSave = (
@@ -140,7 +163,7 @@ export const authoredEventsToSave = (
   return preview.map((event) => ({
     ...(existingByKey.get(event.occurrenceKey) ?? {}),
     ...event,
-    id: existingByKey.get(event.occurrenceKey)?.id ?? crypto.randomUUID(),
+    id: event.id ?? existingByKey.get(event.occurrenceKey)?.id ?? crypto.randomUUID(),
     patientId,
     roomId,
     assignmentId: null,
@@ -148,5 +171,5 @@ export const authoredEventsToSave = (
     administeredAt: existingByKey.get(event.occurrenceKey)?.administeredAt ?? null,
     actorLabel,
     recordVersion: existingByKey.get(event.occurrenceKey)?.recordVersion ?? 1,
-  }));
+  }) as MarAdministrationEvent);
 };

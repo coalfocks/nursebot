@@ -51,7 +51,42 @@ describe('Case Builder MAR authoring', () => {
     fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
     await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(2));
     expect(api.saveMarHistory.mock.calls[1][6]).toBe(requestId);
+    expect(api.saveMarHistory.mock.calls[1][5]).toEqual(api.saveMarHistory.mock.calls[0][5]);
     await waitFor(() => expect(window.localStorage.getItem('case-builder-mar:7:generation-request-id')).toBeNull());
+  });
+
+  it('rotates request identity and payload after editing a failed preview', async () => {
+    api.saveMarHistory.mockResolvedValueOnce({ ok: false, error: 'unknown outcome' }).mockResolvedValueOnce({ ok: true, revision: 1 });
+    const view = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(view.getByText('Example')).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /Generate MAR Given/i }));
+    fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
+    await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(1));
+    const oldRequestId = api.saveMarHistory.mock.calls[0][6];
+    const dose = view.getByRole('textbox', { name: /med-1:scheduled:12 dose/i });
+    fireEvent.change(dose, { target: { value: '15 mg' } });
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').requestId).not.toBe(oldRequestId));
+    const newRequestId = JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').requestId;
+    expect(newRequestId).not.toBe(oldRequestId);
+    fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
+    await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(2));
+    expect(api.saveMarHistory.mock.calls[1][6]).toBe(newRequestId);
+    expect(api.saveMarHistory.mock.calls[1][5]).not.toEqual(api.saveMarHistory.mock.calls[0][5]);
+    expect(api.saveMarHistory.mock.calls[1][5][0]).toMatchObject({ orderedDose: '15 mg', administeredDose: '15 mg' });
+  });
+
+  it('discards a persisted preview and request when authored medication metadata changes', async () => {
+    const first = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(first.getByText('Example')).toBeInTheDocument());
+    fireEvent.click(first.getByRole('button', { name: /Generate MAR Given/i }));
+    await waitFor(() => expect(window.localStorage.getItem('case-builder-mar:7:preview')).not.toBeNull());
+    first.unmount();
+    api.listOrders.mockResolvedValue([{ id: 'med-1', patientId: 'patient-1', roomId: 7, assignmentId: null, overrideScope: 'room', category: 'Medication', orderName: 'Example', dose: '20 mg', route: 'PO', frequency: 'q4h', priority: 'Routine', status: 'Active', orderedBy: 'Author', orderTime: '2026-10-20T00:00:00Z' }]);
+    const second = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(second.getByText('Example')).toBeInTheDocument());
+    expect(second.getByText(/Choose timings, then Generate MAR Given/)).toBeInTheDocument();
+    expect(window.localStorage.getItem('case-builder-mar:7:preview')).toBeNull();
+    expect(window.localStorage.getItem('case-builder-mar:7:generation-request-id')).toBeNull();
   });
 
   it('excludes learner-scoped orders and events from authored loading and saving', async () => {
