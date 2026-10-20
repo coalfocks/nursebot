@@ -6,6 +6,7 @@ import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveSc
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { applyNarrativeCommentary, COMMENTARY_VERSION, NARRATIVE_COMMENTARY_V4 } from '../_shared/feedback-commentary.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -88,7 +89,10 @@ Deno.serve(async (req) => {
       }
       if (!hasMeaningfulEvidence(sourceEventIds)) throw new Error('Evidence-bearing attempt produced an empty post-page source event manifest');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
-      const prompt = `${CANONICAL_RUBRIC}\n\n${evaluator.evaluator_prompt || ''}\n\nSCORING ANCHORS (administrator-authored, version ${evaluator.version ?? 'built-in'}):\n${JSON.stringify(evaluator.scoring_anchors ?? {}, null, 2)}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths (maximum 3), improvements (maximum 3), recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
+      // Scoring is deliberately isolated from Studio prose. Studio is a
+      // narrative layer; it cannot redefine the rubric, anchors, deductions,
+      // safety classification, status, or completion semantics.
+      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn only the fixed scoring contract: communication_score, mdm_score (legacy mirror), clinical_reasoning_score, the six canonical component scores and evidence-linked component feedback, safety_result, and an action_review evidence list. The server will preserve these numeric and safety fields unchanged while a separate narrative pass supplies commentary. Every evidence_event_ids value must be copied exactly from the manifest. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
       const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
       const requestEvaluation = async (validationNote = '') => {
         const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
@@ -132,6 +136,20 @@ Deno.serve(async (req) => {
       evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids = evidence.mdm.reasoning;
       evaluation.mdm_breakdown.safety_deduction.evidence_event_ids = normalizeEvidenceEventIds(evaluation.mdm_breakdown.safety_deduction.evidence_event_ids, sourceEventIds);
       evaluation.safety_result.evidence_event_ids = normalizeEvidenceEventIds(evaluation.safety_result.evidence_event_ids, sourceEventIds);
+      const narrativePrompt = evaluator.evaluator_prompt?.trim() || NARRATIVE_COMMENTARY_V4;
+      const narrativeInput = `${narrativePrompt}\n\nFIXED SCORING RESULT (read-only; do not repeat or change numeric/safety fields):\n${JSON.stringify({
+        communication_score: evaluation.communication_score,
+        mdm_score: evaluation.mdm_score,
+        clinical_reasoning_score: evaluation.clinical_reasoning_score,
+        communication_breakdown: evaluation.communication_breakdown,
+        clinical_reasoning_breakdown: evaluation.clinical_reasoning_breakdown,
+        safety_result: evaluation.safety_result,
+      }, null, 2)}\n\nROOM: ${String(room.room_number ?? room.id ?? 'Unknown')}\nDIAGNOSIS: ${String(room.expected_diagnosis ?? 'Unknown')}\nCASE GOALS: ${JSON.stringify(key.goals)}\nPOST-PAGE EVIDENCE MANIFEST:\n${evidenceManifest}\n\nReturn JSON only with learning_objectives, strengths, improvements, recommendations, component_feedback, and action_review. Do not return score fields.`;
+      const narrativeCompletion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: narrativeInput }], response_format: { type: 'json_object' }, max_completion_tokens: 2200 });
+      const narrativeParsed = JSON.parse(narrativeCompletion.choices[0].message.content ?? '{}') as Record<string, unknown>;
+      const narrativeResult = applyNarrativeCommentary(evaluation, narrativeParsed, sourceEventIds);
+      evaluation = narrativeResult.evaluation;
+      actionReview = narrativeResult.commentary.action_review;
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
         observed_event_ids: sourceEventIds,
@@ -151,7 +169,7 @@ Deno.serve(async (req) => {
             })),
         ],
       };
-      const debrief = { case_diagnosis: typeof room.expected_diagnosis === 'string' ? room.expected_diagnosis : null, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 3), improvements: evaluation.improvements.slice(0, 3), recommendations: evaluation.recommendations, growth_areas: [], action_review: actionReviewWithKey, evidence_manifest: scoredEntries.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, occurred_at: entry.timestamp })), safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
+      const debrief = { case_diagnosis: typeof room.expected_diagnosis === 'string' ? room.expected_diagnosis : null, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 3), improvements: evaluation.improvements.slice(0, 3), recommendations: evaluation.recommendations, growth_areas: [], action_review: actionReviewWithKey, evidence_manifest: scoredEntries.map((entry) => ({ id: entry.id, kind: entry.kind, title: entry.title, occurred_at: entry.timestamp })), safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, commentary_version: COMMENTARY_VERSION };
       const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, evaluator_config_id: evaluator.id, evaluator_version: evaluator.version, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
       if (run.error) throw run.error;
