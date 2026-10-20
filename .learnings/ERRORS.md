@@ -129,3 +129,30 @@ Use Vitest's native single-file command without Jest flags.
 - Tags: vitest, cli
 
 ---
+## [ERR-20261020-NPM] unsupported-validation-script
+
+**Logged**: 2026-10-20T23:47:10Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The repository has no `typecheck` npm script.
+
+### Error
+```text
+npm error Missing script: "typecheck"
+```
+
+### Context
+- Ran the focused CaseBuilder MAR test followed by `npm run typecheck`.
+- The focused test passed; the repository's supported check is `npx tsc --noEmit`.
+
+### Suggested Fix
+Use `npx tsc --noEmit` or add a project script if maintainers want a named typecheck command.
+
+### Metadata
+- Reproducible: yes
+- Related Files: package.json
+
+---

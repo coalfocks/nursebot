@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CaseBuilderMarAuthoring from './CaseBuilderMarAuthoring';
 
 const { api } = vi.hoisted(() => ({ api: {
-  getPatientByRoomId: vi.fn(), getRoomContext: vi.fn(), listOrders: vi.fn(), listMarEvents: vi.fn(), getMarHistoryRevision: vi.fn(), saveMarHistory: vi.fn(),
+  getPatientByRoomId: vi.fn(), getRoomContext: vi.fn(), listOrders: vi.fn(), listMarEvents: vi.fn(), getMarHistoryRevision: vi.fn(), getMarReadiness: vi.fn(), saveMarHistory: vi.fn(),
 } }));
 
 vi.mock('../lib/api', () => ({ emrApi: api }));
@@ -19,6 +19,7 @@ describe('Case Builder MAR authoring', () => {
     api.listOrders.mockResolvedValue([{ id: 'med-1', patientId: 'patient-1', roomId: 7, assignmentId: null, overrideScope: 'room', category: 'Medication', orderName: 'Example', dose: '10 mg', route: 'PO', frequency: 'q4h', priority: 'Routine', status: 'Active', orderedBy: 'Author', orderTime: '2026-10-20T00:00:00Z' }]);
     api.listMarEvents.mockResolvedValue([]);
     api.getMarHistoryRevision.mockResolvedValue(0);
+    api.getMarReadiness.mockResolvedValue(true);
   });
 
   it('keeps Generate MAR Given preview-only and does not write', async () => {
@@ -28,6 +29,31 @@ describe('Case Builder MAR authoring', () => {
     expect(api.saveMarHistory).not.toHaveBeenCalled();
     expect(view.getByText(/Preview generated locally/)).toBeInTheDocument();
     expect(view.getByRole('spinbutton', { name: /:scheduled:12 time/i })).toHaveValue(12);
+  });
+
+  it('keeps the authorized list and local hypothetical preview usable when MAR persistence is unavailable', async () => {
+    api.getMarReadiness.mockResolvedValue(false);
+    const view = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(view.getByText('Example')).toBeInTheDocument());
+    expect(view.getByRole('status')).toHaveTextContent(/Local preview only/);
+    expect(view.getByRole('button', { name: /Add medication/i })).toBeDisabled();
+    fireEvent.click(view.getByRole('button', { name: /Generate MAR Given/i }));
+    expect(view.getByText(/Preview generated locally/)).toBeInTheDocument();
+    expect(view.getByText(/local hypothetical preview/)).toBeInTheDocument();
+    expect(api.saveMarHistory).not.toHaveBeenCalled();
+  });
+
+  it('labels a failed history read unavailable instead of treating it as an empty baseline', async () => {
+    api.listMarEvents.mockImplementation(async (...args: unknown[]) => {
+      (args[4] as ((message: string) => void) | undefined)?.('history unavailable');
+      return [];
+    });
+    const view = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(view.getByText('Example')).toBeInTheDocument());
+    expect(view.getByRole('status')).toHaveTextContent(/Saved MAR history is unavailable, not empty/);
+    fireEvent.click(view.getByRole('button', { name: /Generate MAR Given/i }));
+    fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
+    expect(api.saveMarHistory).not.toHaveBeenCalled();
   });
 
   it('allows authored preview edits and keeps them keyed to the occurrence', async () => {

@@ -1287,7 +1287,12 @@ export const emrApi = {
     return { ok: true, revision: Number.isFinite(revision) ? revision : expectedRevision + 1 };
   },
 
-  async getMarHistoryRevision(patientId: string, roomId: number, assignmentId: string | null): Promise<number> {
+  async getMarHistoryRevision(
+    patientId: string,
+    roomId: number,
+    assignmentId: string | null,
+    onError?: (message: string) => void,
+  ): Promise<number> {
     const { data, error } = await supabase.rpc('get_mar_history_revision', {
       p_patient_id: patientId,
       p_room_id: roomId,
@@ -1295,6 +1300,7 @@ export const emrApi = {
     });
     if (error) {
       console.error('Error fetching MAR revision', error);
+      onError?.('Unable to load MAR history revision. Saved history is unavailable until the chart can be refreshed.');
       return 0;
     }
     return Number(data ?? 0);
