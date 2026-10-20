@@ -19,6 +19,18 @@ describe('Case Builder MAR authoring', () => {
     expect(result.events.map((event) => event.relativeOffsetHours)).toEqual([12, 8, 4]);
     expect(result.events[0]).toMatchObject({ orderedDose: '10 mg', route: 'PO', frequency: 'q4h', status: 'Given' });
   });
+  it('defaults an unedited medication to the selected 72-hour history and preserves a later authored start', () => {
+    const defaulted = buildCaseMarPreview([order()], { 'med-1': defaultCaseMedicationDraft(order()) }, 72, 'baseline-v1', 72);
+    expect(defaulted.events.map((event) => event.relativeOffsetHours)).toEqual([72, 68, 64, 60, 56, 52, 48, 44, 40, 36, 32, 28, 24, 20, 16, 12, 8, 4]);
+    const later = buildCaseMarPreview([order()], { 'med-1': { ...defaultCaseMedicationDraft(order()), startPriorHours: '12', startPriorHoursEdited: true } }, 72, 'baseline-v1', 72);
+    expect(later.events.map((event) => event.relativeOffsetHours)).toEqual([12, 8, 4]);
+  });
+
+  it('rejects a selected history longer than the authored stay instead of extending the case', () => {
+    const result = buildCaseMarPreview([order()], { 'med-1': defaultCaseMedicationDraft(order()) }, 72, 'baseline-v1', 24);
+    expect(result.events).toEqual([]);
+    expect(result.errors.join(' ')).toContain('MAR_INCOMPATIBLE_SOURCE_STAY');
+  });
   it('requires explicit PRN timing when the author says it was given', () => {
     const medication = order({ id: 'prn', orderName: 'PRN', frequency: 'PRN', instructions: 'PRN' });
     const result = buildCaseMarPreview([medication], { prn: { ...defaultCaseMedicationDraft(medication), prnGiven: true } }, 12);
@@ -53,6 +65,22 @@ describe('Case Builder MAR authoring', () => {
     const preview = buildCaseMarPreview([order()], { 'med-1': defaultCaseMedicationDraft(order()) }, 12);
     const edited = updatePreviewEvent(preview, preview.events[0].occurrenceKey, { status: 'Held', reason: 'Author note', relativeOffsetHours: 10 });
     expect(mergePreviewWithExisting(edited.events, []) [0]).toMatchObject({ occurrenceKey: preview.events[0].occurrenceKey, status: 'Held', reason: 'Author note', relativeOffsetHours: 10 });
+  });
+
+  it('exposes invalid edited times and prevents invalid rows from becoming save payloads', () => {
+    const preview = buildCaseMarPreview([order()], { 'med-1': defaultCaseMedicationDraft(order()) }, 24, 'baseline-v1', 24);
+    const zero = updatePreviewEvent(preview, preview.events[0].occurrenceKey, { relativeOffsetHours: 0 });
+    expect(zero.errors.join(' ')).toContain('MAR_TIME_MUST_PRECEDE_FIRST_PAGE');
+    const tooLate = updatePreviewEvent(preview, preview.events[0].occurrenceKey, { relativeOffsetHours: 73 });
+    expect(tooLate.errors.join(' ')).toContain('MAR_TIME_OUTSIDE_SELECTED_HISTORY');
+    expect(authoredEventsToSave(tooLate.events, [], 'patient-1', 7, 'baseline-v1', 'Author', 24, 24)).toEqual([]);
+  });
+
+  it('validates edited dose, status, reason, and infusion consistency', () => {
+    const preview = buildCaseMarPreview([order()], { 'med-1': defaultCaseMedicationDraft(order()) }, 24, 'baseline-v1', 24);
+    const invalid = updatePreviewEvent(preview, preview.events[0].occurrenceKey, { administeredDose: '', status: 'Held', reason: '' });
+    expect(invalid.errors.join(' ')).toEqual(expect.stringContaining('MAR_DOSE_REQUIRED'));
+    expect(invalid.errors.join(' ')).toEqual(expect.stringContaining('MAR_REASON_REQUIRED'));
   });
 
   it('recognizes only room-scoped authored medication content', () => {

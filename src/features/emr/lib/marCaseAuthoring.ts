@@ -6,6 +6,7 @@ export type MarHistoryHours = typeof MAR_HISTORY_OPTIONS[number];
 
 export type CaseMedicationDraft = {
   startPriorHours: string;
+  startPriorHoursEdited?: boolean;
   stopPriorHours: string;
   explicitPriorHours: string;
   prnGiven: boolean;
@@ -20,6 +21,7 @@ export type CaseMedicationDraft = {
 
 export const defaultCaseMedicationDraft = (order: MedicalOrder): CaseMedicationDraft => ({
   startPriorHours: '12',
+  startPriorHoursEdited: false,
   stopPriorHours: '',
   explicitPriorHours: '',
   prnGiven: false,
@@ -50,7 +52,38 @@ const parseHours = (value: string, label: string): number | null => {
 
 const parseExplicitHours = (value: string): number[] => value.split(',').map((part) => part.trim()).filter(Boolean).map((part) => parseHours(part, 'EXPLICIT_TIME') as number);
 
-export type CaseMarPreview = { events: MarDraftOccurrence[]; errors: string[]; orderDefinitionFingerprint: string };
+export type CaseMarPreview = {
+  events: MarDraftOccurrence[];
+  errors: string[];
+  baseErrors?: string[];
+  selectedHistoryHours?: number;
+  authoredStayHours?: number;
+  orderDefinitionFingerprint: string;
+};
+
+const validStatuses: MarDraftOccurrence['status'][] = ['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented'];
+
+export const validateMarDraftOccurrence = (
+  event: MarDraftOccurrence,
+  selectedHistoryHours: number,
+  authoredStayHours: number,
+): string[] => {
+  const errors: string[] = [];
+  if (!Number.isFinite(selectedHistoryHours) || selectedHistoryHours < 1 || selectedHistoryHours > 72) errors.push('MAR_INVALID_SELECTED_HISTORY');
+  if (!Number.isFinite(authoredStayHours) || authoredStayHours < 1 || authoredStayHours > 72) errors.push('MAR_INVALID_AUTHORED_STAY');
+  if (selectedHistoryHours > authoredStayHours) errors.push('MAR_INCOMPATIBLE_SOURCE_STAY');
+  if (!Number.isFinite(event.relativeOffsetHours) || event.relativeOffsetHours <= 0) errors.push('MAR_TIME_MUST_PRECEDE_FIRST_PAGE');
+  else if (event.relativeOffsetHours > selectedHistoryHours) errors.push('MAR_TIME_OUTSIDE_SELECTED_HISTORY');
+  else if (event.relativeOffsetHours > authoredStayHours) errors.push('MAR_TIME_OUTSIDE_AUTHORED_STAY');
+  if (!event.orderedDose?.trim() || !event.administeredDose?.trim()) errors.push('MAR_DOSE_REQUIRED');
+  if (!validStatuses.includes(event.status)) errors.push('MAR_INVALID_STATUS');
+  const needsReason = ['Held', 'Refused', 'Not given'].includes(event.status);
+  if (needsReason && !event.reason?.trim()) errors.push('MAR_REASON_REQUIRED');
+  if (event.category !== 'infusion' && ['Started', 'Rate changed', 'Stopped'].includes(event.status)) errors.push('MAR_INFUSION_STATUS_REQUIRES_INFUSION');
+  if (event.category === 'infusion' && ['Started', 'Rate changed'].includes(event.status)
+    && !String(event.infusionDetails?.rate ?? '').trim()) errors.push('MAR_INFUSION_RATE_REQUIRED');
+  return [...new Set(errors)];
+};
 
 const stableSerialize = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
@@ -99,16 +132,21 @@ export const updatePreviewEvent = (
   preview: CaseMarPreview,
   occurrenceKey: string,
   patch: Partial<MarDraftOccurrence>,
-): CaseMarPreview => ({
-  ...preview,
-  events: preview.events.map((event) => event.occurrenceKey === occurrenceKey ? { ...event, ...patch } : event),
-});
+): CaseMarPreview => {
+  const events = preview.events.map((event) => event.occurrenceKey === occurrenceKey ? { ...event, ...patch } : event);
+  const selectedHistoryHours = preview.selectedHistoryHours ?? 72;
+  const authoredStayHours = preview.authoredStayHours ?? 72;
+  const validationErrors = events.flatMap((event) => validateMarDraftOccurrence(event, selectedHistoryHours, authoredStayHours)
+    .map((error) => `${event.medicationName} (${event.occurrenceKey}): ${error}`));
+  return { ...preview, events, errors: [...(preview.baseErrors ?? []), ...new Set(validationErrors)] };
+};
 
 export const buildCaseMarPreview = (
   orders: MedicalOrder[],
   drafts: Record<string, CaseMedicationDraft>,
   historyHours: MarHistoryHours,
   caseVersion = 'baseline-v1',
+  authoredStayHours = historyHours,
 ): CaseMarPreview => {
   const events: MarDraftOccurrence[] = [];
   const errors: string[] = [];
@@ -116,7 +154,8 @@ export const buildCaseMarPreview = (
     const draft = drafts[order.id] ?? defaultCaseMedicationDraft(order);
     try {
       if (draft.category === 'prn' && !draft.prnGiven) throw new RangeError('MAR_PRN_TIMING_REQUIRED');
-      const start = parseHours(draft.startPriorHours, 'START_HOURS');
+      const hasAuthoredStart = draft.startPriorHoursEdited === true || draft.startPriorHours.trim() !== defaultCaseMedicationDraft(order).startPriorHours;
+      const start = hasAuthoredStart ? parseHours(draft.startPriorHours, 'START_HOURS') : historyHours;
       if (start === null) throw new RangeError('MAR_START_REQUIRED');
       const stop = parseHours(draft.stopPriorHours, 'STOP_HOURS');
       const explicit = draft.explicitPriorHours.trim() ? parseExplicitHours(draft.explicitPriorHours) : undefined;
@@ -135,7 +174,7 @@ export const buildCaseMarPreview = (
         frequency: order.frequency ?? '',
         category: draft.category,
         historyHours,
-        stayHours: historyHours,
+        stayHours: authoredStayHours,
         startPriorHours: start,
         firstDosePriorHours: start,
         stopPriorHours: stop,
@@ -148,7 +187,16 @@ export const buildCaseMarPreview = (
       errors.push(`${order.orderName}: ${error instanceof Error ? error.message : 'Invalid MAR timing'}`);
     }
   });
-  return { events, errors, orderDefinitionFingerprint: orderDefinitionFingerprint(orders) };
+  const validationErrors = events.flatMap((event) => validateMarDraftOccurrence(event, historyHours, authoredStayHours)
+    .map((error) => `${event.medicationName} (${event.occurrenceKey}): ${error}`));
+  return {
+    events,
+    errors: [...errors, ...new Set(validationErrors)],
+    baseErrors: errors,
+    selectedHistoryHours: historyHours,
+    authoredStayHours,
+    orderDefinitionFingerprint: orderDefinitionFingerprint(orders),
+  };
 };
 
 export const authoredEventsToSave = (
@@ -158,7 +206,10 @@ export const authoredEventsToSave = (
   roomId: number,
   caseVersion: string,
   actorLabel: string,
+  selectedHistoryHours = 72,
+  authoredStayHours = 72,
 ): MarAdministrationEvent[] => {
+  if (preview.some((event) => validateMarDraftOccurrence(event, selectedHistoryHours, authoredStayHours).length)) return [];
   const existingByKey = new Map(existing.map((event) => [event.occurrenceKey, event]));
   return preview.map((event) => ({
     ...(existingByKey.get(event.occurrenceKey) ?? {}),

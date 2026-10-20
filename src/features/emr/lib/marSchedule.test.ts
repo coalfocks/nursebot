@@ -9,10 +9,35 @@ describe('MAR schedule expansion', () => {
         expect.objectContaining({ relativeOffsetHours: 8 }),
         expect.objectContaining({ relativeOffsetHours: 4 }),
       ]));
-    expect(expandMarSchedule({ medicationName: 'Long stay', frequency: 'q4h', historyHours: 12, stayHours: 48, firstDosePriorHours: 48 }))
+    expect(expandMarSchedule({ medicationName: 'Long stay', frequency: 'q4h', historyHours: 48, stayHours: 48, firstDosePriorHours: 48 }))
       .toHaveLength(12);
     expect(expandMarSchedule({ medicationName: 'Late start', frequency: 'q4h', historyHours: 48, stayHours: 48, firstDosePriorHours: 12 }))
       .toHaveLength(3);
+  });
+
+  it('treats Daily, q24h, and spacing/case variants as q24h', () => {
+    for (const frequency of ['Daily', ' daily ', 'DAILY', 'q24h', 'q 24 h']) {
+      expect(expandMarSchedule({ medicationName: frequency, frequency, historyHours: 72, stayHours: 72, firstDosePriorHours: 72 }))
+        .toHaveLength(3);
+    }
+  });
+
+  it('returns an explicit error for unsupported frequencies', () => {
+    expect(() => expandMarSchedule({ medicationName: 'Unsupported', frequency: 'weekly', historyHours: 72, firstDosePriorHours: 72 }))
+      .toThrow('MAR_UNSUPPORTED_FREQUENCY');
+  });
+
+  it('covers all five Room 204 medication labels without silently omitting events', () => {
+    const room204 = [
+      { medicationName: 'Ipratropium-albuterol (Duoneb)', frequency: 'q2 hr PRN', category: 'prn' as const, assumePrnGiven: true, explicitPriorHours: [72, 70] },
+      { medicationName: 'Acetaminophen', frequency: 'PRN', category: 'prn' as const, assumePrnGiven: true, explicitPriorHours: [66] },
+      { medicationName: 'Ceftriaxone', frequency: 'Daily' },
+      { medicationName: 'Methylprednisolone', frequency: 'Daily' },
+      { medicationName: 'Azithromycin', frequency: 'Daily' },
+    ];
+    const events = room204.flatMap((medication) => expandMarSchedule({ ...medication, historyHours: 72, stayHours: 72, firstDosePriorHours: 72 }));
+    expect(events).not.toHaveLength(0);
+    expect(new Set(events.map((event) => event.medicationName))).toEqual(new Set(room204.map((medication) => medication.medicationName)));
   });
 
   it('keeps BID/TID/QID as explicit preview frequencies', () => {

@@ -258,7 +258,7 @@ export const emrApi = {
   async getRoomContext(roomId: number, assignmentId?: string | null) {
     const { data: room, error } = await supabase
       .from('rooms')
-      .select('id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint')
+      .select('id, room_number, context, nurse_context, emr_context, expected_diagnosis, expected_treatment, case_goals, difficulty_level, objective, progress_note, completion_hint, hospital_stay_days')
       .eq('id', roomId)
       .maybeSingle();
 

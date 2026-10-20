@@ -50,6 +50,7 @@ const frequencyHours = (frequency: string): number | null => {
   const normalized = frequency.trim().toLowerCase().replace(/\s+/g, '');
   const qHours = normalized.match(/^q(\d+(?:\.\d+)?)h$/);
   if (qHours) return Number(qHours[1]);
+  if (normalized === 'daily') return 24;
   if (normalized === 'bid') return 12;
   if (normalized === 'tid') return 8;
   if (normalized === 'qid') return 6;
@@ -63,12 +64,11 @@ const finiteHours = (value: number, label: string): number => {
 };
 
 const normalizeHistoryHours = (input: MarScheduleInput): number => {
-  const requested = input.stayHours ?? input.historyHours;
-  finiteHours(requested, 'history_hours');
-  // The product contract is a maximum three-day authored encounter window;
-  // authored values outside it are invalid rather than silently truncated.
-  if (requested > 72) throw new RangeError('MAR_HISTORY_EXCEEDS_MAXIMUM');
-  return requested;
+  const history = finiteHours(input.historyHours, 'history_hours');
+  const stay = finiteHours(input.stayHours ?? history, 'stay_hours');
+  if (history > 72 || stay > 72) throw new RangeError('MAR_HISTORY_EXCEEDS_MAXIMUM');
+  if (history > stay) throw new RangeError('MAR_INCOMPATIBLE_SOURCE_STAY');
+  return history;
 };
 
 const explicitOffsets = (input: MarScheduleInput, historyHours: number, first: number, stop: number | null): number[] => {
@@ -173,9 +173,9 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
         source: 'authored_scenario' as const,
       }));
   }
-  const normalizedFrequency = input.frequency.trim().toLowerCase();
+  const normalizedFrequency = input.frequency.trim().toLowerCase().replace(/\s+/g, '');
   const interval = frequencyHours(input.frequency);
-  if (!interval || interval <= 0) return [];
+  if (!interval || interval <= 0) throw new RangeError('MAR_UNSUPPORTED_FREQUENCY');
   const requiresExplicit = ['bid', 'tid', 'qid'].includes(normalizedFrequency);
   if (requiresExplicit) {
     return explicitOffsets(input, historyHours, first, stop).map((offset) => ({

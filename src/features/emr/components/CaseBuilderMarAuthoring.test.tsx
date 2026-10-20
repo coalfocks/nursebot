@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CaseBuilderMarAuthoring from './CaseBuilderMarAuthoring';
 
 const { api } = vi.hoisted(() => ({ api: {
-  getPatientByRoomId: vi.fn(), listOrders: vi.fn(), listMarEvents: vi.fn(), getMarHistoryRevision: vi.fn(), saveMarHistory: vi.fn(),
+  getPatientByRoomId: vi.fn(), getRoomContext: vi.fn(), listOrders: vi.fn(), listMarEvents: vi.fn(), getMarHistoryRevision: vi.fn(), saveMarHistory: vi.fn(),
 } }));
 
 vi.mock('../lib/api', () => ({ emrApi: api }));
@@ -15,6 +15,7 @@ describe('Case Builder MAR authoring', () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     api.getPatientByRoomId.mockResolvedValue({ id: 'patient-1', roomId: 7, mrn: 'MRN-1', firstName: 'Test', lastName: 'Patient', dateOfBirth: '1980-01-01', gender: 'Other', allergies: [] });
+    api.getRoomContext.mockResolvedValue({ data: { hospital_stay_days: 1 }, error: null });
     api.listOrders.mockResolvedValue([{ id: 'med-1', patientId: 'patient-1', roomId: 7, assignmentId: null, overrideScope: 'room', category: 'Medication', orderName: 'Example', dose: '10 mg', route: 'PO', frequency: 'q4h', priority: 'Routine', status: 'Active', orderedBy: 'Author', orderTime: '2026-10-20T00:00:00Z' }]);
     api.listMarEvents.mockResolvedValue([]);
     api.getMarHistoryRevision.mockResolvedValue(0);
@@ -37,6 +38,16 @@ describe('Case Builder MAR authoring', () => {
     fireEvent.change(dose, { target: { value: '15 mg' } });
     expect(dose).toHaveValue('15 mg');
     expect(JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').events[0]).toMatchObject({ occurrenceKey: 'med-1:scheduled:12', orderedDose: '15 mg' });
+  });
+
+  it('blocks Save and shows the edited-row error for an invalid time', async () => {
+    const view = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(view.getByText('Example')).toBeInTheDocument());
+    fireEvent.click(view.getByRole('button', { name: /Generate MAR Given/i }));
+    fireEvent.change(view.getByRole('spinbutton', { name: /med-1:scheduled:12 time/i }), { target: { value: '0' } });
+    expect(view.getByText(/MAR_TIME_MUST_PRECEDE_FIRST_PAGE/)).toBeInTheDocument();
+    expect(view.getByRole('button', { name: /Save authored MAR/i })).toBeDisabled();
+    expect(api.saveMarHistory).not.toHaveBeenCalled();
   });
 
   it('uses the persisted generation request id for a retry and clears it only after success', async () => {
