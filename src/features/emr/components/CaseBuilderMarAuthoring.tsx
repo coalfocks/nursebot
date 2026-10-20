@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
-import type { MedicalOrder, MarAdministrationEvent, Patient } from '../lib/types';
+import type { MedicalOrder, MarAdministrationEvent, MarStatus, Patient } from '../lib/types';
 import { emrApi } from '../lib/api';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
@@ -12,13 +12,27 @@ import {
   authoredEventsToSave,
   buildCaseMarPreview,
   defaultCaseMedicationDraft,
+  isRoomScopedAuthoredEvent,
+  isRoomScopedAuthoredOrder,
   MAR_HISTORY_OPTIONS,
+  mergePreviewWithExisting,
+  updatePreviewEvent,
   type CaseMedicationDraft,
   type MarHistoryHours,
 } from '../lib/marCaseAuthoring';
 
 const CASE_VERSION = 'baseline-v1';
 const blankOrder = { name: '', dose: '', route: '', frequency: '' };
+const statusOptions: MarStatus[] = ['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented'];
+const storageKey = (roomId: number, suffix: string) => `case-builder-mar:${roomId}:${suffix}`;
+const readJson = <T,>(key: string, fallback: T): T => {
+  if (typeof window === 'undefined') return fallback;
+  try { return JSON.parse(window.localStorage.getItem(key) ?? 'null') ?? fallback; } catch { return fallback; }
+};
+const writeJson = (key: string, value: unknown) => {
+  if (typeof window !== 'undefined') window.localStorage.setItem(key, JSON.stringify(value));
+};
+const infusionText = (details: Record<string, unknown> | null | undefined, field: string): string => String(details?.[field] ?? '');
 
 export default function CaseBuilderMarAuthoring() {
   const navigate = useNavigate();
@@ -39,6 +53,18 @@ export default function CaseBuilderMarAuthoring() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const generationId = useRef<string | null>(null);
+  const draftKey = storageKey(roomId, 'drafts');
+  const previewKey = storageKey(roomId, 'preview');
+  const requestKey = storageKey(roomId, 'generation-request-id');
+
+  const ensureGenerationId = useCallback(() => {
+    const existing = generationId.current ?? readJson<string | null>(requestKey, null);
+    if (existing) { generationId.current = existing; return existing; }
+    const next = crypto.randomUUID();
+    generationId.current = next;
+    writeJson(requestKey, next);
+    return next;
+  }, [requestKey]);
 
   const load = useCallback(async () => {
     if (!roomId) { setError('A room is required to open Case Builder MAR authoring.'); setLoading(false); return; }
@@ -50,36 +76,70 @@ export default function CaseBuilderMarAuthoring() {
       emrApi.listMarEvents(loadedPatient.id, undefined, roomId, CASE_VERSION),
       emrApi.getMarHistoryRevision(loadedPatient.id, roomId, null),
     ]);
-    const authoredOrders = loadedOrders.filter((order) => order.category === 'Medication' && !order.assignmentId);
+    const authoredOrders = loadedOrders.filter((order) => isRoomScopedAuthoredOrder(order, roomId));
+    const authoredEvents = loadedEvents.filter((event) => isRoomScopedAuthoredEvent(event, roomId));
+    const savedDrafts = readJson<Record<string, Partial<CaseMedicationDraft>> & { __historyHours?: string }>(draftKey, {});
+    const savedPreview = readJson<ReturnType<typeof buildCaseMarPreview> | null>(previewKey, null);
     setPatient(loadedPatient);
     setOrders(authoredOrders);
-    setEvents(loadedEvents.filter((event) => event.source === 'authored_scenario'));
+    setEvents(authoredEvents);
     setRevision(loadedRevision);
-    setDrafts(Object.fromEntries(authoredOrders.map((order) => [order.id, defaultCaseMedicationDraft(order)])));
+    setDrafts(Object.fromEntries(authoredOrders.map((order) => [
+      order.id,
+      { ...defaultCaseMedicationDraft(order), ...(savedDrafts[order.id] ?? {}) },
+    ])));
+    if (savedDrafts.__historyHours && MAR_HISTORY_OPTIONS.includes(Number(savedDrafts.__historyHours) as MarHistoryHours)) {
+      setHistoryHours(Number(savedDrafts.__historyHours) as MarHistoryHours);
+    }
+    if (savedPreview && Array.isArray(savedPreview.events)) {
+      setPreview({ ...savedPreview, events: mergePreviewWithExisting(savedPreview.events, authoredEvents, false) });
+      ensureGenerationId();
+    }
     setLoading(false);
-  }, [roomId]);
+  }, [draftKey, ensureGenerationId, previewKey, roomId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!loading) writeJson(draftKey, { ...drafts, __historyHours: String(historyHours) });
+  }, [draftKey, drafts, historyHours, loading]);
+
+  useEffect(() => {
+    if (preview) writeJson(previewKey, preview);
+  }, [preview, previewKey]);
 
   const updateDraft = (orderId: string, patch: Partial<CaseMedicationDraft>) => {
     setDrafts((current) => ({ ...current, [orderId]: { ...(current[orderId] ?? defaultCaseMedicationDraft(orders.find((order) => order.id === orderId) as MedicalOrder)), ...patch } }));
     setPreview(null);
+    window.localStorage.removeItem(previewKey);
   };
 
   const generatePreview = () => {
     const result = buildCaseMarPreview(orders, drafts, historyHours, CASE_VERSION);
-    setPreview(result);
+    const authoredEvents = events.filter((event) => isRoomScopedAuthoredEvent(event, roomId));
+    setPreview({ ...result, events: mergePreviewWithExisting(result.events, authoredEvents) });
     generationId.current = crypto.randomUUID();
+    writeJson(requestKey, generationId.current);
     setMessage(result.errors.length ? 'Preview has validation errors; nothing was written.' : 'Preview generated locally. Nothing was written.');
+  };
+
+  const editPreviewEvent = (occurrenceKey: string, patch: Partial<ReturnType<typeof buildCaseMarPreview>['events'][number]>) => {
+    setPreview((current) => current ? updatePreviewEvent(current, occurrenceKey, patch) : current);
   };
 
   const savePreview = async () => {
     if (!patient || !preview || preview.errors.length || !preview.events.length || saving) return;
     setSaving(true); setError(null);
-    const additions = authoredEventsToSave(preview.events, events, patient.id, roomId, CASE_VERSION, profile?.full_name ?? 'Scenario author');
+    const authoredPreview = preview.events.filter((event) => event.source === 'authored_scenario' && (!event.orderId || orders.some((order) => order.id === event.orderId)));
+    const authoredExisting = events.filter((event) => isRoomScopedAuthoredEvent(event, roomId));
+    const additions = authoredEventsToSave(authoredPreview, authoredExisting, patient.id, roomId, CASE_VERSION, profile?.full_name ?? 'Scenario author');
     if (!additions.length) { setMessage('All preview occurrences already exist. No duplicate administrations were saved.'); setSaving(false); return; }
-    const result = await emrApi.saveMarHistory(patient.id, roomId, null, CASE_VERSION, revision, additions, generationId.current ?? crypto.randomUUID());
+    const result = await emrApi.saveMarHistory(patient.id, roomId, null, CASE_VERSION, revision, additions, ensureGenerationId());
     if (!result.ok) { setError(result.error); setSaving(false); return; }
+    window.localStorage.removeItem(requestKey);
+    window.localStorage.removeItem(previewKey);
+    generationId.current = null;
+    setPreview(null);
     setRevision(result.revision);
     setMessage(`Saved ${additions.length} authored MAR occurrence${additions.length === 1 ? '' : 's'} atomically.`);
     await load();
@@ -104,7 +164,7 @@ export default function CaseBuilderMarAuthoring() {
     <div className="mx-auto max-w-7xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><Button variant="ghost" onClick={() => navigate('/case-builder')}><ArrowLeft className="h-4 w-4" /> Case Builder</Button><h1 className="mt-2 text-2xl font-semibold">Case Builder MAR setup</h1><p className="text-sm text-slate-600">Author the simple dose / route / frequency MAR for Room {roomId}. Given generation is preview-only until Save.</p></div>
-        <div className="flex items-center gap-2"><label className="text-sm font-medium">History</label><select aria-label="History hours" className="rounded-md border bg-white px-3 py-2" value={historyHours} onChange={(event) => { setHistoryHours(Number(event.target.value) as MarHistoryHours); setPreview(null); }}>{MAR_HISTORY_OPTIONS.map((hours) => <option key={hours} value={hours}>{hours} hours</option>)}</select><Button onClick={generatePreview}><Wand2 className="h-4 w-4" /> Generate MAR Given</Button></div>
+        <div className="flex items-center gap-2"><label className="text-sm font-medium">History</label><select aria-label="History hours" className="rounded-md border bg-white px-3 py-2" value={historyHours} onChange={(event) => { setHistoryHours(Number(event.target.value) as MarHistoryHours); setPreview(null); window.localStorage.removeItem(previewKey); }}>{MAR_HISTORY_OPTIONS.map((hours) => <option key={hours} value={hours}>{hours} hours</option>)}</select><Button onClick={generatePreview}><Wand2 className="h-4 w-4" /> Generate MAR Given</Button></div>
       </div>
       {error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
       {message && <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{message}</div>}
@@ -118,7 +178,7 @@ export default function CaseBuilderMarAuthoring() {
           {!orders.length && <p className="text-sm text-slate-600">No authored medications yet. Add one below.</p>}
           <div className="rounded-md border border-dashed p-3"><p className="mb-2 text-sm font-medium">Add authored medication</p><div className="grid gap-2 md:grid-cols-4">{(['name', 'dose', 'route', 'frequency'] as const).map((field) => <Input key={field} aria-label={field} placeholder={field} value={newOrder[field]} onChange={(e) => setNewOrder((current) => ({ ...current, [field]: e.target.value }))} />)}</div><Button className="mt-2" size="sm" onClick={() => void saveOrder({ id: '', patientId: patient?.id ?? '', orderName: newOrder.name, dose: newOrder.dose, route: newOrder.route, frequency: newOrder.frequency, category: 'Medication', priority: 'Routine', status: 'Active', orderedBy: profile?.full_name ?? 'Scenario author', orderTime: new Date().toISOString() }, true)}><Plus className="h-4 w-4" /> Add medication</Button></div>
         </CardContent></Card>
-        <Card><CardHeader><CardTitle>Generated Given preview</CardTitle></CardHeader><CardContent>{!preview ? <p className="text-sm text-slate-600">Choose timings, then Generate MAR Given. This panel is the complete preview shown before Save.</p> : <><p className="mb-3 text-xs text-slate-500">{preview.events.length} rows • {historyHours}-hour history • no 0-hour events</p>{preview.errors.length > 0 && <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-800">{preview.errors.map((item) => <div key={item}>{item}</div>)}</div>}<div className="max-h-[32rem] overflow-auto rounded-md border"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Medication</th><th className="p-2">Dose / route / frequency</th><th className="p-2">Prior hours</th><th className="p-2">Status</th></tr></thead><tbody>{preview.events.map((event) => <tr key={event.occurrenceKey} className="border-t"><td className="p-2">{event.medicationName}</td><td className="p-2">{[event.orderedDose, event.route, event.frequency].filter(Boolean).join(' • ')}</td><td className="p-2">{event.relativeOffsetHours}</td><td className="p-2">{event.status}</td></tr>)}</tbody></table></div><Button className="mt-3 w-full" disabled={Boolean(preview.errors.length) || !preview.events.length || saving} onClick={() => void savePreview()}><Save className="h-4 w-4" /> Save authored MAR</Button></>}</CardContent></Card>
+        <Card><CardHeader><CardTitle>Generated Given preview</CardTitle></CardHeader><CardContent>{!preview ? <p className="text-sm text-slate-600">Choose timings, then Generate MAR Given. This panel is the complete preview shown before Save.</p> : <><p className="mb-3 text-xs text-slate-500">{preview.events.length} rows • {historyHours}-hour history • no 0-hour events</p>{preview.errors.length > 0 && <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-800">{preview.errors.map((item) => <div key={item}>{item}</div>)}</div>}<div className="max-h-[32rem] overflow-auto rounded-md border"><table className="w-full text-left text-sm"><thead className="sticky top-0 bg-slate-100"><tr><th className="p-2">Medication</th><th className="p-2">Dose</th><th className="p-2">Prior hours</th><th className="p-2">Status</th><th className="p-2">Reason / infusion details</th></tr></thead><tbody>{preview.events.map((event) => <tr key={event.occurrenceKey} className="border-t align-top"><td className="p-2">{event.medicationName}<div className="text-xs text-slate-500">{[event.route, event.frequency].filter(Boolean).join(' • ')}</div></td><td className="p-2"><Input aria-label={`${event.occurrenceKey} dose`} value={event.orderedDose ?? ''} onChange={(e) => editPreviewEvent(event.occurrenceKey, { orderedDose: e.target.value, administeredDose: e.target.value })} /></td><td className="p-2"><Input aria-label={`${event.occurrenceKey} time`} type="number" min="1" max="72" value={event.relativeOffsetHours} onChange={(e) => editPreviewEvent(event.occurrenceKey, { relativeOffsetHours: Number(e.target.value) })} /></td><td className="p-2"><select aria-label={`${event.occurrenceKey} status`} className="h-9 rounded-md border px-2" value={event.status} onChange={(e) => editPreviewEvent(event.occurrenceKey, { status: e.target.value as MarStatus })}>{statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></td><td className="p-2"><Input aria-label={`${event.occurrenceKey} reason`} value={event.reason ?? ''} placeholder="Reason" onChange={(e) => editPreviewEvent(event.occurrenceKey, { reason: e.target.value })} />{event.category === 'infusion' && <div className="mt-1 space-y-1"><Input aria-label={`${event.occurrenceKey} infusion rate`} value={infusionText(event.infusionDetails, 'rate')} placeholder="Rate" onChange={(e) => editPreviewEvent(event.occurrenceKey, { infusionDetails: { ...(event.infusionDetails ?? {}), rate: e.target.value } })} /><Input aria-label={`${event.occurrenceKey} infusion volume`} value={infusionText(event.infusionDetails, 'volume')} placeholder="Volume" onChange={(e) => editPreviewEvent(event.occurrenceKey, { infusionDetails: { ...(event.infusionDetails ?? {}), volume: e.target.value } })} /></div>}</td></tr>)}</tbody></table></div><Button className="mt-3 w-full" disabled={Boolean(preview.errors.length) || !preview.events.length || saving} onClick={() => void savePreview()}><Save className="h-4 w-4" /> Save authored MAR</Button></>}</CardContent></Card>
       </div>
       {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl"><h2 className="text-lg font-semibold">Edit authored medication</h2><div className="mt-3 grid gap-3">{(['orderName', 'dose', 'route', 'frequency'] as const).map((field) => <label key={field} className="text-sm">{field}<Input value={editing[field] ?? ''} onChange={(e) => setEditing((current) => current ? { ...current, [field]: e.target.value } : current)} /></label>)}</div><div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button><Button onClick={() => void saveOrder(editing, false)}>Save edit</Button></div></div></div>}
     </div>

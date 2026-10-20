@@ -52,6 +52,35 @@ const parseExplicitHours = (value: string): number[] => value.split(',').map((pa
 
 export type CaseMarPreview = { events: MarDraftOccurrence[]; errors: string[] };
 
+export const isRoomScopedAuthoredOrder = (order: MedicalOrder, roomId: number): boolean =>
+  order.category === 'Medication'
+  && order.assignmentId == null
+  && order.roomId === roomId
+  && order.overrideScope === 'room';
+
+export const isRoomScopedAuthoredEvent = (event: MarAdministrationEvent, roomId: number): boolean =>
+  event.assignmentId == null && event.roomId === roomId && event.source === 'authored_scenario';
+
+export const mergePreviewWithExisting = (
+  preview: MarDraftOccurrence[],
+  existing: MarAdministrationEvent[],
+  preferExisting = true,
+): MarDraftOccurrence[] => {
+  const existingByKey = new Map(existing.map((event) => [event.occurrenceKey, event]));
+  return preview.map((event) => preferExisting
+    ? { ...event, ...(existingByKey.get(event.occurrenceKey) ?? {}) }
+    : { ...(existingByKey.get(event.occurrenceKey) ?? {}), ...event });
+};
+
+export const updatePreviewEvent = (
+  preview: CaseMarPreview,
+  occurrenceKey: string,
+  patch: Partial<MarDraftOccurrence>,
+): CaseMarPreview => ({
+  ...preview,
+  events: preview.events.map((event) => event.occurrenceKey === occurrenceKey ? { ...event, ...patch } : event),
+});
+
 export const buildCaseMarPreview = (
   orders: MedicalOrder[],
   drafts: Record<string, CaseMedicationDraft>,
@@ -107,16 +136,17 @@ export const authoredEventsToSave = (
   caseVersion: string,
   actorLabel: string,
 ): MarAdministrationEvent[] => {
-  const existingKeys = new Set(existing.map((event) => event.occurrenceKey));
-  return preview.filter((event) => !existingKeys.has(event.occurrenceKey)).map((event) => ({
+  const existingByKey = new Map(existing.map((event) => [event.occurrenceKey, event]));
+  return preview.map((event) => ({
+    ...(existingByKey.get(event.occurrenceKey) ?? {}),
     ...event,
-    id: crypto.randomUUID(),
+    id: existingByKey.get(event.occurrenceKey)?.id ?? crypto.randomUUID(),
     patientId,
     roomId,
     assignmentId: null,
     caseVersion,
-    administeredAt: null,
+    administeredAt: existingByKey.get(event.occurrenceKey)?.administeredAt ?? null,
     actorLabel,
-    recordVersion: 1,
+    recordVersion: existingByKey.get(event.occurrenceKey)?.recordVersion ?? 1,
   }));
 };
