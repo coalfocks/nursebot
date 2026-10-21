@@ -12,7 +12,7 @@ import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { projectMedicationRows } from '../lib/marProjection';
 import { marScopeKey } from '../lib/marScope';
-import { manualMarCanEdit } from '../lib/manualMar';
+import { manualMarCanEdit, manualMarTimelinePositionPercent } from '../lib/manualMar';
 import { authoredMarCaseVersion } from '../../../lib/marMaterialization';
 
 interface MedicationAdministrationRecordProps {
@@ -203,12 +203,23 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     return matchesCategory && matchesSearch && (event.relativeOffsetHours == null || event.relativeOffsetHours <= Number(historyHours));
   }), [events, categoryFilter, search, historyHours]);
 
+  const isConfirmedManualMarConflict = (message: string) =>
+    /^MANUAL_MAR_(REVISION_CONFLICT|RETRY_PAYLOAD_MISMATCH|INVALID_REQUEST|EVENTS_ARRAY_REQUIRED|EVENT_OBJECT_REQUIRED|MEDICATION_REQUIRED|OCCURRENCE_REQUIRED|CATEGORY_INVALID|STATUS_INVALID|LEARNER_SOURCE_REJECTED|SOURCE_INVALID|ORDER_ID_NOT_ALLOWED|RELATIVE_HOURS_INVALID)/.test(message);
+
   const updateEvent = (id: string, patch: Partial<MarAdministrationEvent>) => {
+    if (pendingSave) {
+      setSaveError('A manual MAR save has an unknown outcome. Resume the frozen save before editing.');
+      return;
+    }
     setEvents((current) => current.map((event) => event.id === id ? { ...event, ...patch } : event));
     setDirty(true);
   };
 
   const handlePopulate = () => {
+    if (pendingSave) {
+      setSaveError('A manual MAR save has an unknown outcome. Resume the frozen save before editing.');
+      return;
+    }
     const order = orders.find((item) => item.id === populate.orderId);
     if (!order) return;
     try {
@@ -269,18 +280,31 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     if (!patient.roomId || (!canEdit && !pendingSave)) return;
     const request = capture();
     setSaveError(null);
-    const payloadHash = marPayloadHash(events);
-    const requestId = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.requestId : crypto.randomUUID();
-    const expectedRevision = pendingSave && pendingSave.payloadHash === payloadHash ? pendingSave.expectedRevision : revision;
-    const envelope: PendingMarSave = { requestId, payloadHash, expectedRevision, events, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: path === 'manual' ? manualCaseVersion : effectiveCaseVersion, actorId };
+    // Once an outcome is unknown, Resume must use the exact frozen envelope;
+    // never derive a new request from mutable UI state.
+    const submittedEvents = pendingSave?.events ?? events;
+    const payloadHash = pendingSave?.payloadHash ?? marPayloadHash(submittedEvents);
+    const requestId = pendingSave?.requestId ?? crypto.randomUUID();
+    const expectedRevision = pendingSave?.expectedRevision ?? revision;
+    const envelope: PendingMarSave = pendingSave ?? { requestId, payloadHash, expectedRevision, events: submittedEvents, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: path === 'manual' ? manualCaseVersion : effectiveCaseVersion, actorId };
     setPendingSave(envelope);
     window.localStorage.setItem(recoveryKey, JSON.stringify(envelope));
     const result = path === 'manual'
-      ? await emrApi.saveManualMarPacket({ patientId: patient.id, roomId: patient.roomId, caseVersion: manualCaseVersion, revision: expectedRevision, events }, requestId)
-      : await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, events, requestId);
+      ? await emrApi.saveManualMarPacket({ patientId: patient.id, roomId: patient.roomId, caseVersion: manualCaseVersion, revision: expectedRevision, events: envelope.events }, requestId)
+      : await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, envelope.events, requestId);
     if (!isCurrent(request)) return;
     if (!result.ok) {
-      setSaveError(`${result.error} Resume the same MAR save after reload; editing creates a new request.`);
+      if (path === 'manual' && isConfirmedManualMarConflict(result.error)) {
+        // These errors are confirmed no-commit outcomes. Drop only this frozen
+        // request; the effect reloads the authoritative packet and re-enables
+        // a fresh edit/request after reconciliation.
+        setPendingSave(null);
+        window.localStorage.removeItem(recoveryKey);
+        setDirty(false);
+        setSaveError(`${result.error} No manual MAR change was committed. Reloading the authoritative packet.`);
+      } else {
+        setSaveError(`${result.error} Resume the same MAR save after reload; editing creates a new request.`);
+      }
       return;
     }
     setRevision(result.revision);
@@ -291,6 +315,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const addManual = () => {
+    if (pendingSave) {
+      setSaveError('A manual MAR save has an unknown outcome. Resume the frozen save before editing.');
+      return;
+    }
     if (!patient.roomId || !manual.medicationName.trim()) return;
     const relativeOffsetHours = Number(manual.relativeOffsetHours);
     if (!Number.isFinite(relativeOffsetHours) || relativeOffsetHours < 0 || relativeOffsetHours > 72) {
@@ -334,12 +362,16 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   };
 
   const beginEdit = (event: MarAdministrationEvent) => {
+    if (pendingSave) {
+      setSaveError('A manual MAR save has an unknown outcome. Resume the frozen save before editing.');
+      return;
+    }
     setEditingId(event.id);
     setEditingDraft({ ...event });
   };
 
   const commitEdit = () => {
-    if (!editingId) return;
+    if (!editingId || pendingSave) return;
     updateEvent(editingId, editingDraft);
     setEditingId(null);
     setEditingDraft({});
@@ -449,9 +481,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {schemaReady && error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
           {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
-          {path === 'manual' && !loading && !setupBlocked && <div className="overflow-x-auto rounded-md border bg-muted/10 p-3"><div className="min-w-[980px]"><div className="mb-2 grid grid-cols-[minmax(180px,1fr)_repeat(73,minmax(14px,1fr))] text-[10px] text-muted-foreground"><span className="sticky left-0 bg-muted/10 pr-2">Medication / details</span>{Array.from({ length: 73 }, (_, hour) => <span key={hour} className={`text-center ${[12, 24, 36, 48, 72].includes(hour) ? 'font-bold text-foreground' : ''}`}>{[12, 24, 36, 48, 72].includes(hour) ? `${hour}h` : ''}</span>)}</div>{Array.from(new Set(timelineEvents.map((event) => event.medicationName))).map((medicationName) => { const medicationEvents = timelineEvents.filter((event) => event.medicationName === medicationName); return <div key={medicationName} className="grid grid-cols-[minmax(180px,1fr)_repeat(73,minmax(14px,1fr))] items-center border-t py-2"><div className="pr-2 text-xs"><div className="font-medium">{medicationName}</div><div className="text-muted-foreground">{medicationEvents.map((event) => `${event.administeredDose || event.orderedDose || 'Dose undocumented'} · ${event.route || 'route undocumented'} · ${event.status}`).join(' | ')}</div></div>{Array.from({ length: 73 }, (_, hour) => { const atHour = medicationEvents.filter((event) => event.relativeOffsetHours === hour); return <div key={hour} className={`relative h-8 border-l ${[12, 24, 36, 48, 72].includes(hour) ? 'border-l-2 border-foreground/40' : 'border-border/40'}`}>{atHour.map((event) => <span key={event.id} title={`${event.relativeOffsetHours}h · ${event.administeredDose || event.orderedDose || 'Dose undocumented'} · ${event.route || 'route undocumented'} · ${event.status}${event.reason ? ` · ${event.reason}` : ''}`} className="absolute left-0.5 top-1 h-6 min-w-2 rounded bg-primary px-0.5 text-[9px] text-primary-foreground">{event.relativeOffsetHours}h</span>)}</div>; })}</div>; })}</div></div>}
+          {path === 'manual' && !loading && !setupBlocked && <div className="overflow-x-auto rounded-md border bg-muted/10 p-3"><div className="min-w-[980px]"><div className="mb-2 grid grid-cols-[minmax(180px,1fr)_repeat(73,minmax(14px,1fr))] text-[10px] text-muted-foreground"><span className="sticky left-0 bg-muted/10 pr-2">Medication / details</span>{Array.from({ length: 73 }, (_, hour) => <span key={hour} className={`text-center ${[12, 24, 36, 48, 72].includes(hour) ? 'font-bold text-foreground' : ''}`}>{[12, 24, 36, 48, 72].includes(hour) ? `${hour}h` : ''}</span>)}</div>{Array.from(new Set(timelineEvents.map((event) => event.medicationName))).map((medicationName) => { const medicationEvents = timelineEvents.filter((event) => event.medicationName === medicationName); return <div key={medicationName} className="grid grid-cols-[minmax(180px,1fr)_repeat(73,minmax(14px,1fr))] items-center border-t py-2"><div className="pr-2 text-xs"><div className="font-medium">{medicationName}</div><div className="text-muted-foreground">{medicationEvents.map((event) => `${event.administeredDose || event.orderedDose || 'Dose undocumented'} · ${event.route || 'route undocumented'} · ${event.status}`).join(' | ')}</div></div>{Array.from({ length: 73 }, (_, hour) => { const atHour = medicationEvents.filter((event) => event.relativeOffsetHours === hour); const fractional = medicationEvents.filter((event) => event.relativeOffsetHours != null && !Number.isInteger(event.relativeOffsetHours) && Math.floor(event.relativeOffsetHours) === hour); return <div key={hour} className={`relative h-8 border-l ${[12, 24, 36, 48, 72].includes(hour) ? 'border-l-2 border-foreground/40' : 'border-border/40'}`}>{atHour.map((event) => <span key={event.id} title={`${event.relativeOffsetHours}h · ${event.administeredDose || event.orderedDose || 'Dose undocumented'} · ${event.route || 'route undocumented'} · ${event.status}${event.reason ? ` · ${event.reason}` : ''}`} className="absolute left-0.5 top-1 h-6 min-w-2 rounded bg-primary px-0.5 text-[9px] text-primary-foreground">{event.relativeOffsetHours}h</span>)}{fractional.map((event) => <span key={event.id} title={`${event.relativeOffsetHours}h · ${event.administeredDose || event.orderedDose || 'Dose undocumented'} · ${event.route || 'route undocumented'} · ${event.status}${event.reason ? ` · ${event.reason}` : ''}`} style={{ left: `${manualMarTimelinePositionPercent(event.relativeOffsetHours!) - manualMarTimelinePositionPercent(hour)}%` }} className="absolute top-1 h-6 -translate-x-1/2 rounded bg-primary px-0.5 text-[9px] text-primary-foreground">{event.relativeOffsetHours}h</span>)}</div>; })}</div>; })}</div></div>}
+          {path === 'manual' && !loading && !setupBlocked && timelineEvents.length === 0 && <p role="status" className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{assignmentId ? 'No manual MAR snapshot is attached to this attempt. This view is read-only until a genuinely new assignment is created from a saved author packet.' : 'No manual MAR events have been authored for this case yet.'}</p>}
           {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'Manual MAR authoring will appear after the packet contract is installed.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 && path !== 'manual' ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
-            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
+            <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} disabled={Boolean(pendingSave)} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" disabled={Boolean(pendingSave)} aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} disabled={Boolean(pendingSave)} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" disabled={Boolean(pendingSave)} onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" disabled={Boolean(pendingSave)} onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           ) : (
             <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, order, administrations }) => { const expanded = expandedMedicationKeys.has(key); const visibleAdministrations = administrations.filter((event) => event.relativeOffsetHours == null || event.relativeOffsetHours <= Number(historyHours)); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative, order)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{administrations.length ? <>{visibleAdministrations.length === 0 && <p className="text-muted-foreground">No doses in the selected {historyHours} hours. Older history remains available by widening the range.</p>}{administrations.map((event) => <div key={event.id} className={`flex flex-wrap gap-x-3 gap-y-1 ${event.relativeOffsetHours != null && event.relativeOffsetHours > Number(historyHours) ? 'text-muted-foreground' : ''}`}><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.route && <span>{event.route}</span>}{event.reason && <span>{event.reason}</span>}</div>)}</> : <p className="text-muted-foreground">No documented doses.</p>}</div>}</div>; })}</div>
           )}

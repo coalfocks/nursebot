@@ -25,6 +25,10 @@ export type ManualMarPacketResult =
 export const manualMarCanEdit = (role: string | null | undefined, readOnly: boolean, schemaReady: boolean, assignmentId?: string): boolean =>
   (role === 'school_admin' || role === 'super_admin') && !readOnly && schemaReady && !assignmentId;
 
+/** Position an authored prior-hour event on the 0–72h timeline without rounding it. */
+export const manualMarTimelinePositionPercent = (relativeOffsetHours: number): number =>
+  (relativeOffsetHours / 72) * 100;
+
 const categories = new Set<MarCategory>(['scheduled', 'prn', 'one_time', 'infusion']);
 const statuses = new Set<MarStatus>(['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented']);
 

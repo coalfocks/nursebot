@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { manualMarCanEdit, mapManualMarPacket, validateManualMarEvents } from './manualMar';
+import { manualMarCanEdit, manualMarTimelinePositionPercent, mapManualMarPacket, validateManualMarEvents } from './manualMar';
 
 const event = (overrides: Record<string, unknown> = {}) => ({
   id: 'event-1', occurrenceKey: 'manual:event-1', medicationName: 'Example medication',
@@ -26,5 +26,11 @@ describe('manual MAR packet contract', () => {
     expect(manualMarCanEdit('student', false, true)).toBe(false);
     expect(manualMarCanEdit('school_admin', false, true, 'assignment-1')).toBe(false);
     expect(manualMarCanEdit('school_admin', true, true)).toBe(false);
+  });
+
+  it('keeps integer and fractional prior-hour events at distinct exact timeline positions', () => {
+    expect(manualMarTimelinePositionPercent(12)).toBeCloseTo(16.6666666667);
+    expect(manualMarTimelinePositionPercent(12.5)).toBeCloseTo(17.3611111111);
+    expect(manualMarTimelinePositionPercent(12.5)).not.toBe(manualMarTimelinePositionPercent(12));
   });
 });
