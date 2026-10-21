@@ -33,6 +33,16 @@ export const manualMarTimelinePositionPercent = (relativeOffsetHours: number): n
 export const manualMarTimelineCellOffsetPercent = (relativeOffsetHours: number): number =>
   (relativeOffsetHours - Math.floor(relativeOffsetHours)) * 100;
 
+export const manualMarEventDoseLabel = (event: Pick<MarAdministrationEvent, 'orderedDose' | 'administeredDose' | 'unit'>): string => {
+  const ordered = event.orderedDose?.trim()
+    ? [event.orderedDose, event.unit].filter(Boolean).join(' ')
+    : '';
+  const administered = event.administeredDose?.trim()
+    ? [event.administeredDose, event.unit].filter(Boolean).join(' ')
+    : '';
+  return administered ? `${administered} administered` : ordered ? `${ordered} ordered; dose undocumented` : 'Dose undocumented';
+};
+
 const categories = new Set<MarCategory>(['scheduled', 'prn', 'one_time', 'infusion']);
 const statuses = new Set<MarStatus>(['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented']);
 

@@ -12,7 +12,7 @@ import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { projectMedicationRows } from '../lib/marProjection';
 import { marScopeKey } from '../lib/marScope';
-import { manualMarCanEdit, manualMarTimelineCellOffsetPercent } from '../lib/manualMar';
+import { manualMarCanEdit, manualMarEventDoseLabel, manualMarTimelineCellOffsetPercent } from '../lib/manualMar';
 import { authoredMarCaseVersion } from '../../../lib/marMaterialization';
 
 interface MedicationAdministrationRecordProps {
@@ -403,9 +403,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     : event.administeredAt ? (adminContext ? new Date(event.administeredAt).toLocaleString() : 'During encounter') : '—';
 
   const eventDoseLabel = (event: MarAdministrationEvent) => {
-    const ordered = [event.orderedDose, event.unit].filter(Boolean).join(' ');
-    const administered = [event.administeredDose, event.unit].filter(Boolean).join(' ');
-    return administered ? `${administered} administered` : ordered ? `${ordered} ordered; dose undocumented` : 'Dose undocumented';
+    return manualMarEventDoseLabel(event);
   };
 
   const eventDetailsLabel = (event: MarAdministrationEvent) => [

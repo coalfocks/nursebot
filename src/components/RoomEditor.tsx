@@ -36,12 +36,38 @@ type CompletionHints = {
 };
 
 type TimelinePublishRecovery = {
+  version: 1;
+  actorId: string;
   roomId: number;
   patientId: string;
   schoolId: string;
   caseBlueprintId: string | null;
   timeline: HospitalTimeline;
   nurseContext: string;
+};
+
+const timelineRecoveryStorageKey = (actorId: string, schoolId: string) =>
+  `nursebot:timeline-publish-recovery:v1:${actorId}:${schoolId}`;
+
+const readTimelinePublishRecovery = (actorId: string | null, schoolId: string | null): TimelinePublishRecovery | null => {
+  if (typeof window === 'undefined' || !actorId || !schoolId) return null;
+  try {
+    const value = JSON.parse(window.localStorage.getItem(timelineRecoveryStorageKey(actorId, schoolId)) ?? 'null') as Partial<TimelinePublishRecovery> | null;
+    if (!value || value.version !== 1 || value.actorId !== actorId || typeof value.roomId !== 'number' || typeof value.patientId !== 'string' || value.schoolId !== schoolId || !value.timeline || typeof value.nurseContext !== 'string') return null;
+    return value as TimelinePublishRecovery;
+  } catch {
+    return null;
+  }
+};
+
+const writeTimelinePublishRecovery = (recovery: TimelinePublishRecovery) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(timelineRecoveryStorageKey(recovery.actorId, recovery.schoolId), JSON.stringify(recovery));
+};
+
+const clearTimelinePublishRecovery = (actorId: string | null, schoolId: string | null) => {
+  if (typeof window === 'undefined' || !actorId || !schoolId) return;
+  window.localStorage.removeItem(timelineRecoveryStorageKey(actorId, schoolId));
 };
 
 const describeSupabaseError = (error: unknown): string => {
@@ -149,7 +175,10 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   const [availabilityStatus, setAvailabilityStatus] = useState('');
   const [promptPreview, setPromptPreview] = useState<ConversationPromptKind | null>(null);
   const [timelineWarning, setTimelineWarning] = useState<string>('');
-  const [timelinePublishRecovery, setTimelinePublishRecovery] = useState<TimelinePublishRecovery | null>(null);
+  const actorId = profile?.id ?? null;
+  const [timelinePublishRecovery, setTimelinePublishRecovery] = useState<TimelinePublishRecovery | null>(() =>
+    readTimelinePublishRecovery(actorId, activeSchoolId ?? null),
+  );
   const advancedSettingsVisible = false;
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
@@ -318,6 +347,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   const scopedSchoolId = isSuperAdmin(profile)
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
+  const recoverySchoolId = scopedSchoolId ?? activeSchoolId ?? null;
   const [schoolId, setSchoolId] = useState<string>(() => scopedSchoolId ?? '');
   // Check if room is available to all schools (empty array or all school IDs)
   const isAllSchools = (() => {
@@ -462,6 +492,21 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   }, [schoolId]);
 
   useEffect(() => {
+    const stored = readTimelinePublishRecovery(actorId, recoverySchoolId);
+    if (!stored) {
+      setTimelinePublishRecovery(null);
+      return;
+    }
+    // A recovery is scoped to the room/patient that was actually committed;
+    // never offer it while editing a different existing room.
+    if (room && (stored.roomId !== room.id || stored.patientId !== room.patient_id || stored.schoolId !== room.school_id)) {
+      setTimelinePublishRecovery(null);
+      return;
+    }
+    setTimelinePublishRecovery(stored);
+  }, [actorId, recoverySchoolId, room]);
+
+  useEffect(() => {
     const fetchRooms = async () => {
       const { data, error } = await supabase.from('rooms').select('id, room_number').order('room_number');
       if (error) {
@@ -597,6 +642,21 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   };
 
   const publishHospitalTimeline = async (recovery: TimelinePublishRecovery) => {
+    if (!actorId || !profile || !hasAdminAccess(profile) || recovery.actorId !== actorId) {
+      throw new Error('Recovery requires the same authorized editor session that saved the room.');
+    }
+    if (!recoverySchoolId || recovery.schoolId !== recoverySchoolId || (room && (room.id !== recovery.roomId || room.patient_id !== recovery.patientId || room.school_id !== recovery.schoolId))) {
+      throw new Error('Recovery scope no longer matches this room, patient, and school. Reload the authorized room before retrying.');
+    }
+    const { data: scopedRoom, error: scopeError } = await supabase
+      .from('rooms')
+      .select('id, patient_id, school_id')
+      .eq('id', recovery.roomId)
+      .eq('patient_id', recovery.patientId)
+      .eq('school_id', recovery.schoolId)
+      .maybeSingle();
+    if (scopeError) throw scopeError;
+    if (!scopedRoom) throw new Error('Recovery scope could not be verified for this room and patient.');
     const { error: timelineError } = await supabase.rpc('materialize_hospital_timeline', {
       p_room_id: recovery.roomId,
       p_patient_id: recovery.patientId,
@@ -615,6 +675,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
     setError('Retrying hospital timeline publication…');
     try {
       await publishHospitalTimeline(timelinePublishRecovery);
+      clearTimelinePublishRecovery(actorId, recoverySchoolId);
       setTimelinePublishRecovery(null);
       setError('Room, patient, and hospital timeline saved.');
       onSave();
@@ -627,10 +688,13 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (timelinePublishRecovery) {
+      await retryTimelinePublish();
+      return;
+    }
     if (isLoading) return;
     setIsLoading(true);
     setError('');
-    setTimelinePublishRecovery(null);
 
     try {
       const finalSchoolId = schoolId || scopedSchoolId;
@@ -882,7 +946,10 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         try {
           await publishHospitalTimeline(recovery);
         } catch (timelineError) {
-          setTimelinePublishRecovery(recovery);
+          const durableRecovery: TimelinePublishRecovery = { version: 1, actorId: actorId ?? '', ...recovery };
+          if (!actorId) throw new Error('The saved room needs an authenticated editor session before timeline recovery can be retained.');
+          writeTimelinePublishRecovery(durableRecovery);
+          setTimelinePublishRecovery(durableRecovery);
           setError(`Room and patient saved, but hospital timeline publication failed: ${describeSupabaseError(timelineError)}. Use Retry timeline; do not recreate the room.`);
           return;
         }
@@ -1568,6 +1635,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
           {timelinePublishRecovery && <button type="button" onClick={() => void retryTimelinePublish()} disabled={isLoading} className="ml-3 rounded border border-red-300 bg-white px-2 py-1 font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Retry timeline</button>}
         </div>
       )}
+      {timelinePublishRecovery && !error && <p role="status" className="text-sm text-amber-800">This room is saved but its hospital timeline is pending. Save Room is routed to the scoped retry; do not recreate the room.</p>}
 
       <div className="flex justify-end space-x-3">
         <button
@@ -1588,7 +1656,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               Saving...
             </>
           ) : (
-            'Save Room'
+            timelinePublishRecovery ? 'Retry timeline' : 'Save Room'
           )}
         </button>
       </div>
