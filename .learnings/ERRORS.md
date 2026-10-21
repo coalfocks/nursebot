@@ -25,6 +25,35 @@ Use the Supabase function HTTPS endpoint with an authenticated service-role requ
 
 ---
 
+## [ERR-20261021-MODEL-FIXTURE]
+
+**Logged**: 2026-10-21T03:15:00Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The new structured-output validator test used incorrect hard-coded output lengths.
+
+### Error
+```text
+Expected outputLength 55, received 58; expected truncated length 21, received 20.
+```
+
+### Context
+- Added bounded consultant model-output parsing and same-identity recovery.
+- The parser behavior was correct; only the fixture counts were wrong.
+
+### Suggested Fix
+Prefer deriving fixture lengths from the literal or asserting the parser metadata against exact `string.length` values.
+
+### Metadata
+- Reproducible: yes
+- Related Files: supabase/functions/_shared/consultant-response.test.ts
+- Tags: deno, tests, structured-output
+
+---
+
 ## [ERR-20261015-SUPABASE-TARGET] supabase_apply_migration
 
 **Logged**: 2026-10-15T20:30:00Z

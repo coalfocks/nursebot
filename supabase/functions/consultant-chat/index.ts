@@ -4,6 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { resolvePinnedConversationPrompt } from '../_shared/conversation-prompt-config.ts';
 import { resolveFailedConsultantRequestClaim } from '../_shared/consultant-request-claim.ts';
+import { ConsultantModelOutputError, parseConsultantCompletion } from '../_shared/consultant-response.ts';
 import {
   CONSULTANT_TRANSPORT_FUNCTION_VERSION,
   CONSULTANT_TRANSPORT_SCHEMA_VERSION,
@@ -269,18 +270,28 @@ Deno.serve(async (req) => {
     const { data: priorMessages, error: priorMessagesError } = await admin.from('consultant_chat_messages').select('role, content').eq('assignment_id', frozenPayload.assignmentId).eq('audience', frozenPayload.audience).eq('specialty', frozenPayload.specialty).order('created_at', { ascending: true });
     if (priorMessagesError) throw priorMessagesError;
     const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
-    const completion = await openai.chat.completions.create({
-      model: getOpenAIModel('chat'), max_completion_tokens: 500, response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: behavior },
-        { role: 'system', content: 'Technical transport contract: return a JSON object with message (string) and disposition (routine_review or assumes_care). Do not add any other fields.' },
-        { role: 'user', content: JSON.stringify({ audience: frozenPayload.audience, specialty: frozenPayload.specialty, thread: [...(priorMessages ?? []), { role: 'student', content: frozenPayload.message }] }) },
-      ],
-    });
-    const parsedAnswer = record(JSON.parse(completion.choices[0]?.message?.content ?? '{}'));
-    const answer = typeof parsedAnswer.message === 'string' ? parsedAnswer.message.trim() : '';
-    if (!answer) throw new Error('Consultant response was empty');
-    const disposition = parsedAnswer.disposition === 'assumes_care' ? 'assumes_care' : 'routine_review';
+    const modelMessages = [
+      { role: 'system' as const, content: behavior },
+      { role: 'system' as const, content: 'Technical transport contract: return only a complete JSON object with message (string) and disposition (routine_review or assumes_care). Do not add any other fields.' },
+      { role: 'user' as const, content: JSON.stringify({ audience: frozenPayload.audience, specialty: frozenPayload.specialty, thread: [...(priorMessages ?? []), { role: 'student', content: frozenPayload.message }] }) },
+    ];
+    const requestCompletion = (maxCompletionTokens: number) => openai.chat.completions.create({ model: getOpenAIModel('chat'), max_completion_tokens: maxCompletionTokens, response_format: { type: 'json_object' }, messages: modelMessages });
+    let parsedResponse;
+    try {
+      parsedResponse = parseConsultantCompletion(await requestCompletion(500));
+    } catch (firstError) {
+      if (!(firstError instanceof ConsultantModelOutputError)) throw firstError;
+      console.warn(JSON.stringify({ code: firstError.code, requestId: requestRecord.id, attempt: 1, finishReason: firstError.finishReason, outputLength: firstError.outputLength }));
+      try {
+        parsedResponse = parseConsultantCompletion(await requestCompletion(700));
+      } catch (recoveryError) {
+        if (recoveryError instanceof ConsultantModelOutputError) {
+          console.error(JSON.stringify({ code: recoveryError.code, requestId: requestRecord.id, attempt: 2, finishReason: recoveryError.finishReason, outputLength: recoveryError.outputLength }));
+        }
+        throw recoveryError;
+      }
+    }
+    const { answer, disposition } = parsedResponse;
     const { data: persisted, error: persistError } = await admin.rpc('persist_consultant_response_v2', {
       p_student_id: auth.user.id,
       p_assignment_id: frozenPayload.assignmentId,
