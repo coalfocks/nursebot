@@ -245,6 +245,42 @@ describe("Case Builder MAR authoring", () => {
     });
   });
 
+  it("reconciles a deterministic revision conflict before rotating the request", async () => {
+    api.saveMarHistory.mockResolvedValueOnce({
+      ok: false,
+      error: "MAR changed in another window. Reload the preview before saving.",
+    });
+    const view = render(
+      <MemoryRouter initialEntries={["/case-builder/mar?roomId=7"]}>
+        <CaseBuilderMarAuthoring />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(view.getByText("Example")).toBeInTheDocument());
+    fireEvent.click(view.getByRole("button", { name: /Generate MAR Given/i }));
+    const originalRequestId = JSON.parse(
+      window.localStorage.getItem(
+        Object.keys(window.localStorage).find((key) =>
+          key.endsWith(":generation-request-id"),
+        ) ?? "",
+      ) ?? "null",
+    );
+    fireEvent.click(view.getByRole("button", { name: /Save authored MAR/i }));
+    await waitFor(() =>
+      expect(
+        view.getByText(/reconciled\. Review the preview and save again/i),
+      ).toBeInTheDocument(),
+    );
+    expect(view.queryByText(/unknown outcome/i)).not.toBeInTheDocument();
+    const reconciledRequestId = JSON.parse(
+      window.localStorage.getItem(
+        Object.keys(window.localStorage).find((key) =>
+          key.endsWith(":generation-request-id"),
+        ) ?? "",
+      ) ?? "null",
+    );
+    expect(reconciledRequestId).not.toBe(originalRequestId);
+  });
+
   it("discards a persisted preview and request when authored medication metadata changes", async () => {
     const first = render(
       <MemoryRouter initialEntries={["/case-builder/mar?roomId=7"]}>

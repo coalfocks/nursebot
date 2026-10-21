@@ -411,8 +411,13 @@ export default function CaseBuilderMarAuthoring() {
     const editedErrors = pendingUnknownSave
       ? []
       : authoredPreview.flatMap((event) =>
-          validateMarDraftOccurrence(event, historyHours, authoredStayHours).map(
-            (item) => `${event.medicationName} (${event.occurrenceKey}): ${item}`,
+          validateMarDraftOccurrence(
+            event,
+            historyHours,
+            authoredStayHours,
+          ).map(
+            (item) =>
+              `${event.medicationName} (${event.occurrenceKey}): ${item}`,
           ),
         );
     if (editedErrors.length) {
@@ -468,6 +473,22 @@ export default function CaseBuilderMarAuthoring() {
       return;
     }
     if (!result.ok) {
+      if (result.error.includes("MAR changed in another window")) {
+        setError(`${result.error} Reloading the current authored revision.`);
+        setSaving(false);
+        await load();
+        if (!isCurrent(request)) return;
+        const reconciledRequestId = crypto.randomUUID();
+        generationId.current = reconciledRequestId;
+        writeJson(requestKey, reconciledRequestId);
+        setPreview((current) =>
+          current ? { ...current, requestId: reconciledRequestId } : current,
+        );
+        setMessage(
+          "The saved MAR revision was reconciled. Review the preview and save again as a new request.",
+        );
+        return;
+      }
       const pending = pendingUnknownSave ?? {
         requestId: submittedRequestId,
         patientId: patient.id,
@@ -635,7 +656,15 @@ export default function CaseBuilderMarAuthoring() {
             An authored MAR save has an unknown outcome. The exact request and
             event envelope are frozen; retry Save authored MAR to reconcile it
             before publishing or starting a new version.
-            <Button className="ml-2" size="sm" variant="outline" disabled={writesDisabled} onClick={() => void savePreview()}>Retry exact saved MAR</Button>
+            <Button
+              className="ml-2"
+              size="sm"
+              variant="outline"
+              disabled={writesDisabled}
+              onClick={() => void savePreview()}
+            >
+              Retry exact saved MAR
+            </Button>
           </div>
         )}
         {durableSaved && !pendingUnknownSave && (
