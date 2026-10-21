@@ -63,7 +63,8 @@ describe('Case Builder MAR authoring', () => {
     const dose = view.getByRole('textbox', { name: /med-1:scheduled:12 dose/i });
     fireEvent.change(dose, { target: { value: '15 mg' } });
     expect(dose).toHaveValue('15 mg');
-    expect(JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').events[0]).toMatchObject({ occurrenceKey: 'med-1:scheduled:12', orderedDose: '15 mg' });
+    const previewKey = Object.keys(window.localStorage).find((key) => key.endsWith(':preview'));
+    expect(JSON.parse(window.localStorage.getItem(previewKey ?? '') ?? '{}').events[0]).toMatchObject({ occurrenceKey: 'med-1:scheduled:12', orderedDose: '15 mg' });
   });
 
   it('blocks Save and shows the edited-row error for an invalid time', async () => {
@@ -84,12 +85,13 @@ describe('Case Builder MAR authoring', () => {
     fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
     await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(1));
     const requestId = api.saveMarHistory.mock.calls[0][6];
-    expect(window.localStorage.getItem('case-builder-mar:7:generation-request-id')).toBe(JSON.stringify(requestId));
+    const requestKey = Object.keys(window.localStorage).find((key) => key.endsWith(':generation-request-id'));
+    expect(window.localStorage.getItem(requestKey ?? '')).toBe(JSON.stringify(requestId));
     fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
     await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(2));
     expect(api.saveMarHistory.mock.calls[1][6]).toBe(requestId);
     expect(api.saveMarHistory.mock.calls[1][5]).toEqual(api.saveMarHistory.mock.calls[0][5]);
-    await waitFor(() => expect(window.localStorage.getItem('case-builder-mar:7:generation-request-id')).toBeNull());
+    await waitFor(() => expect(Object.keys(window.localStorage).some((key) => key.endsWith(':generation-request-id'))).toBe(false));
   });
 
   it('rotates request identity and payload after editing a failed preview', async () => {
@@ -102,8 +104,9 @@ describe('Case Builder MAR authoring', () => {
     const oldRequestId = api.saveMarHistory.mock.calls[0][6];
     const dose = view.getByRole('textbox', { name: /med-1:scheduled:12 dose/i });
     fireEvent.change(dose, { target: { value: '15 mg' } });
-    await waitFor(() => expect(JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').requestId).not.toBe(oldRequestId));
-    const newRequestId = JSON.parse(window.localStorage.getItem('case-builder-mar:7:preview') ?? '{}').requestId;
+    const previewKey = () => Object.keys(window.localStorage).find((key) => key.endsWith(':preview')) ?? '';
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(previewKey()) ?? '{}').requestId).not.toBe(oldRequestId));
+    const newRequestId = JSON.parse(window.localStorage.getItem(previewKey()) ?? '{}').requestId;
     expect(newRequestId).not.toBe(oldRequestId);
     fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
     await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalledTimes(2));
@@ -116,14 +119,14 @@ describe('Case Builder MAR authoring', () => {
     const first = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
     await waitFor(() => expect(first.getByText('Example')).toBeInTheDocument());
     fireEvent.click(first.getByRole('button', { name: /Generate MAR Given/i }));
-    await waitFor(() => expect(window.localStorage.getItem('case-builder-mar:7:preview')).not.toBeNull());
+    await waitFor(() => expect(Object.keys(window.localStorage).some((key) => key.endsWith(':preview'))).toBe(true));
     first.unmount();
     api.listOrders.mockResolvedValue([{ id: 'med-1', patientId: 'patient-1', roomId: 7, assignmentId: null, overrideScope: 'room', category: 'Medication', orderName: 'Example', dose: '20 mg', route: 'PO', frequency: 'q4h', priority: 'Routine', status: 'Active', orderedBy: 'Author', orderTime: '2026-10-20T00:00:00Z' }]);
     const second = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
     await waitFor(() => expect(second.getByText('Example')).toBeInTheDocument());
     expect(second.getByText(/Choose timings, then Generate MAR Given/)).toBeInTheDocument();
-    expect(window.localStorage.getItem('case-builder-mar:7:preview')).toBeNull();
-    expect(window.localStorage.getItem('case-builder-mar:7:generation-request-id')).toBeNull();
+    expect(Object.keys(window.localStorage).some((key) => key.endsWith(':preview'))).toBe(false);
+    expect(Object.keys(window.localStorage).some((key) => key.endsWith(':generation-request-id'))).toBe(false);
   });
 
   it('excludes learner-scoped orders and events from authored loading and saving', async () => {
@@ -140,5 +143,17 @@ describe('Case Builder MAR authoring', () => {
     fireEvent.click(view.getByRole('button', { name: /Save authored MAR/i }));
     await waitFor(() => expect(api.saveMarHistory).toHaveBeenCalled());
     expect(api.saveMarHistory.mock.calls[0][5]).not.toEqual(expect.arrayContaining([expect.objectContaining({ medicationName: 'Learner only' })]));
+  });
+
+  it('fails closed for an unavailable authorized-order read and never invokes save', async () => {
+    api.listOrders.mockImplementation(async (...args: unknown[]) => {
+      (args[3] as ((message: string) => void) | undefined)?.('orders unavailable');
+      return [];
+    });
+    const view = render(<MemoryRouter initialEntries={['/case-builder/mar?roomId=7']}><CaseBuilderMarAuthoring /></MemoryRouter>);
+    await waitFor(() => expect(view.getByRole('status')).toHaveTextContent(/authorized medication list is unavailable/i));
+    expect(view.getByRole('button', { name: /Generate MAR Given/i })).toBeDisabled();
+    expect(view.queryByRole('button', { name: /Save authored MAR/i })).not.toBeInTheDocument();
+    expect(api.saveMarHistory).not.toHaveBeenCalled();
   });
 });

@@ -156,3 +156,29 @@ Use `npx tsc --noEmit` or add a project script if maintainers want a named typec
 - Related Files: package.json
 
 ---
+## [ERR-20261021-001] missing-typecheck-script
+
+**Logged**: 2026-10-21T00:31:06Z
+**Priority**: low
+**Status**: pending
+**Area**: tests
+
+### Summary
+The repository has no `typecheck` npm script.
+
+### Error
+```text
+npm error Missing script: "typecheck"
+```
+
+### Context
+The focused Vitest suite passed; the requested compiler check was attempted using the nonexistent script.
+
+### Suggested Fix
+Use `npm run build` and `npm run lint` for this repository, or add a documented typecheck script if maintainers want one.
+
+### Metadata
+- Reproducible: yes
+- Related Files: package.json
+
+---
