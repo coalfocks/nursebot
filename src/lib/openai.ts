@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { resolveAssignmentRoom } from './assignmentBaseline';
 
 export interface ChatMessage {
   role: 'system' | 'assistant' | 'user';
@@ -27,13 +28,25 @@ async function getRoomConfig(roomNumber: string): Promise<RoomConfig | null> {
   return data;
 }
 
-export const generateInitialPrompt = async (roomNumber: string) => {
-  const room = await getRoomConfig(roomNumber);
+export const generateInitialPrompt = async (roomNumber: string, assignmentId?: string) => {
+  let room = await getRoomConfig(roomNumber);
+  if (assignmentId) {
+    const { data: assignment, error } = await supabase
+      .from('student_room_assignments')
+      .select('scenario_baseline, room:room_id(role, context, nurse_context, style)')
+      .eq('id', assignmentId)
+      .maybeSingle();
+    if (error) console.error('Error fetching pinned assignment room config:', error);
+    const assignmentRoom = Array.isArray(assignment?.room) ? assignment.room[0] : assignment?.room;
+    if (assignmentRoom) room = resolveAssignmentRoom(assignmentRoom, assignment?.scenario_baseline);
+  }
   if (!room) return null;
 
   const nurseContext = room.nurse_context || room.context || '';
 
-  return `You are a night-shift nurse in a hospital. ${room.role}
+  return `You are a bedside night-shift nurse supporting the learner in a hospital. ${room.role}
+
+Never speak as the assessing clinician, physician, or learner. Do not say that you will assess the patient, order care, or independently examine the patient. Your opening and replies are nurse handoff/observation messages only.
 
 Your communication style should be ${room.style}. Text like a real busy nurse: short, direct, and professional.
 

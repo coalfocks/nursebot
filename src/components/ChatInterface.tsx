@@ -516,7 +516,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       
       console.log('No messages found, generating initial prompt');
       
-      const systemPrompt = await generateInitialPrompt(roomNumber);
+      const systemPrompt = await generateInitialPrompt(roomNumber, assignmentId);
       if (!systemPrompt) {
         throw new Error('Failed to generate initial prompt');
       }
@@ -628,7 +628,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       }
 
       // Get the system prompt for context
-      const systemPrompt = await generateInitialPrompt(roomNumber);
+      const systemPrompt = await generateInitialPrompt(roomNumber, assignmentId);
       if (!systemPrompt) {
         throw new Error('Failed to generate system prompt');
       }

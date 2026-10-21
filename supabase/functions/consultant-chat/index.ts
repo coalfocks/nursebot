@@ -14,6 +14,7 @@ import {
   type ConsultantAudience,
   type FrozenConsultantPayload,
 } from '../_shared/consultant-transport.ts';
+import { isAuthorizedDisposableQaLearner } from '../_shared/disposable-qa.ts';
 
 type ConsultantRequest = {
   audience?: unknown;
@@ -168,9 +169,16 @@ Deno.serve(async (req) => {
     const { payload: frozenPayload, clientRequestId } = parsed;
     const payloadHash = await hashConsultantPayload(frozenPayload);
 
-    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, emr_context, role, context)').eq('id', frozenPayload.assignmentId).maybeSingle();
+    const { data: assignment, error } = await admin.from('student_room_assignments').select('id, student_id, disposable_qa, scenario_baseline, room:room_id(id, patient_id, school_id, consultant_response_prompt, emr_context, role, context)').eq('id', frozenPayload.assignmentId).maybeSingle();
     if (error) throw error;
     if (!assignment || assignment.student_id !== auth.user.id) return json({ error: 'Assignment not found' }, 404);
+    if (assignment.disposable_qa) {
+      const { data: allowed, error: allowError } = await admin.rpc('is_authorized_disposable_qa_assignment', { requested_assignment_id: frozenPayload.assignmentId });
+      if (allowError) throw allowError;
+      if (allowed !== true || !isAuthorizedDisposableQaLearner(assignment.student_id)) {
+        return json({ error: 'This disposable QA assignment is not authorized for consultant transport.' }, 403);
+      }
+    }
     const room = Array.isArray(assignment.room) ? assignment.room[0] : assignment.room;
     const roomRecord = record(room);
     const patientId = typeof roomRecord.patient_id === 'string' ? roomRecord.patient_id : null;

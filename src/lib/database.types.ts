@@ -2434,6 +2434,7 @@ export type Database = {
           grade: number | null
           id: string
           is_sandbox: boolean
+          disposable_qa: boolean
           learning_objectives: string | null
           learner_program: string
           mdm_breakdown: Json | null
@@ -2481,6 +2482,7 @@ export type Database = {
           grade?: number | null
           id?: string
           is_sandbox?: boolean
+          disposable_qa?: boolean
           learning_objectives?: string | null
           learner_program?: string
           mdm_breakdown?: Json | null
@@ -2510,6 +2512,7 @@ export type Database = {
         Update: {
           assigned_by?: string
           is_sandbox?: boolean
+          disposable_qa?: boolean
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null

@@ -14,6 +14,7 @@ import { buildAssignmentListQuery } from '../lib/assignmentQueries';
 import { collectPersistedChatAssignmentIds } from '../lib/chatEvidence';
 import { assessOrdersConfig } from '../lib/ordersConfig';
 import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
+import { isAuthorizedDisposableQaLearner } from '../lib/disposableQa';
 import { authoredMarCaseVersion } from '../lib/marMaterialization';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -344,7 +345,7 @@ export default function AssignmentManager() {
       const assignment = request.assignments[0];
       const { error } = await supabase
         .from('student_room_assignments')
-        .insert({ ...assignment, is_sandbox: true })
+        .insert({ ...assignment, is_sandbox: true, disposable_qa: true })
         .select('id')
         .maybeSingle();
       if (error && !String(error.message ?? '').toLowerCase().includes('duplicate')) throw error;
@@ -588,8 +589,8 @@ export default function AssignmentManager() {
       return;
     }
 
-    if (disposableQaMode && studentProfiles.some((student) => student?.role !== 'student')) {
-      fail('DISPOSABLE_QA_STUDENT_REQUIRED', 'Disposable QA mode is limited to an authorized learner account.');
+    if (disposableQaMode && studentProfiles.some((student) => !isAuthorizedDisposableQaLearner(student))) {
+      fail('DISPOSABLE_QA_STUDENT_REQUIRED', 'Disposable QA mode is limited to the explicitly authorized synthetic learner account.');
       return;
     }
 

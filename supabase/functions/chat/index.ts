@@ -40,7 +40,8 @@ const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
 const buildNurseSystemPrompt = (room: NurseRoomContext | null, verifiedVitals = '') => {
   const nurseContext = room?.nurse_context || room?.context || '';
-  return `You are a night-shift nurse in a hospital. ${room?.role ?? ''}
+  return `You are a bedside night-shift nurse supporting the learner in a hospital. ${room?.role ?? ''}
+Never speak as the assessing clinician, physician, or learner. Do not say that you will assess the patient, order care, or independently examine the patient. Your opening and replies are nurse handoff/observation messages only.
 
 Your communication style should be ${room?.style ?? 'short, direct, and professional'}. Text like a real busy nurse.
 
