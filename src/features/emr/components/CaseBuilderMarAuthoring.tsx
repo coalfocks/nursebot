@@ -61,6 +61,16 @@ const infusionText = (
   field: string,
 ): string => String(details?.[field] ?? "");
 
+type PendingUnknownSave = {
+  requestId: string;
+  patientId: string;
+  roomId: number;
+  caseVersion: string;
+  expectedRevision: number;
+  events: MarAdministrationEvent[];
+  actorId: string;
+};
+
 export default function CaseBuilderMarAuthoring() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -86,6 +96,9 @@ export default function CaseBuilderMarAuthoring() {
   const [ordersReadAvailable, setOrdersReadAvailable] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingUnknownSave, setPendingUnknownSave] =
+    useState<PendingUnknownSave | null>(null);
+  const [durableSaved, setDurableSaved] = useState(false);
   const scopeKey = marScopeKey({
     patientId: patient?.id ?? `room-${roomId}`,
     roomId,
@@ -98,6 +111,8 @@ export default function CaseBuilderMarAuthoring() {
   const draftKey = storageKey(scopeKey, "drafts");
   const previewKey = storageKey(scopeKey, "preview");
   const requestKey = storageKey(scopeKey, "generation-request-id");
+  const pendingSaveKey = storageKey(scopeKey, "pending-save");
+  const editorScopeKey = `${actorId}:${roomId}:${CASE_VERSION}`;
   const scopeKeyRef = useRef(scopeKey);
   scopeKeyRef.current = scopeKey;
   const captureRef = useRef(capture);
@@ -131,6 +146,8 @@ export default function CaseBuilderMarAuthoring() {
     setOrdersReadAvailable(true);
     setHistoryReadAvailable(true);
     setMarPersistenceReady(false);
+    setPendingUnknownSave(null);
+    setDurableSaved(false);
     let historyReadFailed = false;
     let ordersReadFailed = false;
     const loadedPatient = await emrApi.getPatientByRoomId(roomId);
@@ -149,10 +166,19 @@ export default function CaseBuilderMarAuthoring() {
     });
     const currentDraftKey = storageKey(loadedScopeKey, "drafts");
     const currentPreviewKey = storageKey(loadedScopeKey, "preview");
-    const currentRequestKey = storageKey(loadedScopeKey, "generation-request-id");
+    const currentRequestKey = storageKey(
+      loadedScopeKey,
+      "generation-request-id",
+    );
+    const currentPendingSaveKey = storageKey(loadedScopeKey, "pending-save");
+    const loadedPendingSave = readJson<PendingUnknownSave | null>(
+      currentPendingSaveKey,
+      null,
+    );
     const [loadedOrders, loadedEvents, loadedRevision, roomContext] =
       await Promise.all([
         emrApi.listOrders(loadedPatient.id, undefined, roomId, () => {
+          if (!isCurrent(request)) return;
           ordersReadFailed = true;
           setOrdersReadAvailable(false);
         }),
@@ -162,11 +188,13 @@ export default function CaseBuilderMarAuthoring() {
           roomId,
           CASE_VERSION,
           () => {
+            if (!isCurrent(request)) return;
             historyReadFailed = true;
             setHistoryReadAvailable(false);
           },
         ),
         emrApi.getMarHistoryRevision(loadedPatient.id, roomId, null, () => {
+          if (!isCurrent(request)) return;
           historyReadFailed = true;
           setHistoryReadAvailable(false);
         }),
@@ -198,6 +226,14 @@ export default function CaseBuilderMarAuthoring() {
     setOrders(authoredOrders);
     setEvents(historyReadFailed ? [] : authoredEvents);
     setRevision(loadedRevision);
+    setPendingUnknownSave(
+      loadedPendingSave &&
+        loadedPendingSave.actorId === actorId &&
+        loadedPendingSave.patientId === loadedPatient.id
+        ? loadedPendingSave
+        : null,
+    );
+    setDurableSaved(authoredEvents.length > 0);
     setAuthoredStayHours(
       Number(roomContext.data?.hospital_stay_days ?? 1) * 24,
     );
@@ -242,8 +278,10 @@ export default function CaseBuilderMarAuthoring() {
         ),
       });
     } else {
-      window.localStorage.removeItem(currentPreviewKey);
-      window.localStorage.removeItem(currentRequestKey);
+      if (!loadedPendingSave) {
+        window.localStorage.removeItem(currentPreviewKey);
+        window.localStorage.removeItem(currentRequestKey);
+      }
       generationId.current = null;
       setPreview(null);
     }
@@ -253,6 +291,23 @@ export default function CaseBuilderMarAuthoring() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setPatient(null);
+    setOrders([]);
+    setEvents([]);
+    setDrafts({});
+    setPreview(null);
+    setEditing(null);
+    setNewOrder(blankOrder);
+    setPendingUnknownSave(null);
+    setDurableSaved(false);
+    setSaving(false);
+    setLoading(true);
+    setError(null);
+    setMessage(null);
+    generationId.current = null;
+  }, [editorScopeKey]);
 
   useEffect(() => {
     if (!loading)
@@ -316,9 +371,11 @@ export default function CaseBuilderMarAuthoring() {
     occurrenceKey: string,
     patch: Partial<ReturnType<typeof buildCaseMarPreview>["events"][number]>,
   ) => {
-    const requestId = crypto.randomUUID();
-    generationId.current = requestId;
-    writeJson(requestKey, requestId);
+    const requestId = pendingUnknownSave?.requestId ?? crypto.randomUUID();
+    if (!pendingUnknownSave) {
+      generationId.current = requestId;
+      writeJson(requestKey, requestId);
+    }
     setPreview((current) =>
       current
         ? { ...updatePreviewEvent(current, occurrenceKey, patch), requestId }
@@ -329,9 +386,9 @@ export default function CaseBuilderMarAuthoring() {
   const savePreview = async () => {
     if (
       !patient ||
-      !preview ||
-      preview.errors.length ||
-      !preview.events.length ||
+      (!preview && !pendingUnknownSave) ||
+      (!pendingUnknownSave && Boolean(preview?.errors.length)) ||
+      !(preview?.events.length || pendingUnknownSave?.events.length) ||
       saving ||
       !marPersistenceReady ||
       !historyReadAvailable ||
@@ -339,20 +396,25 @@ export default function CaseBuilderMarAuthoring() {
     )
       return;
     const request = capture();
-    const submittedRequestId = preview.requestId || ensureGenerationId();
-    const submittedPreview = preview;
+    const submittedRequestId =
+      pendingUnknownSave?.requestId ??
+      (preview.requestId || ensureGenerationId());
+    const submittedEvents = pendingUnknownSave?.events ?? preview!.events;
+    const submittedRevision = pendingUnknownSave?.expectedRevision ?? revision;
     setSaving(true);
     setError(null);
-    const authoredPreview = preview.events.filter(
+    const authoredPreview = submittedEvents.filter(
       (event) =>
         event.source === "authored_scenario" &&
         (!event.orderId || orders.some((order) => order.id === event.orderId)),
     );
-    const editedErrors = authoredPreview.flatMap((event) =>
-      validateMarDraftOccurrence(event, historyHours, authoredStayHours).map(
-        (item) => `${event.medicationName} (${event.occurrenceKey}): ${item}`,
-      ),
-    );
+    const editedErrors = pendingUnknownSave
+      ? []
+      : authoredPreview.flatMap((event) =>
+          validateMarDraftOccurrence(event, historyHours, authoredStayHours).map(
+            (item) => `${event.medicationName} (${event.occurrenceKey}): ${item}`,
+          ),
+        );
     if (editedErrors.length) {
       setPreview((current) =>
         current
@@ -369,22 +431,23 @@ export default function CaseBuilderMarAuthoring() {
       return;
     }
     if (!isCurrent(request)) {
-      setSaving(false);
       return;
     }
     const authoredExisting = events.filter((event) =>
       isRoomScopedAuthoredEvent(event, roomId),
     );
-    const additions = authoredEventsToSave(
-      authoredPreview,
-      authoredExisting,
-      patient.id,
-      roomId,
-      CASE_VERSION,
-      profile?.full_name ?? "Scenario author",
-      historyHours,
-      authoredStayHours,
-    );
+    const additions =
+      pendingUnknownSave?.events ??
+      authoredEventsToSave(
+        authoredPreview,
+        authoredExisting,
+        patient.id,
+        roomId,
+        CASE_VERSION,
+        profile?.full_name ?? "Scenario author",
+        historyHours,
+        authoredStayHours,
+      );
     if (!additions.length) {
       setMessage(
         "All preview occurrences already exist. No duplicate administrations were saved.",
@@ -397,30 +460,43 @@ export default function CaseBuilderMarAuthoring() {
       roomId,
       null,
       CASE_VERSION,
-      revision,
+      submittedRevision,
       additions,
       submittedRequestId,
     );
     if (!isCurrent(request)) {
-      setSaving(false);
       return;
     }
     if (!result.ok) {
+      const pending = pendingUnknownSave ?? {
+        requestId: submittedRequestId,
+        patientId: patient.id,
+        roomId,
+        caseVersion: CASE_VERSION,
+        expectedRevision: submittedRevision,
+        events: additions,
+        actorId,
+      };
+      setPendingUnknownSave(pending);
+      writeJson(pendingSaveKey, pending);
       setError(
         `${result.error} The exact submitted preview is retained for retry.`,
       );
-      setPreview(submittedPreview);
       setSaving(false);
       return;
     }
     window.localStorage.removeItem(requestKey);
     window.localStorage.removeItem(previewKey);
+    window.localStorage.removeItem(pendingSaveKey);
     generationId.current = null;
+    setPendingUnknownSave(null);
     setPreview(null);
+    setDurableSaved(true);
     setRevision(result.revision);
     setMessage(
       `Saved ${additions.length} authored MAR occurrence${additions.length === 1 ? "" : "s"} atomically.`,
     );
+    if (!isCurrent(request)) return;
     await load();
     setSaving(false);
   };
@@ -434,6 +510,7 @@ export default function CaseBuilderMarAuthoring() {
       !ordersReadAvailable
     )
       return;
+    const request = capture();
     setError(null);
     const saved = isNew
       ? await emrApi.addOrder(
@@ -462,6 +539,7 @@ export default function CaseBuilderMarAuthoring() {
           },
           draft.recordVersion,
         );
+    if (!isCurrent(request)) return;
     if (!saved || ("conflict" in saved && saved.conflict)) {
       setError(
         "This medication changed elsewhere. Reload before editing it again.",
@@ -547,6 +625,41 @@ export default function CaseBuilderMarAuthoring() {
         {message && (
           <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
             {message}
+          </div>
+        )}
+        {pendingUnknownSave && (
+          <div
+            role="status"
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"
+          >
+            An authored MAR save has an unknown outcome. The exact request and
+            event envelope are frozen; retry Save authored MAR to reconcile it
+            before publishing or starting a new version.
+            <Button className="ml-2" size="sm" variant="outline" disabled={writesDisabled} onClick={() => void savePreview()}>Retry exact saved MAR</Button>
+          </div>
+        )}
+        {durableSaved && !pendingUnknownSave && (
+          <div className="flex flex-wrap gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+            <Button
+              variant="outline"
+              onClick={() =>
+                navigate(
+                  `/ehr?roomId=${roomId}&patientId=${patient?.id ?? ""}&tab=mar&marRevision=${revision}`,
+                )
+              }
+            >
+              Review saved MAR / publish version
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                navigate(
+                  `/admin/assignments?roomId=${roomId}&caseVersion=${encodeURIComponent(CASE_VERSION)}&marRevision=${revision}`,
+                )
+              }
+            >
+              Create genuinely new assignment
+            </Button>
           </div>
         )}
         {writesDisabled && (
@@ -920,7 +1033,7 @@ export default function CaseBuilderMarAuthoring() {
                     className="mt-3 w-full"
                     disabled={
                       writesDisabled ||
-                      Boolean(preview.errors.length) ||
+                      (!pendingUnknownSave && Boolean(preview.errors.length)) ||
                       !preview.events.length ||
                       saving
                     }
