@@ -1131,10 +1131,10 @@ export const emrApi = {
       })),
     });
     if (error) {
-      const message = error.message.includes('MANUAL_MAR_REVISION_CONFLICT')
-        ? 'Manual MAR changed in another window. Reopen the packet before saving.'
-        : error.message;
-      return { ok: false, error: message };
+      // Preserve typed RPC outcomes for the component's no-commit recovery
+      // policy. Human-readable copy belongs at the UI boundary; rewriting the
+      // code here makes a confirmed conflict look like an unknown outcome.
+      return { ok: false, error: error.message };
     }
     const revision = Number((data as { revision?: number } | null)?.revision);
     return { ok: true, revision: Number.isFinite(revision) ? revision : packet.revision + 1 };

@@ -92,7 +92,7 @@ describe('emrApi versioned note/order mutations', () => {
     const result = await emrApi.saveManualMarPacket({
       patientId: 'patient-1', roomId: 3, caseVersion: 'manual-v1', revision: 2, events: [],
     });
-    expect(result).toEqual({ ok: false, error: 'Manual MAR changed in another window. Reopen the packet before saving.' });
+    expect(result).toEqual({ ok: false, error: 'MANUAL_MAR_REVISION_CONFLICT' });
   });
 
   it('returns the complete persisted order instead of the optimistic draft', async () => {

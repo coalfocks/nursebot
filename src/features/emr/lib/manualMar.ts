@@ -29,6 +29,10 @@ export const manualMarCanEdit = (role: string | null | undefined, readOnly: bool
 export const manualMarTimelinePositionPercent = (relativeOffsetHours: number): number =>
   (relativeOffsetHours / 72) * 100;
 
+/** Position a fractional event inside its containing one-hour grid cell. */
+export const manualMarTimelineCellOffsetPercent = (relativeOffsetHours: number): number =>
+  (relativeOffsetHours - Math.floor(relativeOffsetHours)) * 100;
+
 const categories = new Set<MarCategory>(['scheduled', 'prn', 'one_time', 'infusion']);
 const statuses = new Set<MarStatus>(['Given', 'Held', 'Refused', 'Not given', 'Started', 'Rate changed', 'Stopped', 'Not documented']);
 
