@@ -65,13 +65,20 @@ const errorCode = (value: unknown) => record(value).code;
 const readRequestMessages = async (requestId: string) => {
   const { data, error } = await admin
     .from('consultant_chat_messages')
-    .select('id, role, content, specialty, audience, created_at, request_receipt_at, message_sequence, request_id, consult_order_id')
+    .select('id, role, content, specialty, audience, created_at, request_id, consult_order_id')
     .eq('request_id', requestId)
-    .order('message_sequence', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true })
     .order('id', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as PersistedMessage[];
+  const { data: request, error: requestError } = await admin.from('consultant_requests').select('created_at').eq('id', requestId).maybeSingle();
+  if (requestError) throw requestError;
+  const requestCreatedAt = typeof request?.created_at === 'string' ? request.created_at : null;
+  return ((data ?? []) as Array<Omit<PersistedMessage, 'request_receipt_at' | 'message_sequence'>>).map((message) => ({
+    ...message,
+    request_receipt_at: requestCreatedAt,
+    request_created_at: requestCreatedAt,
+    message_sequence: message.role === 'student' ? 1 : message.role === 'consultant' ? 2 : null,
+  }));
 };
 
 const responseFromStoredRequest = async (request: StoredRequest, idempotent = true) => {

@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { Loader2, Send, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { CONSULTANT_TRANSPORT_FUNCTION_VERSION, preflightConsultantTransport } from '../lib/consultantTransport';
-import { CONSULTANT_DIRECTORY, filterConsultantMessages, getConsultantThreadKey, sortConsultantMessages } from './consultantPortalModel';
+import { CONSULTANT_DIRECTORY, filterConsultantMessages, getConsultantThreadKey, normalizeConsultantMessages, sortConsultantMessages } from './consultantPortalModel';
 import type { Audience, Message } from './consultantPortalModel';
 
 type Props = { assignmentId: string; open: boolean; onClose: () => void };
@@ -16,6 +16,11 @@ type MessageQuery = {
   select: (columns: string) => MessageQuery;
   eq: (column: string, value: string) => MessageQuery;
   order: (column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) => MessageQuery;
+  then: (resolve: (value: { data: unknown; error: { message: string } | null }) => unknown) => Promise<unknown>;
+};
+type RequestQuery = {
+  select: (columns: string) => RequestQuery;
+  in: (column: string, values: string[]) => RequestQuery;
   then: (resolve: (value: { data: unknown; error: { message: string } | null }) => unknown) => Promise<unknown>;
 };
 
@@ -88,10 +93,8 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
         }
         const messageClient = supabase as unknown as { from: (table: string) => MessageQuery };
         const { data, error: loadError } = await messageClient.from('consultant_chat_messages')
-          .select('id, role, content, specialty, audience, created_at, request_receipt_at, message_sequence, request_id, consult_order_id')
+          .select('id, role, content, specialty, audience, created_at, request_id, consult_order_id')
           .eq('assignment_id', assignmentId)
-          .order('request_receipt_at', { ascending: true, nullsFirst: false })
-          .order('message_sequence', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: true })
           .order('id', { ascending: true });
         if (!active || currentAssignmentRef.current !== assignmentId) return;
@@ -100,7 +103,23 @@ export function ConsultantPortal({ assignmentId, open, onClose }: Props) {
           setGate({ status: 'blocked', reason: 'Consultant sending is unavailable until transcript history can be read.' });
           return;
         }
-        const loaded = (data ?? []) as Message[];
+        const rawLoaded = (data ?? []) as Message[];
+        const requestIds = [...new Set(rawLoaded.map((message) => message.request_id).filter((id): id is string => Boolean(id)))];
+        const requestCreatedAt: Record<string, string | null> = {};
+        if (requestIds.length > 0) {
+          const requestClient = supabase as unknown as { from: (table: string) => RequestQuery };
+          const { data: requests, error: requestError } = await requestClient.from('consultant_requests').select('id, created_at').in('id', requestIds);
+          if (!active || currentAssignmentRef.current !== assignmentId) return;
+          if (requestError) {
+            setHistoryErrors((current) => ({ ...current, [assignmentId]: requestError.message }));
+            setGate({ status: 'blocked', reason: 'Consultant sending is unavailable until transcript history can be read.' });
+            return;
+          }
+          for (const request of (requests ?? []) as Array<{ id?: unknown; created_at?: unknown }>) {
+            if (typeof request.id === 'string') requestCreatedAt[request.id] = typeof request.created_at === 'string' ? request.created_at : null;
+          }
+        }
+        const loaded = normalizeConsultantMessages(rawLoaded, requestCreatedAt);
         setMessages((current) => mergeStoredMessages(current, loaded.filter((message) => message.audience !== null)));
         setLegacyMessages(loaded.filter((message) => message.audience === null));
         const { data: recovered, error: recoveryError } = await supabase.functions.invoke<{ requests?: RecoveredRequest[] }>('consultant-chat', { body: { mode: 'recover', transportContractVersion: CONSULTANT_TRANSPORT_FUNCTION_VERSION, assignmentId } });
