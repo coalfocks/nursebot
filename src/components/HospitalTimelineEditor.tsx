@@ -9,7 +9,7 @@ import {
   type HospitalTimelineEntry,
 } from '../lib/hospitalTimeline';
 
-type Props = { value: string; encounterType: EncounterType; onChange: (value: string) => void };
+type Props = { value: string; encounterType: EncounterType; stayDays?: number; onChange: (value: string) => void };
 
 const kinds: HospitalTimelineEntry['kind'][] = ['admission', 'progress_note', 'consult', 'lab', 'vital', 'imaging', 'procedure', 'nurse_page'];
 
@@ -22,8 +22,12 @@ const emptyEntry = (kind: HospitalTimelineEntry['kind'], index: number): Hospita
   content: '',
 });
 
-export function HospitalTimelineEditor({ value, encounterType, onChange }: Props) {
-  const timeline = useMemo(() => ({ ...parseHospitalTimeline(safeJson(value)), encounterType }), [value, encounterType]);
+export function HospitalTimelineEditor({ value, encounterType, stayDays, onChange }: Props) {
+  const timeline = useMemo(() => ({
+    ...parseHospitalTimeline(safeJson(value)),
+    encounterType,
+    ...(Number.isInteger(stayDays) && stayDays >= 1 && stayDays <= 3 ? { stayDays } : {}),
+  }), [value, encounterType, stayDays]);
   const update = (entries: HospitalTimelineEntry[]) => onChange(JSON.stringify({ ...timeline, encounterType, entries }, null, 2));
   const updateEntry = (index: number, changes: Partial<HospitalTimelineEntry>) => update(timeline.entries.map((entry, i) => i === index ? { ...entry, ...changes } : entry));
 
@@ -64,4 +68,3 @@ function Field({ label, value, onChange }: { label: string; value?: string; onCh
 function safeJson(value: string): unknown {
   try { return JSON.parse(value); } catch { return {}; }
 }
-

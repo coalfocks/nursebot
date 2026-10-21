@@ -1166,7 +1166,15 @@ export default function CaseBuilder() {
                       min="1"
                       max="3"
                       value={form.hospitalDays}
-                      onChange={(e) => setForm((prev) => ({ ...prev, hospitalDays: e.target.value }))}
+                      onChange={(e) => setForm((prev) => ({
+                        ...prev,
+                        hospitalDays: e.target.value,
+                        hospitalTimeline: JSON.stringify({
+                          ...parseHospitalTimeline(prev.hospitalTimeline),
+                          encounterType: prev.encounterType,
+                          stayDays: Number.parseInt(e.target.value, 10) || parseHospitalTimeline(prev.hospitalTimeline).stayDays,
+                        }, null, 2),
+                      }))}
                       className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       placeholder="1–3"
                     />
@@ -1208,7 +1216,7 @@ export default function CaseBuilder() {
 
                 <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
                   <label className="text-sm font-medium text-slate-700">Pre-page hospital timeline</label>
-                  <div className="mt-2"><HospitalTimelineEditor value={form.hospitalTimeline} encounterType={form.encounterType} onChange={(hospitalTimeline) => setForm((prev) => ({ ...prev, hospitalTimeline }))} /></div>
+                  <div className="mt-2"><HospitalTimelineEditor value={form.hospitalTimeline} encounterType={form.encounterType} stayDays={Number.parseInt(form.hospitalDays, 10)} onChange={(hospitalTimeline) => setForm((prev) => ({ ...prev, hospitalTimeline }))} /></div>
                   <p id="timeline-help" className="mt-1 text-xs text-slate-600">
                     Use relative-hour entries for admission, one progress note per inpatient day, consults, labs, vitals, procedures, and the nurse page. Learners see labels such as “24 hours prior”; this chart context is excluded from student scoring.
                   </p>

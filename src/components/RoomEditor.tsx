@@ -35,6 +35,23 @@ type CompletionHints = {
   planHint: string;
 };
 
+type TimelinePublishRecovery = {
+  roomId: number;
+  patientId: string;
+  schoolId: string;
+  caseBlueprintId: string | null;
+  timeline: HospitalTimeline;
+  nurseContext: string;
+};
+
+const describeSupabaseError = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return String(error || 'Unknown database error');
+  const value = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+  return [value.message, value.code ? `code ${value.code}` : null, value.details, value.hint ? `hint: ${value.hint}` : null]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ') || 'Unknown database error';
+};
+
 type BedsideRequirement = 'yes' | 'no' | 'situational';
 
 const bedsideRequirementOptions: Array<{ value: BedsideRequirement; label: string }> = [
@@ -132,6 +149,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
   const [availabilityStatus, setAvailabilityStatus] = useState('');
   const [promptPreview, setPromptPreview] = useState<ConversationPromptKind | null>(null);
   const [timelineWarning, setTimelineWarning] = useState<string>('');
+  const [timelinePublishRecovery, setTimelinePublishRecovery] = useState<TimelinePublishRecovery | null>(null);
   const advancedSettingsVisible = false;
   const [specialties, setSpecialties] = useState<Specialty[]>([]);
   
@@ -577,11 +595,42 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       setAvailabilitySaving(false);
     }
   };
+
+  const publishHospitalTimeline = async (recovery: TimelinePublishRecovery) => {
+    const { error: timelineError } = await supabase.rpc('materialize_hospital_timeline', {
+      p_room_id: recovery.roomId,
+      p_patient_id: recovery.patientId,
+      p_school_id: recovery.schoolId,
+      p_case_blueprint_id: recovery.caseBlueprintId,
+      p_timeline: recovery.timeline,
+      p_nurse_context: recovery.nurseContext,
+      p_generated_at: new Date().toISOString(),
+    });
+    if (timelineError) throw timelineError;
+  };
+
+  const retryTimelinePublish = async () => {
+    if (!timelinePublishRecovery || isLoading) return;
+    setIsLoading(true);
+    setError('Retrying hospital timeline publication…');
+    try {
+      await publishHospitalTimeline(timelinePublishRecovery);
+      setTimelinePublishRecovery(null);
+      setError('Room, patient, and hospital timeline saved.');
+      onSave();
+    } catch (retryError) {
+      setError(`Room and patient are saved, but hospital timeline publication is still incomplete: ${describeSupabaseError(retryError)}. No duplicate room or patient was created.`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
     setIsLoading(true);
     setError('');
+    setTimelinePublishRecovery(null);
 
     try {
       const finalSchoolId = schoolId || scopedSchoolId;
@@ -822,22 +871,27 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       }
 
       if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
-        const { error } = await supabase.rpc('materialize_hospital_timeline', {
-          p_room_id: timelineRoomId,
-          p_patient_id: timelinePatientId,
-          p_school_id: finalSchoolId,
-          p_case_blueprint_id: room?.case_blueprint_id ?? null,
-          p_timeline: hospitalTimeline,
-          p_nurse_context: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
-          p_generated_at: new Date().toISOString(),
-        });
-        if (error) throw error;
+        const recovery: TimelinePublishRecovery = {
+          roomId: timelineRoomId,
+          patientId: timelinePatientId,
+          schoolId: finalSchoolId,
+          caseBlueprintId: room?.case_blueprint_id ?? null,
+          timeline: hospitalTimeline,
+          nurseContext: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
+        };
+        try {
+          await publishHospitalTimeline(recovery);
+        } catch (timelineError) {
+          setTimelinePublishRecovery(recovery);
+          setError(`Room and patient saved, but hospital timeline publication failed: ${describeSupabaseError(timelineError)}. Use Retry timeline; do not recreate the room.`);
+          return;
+        }
       }
 
       onSave();
     } catch (error) {
       console.error('Error saving room:', error);
-      setError('Failed to save room. Please try again.');
+      setError(`Room save failed: ${describeSupabaseError(error)}`);
     } finally {
       setIsLoading(false);
     }
@@ -1178,7 +1232,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               <input type="number" min="1" max="3" value={hospitalStayDays} onChange={(e) => setHospitalStayDays(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 text-sm" />
             </label>
           </div>
-          <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} onChange={setHospitalTimelineText} /></div>
+          <div className="mt-3"><HospitalTimelineEditor value={hospitalTimelineText} encounterType={encounterType} stayDays={Number.parseInt(hospitalStayDays, 10)} onChange={setHospitalTimelineText} /></div>
           {timelineWarning && <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">{timelineWarning}</p>}
           {(() => { try { const timeline = { ...parseHospitalTimeline(JSON.parse(hospitalTimelineText)), encounterType }; const errors = validateHospitalTimeline(timeline); return <div className={`mt-2 text-xs ${errors.length ? 'text-rose-700' : 'text-emerald-700'}`}>{errors.length ? <p>{errors.join(' ')}</p> : <p>Verified trend preview: {timelineTrend(timeline).join(' · ') || 'No lab trend entries.'}</p>}</div>; } catch { return <p className="mt-2 text-xs text-rose-700">Timeline JSON is invalid.</p>; } })()}
         </div>
@@ -1511,6 +1565,7 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       {error && (
         <div className="text-sm text-red-600">
           {error}
+          {timelinePublishRecovery && <button type="button" onClick={() => void retryTimelinePublish()} disabled={isLoading} className="ml-3 rounded border border-red-300 bg-white px-2 py-1 font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Retry timeline</button>}
         </div>
       )}
 
