@@ -1,5 +1,5 @@
-export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 4;
-export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 4;
+export const CONSULTANT_TRANSPORT_SCHEMA_VERSION = 3;
+export const CONSULTANT_TRANSPORT_FUNCTION_VERSION = 3;
 
 type PreflightResult = {
   ready: boolean;

@@ -15,6 +15,8 @@ export type AssignmentCreateRow = {
 export type PendingAssignmentCreate = {
   requestId: string;
   assignments: AssignmentCreateRow[];
+  /** Explicit one-case QA escape hatch while normal MAR materialization is unavailable. */
+  creationMode?: 'normal' | 'disposable_qa';
 };
 
 /**

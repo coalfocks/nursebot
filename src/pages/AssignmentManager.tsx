@@ -107,6 +107,7 @@ export default function AssignmentManager() {
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
+  const [disposableQaMode, setDisposableQaMode] = useState(false);
   const [createStatus, setCreateStatus] = useState<AssignmentCreateStatus | null>(null);
   const [pendingAssignmentCreate, setPendingAssignmentCreate] = useState<PendingAssignmentCreate | null>(null);
   const [createInFlight, setCreateInFlight] = useState(false);
@@ -333,6 +334,28 @@ export default function AssignmentManager() {
   };
 
   const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
+    if (request.creationMode === 'disposable_qa') {
+      if (request.assignments.length !== 1) {
+        throw new Error('Disposable QA mode supports exactly one student and one room.');
+      }
+      // This deliberately skips only normal MAR materialization. The existing
+      // database trigger still pins the immutable room snapshot on insert.
+      // The stable row ID plus read-back makes an unknown retry idempotent.
+      const assignment = request.assignments[0];
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .insert({ ...assignment, is_sandbox: true })
+        .select('id')
+        .maybeSingle();
+      if (error && !String(error.message ?? '').toLowerCase().includes('duplicate')) throw error;
+      const afterInsert = await readBackCreatedAssignments(request);
+      if (afterInsert.missing.length > 0) {
+        const error = new Error('Disposable QA assignment was not confirmed by read-back.');
+        (error as Error & { code?: string }).code = 'DISPOSABLE_QA_CREATE_UNCONFIRMED';
+        throw error;
+      }
+      return;
+    }
     const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
     if (readinessError || !(readiness as { ready?: boolean } | null)?.ready) {
       const error = new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed MAR snapshot/materialization setup is required before creating a new assignment.');
@@ -441,6 +464,7 @@ export default function AssignmentManager() {
     setBulkTargetSchoolId('');
     setBulkTargetSpecialty('');
     setSelectedBulkStudents([]);
+    setDisposableQaMode(false);
   };
 
   const handleAssign = async () => {
@@ -494,6 +518,11 @@ export default function AssignmentManager() {
 
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
       fail('ASSIGNMENT_INPUT_REQUIRED', 'Select at least one room and provide the window start and end times.');
+      return;
+    }
+
+    if (disposableQaMode && (targetingMode !== 'individual' || selectedRooms.length !== 1)) {
+      fail('DISPOSABLE_QA_SCOPE_REQUIRED', 'Disposable QA mode requires exactly one student and one room.');
       return;
     }
 
@@ -556,6 +585,11 @@ export default function AssignmentManager() {
     });
     if (incompatibleStudent) {
       fail('ROOM_SCHOOL_SCOPE_MISMATCH', `The selected room is not available to ${incompatibleStudent.full_name}'s school. Choose a compatible room or student; no assignment was submitted.`);
+      return;
+    }
+
+    if (disposableQaMode && studentProfiles.some((student) => student?.role !== 'student')) {
+      fail('DISPOSABLE_QA_STUDENT_REQUIRED', 'Disposable QA mode is limited to an authorized learner account.');
       return;
     }
 
@@ -638,7 +672,11 @@ export default function AssignmentManager() {
         }
       }
 
-      const request: PendingAssignmentCreate = { requestId, assignments };
+      const request: PendingAssignmentCreate = {
+        requestId,
+        assignments,
+        creationMode: disposableQaMode ? 'disposable_qa' : 'normal',
+      };
       persistPendingAssignmentCreate(request);
       setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_PENDING', message: `Creating ${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}…`, requestId });
       setCreateInFlight(true);
@@ -1508,6 +1546,21 @@ export default function AssignmentManager() {
                     </div>
                   </div>
 
+                  {isSuperAdmin(profile) && (
+                    <label className="flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                      <input
+                        type="checkbox"
+                        checked={disposableQaMode}
+                        onChange={(event) => setDisposableQaMode(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>
+                        <span className="font-semibold">Disposable QA session (MAR unavailable)</span>
+                        <span className="mt-1 block text-xs text-amber-800">One authorized learner + one eligible room. Pins the current authored case snapshot and skips only normal MAR materialization; no existing attempts, pins, or clinical records are changed.</span>
+                      </span>
+                    </label>
+                  )}
+
                   {/* Room Selection */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Select Rooms ({selectedRooms.length} selected)</label>
@@ -1823,6 +1876,7 @@ export default function AssignmentManager() {
                     setBulkTargetSchoolId('');
                     setBulkTargetSpecialty('');
                     setSelectedBulkStudents([]);
+                    setDisposableQaMode(false);
                   }}
                   className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:col-start-1"
                 >
