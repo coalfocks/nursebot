@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { manualMarCanEdit, mapManualMarPacket, validateManualMarEvents } from './manualMar';
+
+const event = (overrides: Record<string, unknown> = {}) => ({
+  id: 'event-1', occurrenceKey: 'manual:event-1', medicationName: 'Example medication',
+  category: 'scheduled', status: 'Given', relativeOffsetHours: 12, source: 'authored_scenario', orderId: null, ...overrides,
+});
+
+describe('manual MAR packet contract', () => {
+  it('maps a persisted packet while preserving exact relative hours and no order', () => {
+    const packet = mapManualMarPacket({ id: 'packet-1', patientId: 'patient-1', roomId: 7, caseVersion: 'manual-v1', revision: 3, events: [event({ relativeOffsetHours: 12.5 })] });
+    expect(packet?.revision).toBe(3);
+    expect(packet?.events[0]).toMatchObject({ relativeOffsetHours: 12.5, orderId: null, patientId: 'patient-1', roomId: 7 });
+  });
+
+  it('rejects learner actions, order-linked rows, and out-of-range hours', () => {
+    expect(() => validateManualMarEvents([event({ source: 'learner' })])).toThrow('MANUAL_MAR_LEARNER_SOURCE_REJECTED');
+    expect(() => validateManualMarEvents([event({ orderId: 'order-1' })])).toThrow('MANUAL_MAR_ORDER_ID_NOT_ALLOWED');
+    expect(() => validateManualMarEvents([event({ relativeOffsetHours: 72.1 })])).toThrow('MANUAL_MAR_RELATIVE_HOURS_INVALID');
+    expect(() => validateManualMarEvents([event({ relativeOffsetHours: 0 })])).not.toThrow();
+  });
+
+  it('gates manual authoring to educators and superadmins outside assignments', () => {
+    expect(manualMarCanEdit('school_admin', false, true)).toBe(true);
+    expect(manualMarCanEdit('super_admin', false, true)).toBe(true);
+    expect(manualMarCanEdit('student', false, true)).toBe(false);
+    expect(manualMarCanEdit('school_admin', false, true, 'assignment-1')).toBe(false);
+    expect(manualMarCanEdit('school_admin', true, true)).toBe(false);
+  });
+});

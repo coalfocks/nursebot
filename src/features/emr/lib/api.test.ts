@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MedicalOrder } from './types';
 
-const { from } = vi.hoisted(() => ({ from: vi.fn() }));
+const { from, rpc } = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn() }));
 
-vi.mock('../../../lib/supabase', () => ({ supabase: { from } }));
+vi.mock('../../../lib/supabase', () => ({ supabase: { from, rpc } }));
 
 import { emrApi } from './api';
 
@@ -85,7 +85,15 @@ const draftOrder: MedicalOrder = {
 };
 
 describe('emrApi versioned note/order mutations', () => {
-  beforeEach(() => from.mockReset());
+  beforeEach(() => { from.mockReset(); rpc.mockReset(); });
+
+  it('maps a manual packet revision conflict without treating it as an empty save', async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: 'MANUAL_MAR_REVISION_CONFLICT' } });
+    const result = await emrApi.saveManualMarPacket({
+      patientId: 'patient-1', roomId: 3, caseVersion: 'manual-v1', revision: 2, events: [],
+    });
+    expect(result).toEqual({ ok: false, error: 'Manual MAR changed in another window. Reopen the packet before saving.' });
+  });
 
   it('returns the complete persisted order instead of the optimistic draft', async () => {
     from.mockReturnValue(builder({ data: orderRow(), error: null }));

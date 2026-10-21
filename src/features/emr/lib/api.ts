@@ -19,6 +19,7 @@ import type {
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 import { normalizeLabResult } from './labIntegrity';
+import { mapManualMarPacket, type ManualMarPacket, type ManualMarPacketResult, type ManualMarReadiness } from './manualMar';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
@@ -162,6 +163,12 @@ const mapMarEvent = (row: Database['public']['Tables']['mar_administration_event
   actorLabel: row.actor_label,
   recordVersion: row.record_version,
 });
+
+type ManualMarRpc = {
+  rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
+};
+
+const manualMarRpc = (): ManualMarRpc => supabase as unknown as ManualMarRpc;
 
 const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult => {
   const valueType = (row.value_type as LabResult['valueType']) ?? (row.value !== null ? 'numeric' : 'coded');
@@ -1063,6 +1070,74 @@ export const emrApi = {
     const { data, error } = await supabase.rpc('get_mar_readiness');
     if (error) return false;
     return Boolean((data as { ready?: boolean } | null)?.ready);
+  },
+
+  async getManualMarReadiness(): Promise<ManualMarReadiness> {
+    const { data, error } = await manualMarRpc().rpc('get_manual_mar_readiness');
+    if (error) return { available: false, ready: false, error: error.message };
+    const value = data as { available?: boolean; ready?: boolean; schemaVersion?: number } | null;
+    return {
+      available: value?.available === true,
+      ready: value?.ready === true,
+      schemaVersion: value?.schemaVersion,
+    };
+  },
+
+  async readManualMarPacket(patientId: string, roomId: number, assignmentId: string | null, caseVersion: string): Promise<ManualMarPacketResult> {
+    const { data, error } = await manualMarRpc().rpc('get_manual_mar_packet', {
+      p_patient_id: patientId,
+      p_room_id: roomId,
+      p_assignment_id: assignmentId,
+      p_case_version: caseVersion,
+    });
+    if (error) return { status: 'unavailable', packet: null, error: error.message };
+    if (data === null || data === undefined) return { status: 'empty', packet: null };
+    try {
+      const packet = mapManualMarPacket(data);
+      return packet ? { status: 'ready', packet } : { status: 'error', packet: null, error: 'MANUAL_MAR_PACKET_INVALID' };
+    } catch (packetError) {
+      return { status: 'error', packet: null, error: packetError instanceof Error ? packetError.message : 'MANUAL_MAR_PACKET_INVALID' };
+    }
+  },
+
+  async saveManualMarPacket(packet: Pick<ManualMarPacket, 'patientId' | 'roomId' | 'caseVersion' | 'revision' | 'events'>, requestId = crypto.randomUUID()): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
+    const { data, error } = await manualMarRpc().rpc('save_manual_mar_packet', {
+      p_request_id: requestId,
+      p_patient_id: packet.patientId,
+      p_room_id: packet.roomId,
+      p_case_version: packet.caseVersion,
+      p_expected_revision: packet.revision,
+      p_events: packet.events.map((event) => ({
+        id: event.id,
+        occurrenceKey: event.occurrenceKey,
+        relativeOffsetHours: event.relativeOffsetHours,
+        administeredAt: event.administeredAt,
+        medicationName: event.medicationName,
+        orderedDose: event.orderedDose,
+        administeredDose: event.administeredDose,
+        unit: event.unit,
+        route: event.route,
+        frequency: event.frequency,
+        category: event.category,
+        status: event.status,
+        simulatedClinician: event.simulatedClinician,
+        reason: event.reason,
+        prnIndication: event.prnIndication,
+        response: event.response,
+        infusionDetails: event.infusionDetails,
+        source: event.source,
+        actorLabel: event.actorLabel,
+        orderId: null,
+      })),
+    });
+    if (error) {
+      const message = error.message.includes('MANUAL_MAR_REVISION_CONFLICT')
+        ? 'Manual MAR changed in another window. Reopen the packet before saving.'
+        : error.message;
+      return { ok: false, error: message };
+    }
+    const revision = Number((data as { revision?: number } | null)?.revision);
+    return { ok: true, revision: Number.isFinite(revision) ? revision : packet.revision + 1 };
   },
 
   async saveMarHistory(

@@ -12,6 +12,8 @@ import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { projectMedicationRows } from '../lib/marProjection';
 import { marScopeKey } from '../lib/marScope';
+import { manualMarCanEdit } from '../lib/manualMar';
+import { authoredMarCaseVersion } from '../../../lib/marMaterialization';
 
 interface MedicationAdministrationRecordProps {
   patient: Patient;
@@ -52,11 +54,18 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
   const { profile } = useAuthStore();
   const actorId = profile?.id ?? 'anonymous';
   const actorAvailable = Boolean(profile?.id);
+  const [path, setPath] = useState<'automatic' | 'manual' | 'unavailable'>('unavailable');
   const [schemaReady, setSchemaReady] = useState(false);
   // Admin authoring may create the first immutable assignment snapshot. Learner
   // reads still require the already-pinned version and never enter this path.
-  const canEdit = hasAdminAccess(profile) && !readOnly && schemaReady && (forceBaseline || Boolean(caseVersion));
+  const canEdit = path === 'manual'
+    ? manualMarCanEdit(profile?.role, readOnly, schemaReady, assignmentId)
+    : hasAdminAccess(profile) && !readOnly && schemaReady && (forceBaseline || Boolean(caseVersion));
   const effectiveCaseVersion = caseVersion ?? (forceBaseline ? 'baseline-v1' : null);
+  // Baseline authoring must use the same stable room case key that normal and
+  // disposable assignments receive, so a learner can read the saved packet
+  // without copying it into learner-action tables.
+  const manualCaseVersion = effectiveCaseVersion ?? (patient.roomId ? authoredMarCaseVersion(patient.roomId) : 'manual-v1');
   const scopeAssignmentId = forceBaseline ? null : assignmentId ?? null;
   const scopeKey = marScopeKey({ patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion, actorId });
   const recoveryKey = `mar-save:${scopeKey}`;
@@ -97,6 +106,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setRevision(0);
     setDirty(false);
     setSchemaReady(false);
+    setPath('unavailable');
     setBaselineReady(forceBaseline || !assignmentId);
     // Scope changes must not carry an editor, preview, expansion, or draft
     // from another patient/assignment/actor into the new chart.
@@ -122,15 +132,27 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     const marReady = await emrApi.getMarReadiness();
     if (!isCurrent(request)) return;
     if (!marReady) {
-      setEvents([]);
+      const manualReady = await emrApi.getManualMarReadiness();
+      if (!manualReady.ready || (assignmentId && !effectiveCaseVersion)) {
+        setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setDirty(false); setLoading(false); return;
+      }
+      const packet = await emrApi.readManualMarPacket(patient.id, patient.roomId, scopeAssignmentId, manualCaseVersion);
+      if (!isCurrent(request)) return;
+      if (packet.status === 'unavailable' || packet.status === 'error') {
+        setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setError(packet.error ?? 'Manual MAR packet is unavailable.'); setDirty(false); setLoading(false); return;
+      }
+      const loadedEvents = packet.packet?.events ?? [];
+      setEvents(loadedEvents);
       setOrders([]);
-      setRevision(0);
-      setBaselineReady(false);
-      setSchemaReady(false);
+      setRevision(packet.packet?.revision ?? 0);
+      setBaselineReady(true);
+      setSchemaReady(true);
+      setPath('manual');
       setDirty(false);
       setLoading(false);
       return;
     }
+    setPath('automatic');
     const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
       emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => { if (isCurrent(request)) setError(message); }),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
@@ -158,7 +180,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     setSchemaReady(true);
     setDirty(Boolean(pendingSave && recovered !== loadedEvents));
     setLoading(false);
-  }, [actorAvailable, actorId, assignmentId, capture, effectiveCaseVersion, forceBaseline, isCurrent, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
+  }, [actorAvailable, actorId, assignmentId, capture, effectiveCaseVersion, forceBaseline, isCurrent, manualCaseVersion, patient.id, patient.roomId, pendingSave, recoveryKey, scopeAssignmentId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -240,7 +262,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     const envelope: PendingMarSave = { requestId, payloadHash, expectedRevision, events, patientId: patient.id, roomId: patient.roomId, assignmentId: scopeAssignmentId, caseVersion: effectiveCaseVersion, actorId };
     setPendingSave(envelope);
     window.localStorage.setItem(recoveryKey, JSON.stringify(envelope));
-    const result = await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, events, requestId);
+    const result = path === 'manual'
+      ? await emrApi.saveManualMarPacket({ patientId: patient.id, roomId: patient.roomId, caseVersion: manualCaseVersion, revision: expectedRevision, events }, requestId)
+      : await emrApi.saveMarHistory(patient.id, patient.roomId, scopeAssignmentId, effectiveCaseVersion, expectedRevision, events, requestId);
     if (!isCurrent(request)) return;
     if (!result.ok) {
       setSaveError(`${result.error} Resume the same MAR save after reload; editing creates a new request.`);
@@ -260,7 +284,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       setSaveError('MAR_INVALID_MANUAL_TIME: prior hours must be between 0 and 72.');
       return;
     }
-    if (relativeOffsetHours <= 0) {
+    if (path === 'automatic' && relativeOffsetHours <= 0) {
       setSaveError('MAR_ZERO_HOUR_BASELINE: baseline administrations must be prior-hour events.');
       return;
     }
@@ -343,8 +367,9 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     return projectMedicationRows(events, orders, patient, effectiveCaseVersion, categoryFilter, search);
   }, [categoryFilter, effectiveCaseVersion, events, orders, patient, search]);
 
-  const setupBlocked = !actorAvailable || !schemaReady || Boolean(assignmentId && (!caseVersion || !baselineReady));
+  const setupBlocked = !actorAvailable || !schemaReady || path === 'unavailable' || (path === 'automatic' && Boolean(assignmentId && (!caseVersion || !baselineReady)));
   const adminContext = hasAdminAccess(profile) && !readOnly;
+  const timelineEvents = [...events].sort((a, b) => (a.relativeOffsetHours ?? 0) - (b.relativeOffsetHours ?? 0));
 
   return (
     <div className="space-y-4">
@@ -352,10 +377,10 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2"><Pill className="h-5 w-5" /> {adminContext ? 'Medication Administration Record' : 'Medications'}</CardTitle>
-            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add administration</Button><Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button><Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save MAR history</Button></div>}
+            {canEdit && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setManualOpen((open) => !open)}><Edit3 className="mr-2 h-4 w-4" />Add medication/event</Button>{path === 'automatic' && <Button variant="outline" onClick={() => setPopulateOpen((open) => !open)}><History className="mr-2 h-4 w-4" />Populate MAR</Button>}<Button onClick={() => void save()} disabled={!dirty}><Save className="mr-2 h-4 w-4" />Save {path === 'manual' ? 'packet' : 'MAR history'}</Button></div>}
           </div>
           <p className="text-sm text-muted-foreground">{adminContext ? 'Blank means undocumented. Learner medication orders do not become Given automatically.' : 'Medication history from the authored case. Blank means undocumented.'}</p>
-          {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Awaiting MAR setup: the reviewed schema, authorization policies, and immutable case-version snapshot are required before authoring is enabled. Opening this view never generates or writes MAR history.</p>}
+          {setupBlocked && adminContext && <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Manual MAR authoring is unavailable until its reviewed packet contract is installed. Opening this view never generates administrations or writes medical orders.</p>}
         </CardHeader>
         <CardContent className="space-y-4">
           {populateOpen && canEdit && (
@@ -411,7 +436,8 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
           {schemaReady && error && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
           {saveError && <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>}
           {previewMessage && <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">{previewMessage}</div>}
-          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'MAR authoring will appear after the reviewed setup is installed and this attempt is materialized.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
+          {path === 'manual' && !loading && !setupBlocked && <div className="rounded-md border bg-muted/10 p-3"><div className="mb-2 flex flex-wrap gap-2 text-xs font-medium">{[12, 24, 48, 72].map((landmark) => <span key={landmark} className="rounded border px-2 py-1">{landmark}h</span>)}</div><div className="space-y-2">{timelineEvents.map((event) => <div key={event.id} className="flex flex-wrap items-center gap-3 border-l-2 pl-3 text-sm"><span className="w-12 font-medium">{event.relativeOffsetHours ?? '—'}h</span><span>{event.medicationName}</span><span>{event.status}</span><span className="text-muted-foreground">{event.administeredDose || event.orderedDose || 'Dose undocumented'}</span></div>)}</div></div>}
+          {loading ? <div className="rounded-md border p-6 text-sm text-muted-foreground">Loading medication history…</div> : setupBlocked ? <div className="rounded-md border p-6 text-sm text-muted-foreground">{adminContext ? 'Manual MAR authoring will appear after the packet contract is installed.' : 'Medication history is unavailable for this case.'}</div> : medicationSummaries.length === 0 && path !== 'manual' ? <div className="rounded-md border p-6 text-sm text-muted-foreground">No medications documented.</div> : adminContext ? (
             <div className="overflow-x-auto rounded-md border"><table className="w-full text-sm"><thead><tr className="border-b bg-muted/30 text-left"><th className="p-3">Medication</th><th className="p-3">Ordered dose / route / frequency</th><th className="p-3">Last given</th><th className="p-3">Administration time</th><th className="p-3">Status</th><th className="p-3">Details</th></tr></thead><tbody>{filteredEvents.map((event) => <Fragment key={event.id}><tr className="border-b last:border-0"><td className="p-3 font-medium">{event.medicationName}<div className="text-xs text-muted-foreground">{event.category}{obsoleteKeys.has(event.occurrenceKey) ? ' • obsolete preview occurrence' : ''}</div></td><td className="p-3">{[event.orderedDose, event.unit, event.route, event.frequency].filter(Boolean).join(' • ') || '—'}</td><td className="p-3">{lastGivenLabel(event)}</td><td className="p-3">{eventTimeLabel(event)}</td><td className="p-3"><Select value={event.status} onValueChange={(value: MarStatus) => updateEvent(event.id, { status: value })}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger><SelectContent>{statusOptions.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select></td><td className="p-3"><Button size="sm" variant="ghost" aria-label={`Edit ${event.medicationName}`} onClick={() => beginEdit(event)}><Edit3 className="h-4 w-4" /></Button></td></tr>{editingId === event.id && <tr className="border-b bg-muted/10"><td colSpan={6} className="p-3"><div className="grid grid-cols-1 gap-2 md:grid-cols-4">{(['medicationName','orderedDose','administeredDose','unit','route','frequency','relativeOffsetHours','reason','prnIndication','response','infusionDetails'] as const).map((field) => <Input key={field} aria-label={field} value={field === 'infusionDetails' ? String((editingDraft.infusionDetails as Record<string, unknown> | null | undefined)?.note ?? '') : String(editingDraft[field] ?? '')} onChange={(e) => setEditingDraft((draft) => ({ ...draft, ...(field === 'infusionDetails' ? { infusionDetails: { note: e.target.value } } : { [field]: field === 'relativeOffsetHours' ? Number(e.target.value) : e.target.value }) }))} placeholder={field} />)}</div><div className="mt-2 flex gap-2"><Button size="sm" onClick={commitEdit}>Save edit</Button><Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button></div></td></tr>}</Fragment>)}</tbody></table></div>
           ) : (
             <div className="divide-y rounded-md border">{medicationSummaries.map(({ key, representative, order, administrations }) => { const expanded = expandedMedicationKeys.has(key); const visibleAdministrations = administrations.filter((event) => event.relativeOffsetHours == null || event.relativeOffsetHours <= Number(historyHours)); return <div key={key} className="p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center"><div className="font-medium">{representative.medicationName}</div><div>{[representative.orderedDose, representative.unit].filter(Boolean).join(' ') || 'Dose undocumented'}</div><div>{representative.route || 'Route undocumented'}</div><div>{representative.frequency || 'Frequency undocumented'}<div className="text-xs text-muted-foreground">Last given: {lastGivenLabel(representative, order)}</div></div><Button size="sm" variant="ghost" onClick={() => setExpandedMedicationKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })}>{expanded ? 'Hide history' : 'View history'}</Button></div>{expanded && <div className="mt-3 space-y-1 border-l-2 pl-3 text-sm">{administrations.length ? <>{visibleAdministrations.length === 0 && <p className="text-muted-foreground">No doses in the selected {historyHours} hours. Older history remains available by widening the range.</p>}{administrations.map((event) => <div key={event.id} className={`flex flex-wrap gap-x-3 gap-y-1 ${event.relativeOffsetHours != null && event.relativeOffsetHours > Number(historyHours) ? 'text-muted-foreground' : ''}`}><span>{event.status}</span><span>{event.relativeOffsetHours != null ? `${event.relativeOffsetHours} hours prior` : 'During encounter'}</span><span>{event.administeredDose || 'Dose undocumented'}</span>{event.route && <span>{event.route}</span>}{event.reason && <span>{event.reason}</span>}</div>)}</> : <p className="text-muted-foreground">No documented doses.</p>}</div>}</div>; })}</div>
