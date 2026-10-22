@@ -1,0 +1,99 @@
+DISPOSABLE QA + MANUAL MAR EXACT-SCHEMA TRANSCRIPT
+UTC 2026-10-22T06:28:28Z
+CREATE EXTENSION
+CREATE SCHEMA
+CREATE ROLE
+CREATE ROLE
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+INSERT 0 4
+INSERT 0 4
+INSERT 0 1
+INSERT 0 1
+CREATE ROLE
+CREATE ROLE
+GRANT ROLE
+GRANT
+GRANT
+CREATE TABLE
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+REVOKE
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+GRANT
+GRANT
+GRANT
+CREATE TABLE
+ALTER TABLE
+REVOKE
+ALTER TABLE
+DO
+ALTER TABLE
+CREATE FUNCTION
+psql:/home/skribert/clawd/nursebot-mar-authoring/supabase/migrations/20261021141147_manual_mar_assignment_snapshot_hardening.sql:75: NOTICE:  trigger "manual_mar_snapshot_assignment_insert" for relation "public.student_room_assignments" does not exist, skipping
+DROP TRIGGER
+CREATE TRIGGER
+CREATE FUNCTION
+CREATE FUNCTION
+REVOKE
+REVOKE
+REVOKE
+GRANT
+GRANT
+ALTER TABLE
+psql:/home/skribert/clawd/nursebot-mar-authoring/supabase/migrations/20261021120000_scope_disposable_qa_learners.sql:8: NOTICE:  constraint "student_room_assignments_disposable_qa_sandbox_check" of relation "student_room_assignments" does not exist, skipping
+ALTER TABLE
+ALTER TABLE
+CREATE TABLE
+ALTER TABLE
+REVOKE
+INSERT 0 1
+CREATE FUNCTION
+CREATE FUNCTION
+REVOKE
+GRANT
+REVOKE
+GRANT
+psql:/home/skribert/clawd/nursebot-mar-authoring/supabase/migrations/20261021120000_scope_disposable_qa_learners.sql:85: NOTICE:  policy "Admins manage assignments" for relation "public.student_room_assignments" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+COMMENT
+GRANT
+GRANT
+GRANT
+GRANT
+PRELIGHT NULL checks:
+t|t
+SET ROLE allow/deny checks:
+00000000-0000-0000-0000-000000000001|authenticated
+t
+f
+00000000-0000-0000-0000-000000000002|authenticated
+f
+sandbox invariant:
+ERROR:  new row for relation "student_room_assignments" violates check constraint "student_room_assignments_disposable_qa_sandbox_check"
+DETAIL:  Failing row contains (40000000-0000-0000-0000-000000000001, 00000000-0000-0000-0000-000000000002, 9001, 00000000-0000-0000-0000-000000000001, 10000000-0000-0000-0000-000000000001, null, null, null, null, null, null, null, f, t).
+disposable_qa=true,is_sandbox=false rejected
+four-event manual snapshot/readback:
+00000000-0000-0000-0000-000000000001|authenticated
+{"packetId": "a8cf755e-d750-46d4-942b-d8812e6d1a2a", "revision": 1, "caseVersion": "room-9001-mar-v1"}
+INSERT 0 1
+snapshot_rows=1,event_count=4
+1b895dcc-d329-4b31-8735-2059b986ae96|authenticated
+{"id": "f849b775-b10f-4c1c-b4d4-49e4217f55c9", "events": [{"source": "authored_scenario", "status": "Given", "category": "scheduled", "occurrenceKey": "cef-24", "medicationName": "ceftriaxone", "relativeOffsetHours": 24}, {"reason": "Ordered hold", "source": "authored_scenario", "status": "Held", "category": "prn", "occurrenceKey": "apap-12", "medicationName": "acetaminophen", "relativeOffsetHours": 12}, {"reason": "Patient declined", "source": "authored_scenario", "status": "Refused", "category": "prn", "occurrenceKey": "duoneb-6", "medicationName": "Duoneb", "relativeOffsetHours": 6}, {"source": "authored_scenario", "status": "Not documented", "category": "scheduled", "occurrenceKey": "hep-36", "medicationName": "heparin", "relativeOffsetHours": 36}], "roomId": 9001, "revision": 1, "patientId": "30000000-0000-0000-0000-000000000001", "updatedAt": "2026-10-22T06:28:29.282487+00:00", "caseVersion": "room-9001-mar-v1"}
+rollback/stop: migration runner is ON_ERROR_STOP=1; no production target, no rollback applied.
+PASS: exact disposable QA, NULL/preflight, SET ROLE allow/deny, sandbox invariant, and one immutable four-event snapshot/readback.

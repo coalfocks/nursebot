@@ -61,3 +61,36 @@ audiences or make onboarding mandatory.
    one newly authorized request; never replay it blindly.
 5. Owner review is required before applying the migration or creating the
    assignment.
+
+## Reproducible isolated evidence
+
+The exact-schema runner is
+`scripts/run-disposable-qa-manual-mar-exact.sh`; it requires
+`MAR_QA_DISPOSABLE=1`, uses a disposable PostgreSQL 15 container, applies the
+unchanged 120000 contract plus manual packet/snapshot hardening, and runs with
+`ON_ERROR_STOP=1`. The captured passing transcript is
+`docs/reviews/2026-10-22-disposable-qa-manual-mar-exact.transcript.txt`.
+
+The transcript proves NULL/preflight rejection, authenticated superadmin
+allow, non-superadmin denial, cross-school denial, the
+`disposable_qa=true,is_sandbox=false` constraint rejection, one assignment
+snapshot containing exactly four events, and learner assignment-scoped
+readback. It is disposable-only; no production connection or rollback was
+used. Stop/rollback is simply container teardown because no remote state is
+changed.
+
+## Supported student content repair
+
+The review-only migration
+`supabase/migrations/20261022063000_student_library_versioned_content_repair.sql`
+(SHA-256 `b3081facd7a202c1223dcf4cfe018d140a76da588327c77e7cd511d1ab437900`)
+creates six new `student` video IDs from the six verified published,
+processing-ready media objects, then repoints only the optional preview's
+course items. It does not change the six `test_room` rows, learner progress,
+completion records, or `is_mandatory=false`. The mounted player test is
+`src/pages/StudentWalkthroughVideos.test.tsx`; it verifies a signed media URL
+renders in the student player while optional-course messaging remains visible.
+
+This content migration remains unapplied and requires the same owner review as
+the QA dependency. It is independent of timeline migrations `224401` and
+`032351`.
