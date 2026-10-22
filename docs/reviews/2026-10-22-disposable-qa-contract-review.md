@@ -7,10 +7,11 @@ clinical data change was performed.
 ## Exact dependency
 
 - Migration: `supabase/migrations/20261021120000_scope_disposable_qa_learners.sql`
-- SHA-256: `5f3ce5f090153ce279ff6fc20ffc177a541b5da373b1dfeb6635fe53a0c90bdb`
+- SHA-256: `6dbd1d54adb88ffbe2b2ecd62aa27aa0012a7e89528fc46fd6e6e730cad6db3f`
 - Purpose: add the `student_room_assignments.disposable_qa` discriminator,
-  allow-list `1b895dcc-d329-4b31-8735-2059b986ae96`, and enforce the
+  allow-list `1b895dcc-d329-4b31-8735-2059b986ae96`, enforce the
   superadmin/synthetic-learner/same-school/active-room/program boundary.
+  It also rejects any `disposable_qa=true` row that is not `is_sandbox=true`.
 - Separate from held timeline migrations `20261021224401` and
   `20261022032351`; neither is a prerequisite for this contract.
 

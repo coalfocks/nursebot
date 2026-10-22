@@ -4,6 +4,12 @@
 alter table public.student_room_assignments
   add column if not exists disposable_qa boolean not null default false;
 
+alter table public.student_room_assignments
+  drop constraint if exists student_room_assignments_disposable_qa_sandbox_check;
+alter table public.student_room_assignments
+  add constraint student_room_assignments_disposable_qa_sandbox_check
+  check (not disposable_qa or is_sandbox);
+
 create table if not exists public.disposable_qa_authorized_learners (
   profile_id uuid primary key references public.profiles(id) on delete cascade,
   enabled boolean not null default true,

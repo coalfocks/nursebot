@@ -343,6 +343,16 @@ export default function AssignmentManager() {
       // database trigger still pins the immutable room snapshot on insert.
       // The stable row ID plus read-back makes an unknown retry idempotent.
       const assignment = request.assignments[0];
+      const readiness = await callGeneratedRpc('can_create_disposable_qa_assignment', {
+        requested_student_id: assignment.student_id,
+        requested_room_id: assignment.room_id,
+        requested_school_id: assignment.school_id,
+      });
+      if (readiness.error || readiness.data !== true) {
+        const error = new Error(readiness.error?.message ?? 'Disposable QA server contract is not ready for this learner and room.');
+        (error as Error & { code?: string }).code = 'DISPOSABLE_QA_NOT_READY';
+        throw error;
+      }
       const { error } = await supabase
         .from('student_room_assignments')
         .insert({ ...assignment, is_sandbox: true, disposable_qa: true })

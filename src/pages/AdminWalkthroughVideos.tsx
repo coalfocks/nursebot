@@ -122,15 +122,18 @@ export function CourseEditor() {
   const [loading, setLoading] = useState(Boolean(courseId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [selectedVersions, setSelectedVersions] = useState<Record<string, number>>({});
 
-  useEffect(() => { void (async () => { const videoResult = await supabase.from('walkthrough_videos').select('*').in('audience', ['admin', 'student', 'test_room', 'both']).eq('status', 'published').order('title'); setVideos(videoResult.data ?? []); if (!courseId) { setLoading(false); return; } const courseResult = await supabase.from('walkthrough_courses').select('*').eq('id', courseId).single(); const itemResult = await supabase.from('walkthrough_course_items').select('*').eq('course_id', courseId).eq('course_version', courseResult.data?.version ?? 1).order('position'); if (courseResult.error) setError(courseResult.error.message); else setCourse(courseResult.data); setSelectedIds((itemResult.data ?? []).sort((a, b) => a.position - b.position).map((item) => item.video_id)); setLoading(false); })(); }, [courseId]);
+  useEffect(() => { void (async () => { const videoResult = await supabase.from('walkthrough_videos').select('*').in('audience', ['admin', 'student', 'test_room', 'both']).eq('status', 'published').order('title'); setVideos(videoResult.data ?? []); if (!courseId) { setLoading(false); return; } const courseResult = await supabase.from('walkthrough_courses').select('*').eq('id', courseId).single(); const itemResult = await supabase.from('walkthrough_course_items').select('*').eq('course_id', courseId).eq('course_version', courseResult.data?.version ?? 1).order('position'); if (courseResult.error) setError(courseResult.error.message); else setCourse(courseResult.data); const existingItems = itemResult.data ?? []; setSelectedIds(existingItems.sort((a, b) => a.position - b.position).map((item) => item.video_id)); setSelectedVersions(Object.fromEntries(existingItems.map((item) => [item.video_id, item.video_version]))); setLoading(false); })(); }, [courseId]);
   const orderedVideos = selectedIds.map((id) => videos.find((video) => video.id === id)).filter(Boolean) as Video[];
-  const addVideo = (id: string) => { if (id && !selectedIds.includes(id)) setSelectedIds([...selectedIds, id]); };
+  const addVideo = (id: string) => { const video = videos.find((entry) => entry.id === id); if (id && video && !selectedIds.includes(id)) { setSelectedIds([...selectedIds, id]); setSelectedVersions({ ...selectedVersions, [id]: video.version }); } };
   const move = (index: number, direction: -1 | 1) => { const next = [...selectedIds]; const target = index + direction; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; setSelectedIds(next); };
   const save = async (publish: boolean) => {
     if (!user || !course.title?.trim()) return;
     setSaving(true); setError('');
     if (publish && selectedIds.length === 0) { setError('Add at least one published administrator video before publishing this course.'); setSaving(false); return; }
+    const unresolvedSelectedIds = selectedIds.filter((id) => { const video = videos.find((entry) => entry.id === id); return !video || selectedVersions[id] !== video.version; });
+    if (unresolvedSelectedIds.length > 0) { setError('This course contains a missing or version-unresolved video selection. Reload the published video list and select a supported version before saving.'); setSaving(false); return; }
     if (publish && orderedVideos.some((video) => !isWalkthroughAudienceCompatible(course.audience ?? 'admin', video.audience))) { setError('This course contains a video that is not compatible with its audience. Remove it or change the video audience before publishing.'); setSaving(false); return; }
     if (publish && (course.audience === 'student' || course.audience === 'both') && orderedVideos.some((video) => !video.onboarding_eligible)) { setError('Student onboarding cannot include optional reference videos. Mark sign-in help and other references as optional, or remove them from this course.'); setSaving(false); return; }
     if (publish && orderedVideos.some((video) => getWalkthroughPublicationError(video.transcript))) { setError('This course contains a video with unsafe shared-password advice. Review the video transcript before publishing.'); setSaving(false); return; }
@@ -139,7 +142,7 @@ export function CourseEditor() {
     const saved = result.data;
     const deleteResult = await supabase.from('walkthrough_course_items').delete().eq('course_id', saved.id).eq('course_version', saved.version);
     if (deleteResult.error) { setError(deleteResult.error.message); setSaving(false); return; }
-    const itemResult = selectedIds.length ? await supabase.from('walkthrough_course_items').insert(selectedIds.map((videoId, position) => ({ course_id: saved.id, course_version: saved.version, video_id: videoId, video_version: videos.find((video) => video.id === videoId)?.version ?? 1, position, required: true }))) : { error: null };
+    const itemResult = selectedIds.length ? await supabase.from('walkthrough_course_items').insert(selectedIds.map((videoId, position) => ({ course_id: saved.id, course_version: saved.version, video_id: videoId, video_version: selectedVersions[videoId], position, required: true }))) : { error: null };
     if (itemResult.error) setError(itemResult.error.message);
     else if (publish) { const published = await supabase.from('walkthrough_courses').update({ status: 'published' }).eq('id', saved.id).eq('version', saved.version); if (published.error) setError(published.error.message); else navigate('/admin/walkthrough-videos'); }
     else setCourse(saved);
