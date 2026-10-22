@@ -48,7 +48,9 @@ insert into public.profiles values
  ('00000000-0000-0000-0000-000000000003','student','20000000-0000-0000-0000-000000000002','medical'),
  ('1b895dcc-d329-4b31-8735-2059b986ae96','student','10000000-0000-0000-0000-000000000001','medical');
 insert into public.patients values ('30000000-0000-0000-0000-000000000001');
-insert into public.rooms values (9001,'30000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','{}',true,'medical');
+insert into public.rooms values
+ (9001,'30000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','{}',true,'medical'),
+ (9002,'30000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000002',array['20000000-0000-0000-0000-000000000002'::uuid],true,'medical');
 create role qa_author login password 'qa-author';
 create role qa_student login password 'qa-student';
 grant authenticated to qa_author, qa_student;
@@ -75,11 +77,11 @@ SQL
   PGPASSWORD='qa-author' psql -h 127.0.0.1 -p "$PORT" -U qa_author -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false), set_config('request.jwt.claim.role','authenticated',false);
 select public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9001,'10000000-0000-0000-0000-000000000001') as allowed;
-select public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9001,'20000000-0000-0000-0000-000000000002') as cross_school_denied;
+select public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9002,'10000000-0000-0000-0000-000000000001') as school_restricted_room_denied;
 SQL
   ALLOW_DENY="$(PGPASSWORD='qa-author' psql -h 127.0.0.1 -p "$PORT" -U qa_author -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false), set_config('request.jwt.claim.role','authenticated',false);
-select public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9001,'10000000-0000-0000-0000-000000000001'), public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9001,'20000000-0000-0000-0000-000000000002');
+select public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9001,'10000000-0000-0000-0000-000000000001'), public.can_create_disposable_qa_assignment('1b895dcc-d329-4b31-8735-2059b986ae96',9002,'10000000-0000-0000-0000-000000000001');
 SQL
 )"
   [[ "$ALLOW_DENY" == *'t|f' ]] || { echo "allow/deny assertion failed: $ALLOW_DENY" >&2; exit 1; }
@@ -98,7 +100,7 @@ SQL
   echo 'four-event manual snapshot/readback:'
   PGPASSWORD='qa-author' psql -h 127.0.0.1 -p "$PORT" -U qa_author -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false), set_config('request.jwt.claim.role','authenticated',false);
-select public.save_manual_mar_packet('50000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001',9001,'room-9001-mar-v1',0,'[{"medicationName":"ceftriaxone","occurrenceKey":"cef-24","category":"scheduled","status":"Given","relativeOffsetHours":24,"source":"authored_scenario"},{"medicationName":"acetaminophen","occurrenceKey":"apap-12","category":"prn","status":"Held","relativeOffsetHours":12,"reason":"Ordered hold","source":"authored_scenario"},{"medicationName":"Duoneb","occurrenceKey":"duoneb-6","category":"prn","status":"Refused","relativeOffsetHours":6,"reason":"Patient declined","source":"authored_scenario"},{"medicationName":"heparin","occurrenceKey":"hep-36","category":"scheduled","status":"Not documented","relativeOffsetHours":36,"source":"authored_scenario"}]'::jsonb);
+select public.save_manual_mar_packet('50000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001',9001,'room-9001-mar-v1',0,'[{"medicationName":"ceftriaxone","orderedDose":"2 g","administeredDose":"2 g","unit":"g","route":"IV","frequency":"daily","occurrenceKey":"cef-24","category":"scheduled","status":"Given","relativeOffsetHours":24,"source":"authored_scenario"},{"medicationName":"acetaminophen","orderedDose":"650 mg","administeredDose":null,"unit":"mg","route":"PO","frequency":"q6h PRN","occurrenceKey":"apap-12","category":"prn","status":"Held","relativeOffsetHours":12,"reason":"Ordered hold","source":"authored_scenario"},{"medicationName":"Duoneb","orderedDose":"3 mL","administeredDose":null,"unit":"mL","route":"INH","frequency":"q2h PRN","occurrenceKey":"duoneb-6","category":"prn","status":"Refused","relativeOffsetHours":6,"reason":"Patient declined","source":"authored_scenario"},{"medicationName":"heparin","orderedDose":"5000 units","administeredDose":null,"unit":"units","route":"SQ","frequency":"q8h","occurrenceKey":"hep-36","category":"scheduled","status":"Not documented","relativeOffsetHours":36,"source":"authored_scenario"}]'::jsonb);
 insert into public.student_room_assignments(id,student_id,room_id,assigned_by,school_id,learner_program,status,case_key_version,is_sandbox,disposable_qa) values ('40000000-0000-0000-0000-000000000002','1b895dcc-d329-4b31-8735-2059b986ae96',9001,'00000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','medical','assigned','room-9001-mar-v1',true,true);
 SQL
   SNAPSHOT_COUNTS="$("${PG[@]}" -Atc "select count(*) || '|' || coalesce(max(jsonb_array_length(events)),0) from public.manual_mar_assignment_snapshots where assignment_id='40000000-0000-0000-0000-000000000002';")"
@@ -117,7 +119,7 @@ select public.get_manual_mar_packet('30000000-0000-0000-0000-000000000001',9001,
 SQL
   PGPASSWORD='qa-author' psql -h 127.0.0.1 -p "$PORT" -U qa_author -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000001',false), set_config('request.jwt.claim.role','authenticated',false);
-select public.save_manual_mar_packet('50000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000001',9001,'room-9001-mar-v1',1,'[{"medicationName":"ceftriaxone","occurrenceKey":"cef-24","category":"scheduled","status":"Held","relativeOffsetHours":24,"source":"authored_scenario"},{"medicationName":"acetaminophen","occurrenceKey":"apap-12","category":"prn","status":"Held","relativeOffsetHours":12,"reason":"Ordered hold","source":"authored_scenario"},{"medicationName":"Duoneb","occurrenceKey":"duoneb-6","category":"prn","status":"Refused","relativeOffsetHours":6,"reason":"Patient declined","source":"authored_scenario"},{"medicationName":"heparin","occurrenceKey":"hep-36","category":"scheduled","status":"Not documented","relativeOffsetHours":36,"source":"authored_scenario"}]'::jsonb);
+select public.save_manual_mar_packet('50000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000001',9001,'room-9001-mar-v1',1,'[{"medicationName":"ceftriaxone","orderedDose":"2 g","administeredDose":"2 g","unit":"g","route":"IV","frequency":"daily","occurrenceKey":"cef-24","category":"scheduled","status":"Held","relativeOffsetHours":24,"source":"authored_scenario"},{"medicationName":"acetaminophen","orderedDose":"650 mg","administeredDose":null,"unit":"mg","route":"PO","frequency":"q6h PRN","occurrenceKey":"apap-12","category":"prn","status":"Held","relativeOffsetHours":12,"reason":"Ordered hold","source":"authored_scenario"},{"medicationName":"Duoneb","orderedDose":"3 mL","administeredDose":null,"unit":"mL","route":"INH","frequency":"q2h PRN","occurrenceKey":"duoneb-6","category":"prn","status":"Refused","relativeOffsetHours":6,"reason":"Patient declined","source":"authored_scenario"},{"medicationName":"heparin","orderedDose":"5000 units","administeredDose":null,"unit":"units","route":"SQ","frequency":"q8h","occurrenceKey":"hep-36","category":"scheduled","status":"Not documented","relativeOffsetHours":36,"source":"authored_scenario"}]'::jsonb);
 SQL
   FROZEN_READBACK="$(PGPASSWORD='qa-student' psql -h 127.0.0.1 -p "$PORT" -U qa_student -d postgres -v ON_ERROR_STOP=1 -At <<'SQL'
 select set_config('request.jwt.claim.sub','1b895dcc-d329-4b31-8735-2059b986ae96',false), set_config('request.jwt.claim.role','authenticated',false);
@@ -126,6 +128,8 @@ SQL
 )"
   [[ "$FROZEN_READBACK" == *'"revision": 1'* ]] || { echo 'snapshot revision changed' >&2; exit 1; }
   [[ "$(grep -o '"occurrenceKey"' <<<"$FROZEN_READBACK" | wc -l | tr -d ' ')" == 4 ]] || { echo 'snapshot event count changed' >&2; exit 1; }
+  FULL_FROZEN="$("${PG[@]}" -Atc "select events = '[{\"medicationName\":\"ceftriaxone\",\"orderedDose\":\"2 g\",\"administeredDose\":\"2 g\",\"unit\":\"g\",\"route\":\"IV\",\"frequency\":\"daily\",\"occurrenceKey\":\"cef-24\",\"category\":\"scheduled\",\"status\":\"Given\",\"relativeOffsetHours\":24,\"source\":\"authored_scenario\"},{\"medicationName\":\"acetaminophen\",\"orderedDose\":\"650 mg\",\"administeredDose\":null,\"unit\":\"mg\",\"route\":\"PO\",\"frequency\":\"q6h PRN\",\"occurrenceKey\":\"apap-12\",\"category\":\"prn\",\"status\":\"Held\",\"relativeOffsetHours\":12,\"reason\":\"Ordered hold\",\"source\":\"authored_scenario\"},{\"medicationName\":\"Duoneb\",\"orderedDose\":\"3 mL\",\"administeredDose\":null,\"unit\":\"mL\",\"route\":\"INH\",\"frequency\":\"q2h PRN\",\"occurrenceKey\":\"duoneb-6\",\"category\":\"prn\",\"status\":\"Refused\",\"relativeOffsetHours\":6,\"reason\":\"Patient declined\",\"source\":\"authored_scenario\"},{\"medicationName\":\"heparin\",\"orderedDose\":\"5000 units\",\"administeredDose\":null,\"unit\":\"units\",\"route\":\"SQ\",\"frequency\":\"q8h\",\"occurrenceKey\":\"hep-36\",\"category\":\"scheduled\",\"status\":\"Not documented\",\"relativeOffsetHours\":36,\"source\":\"authored_scenario\"}]'::jsonb from public.manual_mar_assignment_snapshots where assignment_id='40000000-0000-0000-0000-000000000002';")"
+  [[ "$FULL_FROZEN" == 't' ]] || { echo "full frozen event equality failed: $FULL_FROZEN" >&2; exit 1; }
   echo 'rollback/stop: migration runner is ON_ERROR_STOP=1; no production target, no rollback applied.'
   echo 'PASS: exact disposable QA, NULL/preflight, SET ROLE allow/deny, sandbox invariant, and one immutable four-event snapshot/readback.'
 } 2>&1 | tee "$OUT"

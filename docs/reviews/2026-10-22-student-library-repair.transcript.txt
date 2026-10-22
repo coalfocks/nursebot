@@ -1,0 +1,25 @@
+STUDENT LIBRARY VERSIONED REPAIR TRANSCRIPT
+UTC 2026-10-22T07:32:43Z
+CREATE EXTENSION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+INSERT 0 6
+INSERT 0 1
+INSERT 0 6
+INSERT 0 1
+INSERT 0 1
+BEGIN
+DO
+DO
+INSERT 0 6
+INSERT 0 1
+INSERT 0 6
+UPDATE 1
+DO
+COMMIT
+raw_readback=6\|6\|6\|6\|1\|1\|false
+readback=6|6|6|6|1|1|false (old items|new items|Test Room videos|student videos|enrollments|progress|new mandatory)
+PASS: atomic versioned repair preserved old v1/progress and created six student-playable records in a separate optional course.

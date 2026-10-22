@@ -1,5 +1,5 @@
 DISPOSABLE QA + MANUAL MAR EXACT-SCHEMA TRANSCRIPT
-UTC 2026-10-22T07:01:06Z
+UTC 2026-10-22T07:30:45Z
 CREATE EXTENSION
 CREATE SCHEMA
 CREATE ROLE
@@ -15,7 +15,7 @@ ALTER TABLE
 INSERT 0 4
 INSERT 0 4
 INSERT 0 1
-INSERT 0 1
+INSERT 0 2
 CREATE ROLE
 CREATE ROLE
 GRANT ROLE
@@ -89,14 +89,14 @@ DETAIL:  Failing row contains (40000000-0000-0000-0000-000000000001, 00000000-00
 disposable_qa=true,is_sandbox=false rejected
 four-event manual snapshot/readback:
 00000000-0000-0000-0000-000000000001|authenticated
-{"packetId": "85ccd537-645b-4e31-a4c7-a8d8b2921446", "revision": 1, "caseVersion": "room-9001-mar-v1"}
+{"packetId": "50059fb2-3e42-41bf-a518-67d5a4629a7e", "revision": 1, "caseVersion": "room-9001-mar-v1"}
 INSERT 0 1
 00000000-0000-0000-0000-000000000002|authenticated
 ERROR:  new row violates row-level security policy for table "student_room_assignments"
 unauthorized student INSERT rejected
 1b895dcc-d329-4b31-8735-2059b986ae96|authenticated
-{"id": "e57e0637-1183-432f-a5f9-9927f85cba8f", "events": [{"source": "authored_scenario", "status": "Given", "category": "scheduled", "occurrenceKey": "cef-24", "medicationName": "ceftriaxone", "relativeOffsetHours": 24}, {"reason": "Ordered hold", "source": "authored_scenario", "status": "Held", "category": "prn", "occurrenceKey": "apap-12", "medicationName": "acetaminophen", "relativeOffsetHours": 12}, {"reason": "Patient declined", "source": "authored_scenario", "status": "Refused", "category": "prn", "occurrenceKey": "duoneb-6", "medicationName": "Duoneb", "relativeOffsetHours": 6}, {"source": "authored_scenario", "status": "Not documented", "category": "scheduled", "occurrenceKey": "hep-36", "medicationName": "heparin", "relativeOffsetHours": 36}], "roomId": 9001, "revision": 1, "patientId": "30000000-0000-0000-0000-000000000001", "updatedAt": "2026-10-22T07:01:06.417476+00:00", "caseVersion": "room-9001-mar-v1"}
+{"id": "4daa381a-fb5c-440e-962a-589b888fce79", "events": [{"unit": "g", "route": "IV", "source": "authored_scenario", "status": "Given", "category": "scheduled", "frequency": "daily", "orderedDose": "2 g", "occurrenceKey": "cef-24", "medicationName": "ceftriaxone", "administeredDose": "2 g", "relativeOffsetHours": 24}, {"unit": "mg", "route": "PO", "reason": "Ordered hold", "source": "authored_scenario", "status": "Held", "category": "prn", "frequency": "q6h PRN", "orderedDose": "650 mg", "occurrenceKey": "apap-12", "medicationName": "acetaminophen", "administeredDose": null, "relativeOffsetHours": 12}, {"unit": "mL", "route": "INH", "reason": "Patient declined", "source": "authored_scenario", "status": "Refused", "category": "prn", "frequency": "q2h PRN", "orderedDose": "3 mL", "occurrenceKey": "duoneb-6", "medicationName": "Duoneb", "administeredDose": null, "relativeOffsetHours": 6}, {"unit": "units", "route": "SQ", "source": "authored_scenario", "status": "Not documented", "category": "scheduled", "frequency": "q8h", "orderedDose": "5000 units", "occurrenceKey": "hep-36", "medicationName": "heparin", "administeredDose": null, "relativeOffsetHours": 36}], "roomId": 9001, "revision": 1, "patientId": "30000000-0000-0000-0000-000000000001", "updatedAt": "2026-10-22T07:30:46.197421+00:00", "caseVersion": "room-9001-mar-v1"}
 00000000-0000-0000-0000-000000000001|authenticated
-{"packetId": "85ccd537-645b-4e31-a4c7-a8d8b2921446", "revision": 2, "caseVersion": "room-9001-mar-v1"}
+{"packetId": "50059fb2-3e42-41bf-a518-67d5a4629a7e", "revision": 2, "caseVersion": "room-9001-mar-v1"}
 rollback/stop: migration runner is ON_ERROR_STOP=1; no production target, no rollback applied.
 PASS: exact disposable QA, NULL/preflight, SET ROLE allow/deny, sandbox invariant, and one immutable four-event snapshot/readback.

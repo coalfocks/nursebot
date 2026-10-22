@@ -51,8 +51,10 @@ audiences or make onboarding mandatory.
 
 1. Apply only this migration to a disposable schema and capture stdout/stderr.
 2. Prove authenticated superadmin + allow-listed synthetic learner + eligible
-   same-school room succeeds; prove non-superadmin, non-allow-listed learner,
-   cross-school room, inactive room, wrong program, and anon fail.
+   same-school room succeeds; with that same learner and requested school A,
+   prove a valid active medical room restricted to school B is denied, while
+   the eligible room is allowed. Also prove non-superadmin, non-allow-listed
+   learner, inactive room, wrong program, and anon fail.
 3. Prove `disposable_qa=true` cannot be inserted with `is_sandbox=false` and
    that a successful insert produces exactly one immutable manual assignment
    snapshot/readback for the new assignment.
@@ -76,17 +78,52 @@ four-event snapshot. The captured passing transcript is
 `docs/reviews/2026-10-22-disposable-qa-manual-mar-exact.transcript.txt`.
 
 The transcript proves authenticated NULL/preflight rejection, authenticated
-superadmin allow, non-superadmin denial, a valid allow-listed learner against a
-cross-school envelope, unauthorized INSERT denial, the
+superadmin allow, non-superadmin denial, the same valid allow-listed learner
+against an eligible room and a nonempty school-B-restricted room (allowed and
+denied respectively), unauthorized INSERT denial, the
 `disposable_qa=true,is_sandbox=false` constraint rejection, one assignment
 snapshot containing exactly four events, and learner assignment-scoped
-readback after the source packet advances to revision 2. It is
-disposable-only and does not prove production policy behavior. Stop/rollback
-for the runner is container teardown; production execution remains a separate
-owner-reviewed transaction. If production execution is stopped before commit,
-the transaction is rolled back. After commit, no blind down migration is
-authorized: a reviewed compensating migration may remove only the new QA
-objects after proving zero dependent assignments/progress.
+readback after the source packet advances to revision 2. The frozen assertion
+compares the complete original event JSON, including dose, route, frequency,
+status, exact hour, and reason. It is disposable-only and does not prove
+production policy behavior. Stop/rollback for the runner is container
+teardown; production execution remains a separate owner-reviewed transaction.
+
+## Minimal production owner packet
+
+Target: Supabase project `lvpbwtfvairspufrashl` (`sb1-v84f4fhg`). This packet
+is read-only guidance; no production migration or assignment operation was
+performed.
+
+- Dependency ledger: preflight the remote migration ledger and apply only
+  `20261021120000_scope_disposable_qa_learners.sql` after review. Its manual
+  packet prerequisites are the already-applied `20261021130000` and
+  `20261021141147` contracts. The held timeline migrations `224401` and
+  `032351` are unrelated and must remain separate.
+- Schema/preflight: verify `student_room_assignments.disposable_qa`, the
+  `is_sandbox` constraint, `can_create_disposable_qa_assignment`, the
+  assignment policies, and the manual snapshot/read RPC surface exist in the
+  reviewed shape; verify target IDs have no conflicts and request
+  `9bd2dcbd-4bd5-4c16-a3d6-bd030f3941c1` still has no assignment row or
+  snapshot.
+- Grants: confirm direct table access remains revoked as specified by the
+  manual contract, RLS is enabled, and only the reviewed authenticated RPC
+  execution grants/policies are present. Run actual `SET ROLE` author,
+  student, and anon allow/deny checks against a valid school-A envelope and
+  school-B-restricted room; do not treat postgres-session booleans as proof.
+- Stop rule: abort before commit on any ledger, schema, grant, policy, target
+  ID, or request-reconciliation mismatch. Reconcile the expired scheduling
+  window and confirmed no-commit state before issuing exactly one new
+  authorized request; never replay the expired request blindly.
+- Rollback: before commit, rollback the transaction. After commit, do not use
+  a blind down migration; use a separately reviewed compensating migration
+  only after proving zero dependent assignments/snapshots/progress and naming
+  every newly created ID. Existing room 118, MAR events, old pins, and the
+  expired request are preserved.
+
+The disposable fixture proves the contract shape and immutable snapshot
+behavior, not production policy or live storage access. Production owner
+preflight and execution remain required.
 
 ## Supported student content repair
 
@@ -104,4 +141,11 @@ renders in the student player while optional-course messaging remains visible.
 
 This content migration remains unapplied and requires the same owner review as
 the QA dependency. It is independent of timeline migrations `224401` and
-`032351`.
+`032351`. Its exact isolated readback runner is
+`scripts/qa/run-student-library-repair-isolated.sh`; the passing transcript is
+`docs/reviews/2026-10-22-student-library-repair.transcript.txt` and asserts
+`6|6|6|6|1|1|false` (old items, new items, Test Room videos, student videos,
+enrollments, progress, new mandatory flag). This verifies migration
+transaction/count/ID-conflict behavior in a disposable schema only. The
+mounted player test remains rendering-only; real student storage authorization
+and playable-media acceptance are still pending Codex review.
