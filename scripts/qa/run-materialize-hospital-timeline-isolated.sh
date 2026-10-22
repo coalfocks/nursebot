@@ -11,9 +11,12 @@ trap cleanup EXIT
 exec > >(tee "$TRANSCRIPT") 2>&1
 echo "runner=$(basename "$0")"
 echo "mode=read-only production schema dump + disposable PostgreSQL"
+echo "stream_capture=combined stdout+stderr"
 echo "migration_sha256=$(sha256sum "$ROOT_DIR/supabase/migrations/20261021224401_fix_timeline_materialization_conflict_predicate.sql" | awk '{print $1}')"
 echo "compatibility_sha256=$(sha256sum "$ROOT_DIR/supabase/migrations/20261022032351_add_lab_results_case_blueprint_provenance.sql" | awk '{print $1}')"
 echo "prior_function_sha256=$(sha256sum "$ROOT_DIR/docs/reviews/2026-10-22-materialize_hospital_timeline.prior.sql" | awk '{print $1}')"
+echo "exact_test_sha256=$(sha256sum "$ROOT_DIR/supabase/tests/20261022_materialize_hospital_timeline_exact_schema.sql" | awk '{print $1}')"
+echo "runner_sha256=$(sha256sum "$ROOT_DIR/scripts/qa/run-materialize-hospital-timeline-isolated.sh" | awk '{print $1}')"
 
 supabase db dump --linked --schema public --file "$TMP_DIR/public-schema.sql"
 echo "production_public_schema_dump_sha256=$(sha256sum "$TMP_DIR/public-schema.sql" | awk '{print $1}')"

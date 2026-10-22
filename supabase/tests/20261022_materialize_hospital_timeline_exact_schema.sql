@@ -38,6 +38,42 @@ where table_schema = 'public'
     or (table_name = 'lab_results' and column_name = 'case_blueprint_id')
     or (table_name = 'imaging_studies' and column_name = 'case_blueprint_id'));
 
+do $$
+declare
+  v_index_count integer;
+  v_policy_count integer;
+begin
+  if to_regprocedure('public.materialize_hospital_timeline(integer,uuid,uuid,uuid,jsonb,text,timestamptz)') is null then
+    raise exception 'preflight failed: materialize_hospital_timeline is missing';
+  end if;
+  select count(*) into v_index_count
+  from pg_index i
+  join pg_class c on c.oid = i.indexrelid
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relname in ('clinical_notes_room_timeline_entry_uidx', 'lab_results_room_timeline_entry_uidx', 'vital_signs_room_timeline_entry_uidx', 'imaging_studies_room_timeline_entry_uidx')
+    and pg_get_expr(i.indpred, i.indrelid) like '%room_id IS NOT NULL%'
+    and pg_get_expr(i.indpred, i.indrelid) like '%timeline_entry_id IS NOT NULL%'
+    and pg_get_expr(i.indpred, i.indrelid) like '%deleted_at IS NULL%';
+  if v_index_count <> 4 then raise exception 'preflight failed: expected 4 partial provenance indexes, got %', v_index_count; end if;
+  if not has_function_privilege('authenticated', 'public.materialize_hospital_timeline(integer,uuid,uuid,uuid,jsonb,text,timestamptz)', 'execute') then
+    raise exception 'preflight failed: authenticated execute grant is absent';
+  end if;
+  if has_function_privilege('anon', 'public.materialize_hospital_timeline(integer,uuid,uuid,uuid,jsonb,text,timestamptz)', 'execute') then
+    raise exception 'preflight failed: anon execute grant is present';
+  end if;
+  if (select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relname in ('clinical_notes','lab_results','vital_signs','imaging_studies') and c.relrowsecurity) <> 4 then
+    raise exception 'preflight failed: chart RLS is not enabled on all four tables';
+  end if;
+  select count(*) into v_policy_count
+  from pg_policies
+  where schemaname = 'public' and policyname = 'allow authenticated write'
+    and tablename in ('clinical_notes','lab_results','vital_signs','imaging_studies');
+  if v_policy_count <> 4 then raise exception 'preflight failed: expected 4 authenticated chart write policies, got %', v_policy_count; end if;
+  raise notice 'BOOLEAN PREFLIGHTS: PASS';
+end
+$$;
+
 \echo '== production branch column/type readback before compatibility packet =='
 with referenced(table_name, column_name) as (
   values
@@ -53,11 +89,29 @@ order by r.table_name, r.column_name;
 
 set session_replication_role = replica;
 insert into public.schools (id, name, slug) values ('00000000-0000-4000-8000-000000000001', 'Isolated Review School', 'isolated-review');
+insert into public.schools (id, name, slug) values ('00000000-0000-4000-8000-000000000099', 'Other Review School', 'other-review');
 insert into public.rooms (id, room_number, school_id, learner_program, bedside_requirement, patient_id)
 values (900001, 'ISOLATED-42P10', '00000000-0000-4000-8000-000000000001', 'medical', 'situational', '00000000-0000-4000-8000-000000000002');
 insert into public.patients (id, school_id, room_id, mrn, first_name, last_name, date_of_birth, gender)
 values ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 900001, 'ISOLATED-42P10', 'Isolated', 'Fixture', '1990-01-01', 'Other');
 set session_replication_role = origin;
+
+create or replace function auth.uid() returns uuid
+language sql stable
+as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+
+insert into auth.users (id) values
+  ('00000000-0000-4000-8000-000000000010'),
+  ('00000000-0000-4000-8000-000000000011'),
+  ('00000000-0000-4000-8000-000000000012');
+insert into public.profiles (id, full_name, study_year, school_id, role, email, learner_program, is_admin)
+values
+  ('00000000-0000-4000-8000-000000000010', 'Isolated Author', 1, '00000000-0000-4000-8000-000000000001', 'school_admin', 'isolated-author@example.test', 'medical', true),
+  ('00000000-0000-4000-8000-000000000011', 'Isolated Student', 1, '00000000-0000-4000-8000-000000000001', 'student', 'isolated-student@example.test', 'medical', false),
+  ('00000000-0000-4000-8000-000000000012', 'Other School Author', 1, '00000000-0000-4000-8000-000000000099', 'school_admin', 'other-school@example.test', 'medical', true);
+
+create temp table _role_checks (check_name text primary key, passed boolean not null, detail text);
+grant select, insert on _role_checks to authenticated, anon;
 create temp table _initial_room_state as
 select hospital_timeline, hospital_stay_days, encounter_type, nurse_context
 from public.rooms where id = 900001;
@@ -65,6 +119,7 @@ from public.rooms where id = 900001;
 \set timeline '{"encounterType":"inpatient","stayDays":1,"entries":[{"id":"note-1","kind":"admission","hospitalDay":1,"relativeHoursBeforeEncounter":24,"title":"Admission","content":"Exact-schema fixture"},{"id":"lab-1","kind":"lab","hospitalDay":1,"relativeHoursBeforeEncounter":18,"title":"CBC","content":"WBC","analyte":"WBC","value":"7","unit":"K/uL"},{"id":"vital-1","kind":"vital","hospitalDay":1,"relativeHoursBeforeEncounter":12,"title":"Vitals","content":"Stable","vitals":{"heartRate":72}},{"id":"image-1","kind":"imaging","hospitalDay":1,"relativeHoursBeforeEncounter":6,"title":"Chest study","content":"No acute finding","studyType":"Chest radiograph","report":"No acute finding"}]}'
 create temp table _runner_timeline (value jsonb);
 insert into _runner_timeline values (:'timeline'::jsonb);
+grant select on _runner_timeline to authenticated, anon;
 
 do $$
 begin
@@ -156,6 +211,102 @@ select 'retry no duplicates' as check,
   and (select count(*) from public.lab_results where room_id = 900001 and timeline_entry_id = 'lab-1') = 1
   and (select count(*) from public.vital_signs where room_id = 900001 and timeline_entry_id = 'vital-1') = 1
   and (select count(*) from public.imaging_studies where room_id = 900001 and timeline_entry_id = 'image-1') = 1 as passed;
+
+\echo '== later-branch failure must roll back earlier inserts and room update =='
+\set failing_timeline '{"encounterType":"inpatient","stayDays":1,"entries":[{"id":"late-note-1","kind":"admission","hospitalDay":1,"relativeHoursBeforeEncounter":24,"title":"Earlier insert","content":"Must roll back"},{"id":"late-vital-1","kind":"vital","hospitalDay":1,"relativeHoursBeforeEncounter":12,"title":"Invalid later branch","content":"Must fail","vitals":{"heartRate":"not-a-number"}}]}'
+insert into _runner_timeline values (:'failing_timeline'::jsonb);
+create temp table _before_late_failure as
+select hospital_timeline, hospital_stay_days, encounter_type, nurse_context
+from public.rooms where id = 900001;
+do $$
+declare v_sqlstate text; v_sqlerrm text;
+begin
+  begin
+    perform public.materialize_hospital_timeline(900001, '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', null, (select value from _runner_timeline where value->'entries'->0->>'id' = 'late-note-1'), 'later-branch rollback', now());
+    raise exception 'later-branch failure unexpectedly succeeded';
+  exception when others then
+    get stacked diagnostics v_sqlstate = returned_sqlstate, v_sqlerrm = message_text;
+    if v_sqlstate <> '22P02' then
+      raise exception 'unexpected later-branch failure: SQLSTATE=% SQLERRM=%', v_sqlstate, v_sqlerrm;
+    end if;
+    raise notice 'LATER BRANCH FAILURE: PASS (SQLSTATE=% SQLERRM=%)', v_sqlstate, v_sqlerrm;
+  end;
+end
+$$;
+select 'later-branch failure zero residue' as check,
+  (select count(*) from public.clinical_notes where room_id = 900001 and timeline_entry_id = 'late-note-1') = 0
+  and (select count(*) from public.vital_signs where room_id = 900001 and timeline_entry_id = 'late-vital-1') = 0
+  and (select (r.hospital_timeline, r.hospital_stay_days, r.encounter_type, r.nurse_context)
+       is not distinct from (s.hospital_timeline, s.hospital_stay_days, s.encounter_type, s.nurse_context)
+       from public.rooms r cross join _before_late_failure s where r.id = 900001) as passed;
+
+\echo '== authenticated/anonymous role execution checks =='
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000010', false);
+do $$
+declare v_state text; v_message text;
+begin
+  begin
+    perform public.materialize_hospital_timeline(900001, '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', null, (select value from _runner_timeline where value->'entries'->0->>'id' = 'note-1'), 'authenticated author', now());
+    insert into _role_checks values ('authenticated author', true, 'call succeeded');
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+    insert into _role_checks values ('authenticated author', false, format('SQLSTATE=%s SQLERRM=%s', v_state, v_message));
+  end;
+end
+$$;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000011', false);
+do $$
+declare v_state text; v_message text;
+begin
+  begin
+    perform public.materialize_hospital_timeline(900001, '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', null, (select value from _runner_timeline where value->'entries'->0->>'id' = 'note-1'), 'unauthorized student', now());
+    insert into _role_checks values ('unauthorized authenticated student', false, 'call unexpectedly succeeded');
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+    insert into _role_checks values ('unauthorized authenticated student', true, format('SQLSTATE=%s SQLERRM=%s', v_state, v_message));
+  end;
+end
+$$;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000012', false);
+do $$
+declare v_state text; v_message text;
+begin
+  begin
+    perform public.materialize_hospital_timeline(900001, '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000099', null, (select value from _runner_timeline where value->'entries'->0->>'id' = 'note-1'), 'cross-school author', now());
+    insert into _role_checks values ('cross-school authenticated author', false, 'call unexpectedly succeeded');
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+    insert into _role_checks values ('cross-school authenticated author', v_state = 'P0001', format('SQLSTATE=%s SQLERRM=%s', v_state, v_message));
+  end;
+end
+$$;
+reset role;
+set role anon;
+do $$
+begin
+  begin
+    perform public.materialize_hospital_timeline(900001, '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', null, (select value from _runner_timeline where value->'entries'->0->>'id' = 'note-1'), 'anonymous caller', now());
+    insert into _role_checks values ('anonymous caller', false, 'call unexpectedly succeeded');
+  exception when insufficient_privilege then
+    insert into _role_checks values ('anonymous caller', true, 'permission denied');
+  end;
+end
+$$;
+reset role;
+select * from _role_checks order by check_name;
+
+-- The current production policy/function surface is intentionally tested as an
+-- authorization contract here. A false boolean is a runner failure, not a
+-- passing catalogue observation.
+do $$
+declare v_failed text;
+begin
+  select string_agg(check_name || ': ' || detail, '; ' order by check_name) into v_failed
+  from _role_checks where not passed;
+  if v_failed is not null then raise exception 'ROLE AUTHORIZATION CHECKS FAILED: %', v_failed; end if;
+end
+$$;
 
 \echo '== rollback capture check: restore captured prior function body in disposable database =='
 \i :prior_file

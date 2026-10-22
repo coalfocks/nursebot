@@ -1,11 +1,14 @@
 runner=run-materialize-hospital-timeline-isolated.sh
 mode=read-only production schema dump + disposable PostgreSQL
+stream_capture=combined stdout+stderr
 migration_sha256=abc74244a69e5749fa935d3d3b09a28010e934a520a84c6a3bb0871f21e4d76a
 compatibility_sha256=85d59be3f8ebf1a9cb6ffb40828fa2482ac02d2e1360e54ea70065013f1428b7
 prior_function_sha256=0def57e4f38becc90276894dc5963adcc3b68f72d77a7e7dacffc5a916020d1f
+exact_test_sha256=a5fa7108c0b6272db0fbdcf4d94daafd3faf4fd9b9376c0826f99c6c50c209c9
+runner_sha256=09db2c2f278a196bb0968acb09251d0d3f4a3b459493dc8cd27de62208428074
 Initialising login role...
 Dumping schemas from remote database...
-Dumped schema to /tmp/tmp.h07m3rwXHL/public-schema.sql.
+Dumped schema to /tmp/tmp.1oyigneASU/public-schema.sql.
 A new version of Supabase CLI is available: v2.121.0 (currently installed v2.104.0)
 We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
 production_public_schema_dump_sha256=5e80e2c40797f180e81eb64802fdf4fd5d4108c0c49d60ba746567248152f7b9
@@ -849,7 +852,9 @@ schema: restored production public schema dump; database: disposable PostgreSQL
  preflight function column contract | f
 (1 row)
 
+DO
 == production branch column/type readback before compatibility packet ==
+psql:/tmp/exact.sql:75: NOTICE:  BOOLEAN PREFLIGHTS: PASS
    table_name    |       column_name        |        data_type         |  udt_name   | is_nullable 
 -----------------+--------------------------+--------------------------+-------------+-------------
  clinical_notes  | author                   | text                     | text        | YES
@@ -920,15 +925,22 @@ SET
 INSERT 0 1
 INSERT 0 1
 INSERT 0 1
+INSERT 0 1
 SET
+CREATE FUNCTION
+INSERT 0 3
+INSERT 0 3
+CREATE TABLE
+GRANT
 SELECT 1
 CREATE TABLE
 INSERT 0 1
-psql:/tmp/exact.sql:78: NOTICE:  BEFORE 42P10: PASS
+GRANT
+psql:/tmp/exact.sql:133: NOTICE:  BEFORE 42P10: PASS
 DO
 == applying exact unchanged 20261021224401 only inside disposable database ==
 DO
-psql:/tmp/exact.sql:97: NOTICE:  AFTER 224401 PRE-COMPATIBILITY: PASS (SQLSTATE=42703 SQLERRM=column "case_blueprint_id" of relation "lab_results" does not exist)
+psql:/tmp/exact.sql:152: NOTICE:  AFTER 224401 PRE-COMPATIBILITY: PASS (SQLSTATE=42703 SQLERRM=column "case_blueprint_id" of relation "lab_results" does not exist)
 DO
 == applying separately reviewable lab provenance compatibility packet inside disposable database ==
 ALTER TABLE
@@ -939,14 +951,14 @@ COMMENT
  post-compatibility lab blueprint column | t
 (1 row)
 
-psql:/tmp/exact.sql:120: NOTICE:  INTENDED FAILURE ROLLBACK: PASS (SQLSTATE=P0001 SQLERRM=Timeline publish link mismatch for room 900001, patient 00000000-0000-4000-8000-000000000099, school 00000000-0000-4000-8000-000000000001)
 DO
+psql:/tmp/exact.sql:175: NOTICE:  INTENDED FAILURE ROLLBACK: PASS (SQLSTATE=P0001 SQLERRM=Timeline publish link mismatch for room 900001, patient 00000000-0000-4000-8000-000000000099, school 00000000-0000-4000-8000-000000000001)
              check             | passed 
 -------------------------------+--------
  intended failure zero residue | t
 (1 row)
 
-psql:/tmp/exact.sql:145: NOTICE:  AFTER all four branches: PASS ({"labs": 1, "notes": 1, "vitals": 1, "imaging": 1, "room_id": 900001, "patient_id": "00000000-0000-4000-8000-000000000002", "timeline_entries": 4}).
+psql:/tmp/exact.sql:200: NOTICE:  AFTER all four branches: PASS ({"labs": 1, "notes": 1, "vitals": 1, "imaging": 1, "room_id": 900001, "patient_id": "00000000-0000-4000-8000-000000000002", "timeline_entries": 4}).
 DO
             check            | passed 
 -----------------------------+--------
@@ -963,6 +975,49 @@ DO
  retry no duplicates | t
 (1 row)
 
+== later-branch failure must roll back earlier inserts and room update ==
+INSERT 0 1
+SELECT 1
+psql:/tmp/exact.sql:235: NOTICE:  LATER BRANCH FAILURE: PASS (SQLSTATE=22P02 SQLERRM=invalid input syntax for type numeric: "not-a-number")
+DO
+               check               | passed 
+-----------------------------------+--------
+ later-branch failure zero residue | t
+(1 row)
+
+== authenticated/anonymous role execution checks ==
+SET
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000010
+(1 row)
+
+DO
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000011
+(1 row)
+
+DO
+              set_config              
+--------------------------------------
+ 00000000-0000-4000-8000-000000000012
+(1 row)
+
+DO
+RESET
+SET
+DO
+RESET
+             check_name             | passed |                                                                              detail                                                                              
+------------------------------------+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ anonymous caller                   | t      | permission denied
+ authenticated author               | t      | call succeeded
+ cross-school authenticated author  | t      | SQLSTATE=P0001 SQLERRM=Timeline publish link mismatch for room 900001, patient 00000000-0000-4000-8000-000000000002, school 00000000-0000-4000-8000-000000000099
+ unauthorized authenticated student | t      | SQLSTATE=P0001 SQLERRM=Timeline publish link mismatch for room 900001, patient 00000000-0000-4000-8000-000000000002, school 00000000-0000-4000-8000-000000000001
+(4 rows)
+
+DO
 == rollback capture check: restore captured prior function body in disposable database ==
 CREATE FUNCTION
              check              | passed 

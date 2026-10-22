@@ -12,6 +12,16 @@ type Video = Database['public']['Tables']['walkthrough_videos']['Row'];
 type Course = Database['public']['Tables']['walkthrough_courses']['Row'];
 type Item = Database['public']['Tables']['walkthrough_course_items']['Row'];
 type Progress = Database['public']['Tables']['walkthrough_progress']['Row'];
+type SandboxLaunchRow = { room_id: number | null; enabled: boolean };
+type SandboxQuery = {
+  select: (columns: string) => {
+    eq: (column: string, value: string) => {
+      maybeSingle: () => Promise<{ data: SandboxLaunchRow | null; error: { message: string } | null }>;
+    };
+  };
+};
+
+const sandboxLaunches = () => (supabase as unknown as { from: (table: string) => SandboxQuery }).from('walkthrough_sandbox_launches');
 
 export default function StudentWalkthroughVideos() {
   const { user, profile } = useAuthStore();
@@ -26,19 +36,32 @@ export default function StudentWalkthroughVideos() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [sandboxRoomId, setSandboxRoomId] = useState<number | null>(null);
+  const [sandboxEnabled, setSandboxEnabled] = useState(false);
+  const [sandboxConfigured, setSandboxConfigured] = useState(false);
+  const [sandboxLoadError, setSandboxLoadError] = useState('');
   const [launchingSandbox, setLaunchingSandbox] = useState(false);
   const [sandboxMessage, setSandboxMessage] = useState('');
 
   const load = async () => {
     if (!user || !profile?.role) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setSandboxLoadError(''); setSandboxMessage('');
     // The library can expose a reviewed/preview course before it becomes a
     // required onboarding gate. StudentLearningGate intentionally checks
     // is_mandatory separately, so publishing a preview cannot lock cases.
     const visibleAudiences = visibleWalkthroughAudiences(profile.role);
-    const courseResult = await supabase.from('walkthrough_courses').select('*').eq('status', 'published').in('audience', visibleAudiences).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    const [courseResult, launchResult] = await Promise.all([
+      supabase.from('walkthrough_courses').select('*').eq('status', 'published').in('audience', visibleAudiences).order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+      sandboxLaunches().select('room_id, enabled').eq('slug', 'practice-room-00').maybeSingle(),
+    ]);
+    if (launchResult.error) {
+      setSandboxRoomId(null); setSandboxEnabled(false); setSandboxConfigured(false); setSandboxLoadError(launchResult.error.message);
+    } else {
+      setSandboxRoomId(launchResult.data?.room_id ?? null);
+      setSandboxEnabled(Boolean(launchResult.data?.enabled));
+      setSandboxConfigured(Boolean(launchResult.data));
+    }
     if (courseResult.error) { setError(courseResult.error.message); setLoading(false); return; }
-    if (!courseResult.data) { setCourse(null); setLoading(false); return; }
+    if (!courseResult.data) { setCourse(null); setItems([]); setVideos([]); setProgress([]); setLoading(false); return; }
     const [itemResult, videoResult, enrollmentResult] = await Promise.all([
       supabase.from('walkthrough_course_items').select('*').eq('course_id', courseResult.data.id).eq('course_version', courseResult.data.version).order('position'),
       supabase.from('walkthrough_videos').select('*').in('audience', visibleAudiences).eq('status', 'published'),
@@ -52,8 +75,6 @@ export default function StudentWalkthroughVideos() {
       const progressResult = await supabase.from('walkthrough_progress').select('*').eq('enrollment_id', enrollmentResult.data.id);
       if (progressResult.error) setError(progressResult.error.message); else setProgress(progressResult.data ?? []);
     } else setProgress([]);
-    const launch = await (supabase as any).from('walkthrough_sandbox_launches').select('room_id, enabled').eq('slug', 'practice-room-00').eq('enabled', true).maybeSingle();
-    setSandboxRoomId(launch.data?.room_id ?? null);
     setLoading(false);
   };
 
@@ -103,7 +124,7 @@ export default function StudentWalkthroughVideos() {
       const existing = await supabase.from('student_room_assignments').select('id').eq('student_id', user.id).eq('room_id', sandboxRoomId).eq('is_sandbox', true).maybeSingle();
       if (existing.error) throw existing.error;
       if (existing.data?.id) { window.location.assign(`/assignment/${existing.data.id}`); return; }
-      const { data, error: insertError } = await (supabase as any).from('student_room_assignments').insert({
+      const { data, error: insertError } = await supabase.from('student_room_assignments').insert({
         student_id: user.id,
         assigned_by: user.id,
         room_id: sandboxRoomId,
@@ -116,20 +137,23 @@ export default function StudentWalkthroughVideos() {
       window.location.assign(`/assignment/${data.id}`);
     } catch (launchError) {
       console.error('Room 00 launch failed', launchError);
-      setSandboxMessage('Practice Room 00 is not available for this learner yet.');
+      setSandboxMessage(launchError instanceof Error ? launchError.message : 'Practice Room 00 could not be opened.');
     } finally { setLaunchingSandbox(false); }
   };
 
   const room00Launcher = !isTestUser(profile) ? <section className="rounded-lg border border-indigo-200 bg-indigo-50 p-5" aria-labelledby="room00-heading">
     <h2 id="room00-heading" className="font-semibold text-indigo-950">Test Room — Practice Room 00</h2>
     <p className="mt-1 text-sm text-indigo-900">A fictional sandbox for reviewing the chart, conversations, orders, notes, completion, and formative feedback. It is isolated from graded assignments and official analytics.</p>
-    <button type="button" onClick={() => void launchRoom00()} disabled={!sandboxRoomId || launchingSandbox} className="mt-4 rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{launchingSandbox ? 'Opening…' : sandboxRoomId ? 'Open Practice Room 00' : 'Room 00 is being prepared'}</button>
+    {sandboxLoadError ? <p className="mt-3 text-sm text-red-700" role="alert">Practice Room 00 status could not be loaded: {sandboxLoadError}</p> : null}
+    <button type="button" onClick={() => void launchRoom00()} disabled={!sandboxRoomId || !sandboxEnabled || launchingSandbox} className="mt-4 rounded-md bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{launchingSandbox ? 'Opening…' : sandboxRoomId && sandboxEnabled ? 'Open Practice Room 00' : sandboxConfigured ? 'Room 00 is currently disabled' : 'Room 00 is not configured'}</button>
     {sandboxMessage && <p className="mt-2 text-sm text-red-700" role="alert">{sandboxMessage}</p>}
+    {sandboxLoadError && <button type="button" onClick={() => void load()} className="mt-3 inline-flex items-center rounded-md border border-indigo-300 px-3 py-2 text-sm font-medium text-indigo-900"><RefreshCw className="mr-2 h-4 w-4" />Retry Room 00 status</button>}
   </section> : null;
 
   if (loading) return <><Navbar /><div className="flex min-h-[70vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div></>;
   if (error) return <><Navbar /><main className="mx-auto max-w-2xl p-6"><div className="rounded-lg border border-red-200 bg-red-50 p-5"><h1 className="font-semibold text-red-900">Learning Library could not load</h1><p className="mt-2 text-sm text-red-800">{error}</p><button type="button" onClick={() => void load()} className="mt-4 inline-flex items-center rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white"><RefreshCw className="mr-2 h-4 w-4" />Retry</button></div></main></>;
-  if (!course || orderedVideos.length === 0) return <><Navbar /><main className="mx-auto max-w-3xl space-y-6 p-6"><div className="rounded-lg border border-dashed bg-white p-10 text-center"><Film className="mx-auto h-10 w-10 text-blue-600" /><h1 className="mt-4 text-xl font-semibold">Learning Library</h1><p className="mt-2 text-sm text-slate-600">No learning course is published for this role yet. Your assigned cases remain available.</p><Link to="/dashboard" className="mt-5 inline-block text-sm font-semibold text-blue-700 underline">Continue to dashboard</Link></div>{room00Launcher}</main></>;
+  if (!course) return <><Navbar /><main className="mx-auto max-w-3xl space-y-6 p-6"><div className="rounded-lg border border-dashed bg-white p-10 text-center"><Film className="mx-auto h-10 w-10 text-blue-600" /><h1 className="mt-4 text-xl font-semibold">Learning Library</h1><p className="mt-2 text-sm text-slate-600">No learning course is published for this role yet. Your assigned cases remain available.</p><Link to="/dashboard" className="mt-5 inline-block text-sm font-semibold text-blue-700 underline">Continue to dashboard</Link></div>{room00Launcher}</main></>;
+  if (orderedVideos.length === 0) return <><Navbar /><main className="mx-auto max-w-3xl space-y-6 p-6"><div className="rounded-lg border border-amber-200 bg-amber-50 p-10 text-center"><Film className="mx-auto h-10 w-10 text-amber-700" /><h1 className="mt-4 text-xl font-semibold text-amber-950">Learning content needs review</h1><p className="mt-2 text-sm text-amber-900">The published course “{course.title}” is available, but its pinned video versions are not available to this learner. No progress was changed. Please retry or contact an educator.</p><button type="button" onClick={() => void load()} className="mt-5 inline-flex items-center rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white"><RefreshCw className="mr-2 h-4 w-4" />Retry content</button><Link to="/dashboard" className="ml-4 text-sm font-semibold text-blue-700 underline">Continue to dashboard</Link></div>{room00Launcher}</main></>;
   const currentItem = items.find((item) => item.video_id === video?.id && item.video_version === video?.version);
   const isRequired = Boolean(currentItem?.required);
   const progressTotal = requiredItems.length;

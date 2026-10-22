@@ -112,11 +112,13 @@ remotely, and is intentionally separate from `20261021224401`.
 
 The hardened runner restores the schema with `ON_ERROR_STOP=1` and fails on
 restore errors. Its disposable transcript proves: `BEFORE 42P10: PASS`;
-RLS, authenticated table grants, authenticated author-scope policy, and anon
-function denial checks; intended wrong-patient failure with captured
-`SQLSTATE=P0001` and zero chart residue; after the unchanged conflict-target
-repair plus the compatibility packet, all four branches return `1/1/1/1`;
-retry leaves exactly one row per provenance key; and the captured prior
+boolean preflights fail closed; authenticated author success; unauthorized
+student denial; cross-school denial; anonymous function denial; an intended
+wrong-patient failure with captured `SQLSTATE=P0001` and zero chart residue;
+after the unchanged conflict-target repair plus the compatibility packet, all
+four branches return `1/1/1/1`; retry leaves exactly one row per provenance
+key; a later invalid vital branch returns `SQLSTATE=22P02` after an earlier
+note insert and leaves zero chart/room residue; and the captured prior
 function body restores successfully. Production remains untouched.
 
 Current evidence hashes from the transcript:
