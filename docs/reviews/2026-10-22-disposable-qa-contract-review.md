@@ -68,26 +68,37 @@ The exact-schema runner is
 `scripts/run-disposable-qa-manual-mar-exact.sh`; it requires
 `MAR_QA_DISPOSABLE=1`, uses a disposable PostgreSQL 15 container, applies the
 unchanged 120000 contract plus manual packet/snapshot hardening, and runs with
-`ON_ERROR_STOP=1`. The captured passing transcript is
+`ON_ERROR_STOP=1`. It refuses an occupied container name before installing its
+cleanup trap, hard-asserts every positive/negative/NULL/count check, tests a
+real unauthorized INSERT, and changes the mutable packet after assignment
+creation before verifying the learner still reads the frozen revision-1,
+four-event snapshot. The captured passing transcript is
 `docs/reviews/2026-10-22-disposable-qa-manual-mar-exact.transcript.txt`.
 
-The transcript proves NULL/preflight rejection, authenticated superadmin
-allow, non-superadmin denial, cross-school denial, the
+The transcript proves authenticated NULL/preflight rejection, authenticated
+superadmin allow, non-superadmin denial, a valid allow-listed learner against a
+cross-school envelope, unauthorized INSERT denial, the
 `disposable_qa=true,is_sandbox=false` constraint rejection, one assignment
 snapshot containing exactly four events, and learner assignment-scoped
-readback. It is disposable-only; no production connection or rollback was
-used. Stop/rollback is simply container teardown because no remote state is
-changed.
+readback after the source packet advances to revision 2. It is
+disposable-only and does not prove production policy behavior. Stop/rollback
+for the runner is container teardown; production execution remains a separate
+owner-reviewed transaction. If production execution is stopped before commit,
+the transaction is rolled back. After commit, no blind down migration is
+authorized: a reviewed compensating migration may remove only the new QA
+objects after proving zero dependent assignments/progress.
 
 ## Supported student content repair
 
 The review-only migration
 `supabase/migrations/20261022063000_student_library_versioned_content_repair.sql`
-(SHA-256 `b3081facd7a202c1223dcf4cfe018d140a76da588327c77e7cd511d1ab437900`)
-creates six new `student` video IDs from the six verified published,
-processing-ready media objects, then repoints only the optional preview's
-course items. It does not change the six `test_room` rows, learner progress,
-completion records, or `is_mandatory=false`. The mounted player test is
+(SHA-256 `fa1e5874e2bac91835c46a69bbfb53c3afe650b7df114f7ee74b5a9aba21076d`)
+creates six new `student` video IDs and a new optional published course from
+the six verified published, processing-ready media objects. It does not change
+the existing course v1, its six items, the six `test_room` rows, learner
+enrollments/progress, completion records, or `is_mandatory=false`. Its
+transaction and target-ID/count assertions fail before commit on drift. The
+mounted player test is
 `src/pages/StudentWalkthroughVideos.test.tsx`; it verifies a signed media URL
 renders in the student player while optional-course messaging remains visible.
 
