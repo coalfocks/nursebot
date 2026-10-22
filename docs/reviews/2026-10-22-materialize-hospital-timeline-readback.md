@@ -98,9 +98,33 @@ PostgreSQL, copies the unchanged review migration and captured prior function,
 checks the four indexes/function/grant/column contract, and records stdout and
 stderr in
 [`2026-10-22-materialize-hospital-timeline-exact-schema.transcript.txt`](./2026-10-22-materialize-hospital-timeline-exact-schema.transcript.txt).
-The transcript reproducibly shows `BEFORE 42P10: PASS`, then stops before
-claiming the four-branch/retry result because the restored production schema is
-missing `lab_results.case_blueprint_id` (the function references it). This is a
-separate exact-schema contract mismatch requiring owner review; no workaround
-column or production SQL was added. The temporary-table file above remains
-explicitly predicate-shape coverage only.
+The committed transcript now includes the exact pre-compatibility column/type
+readback. It shows `lab_results.case_blueprint_id` is absent while the current
+function's lab branch inserts and updates it. The preserved error is
+`SQLSTATE=42703` / `SQLERRM=column "case_blueprint_id" of relation "lab_results" does not exist`.
+
+The minimal compatible dependency is a separate review-only packet,
+[`20261022032351_add_lab_results_case_blueprint_provenance.sql`](../../supabase/migrations/20261022032351_add_lab_results_case_blueprint_provenance.sql):
+nullable `uuid` `lab_results.case_blueprint_id`, FK to
+`case_blueprints(id) ON DELETE SET NULL`, and a lookup index. It preserves
+school/room/patient/provenance semantics and adds no data. It is not applied
+remotely, and is intentionally separate from `20261021224401`.
+
+The hardened runner restores the schema with `ON_ERROR_STOP=1` and fails on
+restore errors. Its disposable transcript proves: `BEFORE 42P10: PASS`;
+RLS, authenticated table grants, authenticated author-scope policy, and anon
+function denial checks; intended wrong-patient failure with captured
+`SQLSTATE=P0001` and zero chart residue; after the unchanged conflict-target
+repair plus the compatibility packet, all four branches return `1/1/1/1`;
+retry leaves exactly one row per provenance key; and the captured prior
+function body restores successfully. Production remains untouched.
+
+Current evidence hashes from the transcript:
+
+- `20261021224401`: `abc74244a69e5749fa935d3d3b09a28010e934a520a84c6a3bb0871f21e4d76a`
+- compatibility packet: `85d59be3f8ebf1a9cb6ffb40828fa2482ac02d2e1360e54ea70065013f1428b7`
+- captured prior function: `0def57e4f38becc90276894dc5963adcc3b68f72d77a7e7dacffc5a916020d1f`
+- linked public schema dump: `5e80e2c40797f180e81eb64802fdf4fd5d4108c0c49d60ba746567248152f7b9`
+
+The temporary-table file above remains explicitly predicate-shape coverage
+only; the exact-schema runner is the branch/retry/rollback evidence.

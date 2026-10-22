@@ -1,11 +1,14 @@
 runner=run-materialize-hospital-timeline-isolated.sh
 mode=read-only production schema dump + disposable PostgreSQL
 migration_sha256=abc74244a69e5749fa935d3d3b09a28010e934a520a84c6a3bb0871f21e4d76a
+compatibility_sha256=85d59be3f8ebf1a9cb6ffb40828fa2482ac02d2e1360e54ea70065013f1428b7
+prior_function_sha256=0def57e4f38becc90276894dc5963adcc3b68f72d77a7e7dacffc5a916020d1f
 Initialising login role...
 Dumping schemas from remote database...
-Dumped schema to /tmp/tmp.IJhXUCdSee/public-schema.sql.
+Dumped schema to /tmp/tmp.h07m3rwXHL/public-schema.sql.
 A new version of Supabase CLI is available: v2.121.0 (currently installed v2.104.0)
 We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
+production_public_schema_dump_sha256=5e80e2c40797f180e81eb64802fdf4fd5d4108c0c49d60ba746567248152f7b9
 16: Pulling from library/postgres
 Digest: sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
 Status: Image is up to date for postgres:16
@@ -821,21 +824,151 @@ schema: restored production public schema dump; database: disposable PostgreSQL
  preflight authenticated grant | t
 (1 row)
 
+         check         | passed 
+-----------------------+--------
+ preflight anon denied | t
+(1 row)
+
+        check        | passed 
+---------------------+--------
+ preflight chart RLS | t
+(1 row)
+
+                check                 | passed 
+--------------------------------------+--------
+ preflight authenticated chart grants | t
+(1 row)
+
+                     check                     | passed 
+-----------------------------------------------+--------
+ preflight authenticated author-scope policies | t
+(1 row)
+
                check                | passed 
 ------------------------------------+--------
  preflight function column contract | f
 (1 row)
+
+== production branch column/type readback before compatibility packet ==
+   table_name    |       column_name        |        data_type         |  udt_name   | is_nullable 
+-----------------+--------------------------+--------------------------+-------------+-------------
+ clinical_notes  | author                   | text                     | text        | YES
+ clinical_notes  | case_blueprint_id        | uuid                     | uuid        | YES
+ clinical_notes  | content                  | text                     | text        | NO
+ clinical_notes  | deleted_at               | timestamp with time zone | timestamptz | YES
+ clinical_notes  | note_type                | text                     | text        | NO
+ clinical_notes  | override_scope           | text                     | text        | NO
+ clinical_notes  | patient_id               | uuid                     | uuid        | YES
+ clinical_notes  | relative_offset_hours    | integer                  | int4        | YES
+ clinical_notes  | room_id                  | integer                  | int4        | YES
+ clinical_notes  | school_id                | uuid                     | uuid        | YES
+ clinical_notes  | signed                   | boolean                  | bool        | YES
+ clinical_notes  | timeline_entry_id        | text                     | text        | YES
+ clinical_notes  | timestamp                | timestamp with time zone | timestamptz | YES
+ clinical_notes  | title                    | text                     | text        | NO
+ imaging_studies | case_blueprint_id        | uuid                     | uuid        | YES
+ imaging_studies | deleted_at               | timestamp with time zone | timestamptz | YES
+ imaging_studies | ordered_by               | text                     | text        | YES
+ imaging_studies | order_name               | text                     | text        | YES
+ imaging_studies | order_time               | timestamp with time zone | timestamptz | YES
+ imaging_studies | override_scope           | text                     | text        | NO
+ imaging_studies | patient_id               | uuid                     | uuid        | YES
+ imaging_studies | relative_offset_hours    | integer                  | int4        | YES
+ imaging_studies | report                   | text                     | text        | YES
+ imaging_studies | report_generated_at      | timestamp with time zone | timestamptz | YES
+ imaging_studies | room_id                  | integer                  | int4        | YES
+ imaging_studies | school_id                | uuid                     | uuid        | YES
+ imaging_studies | status                   | text                     | text        | YES
+ imaging_studies | study_type               | text                     | text        | NO
+ imaging_studies | timeline_entry_id        | text                     | text        | YES
+ lab_results     | case_blueprint_id        |                          |             | 
+ lab_results     | collection_time          | timestamp with time zone | timestamptz | YES
+ lab_results     | deleted_at               | timestamp with time zone | timestamptz | YES
+ lab_results     | lifecycle_status         | text                     | text        | NO
+ lab_results     | ordered_by               | text                     | text        | YES
+ lab_results     | override_scope           | text                     | text        | NO
+ lab_results     | patient_id               | uuid                     | uuid        | YES
+ lab_results     | relative_offset_hours    | integer                  | int4        | YES
+ lab_results     | result_time              | timestamp with time zone | timestamptz | YES
+ lab_results     | room_id                  | integer                  | int4        | YES
+ lab_results     | school_id                | uuid                     | uuid        | YES
+ lab_results     | status                   | text                     | text        | YES
+ lab_results     | test_name                | text                     | text        | NO
+ lab_results     | text_value               | text                     | text        | YES
+ lab_results     | timeline_entry_id        | text                     | text        | YES
+ lab_results     | unit                     | text                     | text        | YES
+ lab_results     | value                    | numeric                  | numeric     | YES
+ lab_results     | value_type               | text                     | text        | NO
+ vital_signs     | blood_pressure_diastolic | numeric                  | numeric     | YES
+ vital_signs     | blood_pressure_systolic  | numeric                  | numeric     | YES
+ vital_signs     | deleted_at               | timestamp with time zone | timestamptz | YES
+ vital_signs     | heart_rate               | numeric                  | numeric     | YES
+ vital_signs     | override_scope           | text                     | text        | NO
+ vital_signs     | oxygen_saturation        | numeric                  | numeric     | YES
+ vital_signs     | pain                     | numeric                  | numeric     | YES
+ vital_signs     | patient_id               | uuid                     | uuid        | YES
+ vital_signs     | relative_offset_hours    | integer                  | int4        | YES
+ vital_signs     | respiratory_rate         | numeric                  | numeric     | YES
+ vital_signs     | room_id                  | integer                  | int4        | YES
+ vital_signs     | school_id                | uuid                     | uuid        | YES
+ vital_signs     | temperature              | numeric                  | numeric     | YES
+ vital_signs     | timeline_entry_id        | text                     | text        | YES
+ vital_signs     | timestamp                | timestamp with time zone | timestamptz | NO
+(62 rows)
 
 SET
 INSERT 0 1
 INSERT 0 1
 INSERT 0 1
 SET
+SELECT 1
 CREATE TABLE
 INSERT 0 1
-psql:/tmp/exact.sql:47: NOTICE:  BEFORE 42P10: PASS
+psql:/tmp/exact.sql:78: NOTICE:  BEFORE 42P10: PASS
 DO
 == applying exact unchanged 20261021224401 only inside disposable database ==
 DO
-psql:/tmp/exact.sql:65: ERROR:  EXACT_SCHEMA_CONTRACT_MISMATCH: function references a column absent from the restored production schema; all-four-branch/retry proof is blocked until owner review
-CONTEXT:  PL/pgSQL function inline_code_block line 7 at RAISE
+psql:/tmp/exact.sql:97: NOTICE:  AFTER 224401 PRE-COMPATIBILITY: PASS (SQLSTATE=42703 SQLERRM=column "case_blueprint_id" of relation "lab_results" does not exist)
+DO
+== applying separately reviewable lab provenance compatibility packet inside disposable database ==
+ALTER TABLE
+CREATE INDEX
+COMMENT
+                  check                  | passed 
+-----------------------------------------+--------
+ post-compatibility lab blueprint column | t
+(1 row)
+
+psql:/tmp/exact.sql:120: NOTICE:  INTENDED FAILURE ROLLBACK: PASS (SQLSTATE=P0001 SQLERRM=Timeline publish link mismatch for room 900001, patient 00000000-0000-4000-8000-000000000099, school 00000000-0000-4000-8000-000000000001)
+DO
+             check             | passed 
+-------------------------------+--------
+ intended failure zero residue | t
+(1 row)
+
+psql:/tmp/exact.sql:145: NOTICE:  AFTER all four branches: PASS ({"labs": 1, "notes": 1, "vitals": 1, "imaging": 1, "room_id": 900001, "patient_id": "00000000-0000-4000-8000-000000000002", "timeline_entries": 4}).
+DO
+            check            | passed 
+-----------------------------+--------
+ after first call row counts | t
+(1 row)
+
+                                                           materialize_hospital_timeline                                                            
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ {"labs": 1, "notes": 1, "vitals": 1, "imaging": 1, "room_id": 900001, "patient_id": "00000000-0000-4000-8000-000000000002", "timeline_entries": 4}
+(1 row)
+
+        check        | passed 
+---------------------+--------
+ retry no duplicates | t
+(1 row)
+
+== rollback capture check: restore captured prior function body in disposable database ==
+CREATE FUNCTION
+             check              | passed 
+--------------------------------+--------
+ rollback stale target restored | t
+(1 row)
+
+== exact-schema runner PASS ==
+TRANSCRIPT PASS
