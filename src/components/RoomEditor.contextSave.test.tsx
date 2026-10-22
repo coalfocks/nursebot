@@ -13,7 +13,7 @@ const { updateRoom, rpc, availabilityState, roomInsertResponse, patientInsertRes
     response: { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null } as { data: unknown; error: unknown },
     pending: null as Promise<unknown> | null,
   },
-  roomReadbackState: { current: null as { case_goals?: string | null; progress_note?: string | null; hospital_timeline?: unknown; hospital_stay_days?: number; encounter_type?: string } | null },
+  roomReadbackState: { current: null as { emr_context?: unknown; case_goals?: string | null; progress_note?: string | null; hospital_timeline?: unknown; hospital_stay_days?: number; encounter_type?: string } | null, conflict: false },
 }));
 
 vi.mock('../lib/supabase', () => ({
@@ -22,16 +22,26 @@ vi.mock('../lib/supabase', () => ({
       const builder: Record<string, unknown> = {};
       builder.select = vi.fn(() => builder);
       builder.eq = vi.fn(() => builder);
-      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? (roomReadbackState.current ?? roomInsertResponse.data) : null, error: null }));
+      builder.maybeSingle = vi.fn(async () => ({
+        data: table === 'rooms'
+          ? (roomReadbackState.current ?? (roomReadbackState.conflict ? roomInsertResponse.data : { ...roomInsertResponse.data, emr_context: updateRoom.mock.calls.at(-1)?.[0]?.emr_context }))
+          : null,
+        error: null,
+      }));
       builder.single = vi.fn(async () => table === 'rooms' ? roomInsertResponse : table === 'patients' ? patientInsertResponse : ({ data: null, error: null }));
       builder.order = vi.fn(async () => ({ data: table === 'schools' || table === 'specialties' ? [] : [], error: null }));
       builder.or = vi.fn(() => builder);
       builder.update = vi.fn((payload: unknown) => {
         updateRoom(payload);
+        if (!roomReadbackState.conflict && typeof payload === 'object' && payload && 'emr_context' in payload) {
+          roomReadbackState.current = { emr_context: (payload as { emr_context: unknown }).emr_context };
+        }
         const query = {
           eq: vi.fn(() => query),
           is: vi.fn(() => query),
-          maybeSingle: vi.fn(async () => availabilityState.pending ?? availabilityState.response),
+          maybeSingle: vi.fn(async () => typeof payload === 'object' && payload && 'emr_context' in payload
+            ? { data: roomReadbackState.conflict ? roomInsertResponse.data : { id: 204, emr_context: (payload as { emr_context: unknown }).emr_context }, error: null }
+            : availabilityState.pending ?? availabilityState.response),
           select: vi.fn(() => query),
         };
         return query;
@@ -72,8 +82,8 @@ const room = {
   expected_treatment: null, case_goals: null, progress_note: null, completion_hint: null,
   bedside_hint: null, bedside_requirement: 'situational', patient_conversation_enabled: true,
   patient_conversation_prompt: null, consultant_response_prompt: null, orders_config: null,
-  is_active: true, pdf_url: null, available_school_ids: ['school-1'], continues_from: null,
-  patient_id: null, initial_vitals: null, created_at: null, updated_at: null,
+  is_active: true, pdf_url: null, available_school_ids: ['school-1'], continues_from: null, updated_at: '2026-10-17T00:00:00.000Z',
+    patient_id: null, initial_vitals: null, created_at: null,
   encounter_type: 'inpatient', hospital_stay_days: 1, hospital_timeline: { entries: [] },
 } as never;
 
@@ -93,6 +103,7 @@ describe('RoomEditor EMR context control', () => {
     roomInsertResponse.data = { id: 305, room_number: '305', school_id: 'school-1' };
     patientInsertResponse.data = { id: 'patient-new', school_id: 'school-1' };
     roomReadbackState.current = null;
+    roomReadbackState.conflict = false;
   });
 
   it('bypasses native required Style and incomplete timeline validation', async () => {
@@ -105,6 +116,16 @@ describe('RoomEditor EMR context control', () => {
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('style');
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('hospital_timeline');
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the EMR context readback loses the optimistic room revision', async () => {
+    roomReadbackState.conflict = true;
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn() });
+    fireEvent.change(screen.getByLabelText('EHR Context'), { target: { value: 'concurrent edit' } });
+    fireEvent.click(screen.getByTestId('save-emr-context'));
+
+    await waitFor(() => expect(screen.getByText(/EMR context changed during save/)).toBeInTheDocument());
+    expect(updateRoom).toHaveBeenCalledTimes(1);
   });
 
   it('saves only school availability with blank Style and invalid unchanged timeline', async () => {

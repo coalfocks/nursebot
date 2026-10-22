@@ -56,6 +56,7 @@ export default function RoomManagement() {
           patients:patients!patients_room_id_fkey (*),
           patient:patient_id (*)
         `)
+        .eq('is_active', true)
         .order('room_number');
 
       if (schoolId) {

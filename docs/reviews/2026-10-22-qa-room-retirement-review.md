@@ -31,7 +31,10 @@ rooms from active/assignable flows while keeping learner history and all chart
 relationships intact. The manifest stores each room's prior `is_active` value;
 restore sets only that field back to its captured value.
 
-The plan generator is intentionally readback-only:
+The plan generator is intentionally readback-only and fails closed unless the
+readback includes a known positive-integer Room 00 ID, typed room/school
+identity, `patient_id`, `available_school_ids`, `updated_at`, and boolean
+`is_active` for every target:
 
 ```sh
 node scripts/qa/qa-room-retirement-plan.mjs room-readback.json qa-room-retirement-manifest.json
@@ -48,8 +51,10 @@ Before an owner runs the generated transaction, require:
 2. a separate Room 00 readback proving the hard exclusion;
 3. counts/digests for patients, assignments, notes, orders, learner actions,
    manual packets/audits, assignment snapshots, course pins, and progress;
-4. a transaction that locks and updates only the manifest room IDs, then
-   rechecks those counts/digests before commit;
+4. a transaction that locks and updates only the manifest room IDs, checks
+   exact room metadata before and after, and asserts dependency counts for
+   assignments, chat history, notes, orders, learner actions, vitals, MAR
+   packets/audits, and assignment snapshots;
 5. immediate `ROLLBACK` on a missing target, changed target metadata,
    unexpected row count, or any dependent-row mutation;
 6. post-commit readback, followed by restore from the unchanged manifest if
@@ -63,6 +68,10 @@ assignments, specialties, and profiles and cannot preserve history.
 
 `src/lib/qaRoomRetirement.test.ts` proves selector boundaries, Room 00 and
 original-case exclusion, non-destructive SQL shape, captured inactive-state
-restore, and empty/unsafe manifest rejection. This is disposable/source proof,
-not production authorization or RLS proof. Production execution remains on
-hold pending owner review.
+restore, active-list removal, established-attempt count preservation, and
+empty/unsafe manifest rejection. `RoomManagement` now queries only active
+rooms, while assignment/history queries remain joinable by room ID regardless
+of `is_active`; the SQL asserts that those established attempt rows remain
+accessible through the room join. This is disposable/source proof, not
+production authorization or RLS proof. Production execution remains on hold
+pending owner review.

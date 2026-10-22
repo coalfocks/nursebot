@@ -538,11 +538,22 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
     setIsLoading(true);
     setError('');
     try {
-      const { error: contextError } = await supabase
+      const contextPayload = { emr_context: buildContextOnlyEmrPayload(room.emr_context, emrContext) };
+      let contextQuery = supabase
         .from('rooms')
-        .update({ emr_context: buildContextOnlyEmrPayload(room.emr_context, emrContext) })
+        .update(contextPayload)
         .eq('id', room.id);
+      contextQuery = room.updated_at == null
+        ? contextQuery.is('updated_at', null)
+        : contextQuery.eq('updated_at', room.updated_at);
+      const { data: contextReadback, error: contextError } = await contextQuery
+        .select('id, emr_context, updated_at')
+        .maybeSingle();
       if (contextError) throw contextError;
+      if (!contextReadback) throw new Error('This room changed elsewhere while saving EMR context. Reload before retrying.');
+      if (contextReadback.emr_context !== contextPayload.emr_context) {
+        throw new Error('EMR context changed during save; no context update was accepted. Reload before retrying.');
+      }
       onSave();
     } catch (saveError) {
       console.error('Error saving EMR context:', saveError);
@@ -740,8 +751,18 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         ? buildContextOnlyRoomUpdate(room.emr_context, emrContext, currentNonContextSnapshot, originalNonContextSnapshot)
         : null;
       if (contextOnlyUpdate && room) {
-        const { error: contextError } = await supabase.from('rooms').update(contextOnlyUpdate).eq('id', room.id);
+        let contextQuery = supabase.from('rooms').update(contextOnlyUpdate).eq('id', room.id);
+        contextQuery = room.updated_at == null
+          ? contextQuery.is('updated_at', null)
+          : contextQuery.eq('updated_at', room.updated_at);
+        const { data: contextReadback, error: contextError } = await contextQuery
+          .select('id, emr_context, updated_at')
+          .maybeSingle();
         if (contextError) throw contextError;
+        if (!contextReadback) throw new Error('This room changed elsewhere while saving EMR context. Reload before retrying.');
+        if (contextReadback.emr_context !== contextOnlyUpdate.emr_context) {
+          throw new Error('EMR context changed during save; no context update was accepted. Reload before retrying.');
+        }
         onSave();
         return;
       }
