@@ -53,3 +53,21 @@ export const buildContextOnlyRoomUpdate = (
   if (!structurallyEqual(current, original)) return null;
   return { emr_context: buildContextOnlyEmrPayload(existing, contextText) };
 };
+
+/** Save goals/progress independently of a legacy timeline that may be empty. */
+export const buildGoalsProgressOnlyRoomUpdate = (
+  current: RoomEditorNonContextSnapshot,
+  original: RoomEditorNonContextSnapshot,
+): { case_goals: string | null; progress_note: string | null } | null => {
+  const changedGoals = current.caseGoals !== original.caseGoals;
+  const changedProgress = current.progressNote !== original.progressNote;
+  if (!changedGoals && !changedProgress) return null;
+
+  const nonContextKeys = Object.keys(current).filter((key) => key !== 'caseGoals' && key !== 'progressNote');
+  if (nonContextKeys.some((key) => !structurallyEqual(current[key], original[key]))) return null;
+
+  return {
+    case_goals: typeof current.caseGoals === 'string' && current.caseGoals.trim() ? current.caseGoals : null,
+    progress_note: typeof current.progressNote === 'string' && current.progressNote.trim() ? current.progressNote : null,
+  };
+};

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ComponentProps } from 'react';
 import RoomEditor from './RoomEditor';
 
-const { updateRoom, rpc, availabilityState, roomInsertResponse, patientInsertResponse } = vi.hoisted(() => ({
+const { updateRoom, rpc, availabilityState, roomInsertResponse, patientInsertResponse, roomReadbackState } = vi.hoisted(() => ({
   updateRoom: vi.fn(),
   rpc: vi.fn(),
   roomInsertResponse: { data: { id: 305, room_number: '305', school_id: 'school-1' }, error: null } as { data: unknown; error: unknown },
@@ -13,6 +13,7 @@ const { updateRoom, rpc, availabilityState, roomInsertResponse, patientInsertRes
     response: { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null } as { data: unknown; error: unknown },
     pending: null as Promise<unknown> | null,
   },
+  roomReadbackState: { current: null as { case_goals?: string | null; progress_note?: string | null; hospital_timeline?: unknown; hospital_stay_days?: number; encounter_type?: string } | null },
 }));
 
 vi.mock('../lib/supabase', () => ({
@@ -21,7 +22,7 @@ vi.mock('../lib/supabase', () => ({
       const builder: Record<string, unknown> = {};
       builder.select = vi.fn(() => builder);
       builder.eq = vi.fn(() => builder);
-      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? roomInsertResponse.data : null, error: null }));
+      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? (roomReadbackState.current ?? roomInsertResponse.data) : null, error: null }));
       builder.single = vi.fn(async () => table === 'rooms' ? roomInsertResponse : table === 'patients' ? patientInsertResponse : ({ data: null, error: null }));
       builder.order = vi.fn(async () => ({ data: table === 'schools' || table === 'specialties' ? [] : [], error: null }));
       builder.or = vi.fn(() => builder);
@@ -91,6 +92,7 @@ describe('RoomEditor EMR context control', () => {
     availabilityState.response = { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
     roomInsertResponse.data = { id: 305, room_number: '305', school_id: 'school-1' };
     patientInsertResponse.data = { id: 'patient-new', school_id: 'school-1' };
+    roomReadbackState.current = null;
   });
 
   it('bypasses native required Style and incomplete timeline validation', async () => {
@@ -119,6 +121,39 @@ describe('RoomEditor EMR context control', () => {
     expect(rpc).not.toHaveBeenCalled();
     expect(onRoomPatch).toHaveBeenCalledWith(expect.objectContaining({ available_school_ids: [] }));
     expect(screen.getByRole('status')).toHaveTextContent('Saved and read back: Specific schools → all schools');
+  });
+
+  it('saves goals and progress with an invalid unchanged legacy timeline and reads both fields back', async () => {
+    const onRoomPatch = vi.fn();
+    roomReadbackState.current = {
+      case_goals: 'Acute cholecystitis goal',
+      progress_note: 'Continue source-control planning.',
+      hospital_timeline: room.hospital_timeline,
+      hospital_stay_days: room.hospital_stay_days,
+      encounter_type: room.encounter_type,
+    };
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn(), onRoomPatch });
+    fireEvent.change(screen.getByLabelText('Goals of Case'), { target: { value: 'Acute cholecystitis goal' } });
+    fireEvent.change(screen.getByLabelText('Progress Note'), { target: { value: 'Continue source-control planning.' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Room' }).closest('form')!);
+
+    await waitFor(() => expect(updateRoom).toHaveBeenCalledWith({
+      case_goals: 'Acute cholecystitis goal',
+      progress_note: 'Continue source-control planning.',
+    }));
+    expect(rpc).not.toHaveBeenCalled();
+    expect(onRoomPatch).toHaveBeenCalledWith({ case_goals: 'Acute cholecystitis goal', progress_note: 'Continue source-control planning.' });
+  });
+
+  it('keeps timeline validation when the timeline-related form is also changed', async () => {
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn() });
+    fireEvent.change(screen.getByLabelText('Goals of Case'), { target: { value: 'Changed goal' } });
+    fireEvent.change(screen.getByLabelText('Hospital stay days (1–3)'), { target: { value: '2' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Room' }).closest('form')!);
+
+    await waitFor(() => expect(screen.getAllByText(/Hospital day 1 requires one chronological progress note/).length).toBeGreaterThan(0));
+    expect(updateRoom).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it('keeps the draft and reports a conflict when the room revision is stale', async () => {

@@ -12,7 +12,7 @@ import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, hospitalTimelineChanged, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
 import { mergePatientChatContext, normalizePatientResponseMode } from '../lib/patientChatPersistence';
-import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, parseRoomEmrContext } from '../lib/roomEditorPersistence';
+import { buildContextOnlyEmrPayload, buildContextOnlyRoomUpdate, buildGoalsProgressOnlyRoomUpdate, parseRoomEmrContext, structurallyEqual } from '../lib/roomEditorPersistence';
 import { buildConversationPromptPatch, resolveAuthoredConversationPrompt, type ConversationPromptKind } from '../lib/conversationPrompts';
 import { describeRoomAvailabilityChange, normalizeRoomAvailability } from '../lib/roomAvailability';
 import { preserveOrdersConfig } from '../lib/ordersConfig';
@@ -742,6 +742,31 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
       if (contextOnlyUpdate && room) {
         const { error: contextError } = await supabase.from('rooms').update(contextOnlyUpdate).eq('id', room.id);
         if (contextError) throw contextError;
+        onSave();
+        return;
+      }
+
+      const goalsProgressOnlyUpdate = room
+        ? buildGoalsProgressOnlyRoomUpdate(currentNonContextSnapshot, originalNonContextSnapshot)
+        : null;
+      if (goalsProgressOnlyUpdate && room) {
+        const { error: goalsProgressError } = await supabase.from('rooms').update(goalsProgressOnlyUpdate).eq('id', room.id);
+        if (goalsProgressError) throw goalsProgressError;
+        const { data: readback, error: readbackError } = await supabase
+          .from('rooms')
+          .select('id, case_goals, progress_note, hospital_timeline, hospital_stay_days, encounter_type')
+          .eq('id', room.id)
+          .maybeSingle();
+        if (readbackError) throw readbackError;
+        if (!readback
+          || readback.case_goals !== goalsProgressOnlyUpdate.case_goals
+          || readback.progress_note !== goalsProgressOnlyUpdate.progress_note
+          || !structurallyEqual(readback.hospital_timeline, roomWithTimeline?.hospital_timeline)
+          || readback.hospital_stay_days !== roomWithTimeline?.hospital_stay_days
+          || readback.encounter_type !== roomWithTimeline?.encounter_type) {
+          throw new Error('Goals/progress save readback did not preserve the existing hospital timeline.');
+        }
+        onRoomPatch?.(goalsProgressOnlyUpdate);
         onSave();
         return;
       }
