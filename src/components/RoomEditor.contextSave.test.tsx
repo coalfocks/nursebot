@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
+import type { ComponentProps } from 'react';
 import RoomEditor from './RoomEditor';
 
 const { updateRoom, rpc, availabilityState } = vi.hoisted(() => ({
@@ -16,6 +18,9 @@ vi.mock('../lib/supabase', () => ({
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
       builder.select = vi.fn(() => builder);
+      builder.eq = vi.fn(() => builder);
+      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? { id: 204, patient_id: 'patient-1', school_id: 'school-1' } : null, error: null }));
+      builder.single = vi.fn(async () => ({ data: null, error: null }));
       builder.order = vi.fn(async () => ({ data: table === 'schools' || table === 'specialties' ? [] : [], error: null }));
       builder.or = vi.fn(() => builder);
       builder.update = vi.fn((payload: unknown) => {
@@ -68,16 +73,23 @@ const room = {
   encounter_type: 'inpatient', hospital_stay_days: 1, hospital_timeline: { entries: [] },
 } as never;
 
+const renderEditor = (props: ComponentProps<typeof RoomEditor>) => render(
+  <MemoryRouter initialEntries={['/rooms']}>
+    <RoomEditor {...props} />
+  </MemoryRouter>,
+);
+
 describe('RoomEditor EMR context control', () => {
   beforeEach(() => {
     updateRoom.mockReset();
     rpc.mockReset();
+    window.localStorage.clear();
     availabilityState.pending = null;
     availabilityState.response = { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
   });
 
   it('bypasses native required Style and incomplete timeline validation', async () => {
-    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} />);
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn() });
     fireEvent.change(screen.getByLabelText('EHR Context'), { target: { value: 'new lab instructions' } });
     fireEvent.click(screen.getByTestId('save-emr-context'));
 
@@ -91,7 +103,7 @@ describe('RoomEditor EMR context control', () => {
   it('saves only school availability with blank Style and invalid unchanged timeline', async () => {
     const onRoomPatch = vi.fn();
     availabilityState.response = { data: { available_school_ids: [], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
-    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} onRoomPatch={onRoomPatch} />);
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn(), onRoomPatch });
     fireEvent.click(screen.getByLabelText('Available to all schools'));
     fireEvent.click(screen.getByTestId('save-school-availability'));
 
@@ -107,7 +119,7 @@ describe('RoomEditor EMR context control', () => {
   it('keeps the draft and reports a conflict when the room revision is stale', async () => {
     const onRoomPatch = vi.fn();
     availabilityState.response = { data: null, error: null };
-    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} onRoomPatch={onRoomPatch} />);
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn(), onRoomPatch });
     fireEvent.click(screen.getByTestId('save-school-availability'));
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save conflict'));
@@ -117,7 +129,7 @@ describe('RoomEditor EMR context control', () => {
   it('allows only one in-flight availability save', async () => {
     let resolvePending!: (value: unknown) => void;
     availabilityState.pending = new Promise((resolve) => { resolvePending = resolve; });
-    render(<RoomEditor room={room} onSave={vi.fn()} onCancel={vi.fn()} />);
+    renderEditor({ room, onSave: vi.fn(), onCancel: vi.fn() });
     const button = screen.getByTestId('save-school-availability');
     fireEvent.click(button);
     fireEvent.click(button);
@@ -125,5 +137,42 @@ describe('RoomEditor EMR context control', () => {
 
     resolvePending({ data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:01.000Z' }, error: null });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved and read back'));
+  });
+
+  it('persists the complete recovery envelope across reload and retries the same IDs once', async () => {
+    const recoveryRoom = {
+      ...room,
+      patient_id: 'patient-1',
+      hospital_timeline: {
+        encounterType: 'inpatient', stayDays: 1, priorContextHours: 12,
+        entries: [
+          { id: 'timeline-entry-1', kind: 'admission', hospitalDay: 1, relativeHoursBeforeEncounter: 24, title: 'Admission', content: 'Authored fixture' },
+          { id: 'timeline-entry-2', kind: 'progress_note', hospitalDay: 1, relativeHoursBeforeEncounter: 12, title: 'Progress', content: 'Authored progress fixture' },
+        ],
+      },
+    } as never;
+    rpc
+      .mockResolvedValueOnce({ data: null, error: { code: '42P10', message: 'no unique or exclusion constraint matching the ON CONFLICT specification' } })
+      .mockResolvedValueOnce({ data: { room_id: 204, patient_id: 'patient-1', timeline_entries: 1 }, error: null });
+
+    const first = renderEditor({ room: recoveryRoom, onSave: vi.fn(), onCancel: vi.fn() });
+    fireEvent.change(screen.getByLabelText('Room Number'), { target: { value: '205' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Room' }).closest('form')!);
+
+    await waitFor(() => expect(screen.getByText(/Room and patient saved, but hospital timeline publication failed/)).toBeInTheDocument());
+    const stored = JSON.parse(window.localStorage.getItem('nursebot:timeline-publish-recovery:v1:admin-1:school-1') ?? 'null');
+    expect(stored).toMatchObject({ version: 1, actorId: 'admin-1', roomId: 204, patientId: 'patient-1', schoolId: 'school-1' });
+    expect(stored.timeline.entries[0].id).toBe('timeline-entry-1');
+    first.unmount();
+
+    renderEditor({ room: recoveryRoom, onSave: vi.fn(), onCancel: vi.fn() });
+    expect(screen.getByRole('button', { name: 'Retry timeline' })).toBeInTheDocument();
+    fireEvent.submit(screen.getByRole('button', { name: 'Retry timeline' }).closest('form')!);
+
+    await waitFor(() => expect(screen.getByText('Room, patient, and hospital timeline saved.')).toBeInTheDocument());
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls[0][1]).toMatchObject({ p_room_id: 204, p_patient_id: 'patient-1' });
+    expect(rpc.mock.calls[1][1]).toMatchObject({ p_room_id: 204, p_patient_id: 'patient-1' });
+    expect(window.localStorage.getItem('nursebot:timeline-publish-recovery:v1:admin-1:school-1')).toBeNull();
   });
 });

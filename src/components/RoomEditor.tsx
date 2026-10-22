@@ -936,6 +936,8 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
 
       if (timelinePatientId && timelineRoomId && hospitalTimeline.entries.length > 0) {
         const recovery: TimelinePublishRecovery = {
+          version: 1,
+          actorId: actorId ?? '',
           roomId: timelineRoomId,
           patientId: timelinePatientId,
           schoolId: finalSchoolId,
@@ -946,10 +948,9 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
         try {
           await publishHospitalTimeline(recovery);
         } catch (timelineError) {
-          const durableRecovery: TimelinePublishRecovery = { version: 1, actorId: actorId ?? '', ...recovery };
           if (!actorId) throw new Error('The saved room needs an authenticated editor session before timeline recovery can be retained.');
-          writeTimelinePublishRecovery(durableRecovery);
-          setTimelinePublishRecovery(durableRecovery);
+          writeTimelinePublishRecovery(recovery);
+          setTimelinePublishRecovery(recovery);
           setError(`Room and patient saved, but hospital timeline publication failed: ${describeSupabaseError(timelineError)}. Use Retry timeline; do not recreate the room.`);
           return;
         }
