@@ -945,12 +945,18 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
           timeline: hospitalTimeline,
           nurseContext: mergeHospitalTimelineIntoNurseContext(nurseContext, hospitalTimeline),
         };
+        // Persist the complete, scope-bound envelope before the first request.
+        // A network failure may leave publication outcome unknown, so recovery
+        // must survive an unmount/reload and must never be reconstructed from
+        // the mutable form state.
+        if (!actorId) throw new Error('The saved room needs an authenticated editor session before timeline recovery can be retained.');
+        writeTimelinePublishRecovery(recovery);
+        setTimelinePublishRecovery(recovery);
         try {
           await publishHospitalTimeline(recovery);
+          clearTimelinePublishRecovery(actorId, recovery.schoolId);
+          setTimelinePublishRecovery(null);
         } catch (timelineError) {
-          if (!actorId) throw new Error('The saved room needs an authenticated editor session before timeline recovery can be retained.');
-          writeTimelinePublishRecovery(recovery);
-          setTimelinePublishRecovery(recovery);
           setError(`Room and patient saved, but hospital timeline publication failed: ${describeSupabaseError(timelineError)}. Use Retry timeline; do not recreate the room.`);
           return;
         }

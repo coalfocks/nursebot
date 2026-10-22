@@ -90,3 +90,17 @@ the stale target raises `42P10`, applies the corrected target to all four row
 types, replays each provenance key, and asserts one row per type with updated
 content. It ends with `ROLLBACK`; it is not a production test and was not run
 against room 118.
+
+The stronger exact-schema runner is
+[`scripts/qa/run-materialize-hospital-timeline-isolated.sh`](../../scripts/qa/run-materialize-hospital-timeline-isolated.sh).
+It performs a read-only linked public-schema dump, restores it into disposable
+PostgreSQL, copies the unchanged review migration and captured prior function,
+checks the four indexes/function/grant/column contract, and records stdout and
+stderr in
+[`2026-10-22-materialize-hospital-timeline-exact-schema.transcript.txt`](./2026-10-22-materialize-hospital-timeline-exact-schema.transcript.txt).
+The transcript reproducibly shows `BEFORE 42P10: PASS`, then stops before
+claiming the four-branch/retry result because the restored production schema is
+missing `lab_results.case_blueprint_id` (the function references it). This is a
+separate exact-schema contract mismatch requiring owner review; no workaround
+column or production SQL was added. The temporary-table file above remains
+explicitly predicate-shape coverage only.

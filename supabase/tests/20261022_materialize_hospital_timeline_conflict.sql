@@ -1,6 +1,7 @@
--- Isolated exact-conflict-shape regression test. Run in a disposable Postgres
+-- Predicate-shape coverage only. Run in a disposable Postgres
 -- database only. It creates temporary tables and rolls them back; it does not
--- inspect or modify production rows.
+-- inspect or modify production rows. The exact-schema/function runner is
+-- scripts/qa/run-materialize-hospital-timeline-isolated.sh.
 begin;
 
 create temp table clinical_notes (

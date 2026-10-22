@@ -4,9 +4,11 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ComponentProps } from 'react';
 import RoomEditor from './RoomEditor';
 
-const { updateRoom, rpc, availabilityState } = vi.hoisted(() => ({
+const { updateRoom, rpc, availabilityState, roomInsertResponse, patientInsertResponse } = vi.hoisted(() => ({
   updateRoom: vi.fn(),
   rpc: vi.fn(),
+  roomInsertResponse: { data: { id: 305, room_number: '305', school_id: 'school-1' }, error: null } as { data: unknown; error: unknown },
+  patientInsertResponse: { data: { id: 'patient-new', school_id: 'school-1' }, error: null } as { data: unknown; error: unknown },
   availabilityState: {
     response: { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null } as { data: unknown; error: unknown },
     pending: null as Promise<unknown> | null,
@@ -19,8 +21,8 @@ vi.mock('../lib/supabase', () => ({
       const builder: Record<string, unknown> = {};
       builder.select = vi.fn(() => builder);
       builder.eq = vi.fn(() => builder);
-      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? { id: 204, patient_id: 'patient-1', school_id: 'school-1' } : null, error: null }));
-      builder.single = vi.fn(async () => ({ data: null, error: null }));
+      builder.maybeSingle = vi.fn(async () => ({ data: table === 'rooms' ? roomInsertResponse.data : null, error: null }));
+      builder.single = vi.fn(async () => table === 'rooms' ? roomInsertResponse : table === 'patients' ? patientInsertResponse : ({ data: null, error: null }));
       builder.order = vi.fn(async () => ({ data: table === 'schools' || table === 'specialties' ? [] : [], error: null }));
       builder.or = vi.fn(() => builder);
       builder.update = vi.fn((payload: unknown) => {
@@ -33,6 +35,7 @@ vi.mock('../lib/supabase', () => ({
         };
         return query;
       });
+      builder.insert = vi.fn(() => builder);
       return builder;
     },
     rpc,
@@ -86,6 +89,8 @@ describe('RoomEditor EMR context control', () => {
     window.localStorage.clear();
     availabilityState.pending = null;
     availabilityState.response = { data: { available_school_ids: ['school-1'], updated_at: '2026-10-17T00:00:00.000Z' }, error: null };
+    roomInsertResponse.data = { id: 305, room_number: '305', school_id: 'school-1' };
+    patientInsertResponse.data = { id: 'patient-new', school_id: 'school-1' };
   });
 
   it('bypasses native required Style and incomplete timeline validation', async () => {
@@ -174,5 +179,29 @@ describe('RoomEditor EMR context control', () => {
     expect(rpc.mock.calls[0][1]).toMatchObject({ p_room_id: 204, p_patient_id: 'patient-1' });
     expect(rpc.mock.calls[1][1]).toMatchObject({ p_room_id: 204, p_patient_id: 'patient-1' });
     expect(window.localStorage.getItem('nursebot:timeline-publish-recovery:v1:admin-1:school-1')).toBeNull();
+  });
+
+  it('persists a new-room recovery envelope before a pending publication and restores it after remount', async () => {
+    rpc.mockReturnValueOnce(new Promise(() => undefined)).mockResolvedValueOnce({ data: { room_id: 305, patient_id: 'patient-new', timeline_entries: 1 }, error: null });
+    const first = renderEditor({ room: undefined, onSave: vi.fn(), onCancel: vi.fn() });
+    fireEvent.change(screen.getByLabelText('Room Number'), { target: { value: '305' } });
+    fireEvent.change(screen.getByLabelText('Create new patient (optional)'), { target: { value: 'Pending Patient' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Initial progress' } });
+    fireEvent.change(screen.getByLabelText('Content / findings'), { target: { value: 'Pending authored history' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Save Room' }).closest('form')!);
+
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    const stored = JSON.parse(window.localStorage.getItem('nursebot:timeline-publish-recovery:v1:admin-1:school-1') ?? 'null');
+    expect(stored).toMatchObject({ version: 1, actorId: 'admin-1', roomId: 305, patientId: 'patient-new', schoolId: 'school-1' });
+    expect(stored.timeline.entries[0].content).toBe('Pending authored history');
+    first.unmount();
+
+    renderEditor({ room: undefined, onSave: vi.fn(), onCancel: vi.fn() });
+    expect(screen.getByRole('button', { name: 'Retry timeline' })).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem('nursebot:timeline-publish-recovery:v1:admin-1:school-1') ?? 'null')).toMatchObject({
+      version: 1, actorId: 'admin-1', roomId: 305, patientId: 'patient-new', schoolId: 'school-1',
+    });
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 });
