@@ -9,7 +9,7 @@ import { supabase } from '../lib/supabase';
 import { isSuperAdmin } from '../lib/roles';
 import { useAuthStore } from '../stores/authStore';
 import type { Database } from '../lib/database.types';
-import { displayWalkthroughTitle, getWalkthroughPublicationError, type WalkthroughAudience } from '../lib/walkthrough';
+import { displayWalkthroughTitle, getWalkthroughPublicationError, isWalkthroughAudienceCompatible, type WalkthroughAudience } from '../lib/walkthrough';
 
 type Video = Database['public']['Tables']['walkthrough_videos']['Row'];
 type Course = Database['public']['Tables']['walkthrough_courses']['Row'];
@@ -131,8 +131,8 @@ export function CourseEditor() {
     if (!user || !course.title?.trim()) return;
     setSaving(true); setError('');
     if (publish && selectedIds.length === 0) { setError('Add at least one published administrator video before publishing this course.'); setSaving(false); return; }
-    if (publish && course.audience === 'student' && orderedVideos.some((video) => !video.onboarding_eligible)) { setError('Student onboarding cannot include optional reference videos. Mark sign-in help and other references as optional, or remove them from this course.'); setSaving(false); return; }
-    if (publish && course.audience === 'test_room' && orderedVideos.some((video) => video.audience !== 'test_room')) { setError('Test Room courses may include only Test Room videos.'); setSaving(false); return; }
+    if (publish && orderedVideos.some((video) => !isWalkthroughAudienceCompatible(course.audience ?? 'admin', video.audience))) { setError('This course contains a video that is not compatible with its audience. Remove it or change the video audience before publishing.'); setSaving(false); return; }
+    if (publish && (course.audience === 'student' || course.audience === 'both') && orderedVideos.some((video) => !video.onboarding_eligible)) { setError('Student onboarding cannot include optional reference videos. Mark sign-in help and other references as optional, or remove them from this course.'); setSaving(false); return; }
     if (publish && orderedVideos.some((video) => getWalkthroughPublicationError(video.transcript))) { setError('This course contains a video with unsafe shared-password advice. Review the video transcript before publishing.'); setSaving(false); return; }
     const result = course.id ? await supabase.from('walkthrough_courses').update({ title: course.title.trim(), description: course.description?.trim() ?? '', audience: course.audience ?? 'admin', is_mandatory: Boolean(course.is_mandatory), status: 'draft' }).eq('id', course.id).eq('version', course.version ?? 1).select().single() : await supabase.from('walkthrough_courses').insert({ title: course.title.trim(), description: course.description?.trim() ?? '', audience: course.audience ?? 'admin', is_mandatory: Boolean(course.is_mandatory), status: 'draft', created_by: user.id }).select().single();
     if (result.error || !result.data) { setError(result.error?.message ?? 'Course could not be saved.'); setSaving(false); return; }

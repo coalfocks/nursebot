@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAudienceAccess, displayWalkthroughTitle, getWalkthroughPublicationError, visibleWalkthroughAudiences } from './walkthrough';
+import { canAudienceAccess, displayWalkthroughTitle, getMissingWalkthroughItems, getWalkthroughPublicationError, isWalkthroughAudienceCompatible, visibleWalkthroughAudiences } from './walkthrough';
 
 describe('walkthrough audience and publication safety', () => {
   it('allows only the intended role audience', () => {
@@ -35,5 +35,25 @@ describe('walkthrough audience and publication safety', () => {
   it('blocks shared-password advice before publication', () => {
     expect(getWalkthroughPublicationError('Each student should use the same initial password.')).toContain('cannot be published');
     expect(getWalkthroughPublicationError('Use the secure individual activation link and choose a unique password.')).toBeNull();
+  });
+});
+
+describe('walkthrough content contracts', () => {
+  it('reports every missing or wrong-version pinned item without dropping the available positive control', () => {
+    const items = [
+      { video_id: 'available', video_version: 2 },
+      { video_id: 'missing', video_version: 1 },
+      { video_id: 'available', video_version: 1 },
+    ];
+    expect(getMissingWalkthroughItems(items, [{ id: 'available', version: 2 }])).toEqual(items.slice(1));
+  });
+
+  it.each([
+    ['admin', 'admin', true], ['admin', 'both', true], ['admin', 'student', false],
+    ['student', 'student', true], ['student', 'both', true], ['student', 'test_room', false],
+    ['test_room', 'test_room', true], ['test_room', 'student', false],
+    ['both', 'both', true], ['both', 'admin', false],
+  ] as const)('checks %s course against %s video as %s', (course, video, expected) => {
+    expect(isWalkthroughAudienceCompatible(course, video)).toBe(expected);
   });
 });

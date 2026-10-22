@@ -468,6 +468,8 @@ export default function AssignmentManager() {
     setDisposableQaMode(false);
   };
 
+  const disposableQaShapeInvalid = disposableQaMode && (targetingMode !== 'individual' || !selectedStudent || selectedRooms.length !== 1);
+
   const handleAssign = async () => {
     let activeRequestId = pendingAssignmentCreate?.requestId;
     const fail = (code: string, message: string) => {
@@ -1853,7 +1855,7 @@ export default function AssignmentManager() {
                 <button
                   type="button"
                   onClick={handleAssign}
-                  disabled={createInFlight}
+                  disabled={createInFlight || disposableQaShapeInvalid}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
                 >
                   {createInFlight ? 'Creating…' : (() => {
@@ -1864,6 +1866,7 @@ export default function AssignmentManager() {
                       : `Create ${totalAssignments} assignment${totalAssignments !== 1 ? 's' : ''} for ${studentCount} student${studentCount !== 1 ? 's' : ''}`;
                   })()}
                 </button>
+                {disposableQaShapeInvalid && <p className="sm:col-span-2 sm:col-start-1 text-xs text-amber-800">Disposable QA requires one selected student and exactly one room; bulk mode is unavailable.</p>}
                 <button
                   type="button"
                   onClick={() => {

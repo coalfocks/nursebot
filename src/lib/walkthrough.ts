@@ -20,6 +20,20 @@ export function canAudienceAccess(audience: string, role: string | null | undefi
   return false;
 }
 
+export function isWalkthroughAudienceCompatible(courseAudience: WalkthroughAudience, videoAudience: WalkthroughAudience): boolean {
+  if (courseAudience === 'admin') return videoAudience === 'admin' || videoAudience === 'both';
+  if (courseAudience === 'student') return videoAudience === 'student' || videoAudience === 'both';
+  if (courseAudience === 'test_room') return videoAudience === 'test_room';
+  return videoAudience === 'both';
+}
+
+export function getMissingWalkthroughItems<T extends { video_id: string; video_version: number }>(
+  items: T[],
+  videos: Array<{ id: string; version: number }>,
+): T[] {
+  return items.filter((item) => !videos.some((video) => video.id === item.video_id && video.version === item.video_version));
+}
+
 /** Display titles are presentation text; course position and video IDs remain authoritative. */
 export function displayWalkthroughTitle(title: string): string {
   return title.replace(/^\s*\d+\s*(?:\||[.):\-])\s*/, '').trim() || title.trim();
