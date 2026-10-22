@@ -3,7 +3,7 @@ mode=read-only production schema dump + disposable PostgreSQL
 migration_sha256=abc74244a69e5749fa935d3d3b09a28010e934a520a84c6a3bb0871f21e4d76a
 Initialising login role...
 Dumping schemas from remote database...
-Dumped schema to /tmp/tmp.XtRk4gUD58/public-schema.sql.
+Dumped schema to /tmp/tmp.IJhXUCdSee/public-schema.sql.
 A new version of Supabase CLI is available: v2.121.0 (currently installed v2.104.0)
 We recommend updating regularly for new features and bug fixes: https://supabase.com/docs/guides/cli/getting-started#updating-the-supabase-cli
 16: Pulling from library/postgres
@@ -833,9 +833,9 @@ INSERT 0 1
 SET
 CREATE TABLE
 INSERT 0 1
-psql:/tmp/exact.sql:48: NOTICE:  BEFORE 42P10: PASS
+psql:/tmp/exact.sql:47: NOTICE:  BEFORE 42P10: PASS
 DO
 == applying exact unchanged 20261021224401 only inside disposable database ==
 DO
-psql:/tmp/exact.sql:66: ERROR:  EXACT_SCHEMA_CONTRACT_MISMATCH: function references a column absent from the restored production schema; all-four-branch/retry proof is blocked until owner review
+psql:/tmp/exact.sql:65: ERROR:  EXACT_SCHEMA_CONTRACT_MISMATCH: function references a column absent from the restored production schema; all-four-branch/retry proof is blocked until owner review
 CONTEXT:  PL/pgSQL function inline_code_block line 7 at RAISE

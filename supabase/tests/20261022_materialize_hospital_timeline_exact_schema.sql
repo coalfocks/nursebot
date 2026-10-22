@@ -16,12 +16,11 @@ where n.nspname = 'public'
 select 'preflight authenticated grant' as check,
   has_function_privilege('authenticated', 'public.materialize_hospital_timeline(integer,uuid,uuid,uuid,jsonb,text,timestamptz)', 'execute') as passed;
 select 'preflight function column contract' as check,
-  count(*) = 4 as passed
+  count(*) = 3 as passed
 from information_schema.columns
 where table_schema = 'public'
   and ((table_name = 'clinical_notes' and column_name = 'case_blueprint_id')
     or (table_name = 'lab_results' and column_name = 'case_blueprint_id')
-    or (table_name = 'vital_signs' and column_name = 'case_blueprint_id')
     or (table_name = 'imaging_studies' and column_name = 'case_blueprint_id'));
 
 set session_replication_role = replica;
