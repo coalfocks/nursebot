@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { csvEscape, deidentifyStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studySheetRow, validateStudyManifest } from './faculty-study-contract';
+import { csvEscape, deidentifyStudyResult, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
 
 const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: index + 1, specialty: ['ED', 'ICU', 'Peds', 'OB', 'Med-Surg', 'Psych'][index % 6], case_label: `Case ${index % 5 + 1}`, packet_label: `Packet ${index % 5 + 1}`, assignment_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}` }));
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
@@ -43,5 +43,15 @@ describe('faculty study contract', () => {
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'completed', ...assignment })).toBe(true);
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'completed', ...assignment, grade: 88 })).toBe(false);
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'failed', ...assignment })).toBe(false);
+  });
+
+  it('does not treat a pre-created empty row as terminal and keeps label columns in the sheet', () => {
+    const empty = { result: null, error: null };
+    expect(isTerminalStudyResult(empty)).toBe(false);
+    expect(studyResultStatus(empty)).toBe('pending');
+    expect(studyResultStatus({ result: null, error: { code: 'CONTEXT_UNRECOVERABLE' } })).toBe('error');
+    expect(studyResultStatus({ result: { status: 'completed' }, error: null })).toBe('completed');
+    expect(STUDY_SHEET_COLUMNS.slice(0, 4)).toEqual(['batch_ordinal', 'specialty', 'case_label', 'packet_label']);
+    expect(studySheetRow({ batch_ordinal: 1, specialty: 'OB', case_label: 'Case 3', packet_label: 'Packet 2', status: 'pending' }).slice(0, 4)).toEqual([1, 'OB', 'Case 3', 'Packet 2']);
   });
 });

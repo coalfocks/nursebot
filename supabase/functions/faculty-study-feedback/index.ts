@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_SHEET_COLUMNS, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
@@ -133,9 +133,13 @@ const privateTermsForAssignment = async (client: ReturnType<typeof serviceClient
   const terms: string[] = [];
   const roomId = Number(assignment.room_id);
   const patient = await client.from('patients').select('first_name, last_name, mrn').eq('room_id', roomId).limit(1).maybeSingle();
-  if (!patient.error && patient.data) terms.push(patient.data.first_name, patient.data.last_name, patient.data.mrn);
+  if (patient.error) throw new Error(`IDENTITY_REDACTION_UNAVAILABLE:patient lookup failed:${patient.error.message}`);
+  if (!patient.data) throw new Error('IDENTITY_REDACTION_UNAVAILABLE:patient identity was not found');
+  terms.push(patient.data.first_name, patient.data.last_name, patient.data.mrn);
   const student = typeof assignment.student_id === 'string' ? await client.from('profiles').select('full_name, email').eq('id', assignment.student_id).maybeSingle() : { data: null, error: null };
-  if (!student.error && student.data) terms.push(student.data.full_name, student.data.email);
+  if (student.error) throw new Error(`IDENTITY_REDACTION_UNAVAILABLE:student lookup failed:${student.error.message}`);
+  if (!student.data) throw new Error('IDENTITY_REDACTION_UNAVAILABLE:student identity was not found');
+  terms.push(student.data.full_name, student.data.email);
   return terms.filter((term): term is string => typeof term === 'string' && term.trim().length > 1);
 };
 
@@ -154,7 +158,7 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   const limit = Math.max(1, Math.min(30, Number.isInteger(Number(requestedLimit)) ? Number(requestedLimit) : 5));
   const existingResult = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
   if (existingResult.error) throw existingResult.error;
-  const doneOrdinals = new Set((existingResult.data ?? []).map((row) => row.batch_ordinal));
+  const doneOrdinals = new Set((existingResult.data ?? []).filter((row) => isTerminalStudyResult(row)).map((row) => row.batch_ordinal));
   const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal)).slice(0, limit);
   if (pending.length === 0) return { batch_id: batchId, learner_writes: 0, result_writes: doneOrdinals.size, status: 'completed' };
   const claim = await client.from('faculty_study_batches').update({ status: 'running', started_at: new Date().toISOString(), error: null }).eq('id', batchId).in('status', ['prepared', 'failed']).select('id').maybeSingle();
@@ -173,6 +177,7 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       const privateTerms = await privateTermsForAssignment(client, assignment);
       snapshot = { assignment_id: item.assignment_id, batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: assignment.status, completed_at: assignment.completed_at, room_id: assignment.room_id, existing_feedback: snapshotAssignmentProtection(assignment) };
       if (assignment.status !== 'completed') throw new Error('CONTEXT_UNRECOVERABLE:assignment is not completed');
+      if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
       const completedAt = typeof assignment.completed_at === 'string' ? assignment.completed_at : '';
       if (!completedAt) throw new Error('CONTEXT_UNRECOVERABLE:assignment has no completed_at cutoff');
       const context = await exactContext(client, item.assignment_id, completedAt);
@@ -220,7 +225,7 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
     if (!row) return { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', error: { code: 'STUDY_RESULT_MISSING', message: 'No isolated result was recorded for this batch ordinal.', phase: 'export', retryable: false }, generated_at: null, prompt_version: batchResult.data.prompt_version, model: batchResult.data.model } as Record<string, unknown>;
     const privateTerms = ((row.frozen_input as Record<string, unknown> | null)?.redaction_terms as string[] | undefined) ?? [];
     const canonical = row.result && typeof row.result === 'object' ? row.result as Record<string, unknown> : { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: row.error ? 'error' : 'completed' };
-    const reviewerCanonical = deidentifyStudyResult({ ...canonical, batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, error: row.error, redaction_terms: privateTerms });
+    const reviewerCanonical = deidentifyStudyResult({ ...canonical, batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: studyResultStatus(row), error: row.error, redaction_terms: privateTerms });
     return { ...reviewerCanonical, raw_model_response: redactStudyValue(row.raw_model_response, privateTerms), generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model } as Record<string, unknown>;
   });
   // Never put the private manifest, assignment IDs, or creator ID in a

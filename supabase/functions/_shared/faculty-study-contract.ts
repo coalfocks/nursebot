@@ -46,6 +46,9 @@ export const protectedAssignmentUnchanged = (before: Record<string, unknown>, af
   before.status === after.status
   && JSON.stringify(snapshotAssignmentProtection(before)) === JSON.stringify(snapshotAssignmentProtection(after));
 
+export const isTerminalStudyResult = (row: { result?: unknown; error?: unknown }) => Boolean(row.result || row.error);
+export const studyResultStatus = (row: { result?: unknown; error?: unknown }) => row.result ? 'completed' : row.error ? 'error' : 'pending';
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const validateStudyManifest = (value: unknown): FacultyStudyManifest => {
@@ -140,6 +143,9 @@ export const studySheetRow = (result: Record<string, unknown>) => {
   const flatten = (value: unknown) => JSON.stringify(value ?? null);
   return [
     safe.batch_ordinal,
+    safe.specialty,
+    safe.case_label,
+    safe.packet_label,
     safe.status,
     safe.communication_score,
     safe.clinical_reasoning_score,
@@ -165,4 +171,4 @@ export const csvEscape = (value: unknown) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export const STUDY_SHEET_COLUMNS = ['case_number', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score'];
+export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score'];
