@@ -32,6 +32,7 @@ import StudentLearningGate from './components/StudentLearningGate';
 import AdminAnalytics from './pages/AdminAnalytics';
 import AdminUsers from './pages/AdminUsers';
 import FeedbackStudio from './pages/FeedbackStudio';
+import FacultyStudy from './pages/FacultyStudy';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isStudent, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -245,6 +246,10 @@ function App() {
         <Route
           path="/admin/feedback-studio"
           element={user?.id && superAdmin ? <FeedbackStudio /> : <Navigate to="/dashboard" replace />}
+        />
+        <Route
+          path="/admin/faculty-study"
+          element={user?.id && superAdmin ? <FacultyStudy /> : <Navigate to="/dashboard" replace />}
         />
         <Route
           path="/superadmin/users"

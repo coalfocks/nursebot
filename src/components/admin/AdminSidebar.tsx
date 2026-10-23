@@ -15,6 +15,7 @@ import {
   Video,
   BarChart3,
   SlidersHorizontal,
+  ClipboardCheck,
 } from 'lucide-react';
 import { EMR_LABEL } from '../../lib/terminology';
 import { isSuperAdmin } from '../../lib/roles';
@@ -47,6 +48,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
     { label: 'Students', to: '/cases', icon: GraduationCap },
     { label: 'Analytics', to: '/admin/analytics', icon: BarChart3 },
     ...(isSuperAdmin(profile) ? [{ label: 'Feedback Studio', to: '/admin/feedback-studio', icon: SlidersHorizontal }] : []),
+    ...(isSuperAdmin(profile) ? [{ label: 'Faculty Study', to: '/admin/faculty-study', icon: ClipboardCheck }] : []),
     { label: 'Data Download', to: '/admin/data-download', icon: Download },
     { label: 'Walkthrough Videos', to: '/admin/walkthrough-videos', icon: Video },
     { label: 'Patients', to: '/admin/patients', icon: UserPlus },
