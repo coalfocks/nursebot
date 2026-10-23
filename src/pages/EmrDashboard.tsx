@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, FileText, TestTube, Pill, Calendar, User, Droplets, Plus, Edit } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import type {
@@ -32,13 +32,17 @@ import { useRequestIdentity } from '../hooks/useRequestIdentity';
 import { resolveAssignmentEncounterAnchor } from '../lib/assignmentEncounterAnchor';
 
 export default function EmrDashboard() {
-  const { profile, user } = useAuthStore();
+  const { profile, user, activeSchoolId } = useAuthStore();
   const [searchParams] = useSearchParams();
   const showAdminLayout = useMemo(() => hasAdminAccess(profile), [profile]);
   const assignmentId = searchParams.get('assignmentId') || undefined;
+  const routePatientId = searchParams.get('patientId') || null;
+  const routeRoomId = searchParams.get('roomId') || null;
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [patientLoadError, setPatientLoadError] = useState<string | null>(null);
+  const initialPatientLoadRef = useRef(0);
+  const routePatientResolutionRef = useRef(0);
   const [sandboxLabs, setSandboxLabs] = useState<LabResult[]>([]);
   const [medicationOrders, setMedicationOrders] = useState<MedicalOrder[]>([]);
   const [labsRefreshToken, setLabsRefreshToken] = useState(0);
@@ -141,15 +145,20 @@ export default function EmrDashboard() {
   }, [selectedPatient?.weightKg, selectedPatient?.gender]);
 
   useEffect(() => {
+    const requestId = initialPatientLoadRef.current + 1;
+    initialPatientLoadRef.current = requestId;
+    let cancelled = false;
+    const isCurrent = () => !cancelled && initialPatientLoadRef.current === requestId;
+
     void (async () => {
       if (!user) return;
       setPatientLoadError(null);
-      const routeRoomId = searchParams.get('roomId');
       // Assignment routes carry immutable room and assignment IDs. Prefer
       // that linked patient over the broad student list, which may contain a
       // previous sandbox session for the same room.
       if (assignmentId && routeRoomId) {
         const patient = await emrApi.getPatientByRoomId(Number.parseInt(routeRoomId, 10));
+        if (!isCurrent()) return;
         if (patient) {
           setPatients([patient]);
           setSelectedPatient(patient);
@@ -162,6 +171,7 @@ export default function EmrDashboard() {
       }
       if (hasAdminAccess(profile)) {
         const data = await emrApi.listPatients();
+        if (!isCurrent()) return;
         if (data.length) {
           setPatients(data);
           setSelectedPatient(data[0]);
@@ -172,6 +182,7 @@ export default function EmrDashboard() {
       }
 
       const data = await emrApi.listPatientsForStudent(user.id, profile?.role === 'test_user');
+      if (!isCurrent()) return;
       setPatients(data);
       if (data.length) {
         setSelectedPatient(data[0]);
@@ -180,47 +191,66 @@ export default function EmrDashboard() {
         setPatientLoadError('No patient chart is available for this assignment.');
       }
     })();
-  }, [assignmentId, profile, searchParams, user]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSchoolId, assignmentId, profile?.id, profile?.role, routeRoomId, user?.id]);
 
   useEffect(() => {
-    const patientIdParam = searchParams.get('patientId');
-    const roomIdParam = searchParams.get('roomId');
-    if (roomIdParam) {
+    const requestId = routePatientResolutionRef.current + 1;
+    routePatientResolutionRef.current = requestId;
+    let cancelled = false;
+    const isCurrent = () => !cancelled && routePatientResolutionRef.current === requestId;
+
+    // Assignment routes are resolved by the initial scoped load above. Avoid
+    // a second canonical read that could race it and reset the same patient.
+    if (assignmentId && routeRoomId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (routeRoomId) {
       void (async () => {
-        const canonicalPatient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
-        if (!canonicalPatient || (patientIdParam && canonicalPatient.id !== patientIdParam)) {
+        const canonicalPatient = await emrApi.getPatientByRoomId(Number.parseInt(routeRoomId, 10));
+        if (!isCurrent()) return;
+        if (!canonicalPatient || (routePatientId && canonicalPatient.id !== routePatientId)) {
           setSelectedPatient(null);
           setPatientLoadError('The requested patient does not match the room’s canonical patient binding.');
           return;
         }
         setPatientLoadError(null);
-        setPatients((prev) => prev.some((p) => p.id === canonicalPatient.id) ? prev.map((p) => p.id === canonicalPatient.id ? canonicalPatient : p) : [...prev, canonicalPatient]);
-        setSelectedPatient(canonicalPatient);
+        setPatients((prev) => {
+          const index = prev.findIndex((p) => p.id === canonicalPatient.id);
+          if (index < 0) return [...prev, canonicalPatient];
+          if (prev[index].roomId === canonicalPatient.roomId) return prev;
+          const next = [...prev];
+          next[index] = canonicalPatient;
+          return next;
+        });
+        setSelectedPatient((prev) => prev?.id === canonicalPatient.id && prev.roomId === canonicalPatient.roomId ? prev : canonicalPatient);
       })();
-      return;
-    }
-    if (patients.length) {
-      const matchingPatient =
-        patients.find(
-          (p) =>
-            patientIdParam && p.id === patientIdParam,
-        ) || null;
-
-      if (matchingPatient) {
-        setSelectedPatient(matchingPatient);
-        return;
-      }
+      return () => {
+        cancelled = true;
+      };
     }
 
-    if (patientIdParam) {
+    if (routePatientId) {
       void (async () => {
-        const patient = await emrApi.getPatient(patientIdParam);
+        const patient = await emrApi.getPatient(routePatientId);
+        if (!isCurrent()) return;
         if (patient) {
           setPatients((prev) => {
-            if (prev.some((p) => p.id === patient.id)) return prev;
+            const index = prev.findIndex((p) => p.id === patient.id);
+            if (index >= 0 && prev[index].roomId === patient.roomId) return prev;
+            if (index >= 0) {
+              const next = [...prev];
+              next[index] = patient;
+              return next;
+            }
             return [...prev, patient];
           });
-          setSelectedPatient(patient);
+          setSelectedPatient((prev) => prev?.id === patient.id && prev.roomId === patient.roomId ? prev : patient);
           setBaselineEditForm({
             firstName: patient.firstName,
             lastName: patient.lastName,
@@ -230,7 +260,10 @@ export default function EmrDashboard() {
         }
       })();
     }
-  }, [patients, searchParams]);
+    return () => {
+      cancelled = true;
+    };
+  }, [assignmentId, routePatientId, routeRoomId]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -1347,6 +1380,11 @@ export default function EmrDashboard() {
       <PatientSidebar selectedPatient={selectedPatient} onPatientSelect={setSelectedPatient} patients={patients} />
       <div className="main-content flex items-center justify-center">
         <div className="text-center">
+          {patientLoadError && (
+            <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {patientLoadError}
+            </div>
+          )}
           <User className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-foreground mb-2">Select a Patient</h2>
           <p className="text-muted-foreground">Choose a patient from the sidebar to view their medical record</p>
