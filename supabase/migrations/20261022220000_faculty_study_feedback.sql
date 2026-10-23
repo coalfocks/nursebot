@@ -23,18 +23,24 @@ create table if not exists public.faculty_study_batches (
 create table if not exists public.faculty_study_results (
   id uuid primary key default gen_random_uuid(),
   batch_id uuid not null references public.faculty_study_batches(id) on delete cascade,
-  case_number integer not null check (case_number between 1 and 30),
+  batch_ordinal integer not null check (batch_ordinal between 1 and 30),
   assignment_id uuid not null,
   historical_snapshot jsonb not null,
+  frozen_input jsonb,
   result jsonb,
+  canonical_result jsonb,
+  raw_model_response jsonb,
   error jsonb,
   generated_at timestamptz,
   prompt_version text not null,
   model text not null,
   created_at timestamptz not null default now(),
-  unique (batch_id, case_number),
+  unique (batch_id, batch_ordinal),
   unique (batch_id, assignment_id)
 );
+
+alter table public.faculty_study_batches
+  add column if not exists next_batch_ordinal integer;
 
 alter table public.faculty_study_batches enable row level security;
 alter table public.faculty_study_results enable row level security;

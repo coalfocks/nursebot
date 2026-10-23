@@ -29,13 +29,20 @@ published feedback, learner history, pins, or status.
 
 ## Artifacts
 
-Export uses the frozen Case 1–30 manifest order and returns:
+The manifest preserves the cohort's original specialty, Case 1–5 label, and
+packet label. A separate `batch_ordinal` (1–30) controls bounded execution and
+resumption; it never replaces those labels.
 
-- raw JSON with the batch attestation and per-case verbatim strengths,
+Export uses the frozen batch ordinal order and returns:
+
+- reviewer JSON with redacted raw-model response plus canonical output and per-case verbatim strengths,
   improvements, recommendations, six component scores, both domain scores,
   evidence IDs, generation time, prompt/model versions, and explicit errors;
 - one CSV sheet with the same fields;
-- one deidentified JSON feedback document per case.
+- one deidentified JSON feedback document per case;
+- a private coordinator JSON containing assignment IDs, resolved room/case-key
+  version, source hashes, frozen inputs, complete raw model responses, and
+  protected-field snapshots.
 
 Assignment and student identifiers are intentionally omitted from exported
 artifacts. The private manifest remains the owner’s source of case-number
@@ -57,7 +64,13 @@ mapping.
    then run a non-clinical smoke check for auth rejection, prompt/model/revision
    mismatch, and a forced context error. Do not use the normal generator for
    smoke data.
-5. Prepare the real batch, review the frozen attestation, run once, and compare
+5. Run the read-only exact-schema preflight
+   `supabase/tests/20261023_faculty_study_exact_schema.sql` before applying the
+   study migration. It proves every historical source table has the expected
+   `assignment_id` and the assignment protection columns exist; it does not
+   write data.
+6. Prepare the real batch, review the frozen attestation, run in bounded
+   resumable chunks, and compare
    the export case count/order to the private manifest. Confirm assignment
    feedback/status/grade/history counts and representative row hashes are
    unchanged before accepting the study export.
@@ -70,9 +83,10 @@ not export; leave the batch failed for review.
 
 ## Validation performed
 
-The manifest/deidentification/export contract tests pass (`3/3`), including
-ordered 30-case validation, duplicate/invalid ID rejection, explicit error
-preservation, six component scores, and identifier exclusion. Frontend build
+The manifest/deidentification/export contract tests pass (`4/4`), including
+ordered batch-ordinal validation with preserved specialty/case/packet labels,
+duplicate/invalid ID rejection, explicit error preservation, six component
+scores, identifier redaction, and protected assignment readback checks. Frontend build
 and function syntax/type validation remain required in the deployment
 environment; no live database or production function was invoked for this
 source-only candidate.

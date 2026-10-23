@@ -1,7 +1,10 @@
 export const FACULTY_STUDY_PROTOCOL_VERSION = 'faculty-study-v1';
 
 export type StudyManifestItem = {
-  case_number: number;
+  batch_ordinal: number;
+  specialty: string;
+  case_label: string;
+  packet_label: string;
   assignment_id: string;
 };
 
@@ -39,6 +42,10 @@ export const STUDY_ASSIGNMENT_PROTECTED_FIELDS = [
 export const snapshotAssignmentProtection = (assignment: Record<string, unknown>) =>
   Object.fromEntries(STUDY_ASSIGNMENT_PROTECTED_FIELDS.map((field) => [field, assignment[field] ?? null]));
 
+export const protectedAssignmentUnchanged = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+  before.status === after.status
+  && JSON.stringify(snapshotAssignmentProtection(before)) === JSON.stringify(snapshotAssignmentProtection(after));
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const validateStudyManifest = (value: unknown): FacultyStudyManifest => {
@@ -56,17 +63,34 @@ export const validateStudyManifest = (value: unknown): FacultyStudyManifest => {
   const attempts = source.attempts.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`STUDY_MANIFEST_INVALID: attempt ${index + 1} is not an object`);
     const row = item as Record<string, unknown>;
-    const caseNumber = row.case_number;
+    const batchOrdinal = row.batch_ordinal;
+    const specialty = typeof row.specialty === 'string' ? row.specialty.trim() : '';
+    const caseLabel = typeof row.case_label === 'string' ? row.case_label.trim() : '';
+    const packetLabel = typeof row.packet_label === 'string' ? row.packet_label.trim() : '';
     const assignmentId = typeof row.assignment_id === 'string' ? row.assignment_id.trim() : '';
-    if (typeof caseNumber !== 'number' || !Number.isInteger(caseNumber) || caseNumber < 1 || caseNumber > 30) throw new Error(`STUDY_MANIFEST_INVALID: invalid case number at position ${index + 1}`);
-    if (!UUID.test(assignmentId)) throw new Error(`STUDY_MANIFEST_INVALID: invalid assignment id at Case ${caseNumber}`);
-    return { case_number: caseNumber, assignment_id: assignmentId };
+    if (typeof batchOrdinal !== 'number' || !Number.isInteger(batchOrdinal) || batchOrdinal < 1 || batchOrdinal > 30) throw new Error(`STUDY_MANIFEST_INVALID: invalid batch ordinal at position ${index + 1}`);
+    if (!specialty || !caseLabel || !packetLabel) throw new Error(`STUDY_MANIFEST_INVALID: specialty, case_label, and packet_label are required at batch ordinal ${batchOrdinal}`);
+    if (specialty.length > 120 || caseLabel.length > 160 || packetLabel.length > 160) throw new Error(`STUDY_MANIFEST_INVALID: study labels are too long at batch ordinal ${batchOrdinal}`);
+    if (!UUID.test(assignmentId)) throw new Error(`STUDY_MANIFEST_INVALID: invalid assignment id at batch ordinal ${batchOrdinal}`);
+    return { batch_ordinal: batchOrdinal, specialty: specialty, case_label: caseLabel, packet_label: packetLabel, assignment_id: assignmentId };
   });
-  const numbers = attempts.map((item) => item.case_number);
-  if (new Set(numbers).size !== 30 || numbers.some((number, index) => number !== index + 1)) throw new Error('STUDY_MANIFEST_INVALID: case_number must contain 1 through 30 in order');
+  const numbers = attempts.map((item) => item.batch_ordinal);
+  if (new Set(numbers).size !== 30 || numbers.some((number, index) => number !== index + 1)) throw new Error('STUDY_MANIFEST_INVALID: batch_ordinal must contain 1 through 30 in order');
   if (new Set(attempts.map((item) => item.assignment_id)).size !== 30) throw new Error('STUDY_MANIFEST_INVALID: assignment ids must be unique');
   return { batch_key: batchKey, prompt_version: promptVersion, prompt_text: promptText, expected_model: expectedModel, attempts };
 };
+
+const scrub = (value: unknown, privateTerms: string[]): unknown => {
+  if (typeof value !== 'string') return Array.isArray(value) ? value.map((item) => scrub(item, privateTerms)) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, scrub(item, privateTerms)])) : value;
+  let text = value
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, '[redacted-id]')
+    .replace(/\b(?:\+?\d[\d(). -]{7,}\d)\b/g, '[redacted-phone]');
+  for (const term of privateTerms.filter((item) => item.length >= 2)) text = text.replace(new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), '[redacted-name]');
+  return text;
+};
+
+export const redactStudyValue = (value: unknown, privateTerms: string[] = []) => scrub(value, privateTerms);
 
 export const deidentifyStudyResult = (result: Record<string, unknown>) => {
   const evaluation = result.evaluation && typeof result.evaluation === 'object' ? result.evaluation as Record<string, unknown> : {};
@@ -78,11 +102,14 @@ export const deidentifyStudyResult = (result: Record<string, unknown>) => {
     return component && typeof component === 'object' ? (component as Record<string, unknown>).score ?? null : null;
   };
   return {
-    case_number: result.case_number,
+    batch_ordinal: result.batch_ordinal,
+    specialty: result.specialty,
+    case_label: result.case_label,
+    packet_label: result.packet_label,
     status: result.status,
-    strengths: evaluation.strengths ?? [],
-    improvements: evaluation.improvements ?? [],
-    recommendations: evaluation.recommendations ?? [],
+    strengths: redactStudyValue(evaluation.strengths ?? [], (result.redaction_terms as string[] | undefined) ?? []),
+    improvements: redactStudyValue(evaluation.improvements ?? [], (result.redaction_terms as string[] | undefined) ?? []),
+    recommendations: redactStudyValue(evaluation.recommendations ?? [], (result.redaction_terms as string[] | undefined) ?? []),
     communication_score: evaluation.communication_score ?? null,
     clinical_reasoning_score: evaluation.clinical_reasoning_score ?? evaluation.mdm_score ?? null,
     component_scores: {
@@ -97,13 +124,13 @@ export const deidentifyStudyResult = (result: Record<string, unknown>) => {
       communication: evaluation.communication_score ?? null,
       clinical_reasoning: evaluation.clinical_reasoning_score ?? evaluation.mdm_score ?? null,
     },
-    communication_breakdown: evaluation.communication_breakdown ?? null,
-    clinical_reasoning_breakdown: evaluation.clinical_reasoning_breakdown ?? evaluation.mdm_breakdown ?? null,
+    communication_breakdown: redactStudyValue(evaluation.communication_breakdown ?? null, (result.redaction_terms as string[] | undefined) ?? []),
+    clinical_reasoning_breakdown: redactStudyValue(evaluation.clinical_reasoning_breakdown ?? evaluation.mdm_breakdown ?? null, (result.redaction_terms as string[] | undefined) ?? []),
     evidence_event_ids: result.evidence_event_ids ?? [],
     generated_at: result.generated_at ?? null,
     prompt_version: result.prompt_version ?? null,
     model: result.model ?? null,
-    error: result.error ?? null,
+    error: redactStudyValue(result.error ?? null, (result.redaction_terms as string[] | undefined) ?? []),
   };
 };
 
@@ -112,7 +139,7 @@ export const studySheetRow = (result: Record<string, unknown>) => {
   const components = safe.component_scores as Record<string, unknown>;
   const flatten = (value: unknown) => JSON.stringify(value ?? null);
   return [
-    safe.case_number,
+    safe.batch_ordinal,
     safe.status,
     safe.communication_score,
     safe.clinical_reasoning_score,
