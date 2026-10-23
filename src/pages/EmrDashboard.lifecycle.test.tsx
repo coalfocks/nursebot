@@ -147,6 +147,36 @@ describe('EmrDashboard canonical patient lifecycle', () => {
     expect(screen.queryByTestId('editable-mar')).not.toBeInTheDocument();
   });
 
+  it('does not let a deferred broad list overwrite canonical ED28 identity', async () => {
+    let resolveList!: (value: Patient[]) => void;
+    listPatients.mockReturnValue(new Promise<Patient[]>((resolve) => { resolveList = resolve; }));
+    const canonical = patient('canonical-ed28', 84);
+    getPatientByRoomId.mockResolvedValue(canonical);
+
+    renderDashboard('/admin/emr?roomId=84&patientId=canonical-ed28');
+    await waitFor(() => expect(screen.getByTestId('editable-mar')).toHaveTextContent('Editable MAR:canonical-ed28'));
+    resolveList([patient('duplicate-sim', 84), canonical]);
+
+    await waitFor(() => expect(screen.getByTestId('patient-sidebar')).toHaveTextContent('canonical-ed28:duplicate-sim,canonical-ed28'));
+    expect(screen.getByRole('heading', { name: 'Patient, Sim' })).toBeInTheDocument();
+    expect(screen.getByText('Room 84')).toBeInTheDocument();
+    expect(screen.getByTestId('editable-mar')).toHaveTextContent('Editable MAR:canonical-ed28');
+  });
+
+  it('keeps a deferred broad list fail-closed after a canonical mismatch', async () => {
+    let resolveList!: (value: Patient[]) => void;
+    listPatients.mockReturnValue(new Promise<Patient[]>((resolve) => { resolveList = resolve; }));
+    getPatientByRoomId.mockResolvedValue(patient('canonical-ed28', 84));
+
+    renderDashboard('/admin/emr?roomId=84&patientId=duplicate-sim');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/does not match the room’s canonical patient binding/));
+    resolveList([patient('duplicate-sim', 84), patient('canonical-ed28', 84)]);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByTestId('editable-mar')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/does not match the room’s canonical patient binding/);
+  });
+
   it('cancels a stale room response during rapid route switching', async () => {
     let resolve84!: (value: Patient) => void;
     let resolve205!: (value: Patient) => void;

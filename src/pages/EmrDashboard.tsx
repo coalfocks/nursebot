@@ -174,7 +174,13 @@ export default function EmrDashboard() {
         if (!isCurrent()) return;
         if (data.length) {
           setPatients(data);
-          setSelectedPatient(data[0]);
+          // An explicit room/patient/assignment route has its own resolver.
+          // The broad list may finish after that resolver and must not replace
+          // its canonical patient (or reopen a fail-closed mismatch) with its
+          // first row.
+          if (!routeRoomId && !routePatientId && !assignmentId) {
+            setSelectedPatient(data[0]);
+          }
         } else {
           setPatientLoadError('No patient chart is available in this scope.');
         }
@@ -184,9 +190,9 @@ export default function EmrDashboard() {
       const data = await emrApi.listPatientsForStudent(user.id, profile?.role === 'test_user');
       if (!isCurrent()) return;
       setPatients(data);
-      if (data.length) {
+      if (data.length && !routeRoomId && !routePatientId && !assignmentId) {
         setSelectedPatient(data[0]);
-      } else {
+      } else if (!data.length) {
         setSelectedPatient(null);
         setPatientLoadError('No patient chart is available for this assignment.');
       }
