@@ -200,7 +200,7 @@ export default function EmrDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [activeSchoolId, assignmentId, profile?.id, profile?.role, routeRoomId, user?.id]);
+  }, [activeSchoolId, assignmentId, profile?.id, profile?.role, routePatientId, routeRoomId, user?.id]);
 
   useEffect(() => {
     const requestId = routePatientResolutionRef.current + 1;

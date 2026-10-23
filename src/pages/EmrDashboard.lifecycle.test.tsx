@@ -105,7 +105,12 @@ vi.mock('../features/emr/components/ui/Tabs', () => ({
 
 const RouteControls = () => {
   const [, setSearchParams] = useSearchParams();
-  return <button onClick={() => setSearchParams({ roomId: '205' })}>switch room</button>;
+  return (
+    <>
+      <button onClick={() => setSearchParams({ roomId: '205' })}>switch room</button>
+      <button onClick={() => setSearchParams({ patientId: 'requested-patient' })}>switch patient</button>
+    </>
+  );
 };
 
 const renderDashboard = (entry: string) => render(
@@ -175,6 +180,26 @@ describe('EmrDashboard canonical patient lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByTestId('editable-mar')).not.toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(/does not match the room’s canonical patient binding/);
+  });
+
+  it('cancels the unscoped broad list before a deferred patient-only route can be overwritten', async () => {
+    const pendingLists: Array<(value: Patient[]) => void> = [];
+    listPatients.mockImplementation(() => new Promise<Patient[]>((resolve) => { pendingLists.push(resolve); }));
+    const requested = patient('requested-patient', 510, 'Requested');
+    apiMethods.getPatient = vi.fn().mockResolvedValue(requested);
+
+    renderDashboard('/admin/emr');
+    await waitFor(() => expect(listPatients).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'switch patient' }));
+    await waitFor(() => expect(listPatients).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => expect(screen.getByTestId('editable-mar')).toHaveTextContent('Editable MAR:requested-patient'));
+    pendingLists[0]([patient('broad-default', 1)]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.getByRole('heading', { name: 'Patient, Requested' })).toBeInTheDocument();
+    expect(screen.getByText('Room 510')).toBeInTheDocument();
+    expect(screen.getByTestId('editable-mar')).toHaveTextContent('Editable MAR:requested-patient');
   });
 
   it('cancels a stale room response during rapid route switching', async () => {
