@@ -185,12 +185,25 @@ export default function EmrDashboard() {
   useEffect(() => {
     const patientIdParam = searchParams.get('patientId');
     const roomIdParam = searchParams.get('roomId');
+    if (roomIdParam) {
+      void (async () => {
+        const canonicalPatient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
+        if (!canonicalPatient || (patientIdParam && canonicalPatient.id !== patientIdParam)) {
+          setSelectedPatient(null);
+          setPatientLoadError('The requested patient does not match the room’s canonical patient binding.');
+          return;
+        }
+        setPatientLoadError(null);
+        setPatients((prev) => prev.some((p) => p.id === canonicalPatient.id) ? prev.map((p) => p.id === canonicalPatient.id ? canonicalPatient : p) : [...prev, canonicalPatient]);
+        setSelectedPatient(canonicalPatient);
+      })();
+      return;
+    }
     if (patients.length) {
       const matchingPatient =
         patients.find(
           (p) =>
-            (patientIdParam && p.id === patientIdParam) ||
-            (roomIdParam && p.roomId && String(p.roomId) === roomIdParam),
+            patientIdParam && p.id === patientIdParam,
         ) || null;
 
       if (matchingPatient) {
@@ -199,18 +212,7 @@ export default function EmrDashboard() {
       }
     }
 
-    if (roomIdParam) {
-      void (async () => {
-        const patient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
-        if (patient) {
-          setPatients((prev) => {
-            if (prev.some((p) => p.id === patient.id)) return prev;
-            return [...prev, patient];
-          });
-          setSelectedPatient(patient);
-        }
-      })();
-    } else if (patientIdParam) {
+    if (patientIdParam) {
       void (async () => {
         const patient = await emrApi.getPatient(patientIdParam);
         if (patient) {

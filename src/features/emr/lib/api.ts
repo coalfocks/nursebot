@@ -20,6 +20,7 @@ import type {
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 import { normalizeLabResult } from './labIntegrity';
 import { mapManualMarPacket, type ManualMarPacket, type ManualMarPacketResult, type ManualMarReadiness } from './manualMar';
+import { resolveCanonicalRoomPatient } from './patientBinding';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
@@ -310,12 +311,22 @@ export const emrApi = {
       .eq('id', roomId)
       .maybeSingle();
 
-    if (data?.patient) {
-      const patient = mapPatient(data.patient as Database['public']['Tables']['patients']['Row'], roomId);
+    const canonical = resolveCanonicalRoomPatient(data as { id?: number | null; patient_id?: string | null; patient?: { id: string } | null } | null, roomId);
+    if (canonical.status === 'mismatch') {
+      console.error('Canonical room patient mismatch', canonical.reason);
+      return null;
+    }
+    if (canonical.status === 'resolved') {
+      const patient = mapPatient(canonical.patient as Database['public']['Tables']['patients']['Row'], roomId);
       if (data.room_number) {
         patient.room = data.room_number;
       }
       return patient;
+    }
+
+    if (error) {
+      console.error('Error fetching canonical patient by room', error);
+      return null;
     }
 
     const { data: legacyData, error: legacyError } = await supabase
@@ -325,7 +336,7 @@ export const emrApi = {
       .is('deleted_at', null)
       .maybeSingle();
 
-    if ((error && !legacyData) || legacyError) {
+    if (legacyError) {
       console.error('Error fetching patient by room', error || legacyError);
     }
 
