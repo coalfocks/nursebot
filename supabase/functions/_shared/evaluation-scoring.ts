@@ -28,23 +28,34 @@ const clamp = (value: unknown, min: number, max: number) => {
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
-type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
+export type EvidenceShape = { id?: string; kind: string; title: string; body?: string; meta?: string[] };
+
+const positiveExamClaim = /\b(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\b|\blearner['’]?s\s+physical\s+findings\b/i;
+const unquotedText = (value: string) => value.replace(/"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’/g, '');
+const containsPositivePhysicalExamEvidence = (value: string) => unquotedText(value).split(/[.!?\n]+/).some((sentence) =>
+  /\b(?:physical\s+(?:exam(?:ination)?|findings)|examined\s+(?:the\s+)?patient)\b/i.test(sentence)
+  && !/\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b/i.test(sentence),
+);
 
 const containsUnsupportedPositiveExamAttribution = (value: unknown): boolean => {
   if (typeof value === 'string') {
-    const quoted = /["'“”]\s*(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\s*[.!?]?\s*["'“”]/i.test(value);
-    const negated = /\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b.{0,100}\bphysical\s+examination\b/i.test(value);
-    return !quoted && !negated && (/\b(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\b|\blearner['’]?s\s+physical\s+findings\b/i.test(value));
+    const unquoted = unquotedText(value);
+    return unquoted.split(/[.!?\n]+/).some((sentence) => positiveExamClaim.test(sentence)
+      && !/\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b/i.test(sentence));
   }
   if (Array.isArray(value)) return value.some(containsUnsupportedPositiveExamAttribution);
   if (value && typeof value === 'object') return Object.values(value).some(containsUnsupportedPositiveExamAttribution);
   return false;
 };
 
-const hasLearnerAuthoredEvidence = (entries: EvidenceShape[]) => entries.some((entry) =>
-  entry.kind === 'learner-action'
-  || entry.meta?.some((value) => /author:\s*student|learner-authored/i.test(value)),
-);
+const isLearnerAuthored = (entry: EvidenceShape) => entry.kind === 'learner-action'
+  || entry.meta?.some((value) => /author:\s*student|learner-authored/i.test(value)) === true;
+
+const supportsPhysicalExamClaim = (ids: string[] | undefined, entriesById: Map<string, EvidenceShape>) => (ids ?? []).some((id) => {
+  const entry = entriesById.get(id);
+  if (!entry || !isLearnerAuthored(entry)) return false;
+  return containsPositivePhysicalExamEvidence(entry.body ?? '');
+});
 
 /** Preserve model/source narratives verbatim; evidence-boundary instructions do the attribution work. */
 export const sanitizeSimulationText = (value: string): string => value;
@@ -106,7 +117,14 @@ export const validateEvidenceAttributions = (
   evaluation: EvaluationScoringResponse,
   entries: EvidenceShape[],
 ): EvaluationScoringResponse => {
-  if (hasLearnerAuthoredEvidence(entries) || !containsUnsupportedPositiveExamAttribution(evaluation)) return evaluation;
+  const entriesById = new Map(entries.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []));
+  const componentGroups = [evaluation.communication_breakdown, evaluation.clinical_reasoning_breakdown];
+  const unsupported = componentGroups.flatMap((group) => Object.values(group)).filter((component) => containsUnsupportedPositiveExamAttribution(component.feedback) && !supportsPhysicalExamClaim(component.evidence_event_ids, entriesById));
+  const unsupportedNarrative = containsUnsupportedPositiveExamAttribution(evaluation.learning_objectives)
+    || evaluation.strengths.some(containsUnsupportedPositiveExamAttribution)
+    || evaluation.improvements.some(containsUnsupportedPositiveExamAttribution)
+    || evaluation.recommendations.some(containsUnsupportedPositiveExamAttribution);
+  if (unsupported.length === 0 && !unsupportedNarrative) return evaluation;
   const warning = 'UNSUPPORTED_ATTRIBUTION: positive learner physical-examination attribution was not supported by learner-authored evidence; preserved as wording only and not credited as observed performance.';
   const warnings = Array.from(new Set([...(evaluation.evidence_validation_warnings ?? []), warning]));
   const stripUnsupportedEvidence = (component: { score: number; evidence_event_ids?: string[]; feedback: string }) => ({
@@ -114,14 +132,9 @@ export const validateEvidenceAttributions = (
     score: 0,
     evidence_event_ids: [],
   });
-  const communication = {
-    ...evaluation.communication_breakdown,
-    focused_information_gathering: stripUnsupportedEvidence(evaluation.communication_breakdown.focused_information_gathering),
-  };
-  const clinicalReasoning = {
-    ...evaluation.clinical_reasoning_breakdown,
-    clinical_reasoning_documentation: stripUnsupportedEvidence(evaluation.clinical_reasoning_breakdown.clinical_reasoning_documentation),
-  };
+  const invalidate = (group: EvaluationScoringResponse['communication_breakdown']) => Object.fromEntries(Object.entries(group).map(([key, component]) => [key, containsUnsupportedPositiveExamAttribution(component.feedback) && !supportsPhysicalExamClaim(component.evidence_event_ids, entriesById) ? stripUnsupportedEvidence(component) : component])) as EvaluationScoringResponse['communication_breakdown'];
+  const communication = invalidate(evaluation.communication_breakdown);
+  const clinicalReasoning = invalidate(evaluation.clinical_reasoning_breakdown);
   return {
     ...evaluation,
     communication_breakdown: communication,

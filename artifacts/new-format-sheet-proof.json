@@ -1,9 +1,11 @@
 {
   "artifact": "new-format-sheet-proof.pdf",
+  "html_artifact": "new-format-sheet-proof.html",
   "renderer": "Chromium headless print-to-pdf",
   "synthetic_only": true,
-  "bytes": 53847,
-  "sha256": "44e942a30ebc04a6252b664eac0a6ea427631d6af00171b2c665e2c342caa728",
+  "html_sha256": "7f06776cf236ffa421a70728bc2db742e9b006eb5fd267e8e60d1e0b6aa24f56",
+  "pdf_sha256": "44e942a30ebc04a6252b664eac0a6ea427631d6af00171b2c665e2c342caa728",
+  "pdf_byte_size": 53847,
   "page_count": 1,
   "model_calls": 0,
   "database_writes": 0,

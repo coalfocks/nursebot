@@ -1,0 +1,31 @@
+import { NEW_FORMAT_EXPECTED_MODEL, NEW_FORMAT_EVALUATOR_SPEC_VERSION } from './new-format-evaluator-spec';
+
+export const SYNTHETIC_NEW_FORMAT_SHEET_RESULT: Record<string, unknown> = {
+  batch_ordinal: 1,
+  specialty: 'ED',
+  case_label: 'Synthetic bedside-first case',
+  packet_label: 'Exact export fixture',
+  status: 'completed',
+  prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+  generated_at: '2026-10-24T00:00:00.000Z',
+  model: NEW_FORMAT_EXPECTED_MODEL,
+  case_goals: ['Recognize deterioration', 'Escalate and reassess'],
+  critical_safety_action: 'Do not administer the contraindicated order.',
+  safety_result: { level: 'critical', action: 'Do not administer the contraindicated order.' },
+  component_scores: {
+    focused_information_gathering: { score: 2, feedback: 'Focused learner-authored information gathering.' },
+    closed_loop_team_communication: { score: 3, feedback: 'Linked learner-authored communication closes the loop.' },
+    efficiency_deduction: { score: 0, feedback: 'No case-specific efficiency deduction.' },
+    orders_monitoring_quality: { score: 3, feedback: 'Orders and monitoring are linked to the case.' },
+    clinical_reasoning_documentation: { score: 2, feedback: 'Reasoning is linked to observed evidence.' },
+    safety_deduction: { score: -2, feedback: 'One actual unsafe order was captured.' },
+  },
+  domain_scores: { communication: 5, clinical_reasoning: 3 },
+  strengths: ['Observable strength'],
+  improvements: ['Observable improvement'],
+  recommendations: ['Observable next step'],
+  communication_breakdown: { focused_information_gathering: { feedback: 'Focused learner-authored information gathering.' } },
+  clinical_reasoning_breakdown: { clinical_reasoning_documentation: { feedback: 'Reasoning is linked to observed evidence.' } },
+  evidence_event_ids: ['synthetic-learner-action-1'],
+  evidence_validation_warnings: [],
+};

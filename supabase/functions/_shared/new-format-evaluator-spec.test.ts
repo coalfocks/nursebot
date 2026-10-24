@@ -18,6 +18,7 @@ import {
   stableCanonicalJson,
 } from './new-format-evaluator-spec';
 import { validateEvidenceAttributions } from './evaluation-scoring';
+import { SYNTHETIC_NEW_FORMAT_SHEET_RESULT } from './new-format-sheet-fixture';
 
 const ids = ['synthetic-1'];
 const component = (score: number, feedback: string) => ({ score, feedback, evidence_event_ids: ids });
@@ -189,5 +190,48 @@ describe('NEW-FORMAT evaluator specification', () => {
     expect(buildEvaluationSheetHtml(reviewer)).toContain('UNSUPPORTED_ATTRIBUTION');
     const quoted = validateEvidenceAttributions(canonicalizeEvaluation({ learning_objectives: 'The note says “The learner performed a physical examination.”', communication_breakdown: { focused_information_gathering: component(1, 'Quoted source only.') }, clinical_reasoning_breakdown: {}, safety_result: { level: 'none', evidence_event_ids: [] } }), [{ kind: 'message', title: 'Nurse page', meta: ['Actor: nurse'] }]);
     expect(quoted.evidence_validation_warnings).toEqual([]);
+  });
+
+  it('requires claim-specific learner evidence content and preserves mixed quoted, negative, and positive wording', () => {
+    const evaluation = canonicalizeEvaluation({
+      communication_breakdown: {
+        focused_information_gathering: component(2, 'The learner performed a physical examination. The record says “The learner performed a physical examination.” No evidence that the learner performed a physical examination.'),
+      },
+      clinical_reasoning_breakdown: {},
+      safety_result: { level: 'none', evidence_event_ids: [] },
+    });
+    const checked = validateEvidenceAttributions(evaluation, [
+      { id: 'unrelated', kind: 'learner-action', title: 'Learner team escalation', body: 'Escalated the patient to the senior clinician.', meta: ['Author: Student'] },
+    ]);
+    expect(checked.evidence_validation_warnings).toHaveLength(1);
+    expect(checked.communication_breakdown.focused_information_gathering.score).toBe(0);
+    expect(checked.communication_breakdown.focused_information_gathering.feedback).toContain('The learner performed a physical examination.');
+  });
+
+  it('accepts only an ID-linked learner entry whose content supports the physical-exam wording', () => {
+    const evaluation = canonicalizeEvaluation({
+      communication_breakdown: { focused_information_gathering: { score: 2, feedback: 'The learner performed a physical examination.', evidence_event_ids: ['exam'] } },
+      clinical_reasoning_breakdown: {}, safety_result: { level: 'none', evidence_event_ids: [] },
+    });
+    const checked = validateEvidenceAttributions(evaluation, [{ id: 'exam', kind: 'learner-action', title: 'Learner bedside finding', body: 'Physical exam findings documented at bedside.', meta: ['Author: Student'] }]);
+    expect(checked.evidence_validation_warnings).toEqual([]);
+    expect(checked.communication_breakdown.focused_information_gathering.score).toBe(2);
+  });
+
+  it('uses the exact shared sheet fixture for the checked-in HTML artifact', async () => {
+    const html = buildEvaluationSheetHtml(SYNTHETIC_NEW_FORMAT_SHEET_RESULT);
+    const artifact = readFileSync('artifacts/new-format-sheet-proof.html', 'utf8');
+    expect(artifact).toBe(html);
+    const metadata = JSON.parse(readFileSync('artifacts/new-format-sheet-proof.json', 'utf8')) as Record<string, unknown>;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(html));
+    const htmlSha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const pdf = readFileSync('artifacts/new-format-sheet-proof.pdf');
+    const pdfDigest = await crypto.subtle.digest('SHA-256', pdf);
+    const pdfSha256 = Array.from(new Uint8Array(pdfDigest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    expect(metadata.html_sha256).toBe(htmlSha256);
+    expect(metadata.pdf_sha256).toBe(pdfSha256);
+    expect(metadata.pdf_byte_size).toBe(pdf.byteLength);
+    expect(metadata.page_count).toBe(1);
+    expect(proveRenderedSheetStructure(artifact, new Uint8Array(pdf))).toEqual({ valid: true, missing: [], page_count: 1 });
   });
 });
