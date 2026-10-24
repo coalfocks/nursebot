@@ -9,7 +9,8 @@ import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-le
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/historical-context.ts';
 import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shared/faculty-study-auth.ts';
-import { resolveLegacyCaseProvenance } from '../_shared/legacy-case-provenance.ts';
+import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '../_shared/legacy-case-provenance.ts';
+import { classifySourceReadError } from '../_shared/source-read-classification.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -134,11 +135,17 @@ const optionalHistoryRows = async (client: ReturnType<typeof serviceClient>, tab
     : query.eq('assignment_id', assignmentId);
   const result = await query;
   if (result.error) {
-    return missingStudyTable(result.error)
-      ? { available: false, rows: [], reason: 'source_table_unavailable' }
-      : { available: false, rows: [], reason: `source_read_failed:${result.error.message}` };
+    const failure = classifySourceReadError(result.error);
+    return {
+      available: false,
+      rows: [],
+      reason: failure.category === 'missing_table' ? 'source_table_unavailable' : failure.category === 'missing_column' ? 'source_column_unavailable' : failure.category === 'denied' ? 'source_read_denied' : 'source_read_failed',
+      error_category: failure.category,
+      error_code: failure.code,
+      error_message: failure.message,
+    };
   }
-  return { available: true, rows: (result.data ?? []) as unknown as Record<string, unknown>[], reason: null };
+  return { available: true, rows: (result.data ?? []) as unknown as Record<string, unknown>[], reason: null, error_category: null, error_code: null, error_message: null };
 };
 
 const historicalSourceInventory = async (
@@ -151,12 +158,13 @@ const historicalSourceInventory = async (
   const assignmentId = String(assignment.id);
   const roomId = Number(assignment.room_id);
   const caseVersion = typeof assignment.case_key_version === 'string' ? assignment.case_key_version : null;
-  const [assignmentMar, saveOperations, packetAudit, noteVersions, clinicalNoteVersions] = await Promise.all([
+  const [assignmentMar, saveOperations, packetAudit, clinicalNotes] = await Promise.all([
     optionalHistoryRows(client, 'manual_mar_assignment_snapshots', 'id, assignment_id, source_packet_id, patient_id, room_id, case_version, packet_revision, content_hash, created_at', assignmentId, roomId, caseVersion),
     optionalHistoryRows(client, 'mar_save_operations', 'request_id, patient_id, room_id, assignment_id, case_version, content_hash, expected_revision, created_at', assignmentId, roomId, caseVersion),
     optionalHistoryRows(client, 'manual_mar_packet_audit', 'id, packet_id, request_id, patient_id, room_id, case_version, prior_revision, next_revision, payload_hash, created_at', assignmentId, roomId, caseVersion),
-    optionalHistoryRows(client, 'student_progress_note_versions', 'id, assignment_id, version, content_hash, created_at, updated_at, deleted_at', assignmentId, roomId, caseVersion),
-    optionalHistoryRows(client, 'clinical_note_versions', 'id, assignment_id, version, content_hash, created_at, updated_at, deleted_at', assignmentId, roomId, caseVersion),
+    // Use only the actual EMR schema. Generic *_note_versions relations are
+    // not application tables and cannot establish historical recovery.
+    optionalHistoryRows(client, 'clinical_notes', 'id, assignment_id, patient_id, school_id, room_id, override_scope, record_version, content, timestamp, created_at, updated_at, deleted_at', assignmentId, roomId, caseVersion),
   ]);
   const missingVersions = (context.availability.missing_historical_version ?? []) as Array<Record<string, unknown>>;
   const orderUpdates = missingVersions.filter((row) => row.table === 'medical_orders');
@@ -187,13 +195,23 @@ const historicalSourceInventory = async (
       content_recovery_proven: false,
       correlation_note: updateGroups.length ? 'Shared updated_at values are correlated with available audit rows only; metadata alone does not prove pre-edit content.' : null,
     },
-    completed_note_history: {
-      current_assignment_metadata: noteMetadata,
-      progress_note_versions: noteVersions,
-      clinical_note_versions: clinicalNoteVersions,
-      version_proven: noteVersions.available && noteVersions.rows.length > 0,
-      missing_history: !noteVersions.available || noteVersions.rows.length === 0,
-    },
+    completed_note_history: (() => {
+      const verification = classifyHistoricalNoteCandidates(clinicalNotes.rows, completedAt, {
+        assignmentId,
+        patientId: typeof assignment.patient_id === 'string' ? assignment.patient_id : null,
+        schoolId: typeof assignment.school_id === 'string' ? assignment.school_id : null,
+      });
+      return {
+        current_assignment_metadata: noteMetadata,
+        source: clinicalNotes,
+        candidates: verification.candidates,
+        verified_completion_time_versions: verification.verified,
+        verification_gaps: verification.verification_gaps,
+        // A row, hash, or metadata timestamp is not proof of historical content.
+        version_proven: clinicalNotes.available && verification.verified.length > 0,
+        missing_history: !clinicalNotes.available || verification.verified.length === 0,
+      };
+    })(),
     archive_recovery: {
       references: legacyRecovery.references ?? [],
       identity_excluded_references: legacyRecovery.identity_excluded_references ?? [],
@@ -223,13 +241,17 @@ const legacyCaseRecovery = async (client: ReturnType<typeof serviceClient>, assi
   let authoredVersions: Array<Record<string, unknown>> = [];
   const baselineQuery = await client.from('mar_assignment_baseline_versions').select('assignment_id, case_version, patient_id, room_id, event_snapshot, content_hash, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: false });
   if (baselineQuery.error) {
-    if (missingStudyTable(baselineQuery.error)) { archiveFlags.push('assignment_case_version_archive_unavailable'); assignmentVersions = []; }
-    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_assignment_baseline_versions:${baselineQuery.error.message}`);
+    const failure = classifySourceReadError(baselineQuery.error);
+    if (failure.category === 'missing_table') { archiveFlags.push('assignment_case_version_archive_unavailable'); assignmentVersions = []; }
+    else if (failure.category === 'missing_column') { archiveFlags.push(`assignment_case_version_archive_column_unavailable:${failure.code}`); assignmentVersions = []; }
+    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:${failure.category}:${failure.code}:${failure.message}`);
   } else assignmentVersions = (baselineQuery.data ?? []) as Array<Record<string, unknown>>;
   const authoredQuery = await client.from('mar_authored_case_versions').select('room_id, patient_id, school_id, case_version, order_snapshot, event_snapshot, content_hash, created_at').eq('room_id', roomId).order('created_at', { ascending: false });
   if (authoredQuery.error) {
-    if (missingStudyTable(authoredQuery.error)) { archiveFlags.push('authored_case_version_archive_unavailable'); authoredVersions = []; }
-    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_authored_case_versions:${authoredQuery.error.message}`);
+    const failure = classifySourceReadError(authoredQuery.error);
+    if (failure.category === 'missing_table') { archiveFlags.push('authored_case_version_archive_unavailable'); authoredVersions = []; }
+    else if (failure.category === 'missing_column') { archiveFlags.push(`authored_case_version_archive_column_unavailable:${failure.code}`); authoredVersions = []; }
+    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:${failure.category}:${failure.code}:${failure.message}`);
   } else authoredVersions = (authoredQuery.data ?? []) as Array<Record<string, unknown>>;
   const provenance = resolveLegacyCaseProvenance({
     assignmentRows: assignmentVersions,
@@ -314,7 +336,7 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
   };
 };
 
-const missingStudyTable = (error: { code?: string; message?: string } | null) => error?.code === '42P01' || /does not exist|relation .* not found/i.test(error?.message ?? '');
+const missingStudyTable = (error: { code?: string; message?: string } | null) => classifySourceReadError(error).category === 'missing_table';
 
 const studyHistory = async (client: ReturnType<typeof serviceClient>, assignmentId: string) => {
   if (!assignmentId.trim()) throw new Error('STUDY_ASSIGNMENT_ID_REQUIRED');

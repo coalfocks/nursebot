@@ -121,3 +121,47 @@ export const resolveLegacyCaseProvenance = ({
     missing_history_flags: flags,
   };
 };
+
+const parseTime = (value: unknown) => typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? Date.parse(value) : null;
+
+export const classifyHistoricalNoteCandidates = (rows: LegacyArchiveRow[], completedAt: string, expected: { assignmentId?: string | null; patientId?: string | null; schoolId?: string | null } = {}) => {
+  const cutoff = parseTime(completedAt);
+  const candidates = rows.map((row) => {
+    const createdAt = parseTime(row.created_at);
+    const updatedAt = parseTime(row.updated_at);
+    const eventAt = parseTime(row.timestamp ?? row.event_at);
+    const deletedAt = parseTime(row.deleted_at);
+    const content = row.content;
+    const contentPresent = typeof content === 'string' ? content.trim().length > 0 : Boolean(content && typeof content === 'object');
+    const gaps: string[] = [];
+    if (expected.assignmentId && row.assignment_id !== expected.assignmentId) gaps.push('assignment_identity_mismatch');
+    if (expected.patientId && row.patient_id !== expected.patientId) gaps.push('patient_identity_mismatch');
+    if (expected.schoolId && row.school_id !== expected.schoolId) gaps.push('school_identity_mismatch');
+    if (row.override_scope !== 'assignment') gaps.push('assignment_scope_unverified');
+    if (cutoff === null) gaps.push('completion_cutoff_invalid');
+    if (createdAt === null) gaps.push('created_at_missing_or_invalid');
+    else if (cutoff !== null && createdAt > cutoff) gaps.push('created_after_completion');
+    if (eventAt !== null && cutoff !== null && eventAt > cutoff) gaps.push('event_after_completion');
+    if (updatedAt !== null && cutoff !== null && updatedAt > cutoff) gaps.push('updated_after_completion');
+    if (deletedAt !== null && cutoff !== null && deletedAt <= cutoff) gaps.push('deleted_before_or_at_completion');
+    if (!contentPresent) gaps.push('historical_content_unavailable');
+    return {
+      source_id: row.id ?? null,
+      source_table: row.source_table ?? 'clinical_notes',
+      assignment_id: row.assignment_id ?? null,
+      record_version: row.record_version ?? null,
+      created_at: row.created_at ?? null,
+      event_at: row.timestamp ?? row.event_at ?? null,
+      updated_at: row.updated_at ?? null,
+      deleted_at: row.deleted_at ?? null,
+      content_present: contentPresent,
+      verified: gaps.length === 0,
+      verification_gaps: gaps,
+    };
+  });
+  return {
+    candidates,
+    verified: candidates.filter((candidate) => candidate.verified),
+    verification_gaps: [...new Set(candidates.flatMap((candidate) => candidate.verification_gaps))],
+  };
+};

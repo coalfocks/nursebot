@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { resolveLegacyCaseProvenance } from './legacy-case-provenance';
+import { classifyHistoricalNoteCandidates } from './legacy-case-provenance';
 
 const identity = { patientId: 'patient-1', schoolId: 'school-1', roomId: 7, pinnedCaseVersion: 'case-v1', identityProvenance: 'assignment' as const };
 const completedAt = '2026-10-24T00:00:00.000Z';
 
 describe('legacy case provenance', () => {
+  it('keeps post-completion, deleted, metadata-only, and mismatched notes as candidates but not proof', () => {
+    const result = classifyHistoricalNoteCandidates([
+      { id: 'post', assignment_id: 'assignment-1', patient_id: 'patient-1', school_id: 'school-1', override_scope: 'assignment', content: 'later', created_at: '2026-10-24T01:00:00.000Z', updated_at: '2026-10-24T01:00:00.000Z' },
+      { id: 'deleted', assignment_id: 'assignment-1', patient_id: 'patient-1', school_id: 'school-1', override_scope: 'assignment', content: 'old', created_at: '2026-10-23T00:00:00.000Z', deleted_at: '2026-10-23T12:00:00.000Z' },
+      { id: 'hash-only', assignment_id: 'assignment-1', patient_id: 'patient-1', school_id: 'school-1', override_scope: 'assignment', content: '', content_hash: 'abc', created_at: '2026-10-23T00:00:00.000Z' },
+      { id: 'verified', assignment_id: 'assignment-1', patient_id: 'patient-1', school_id: 'school-1', override_scope: 'assignment', content: 'completion-time note', created_at: '2026-10-23T00:00:00.000Z', updated_at: '2026-10-23T00:00:00.000Z' },
+    ], completedAt, { assignmentId: 'assignment-1', patientId: 'patient-1', schoolId: 'school-1' });
+    expect(result.candidates).toHaveLength(4);
+    expect(result.verified.map((row) => row.source_id)).toEqual(['verified']);
+    expect(result.candidates.find((row) => row.source_id === 'post')?.verification_gaps).toContain('created_after_completion');
+    expect(result.candidates.find((row) => row.source_id === 'deleted')?.verification_gaps).toContain('deleted_before_or_at_completion');
+    expect(result.candidates.find((row) => row.source_id === 'hash-only')?.verification_gaps).toContain('historical_content_unavailable');
+  });
+
   it('excludes a same-room archive belonging to another patient or school', () => {
     const result = resolveLegacyCaseProvenance({
       identity,
