@@ -131,15 +131,15 @@ describe('feedback v2 canonical contract', () => {
     expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(1);
   });
 
-  it('does not claim that a computer simulation included a physical exam', () => {
+  it('preserves source narrative wording for explicit evidence review', () => {
     expect(sanitizeSimulationText('Documented specific bedside signs after a physical exam.'))
-      .toBe('Recorded learner-reported simulated bedside findings after a simulated bedside interaction.');
+      .toBe('Documented specific bedside signs after a physical exam.');
     const result = canonicalizeEvaluation({
       strengths: ['The learner examined the patient and escalated.'],
       communication_breakdown: { focused_information_gathering: { score: 1, feedback: 'physical exam observed' } },
     });
-    expect(result.strengths[0]).toContain('assessed the patient in the simulation');
-    expect(result.communication_breakdown.focused_information_gathering.feedback).toContain('simulated bedside interaction');
+    expect(result.strengths[0]).toBe('The learner examined the patient and escalated.');
+    expect(result.communication_breakdown.focused_information_gathering.feedback).toBe('physical exam observed');
   });
 
   it('applies the confirmed three-part deductions only when supplied by case-specific evidence', () => {

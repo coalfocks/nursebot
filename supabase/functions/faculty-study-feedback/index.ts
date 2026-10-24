@@ -13,7 +13,7 @@ import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '.
 import { classifySourceReadError } from '../_shared/source-read-classification.ts';
 import { optionalHistoryScope } from '../_shared/history-query-scope.ts';
 import { configuredRoomPdfCandidates, exportAllowlistedRoomPdfs } from '../_shared/room-pdf-export.ts';
-import { NEW_FORMAT_EVALUATOR_SPEC, resolveGeneratorRevisionBinding } from '../_shared/new-format-evaluator-spec.ts';
+import { assertReviewedNewFormatBinding, NEW_FORMAT_COMPONENT_ANCHORS, NEW_FORMAT_EVALUATOR_INSTRUCTION, NEW_FORMAT_EVALUATOR_SPEC, NEW_FORMAT_EVALUATOR_SPEC_SHA256, NEW_FORMAT_EVALUATOR_SPEC_VERSION, NEW_FORMAT_EXPECTED_MODEL, resolveGeneratorRevisionBinding } from '../_shared/new-format-evaluator-spec.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -24,10 +24,21 @@ const message = (error: unknown) => error instanceof Error ? error.message : typ
 const serviceClient = () => createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
 const deploymentMode = (): FacultyStudyDeploymentMode => {
   const configured = Deno.env.get('FACULTY_STUDY_DEPLOYMENT_MODE')?.trim().toLowerCase();
+  if (configured === 'study-enabled') return 'study-enabled';
   if (configured === 'preflight-only') return 'preflight-only';
   // Fail closed: an absent or unknown mode must never expose study-enabled actions.
   return 'preflight-only';
 };
+
+const assertEnabledManifestBinding = (manifest: FacultyStudyManifest, generatorRevision: string | null) => assertReviewedNewFormatBinding({
+  prompt_version: manifest.prompt_version,
+  prompt_text: manifest.prompt_text,
+  evaluator_spec_version: manifest.evaluator_spec_version,
+  evaluator_spec_hash: manifest.evaluator_spec_hash,
+  component_anchors: manifest.component_anchors,
+  expected_model: manifest.expected_model,
+  generator_revision: generatorRevision,
+});
 
 const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>, requestId: string) => {
   let userId: string;
@@ -72,8 +83,10 @@ const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest
     let config;
     try { config = await activeConfig(client, roomId); }
     catch (error) { errors.push({ batch_ordinal: item.batch_ordinal, code: errorCode(error) || message(error).split(':')[0], message: message(error) }); continue; }
-    attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: (config as { scoring_anchors?: unknown }).scoring_anchors ?? {}, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC });
-    if (config.evaluator_prompt.trim() !== manifest.prompt_text.trim()) errors.push({ batch_ordinal: item.batch_ordinal, code: 'PROMPT_CONFIG_MISMATCH', message: `active ${config.scope} evaluator v${config.version} does not match the supplied frozen prompt`, observed_config_id: config.id, observed_config_version: config.version, observed_config_scope: config.scope });
+    const anchors = (config as { scoring_anchors?: unknown }).scoring_anchors ?? {};
+    attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: anchors, evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC });
+    if (config.evaluator_prompt !== NEW_FORMAT_EVALUATOR_INSTRUCTION || manifest.prompt_text !== NEW_FORMAT_EVALUATOR_INSTRUCTION) errors.push({ batch_ordinal: item.batch_ordinal, code: 'PROMPT_CONFIG_MISMATCH', message: `active ${config.scope} evaluator v${config.version} does not exactly match the reviewed instruction`, observed_config_id: config.id, observed_config_version: config.version, observed_config_scope: config.scope });
+    if (JSON.stringify(anchors) !== JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS)) errors.push({ batch_ordinal: item.batch_ordinal, code: 'COMPONENT_ANCHORS_MISMATCH', message: 'active evaluator anchors do not exactly match the reviewed component anchors' });
   }
   let model: string | null = null;
   try { model = getOpenAIModel('generate_feedback'); }
@@ -447,7 +460,8 @@ const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManife
   const sourceIds = new Set(entries.map((entry) => entry.id));
   const room = assignment.scenario_baseline as Record<string, unknown>;
   const caseKey = resolveCaseEvaluationKey(room);
-  const prompt = `${EVALUATION_SYSTEM_PROMPT}\n\n${CANONICAL_RUBRIC}\n\nACTIVE EVALUATOR PROMPT (frozen at preparation):\n${String(evaluator.evaluator_prompt ?? '')}\n\nSCORING ANCHORS (frozen at preparation):\n${JSON.stringify(evaluator.scoring_anchors ?? {}, null, 2)}\n\nThis is a deidentified faculty study. Evaluate only this immutable historical assignment context. Do not infer missing events. The evidence boundary is exactly the following assignment-scoped timeline, reconstructed with the deployed case key version ${caseKey.version || CASE_KEY_VERSION}, rubric ${FEEDBACK_RUBRIC_VERSION}, and assessment ${ASSESSMENT_VERSION}.\n\nCASE LABELS (preserve in output): specialty=${item.specialty}; case=${item.case_label}; packet=${item.packet_label}\n\nASSIGNMENT SNAPSHOT:\n${JSON.stringify({ status: assignment.status, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note, room_id: assignment.room_id, scenario_baseline_version: assignment.scenario_baseline_version })}\n\nHISTORICAL CHART RECONSTRUCTION:\n${JSON.stringify(room)}\n\nAVAILABILITY:\n${JSON.stringify(context.availability)}\n\nHISTORICAL EVIDENCE:\n${renderTimelineEntriesForEvaluation(entries)}\n\nReturn JSON with the six scored components, domain scores, strengths, improvements, recommendations, safety_result, and evidence_event_ids copied only from this evidence boundary.`;
+  const generatorRevision = String(evaluator.generator_revision ?? '');
+  const prompt = `${EVALUATION_SYSTEM_PROMPT}\n\n${CANONICAL_RUBRIC}\n\nREVIEWED NEW-FORMAT INSTRUCTION (exact):\n${NEW_FORMAT_EVALUATOR_INSTRUCTION}\n\nREVIEWED COMPONENT ANCHORS (exact):\n${JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS, null, 2)}\n\nREVIEWED SPEC BINDING: version=${NEW_FORMAT_EVALUATOR_SPEC_VERSION}; sha256=${NEW_FORMAT_EVALUATOR_SPEC_SHA256}; expected_model=${NEW_FORMAT_EXPECTED_MODEL}; generator_revision=${generatorRevision}\n\nThis is a deidentified faculty study. Evaluate only this immutable historical assignment context. Do not infer missing events. The evidence boundary is exactly the following assignment-scoped timeline, reconstructed with the deployed case key version ${caseKey.version || CASE_KEY_VERSION}, rubric ${FEEDBACK_RUBRIC_VERSION}, and assessment ${ASSESSMENT_VERSION}.\n\nCASE LABELS (preserve in output): specialty=${item.specialty}; case=${item.case_label}; packet=${item.packet_label}\n\nASSIGNMENT SNAPSHOT:\n${JSON.stringify({ status: assignment.status, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note, room_id: assignment.room_id, scenario_baseline_version: assignment.scenario_baseline_version })}\n\nHISTORICAL CHART RECONSTRUCTION:\n${JSON.stringify(room)}\n\nAVAILABILITY:\n${JSON.stringify(context.availability)}\n\nHISTORICAL EVIDENCE:\n${renderTimelineEntriesForEvaluation(entries)}\n\nReturn JSON with the six scored components, domain scores, strengths, improvements, recommendations, safety_result, and evidence_event_ids copied only from this evidence boundary. Any unsupported claim must be rejected or explicitly flagged as unsupported; do not relabel source narrative.`;
   const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
   const completion = await openai.chat.completions.create({ model, messages: [{ role: 'system', content: 'You are a clinical education feedback evaluator. Treat the supplied historical context as the complete evidence boundary.' }, { role: 'user', content: prompt }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
   const raw = JSON.parse(completion.choices[0].message.content ?? '{}') as Record<string, unknown>;
@@ -457,6 +471,8 @@ const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManife
 };
 
 const prepare = async (client: ReturnType<typeof serviceClient>, userId: string, manifest: FacultyStudyManifest) => {
+  const generatorRevision = resolveGeneratorRevisionBinding('study-enabled', Deno.env);
+  assertEnabledManifestBinding(manifest, generatorRevision);
   const runtime = await verifyRuntime(client, manifest);
   const manifestText = JSON.stringify(manifest);
   const promptHash = await sha256(manifest.prompt_text);
@@ -533,6 +549,10 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   if (batchResult.error) throw batchResult.error;
   const batch = batchResult.data as Record<string, unknown>;
   const manifest = validateStudyManifest(batch.manifest);
+  // This is deliberately before the lease claim and every result write/model call.
+  const generatorRevision = resolveGeneratorRevisionBinding('study-enabled', Deno.env);
+  assertEnabledManifestBinding(manifest, generatorRevision);
+  if (batch.model !== NEW_FORMAT_EXPECTED_MODEL || batch.generator_revision !== generatorRevision) throw new Error('STUDY_BATCH_BINDING_MISMATCH');
   const model = String(batch.model);
   const limit = Math.max(1, Math.min(30, Number.isInteger(Number(requestedLimit)) ? Number(requestedLimit) : 5));
   const existingResult = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
@@ -582,12 +602,15 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       const sourceHashes = { context_sha256: await sha256(JSON.stringify(context)), assignment_snapshot_sha256: await sha256(JSON.stringify(snapshot)) };
       if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
       const historicalChart = assignment.scenario_baseline as Record<string, unknown>;
-      frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors }, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
+      const generatorRevision = String(batch.generator_revision ?? '');
+      assertEnabledManifestBinding(manifest, generatorRevision);
+      frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS, generator_revision: generatorRevision }, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse: null, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: null });
-      const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors });
+      const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS, generator_revision: generatorRevision });
       rawModelResponse = evaluation.raw;
       await assertProtectedAssignmentReadback(client, item.assignment_id, { ...assignment, status: snapshot.status });
-      result = { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'completed', evaluation: evaluation.canonical, evidence_event_ids: evaluation.evidenceEventIds, generated_at: new Date().toISOString(), prompt_version: batch.prompt_version, model, redaction_terms: privateTerms };
+      const evaluationKey = resolveCaseEvaluationKey(historicalChart);
+      result = { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'completed', evaluation: evaluation.canonical, case_goals: evaluationKey.goals, safety_result: evaluation.canonical.safety_result, critical_safety_action: evaluation.canonical.safety_result.level === 'critical' ? evaluation.canonical.safety_result.action : null, evidence_event_ids: evaluation.evidenceEventIds, generated_at: new Date().toISOString(), prompt_version: batch.prompt_version, model, redaction_terms: privateTerms };
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result, canonicalResult: evaluation.canonical as unknown as Record<string, unknown>, rawModelResponse: evaluation.raw, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: String(result.generated_at) });
     } catch (error) {
       if (message(error) === 'STUDY_RUN_LEASE_LOST') throw error;

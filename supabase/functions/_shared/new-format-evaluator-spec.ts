@@ -102,3 +102,31 @@ export const resolveGeneratorRevisionBinding = (
   if (!revision) throw new Error('GENERATOR_REVISION_UNVERIFIED');
   return revision;
 };
+
+export type NewFormatEvaluatorBinding = {
+  prompt_version?: unknown;
+  prompt_text?: unknown;
+  evaluator_spec_version?: unknown;
+  evaluator_spec_hash?: unknown;
+  component_anchors?: unknown;
+  expected_model?: unknown;
+  generator_revision?: unknown;
+};
+
+const exactJson = (value: unknown) => JSON.stringify(value) === JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS);
+
+/**
+ * The study-enabled path is allowed to run only against the reviewed spec.
+ * Keep this pure so callers can validate before their first isolated-table write
+ * or model request, and so synthetic tests never need a database or model.
+ */
+export const assertReviewedNewFormatBinding = (binding: NewFormatEvaluatorBinding) => {
+  if (binding.prompt_version !== NEW_FORMAT_EVALUATOR_SPEC_VERSION) throw new Error('NEW_FORMAT_PROMPT_VERSION_MISMATCH');
+  if (binding.prompt_text !== NEW_FORMAT_EVALUATOR_INSTRUCTION) throw new Error('NEW_FORMAT_PROMPT_MISMATCH');
+  if (binding.evaluator_spec_version !== NEW_FORMAT_EVALUATOR_SPEC_VERSION) throw new Error('NEW_FORMAT_SPEC_VERSION_MISMATCH');
+  if (binding.evaluator_spec_hash !== NEW_FORMAT_EVALUATOR_SPEC_SHA256) throw new Error('NEW_FORMAT_SPEC_HASH_MISMATCH');
+  if (!exactJson(binding.component_anchors)) throw new Error('NEW_FORMAT_COMPONENT_ANCHORS_MISMATCH');
+  if (binding.expected_model !== NEW_FORMAT_EXPECTED_MODEL) throw new Error('NEW_FORMAT_MODEL_MISMATCH');
+  if (typeof binding.generator_revision !== 'string' || binding.generator_revision.trim() === '') throw new Error('GENERATOR_REVISION_UNVERIFIED');
+  return true;
+};

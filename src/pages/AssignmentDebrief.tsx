@@ -22,22 +22,12 @@ const nonEmpty = (value: unknown): string[] => {
   }
   return Array.from(new Set(cleaned)).slice(0, 5);
 };
-const sanitizeSimulationText = (value: string) => value
-  .replace(/\bphysical examination\b/gi, 'simulated bedside interaction')
-  .replace(/\bphysical exam\b/gi, 'simulated bedside interaction')
-  .replace(/\bexamined the patient\b/gi, 'assessed the patient in the simulation')
-  .replace(/\bexamined\b/gi, 'assessed in the simulation')
-  .replace(/\bphysical findings?\b/gi, 'recorded simulated bedside findings')
-  .replace(/documented specific bedside signs/gi, (match) => match[0] === match[0].toUpperCase()
-    ? 'Recorded learner-reported simulated bedside findings'
-    : 'recorded learner-reported simulated bedside findings')
-  .replace(/structured bedside action/gi, 'learner-recorded simulated bedside/team action');
-const firstText = (...values: unknown[]) => { const value = values.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? ''; return sanitizeSimulationText(value); };
+const firstText = (...values: unknown[]) => values.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
 
 const scoreCard = (label: string, score: unknown, breakdown: Array<{ label: string; value: unknown; feedback: unknown }>) => (
   <section className="rounded-lg border bg-white p-5 shadow-sm" aria-labelledby={`${label}-heading`}>
     <div className="flex items-baseline justify-between"><h2 id={`${label}-heading`} className="font-semibold text-gray-900">{label}</h2><span className="text-3xl font-bold text-blue-700">{typeof score === 'number' ? `${score}/5` : '—'}</span></div>
-    <div className="mt-4 space-y-3">{breakdown.map((item) => <div key={item.label}><div className="flex justify-between text-sm font-medium"><span>{item.label}</span><span>{typeof item.value === 'number' ? `${item.value}` : 'Not observed'}</span></div><p className="mt-1 text-sm text-gray-600">{sanitizeSimulationText(String(item.feedback || 'Insufficient evidence.'))}</p></div>)}</div>
+    <div className="mt-4 space-y-3">{breakdown.map((item) => <div key={item.label}><div className="flex justify-between text-sm font-medium"><span>{item.label}</span><span>{typeof item.value === 'number' ? `${item.value}` : 'Not observed'}</span></div><p className="mt-1 text-sm text-gray-600">{String(item.feedback || 'Insufficient evidence.')}</p></div>)}</div>
   </section>
 );
 

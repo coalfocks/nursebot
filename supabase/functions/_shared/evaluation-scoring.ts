@@ -27,15 +27,8 @@ const clamp = (value: unknown, min: number, max: number) => {
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
-export const sanitizeSimulationText = (value: string): string => value
-  .replace(/\bphysical examination\b/gi, 'simulated bedside interaction')
-  .replace(/\bphysical exam\b/gi, 'simulated bedside interaction')
-  .replace(/\bexamined the patient\b/gi, 'assessed the patient in the simulation')
-  .replace(/\bexamined\b/gi, 'assessed in the simulation')
-  .replace(/\bphysical findings?\b/gi, 'recorded simulated bedside findings')
-  .replace(/documented specific bedside signs/gi, (match) => match[0] === match[0].toUpperCase() ? 'Recorded learner-reported simulated bedside findings' : 'recorded learner-reported simulated bedside findings')
-  .replace(/structured bedside action/gi, 'learner-recorded simulated bedside/team action')
-  .replace(/bedside signs of impaired perfusion and ongoing dizziness/gi, 'learner-recorded perfusion concern and dizziness');
+/** Preserve model/source narratives verbatim; evidence-boundary instructions do the attribution work. */
+export const sanitizeSimulationText = (value: string): string => value;
 
 export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>): EvaluationScoringResponse => {
   const source = raw as Record<string, any>;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalizeEvaluation } from './evaluation-scoring';
 import { CANONICAL_RUBRIC, EVALUATION_SYSTEM_PROMPT } from './evaluation-prompts';
-import { buildEvaluationSheetHtml } from './faculty-study-contract';
+import { buildEvaluationSheetHtml, proveRenderedSheetStructure } from './faculty-study-contract';
 import {
   GENERATOR_REVISION_BINDING_KEY,
   NEW_FORMAT_COMPONENT_ANCHORS,
@@ -12,6 +12,7 @@ import {
   NEW_FORMAT_STUDY_ONLY_DEPENDENCIES,
   NEW_FORMAT_EVALUATOR_SPEC_VERSION,
   NEW_FORMAT_EXPECTED_MODEL,
+  assertReviewedNewFormatBinding,
   resolveGeneratorRevisionBinding,
 } from './new-format-evaluator-spec';
 
@@ -115,5 +116,43 @@ describe('NEW-FORMAT evaluator specification', () => {
     expect(resolveGeneratorRevisionBinding('preflight-only', empty)).toBeNull();
     expect(() => resolveGeneratorRevisionBinding('study-enabled', empty)).toThrow('GENERATOR_REVISION_UNVERIFIED');
     expect(resolveGeneratorRevisionBinding('study-enabled', { get: (name) => name === GENERATOR_REVISION_BINDING_KEY ? 'revision-2026-10-24' : undefined })).toBe('revision-2026-10-24');
+  });
+
+  it('rejects every enabled-path binding mismatch before generation', () => {
+    const valid = {
+      prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+      prompt_text: NEW_FORMAT_EVALUATOR_INSTRUCTION,
+      evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+      evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256,
+      component_anchors: NEW_FORMAT_COMPONENT_ANCHORS,
+      expected_model: NEW_FORMAT_EXPECTED_MODEL,
+      generator_revision: 'revision-2026-10-24',
+    };
+    expect(assertReviewedNewFormatBinding(valid)).toBe(true);
+    for (const key of ['prompt_version', 'prompt_text', 'evaluator_spec_version', 'evaluator_spec_hash', 'component_anchors', 'expected_model', 'generator_revision'] as const) {
+      expect(() => assertReviewedNewFormatBinding({ ...valid, [key]: key === 'generator_revision' ? '' : 'mismatch' })).toThrow();
+    }
+  });
+
+  it('proves the synthetic printable sheet structure without a PDF or model call', () => {
+    const html = buildEvaluationSheetHtml({
+      batch_ordinal: 1, specialty: 'ED', case_label: 'Synthetic', packet_label: 'Fixture', status: 'completed', prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, model: NEW_FORMAT_EXPECTED_MODEL,
+      case_goals: ['Recognize deterioration', 'Escalate and reassess'], critical_safety_action: 'Do not administer the contraindicated order.', safety_result: { level: 'critical', action: 'Do not administer the contraindicated order.' },
+      component_scores: { focused_information_gathering: 2, closed_loop_team_communication: 3, efficiency_deduction: 0, orders_monitoring_quality: 3, clinical_reasoning_documentation: 2, safety_deduction: -2 }, domain_scores: { communication: 5, clinical_reasoning: 3 },
+    });
+    expect(proveRenderedSheetStructure(html)).toEqual({ valid: true, missing: [], page_count: 1 });
+    expect(html).toContain('Recognize deterioration');
+    expect(html).toContain('Do not administer the contraindicated order.');
+  });
+
+  it('preserves source narrative wording in the printable sheet', () => {
+    const sourceNarrative = 'The learner performed a physical examination; physical findings were documented.';
+    const html = buildEvaluationSheetHtml({
+      batch_ordinal: 1, specialty: 'ED', case_label: 'Synthetic', packet_label: 'Fixture', status: 'completed',
+      component_scores: { focused_information_gathering: { score: 1, feedback: sourceNarrative } },
+      domain_scores: {},
+    });
+    expect(html).toContain('The learner performed a physical examination; physical findings were documented.');
+    expect(html).not.toContain('simulated bedside interaction');
   });
 });
