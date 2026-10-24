@@ -13,6 +13,7 @@ import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '.
 import { classifySourceReadError } from '../_shared/source-read-classification.ts';
 import { optionalHistoryScope } from '../_shared/history-query-scope.ts';
 import { configuredRoomPdfCandidates, exportAllowlistedRoomPdfs } from '../_shared/room-pdf-export.ts';
+import { NEW_FORMAT_EVALUATOR_SPEC, resolveGeneratorRevisionBinding } from '../_shared/new-format-evaluator-spec.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -59,12 +60,6 @@ const activeConfig = async (client: ReturnType<typeof serviceClient>, roomId: nu
   return probe.data as { id: string; version: number; evaluator_prompt: string; scope: string; room_id: number | null };
 };
 
-const generatorRevision = () => {
-  const value = Deno.env.get('GENERATE_FEEDBACK_REVISION')?.trim();
-  if (!value) throw new Error('GENERATOR_REVISION_UNVERIFIED');
-  return value;
-};
-
 const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
   const attestations: Array<Record<string, unknown>> = [];
   const errors: Array<Record<string, unknown>> = [];
@@ -77,7 +72,7 @@ const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest
     let config;
     try { config = await activeConfig(client, roomId); }
     catch (error) { errors.push({ batch_ordinal: item.batch_ordinal, code: errorCode(error) || message(error).split(':')[0], message: message(error) }); continue; }
-    attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: (config as { scoring_anchors?: unknown }).scoring_anchors ?? {} });
+    attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: (config as { scoring_anchors?: unknown }).scoring_anchors ?? {}, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC });
     if (config.evaluator_prompt.trim() !== manifest.prompt_text.trim()) errors.push({ batch_ordinal: item.batch_ordinal, code: 'PROMPT_CONFIG_MISMATCH', message: `active ${config.scope} evaluator v${config.version} does not match the supplied frozen prompt`, observed_config_id: config.id, observed_config_version: config.version, observed_config_scope: config.scope });
   }
   let model: string | null = null;
@@ -85,7 +80,7 @@ const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest
   catch (error) { errors.push({ code: errorCode(error) || message(error).split(':')[0], message: message(error) }); }
   if (model !== null && model !== manifest.expected_model) errors.push({ code: 'MODEL_MISMATCH', message: `deployed generator resolves ${model}, manifest requires ${manifest.expected_model}`, observed_model: model });
   let revision: string | null = null;
-  try { revision = generatorRevision(); }
+  try { revision = resolveGeneratorRevisionBinding(deploymentMode(), Deno.env); }
   catch (error) { errors.push({ code: errorCode(error) || message(error).split(':')[0], message: message(error) }); }
   return { ready: errors.length === 0, attestations, model, expected_model: manifest.expected_model, generator_revision: revision, errors };
 };
@@ -345,7 +340,7 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
     batch_key: manifest.batch_key,
     manifest_sha256: manifestHash,
     protocol_version: FACULTY_STUDY_PROTOCOL_VERSION,
-    prompt_provenance: { prompt_version: manifest.prompt_version, supplied_prompt_sha256: promptTextHash, canonical_prompt_sha256: canonicalPromptHash, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: CASE_KEY_VERSION, expected_model: manifest.expected_model, active_evaluator_config: null, scoring_anchors: null },
+    prompt_provenance: { prompt_version: manifest.prompt_version, supplied_prompt_sha256: promptTextHash, canonical_prompt_sha256: canonicalPromptHash, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: CASE_KEY_VERSION, expected_model: manifest.expected_model, active_evaluator_config: null, scoring_anchors: null, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC },
     attempt_count: manifest.attempts.length,
     audited_count: results.filter((result) => result.status === 'audited').length,
     error_count: results.filter((result) => result.status === 'error').length,
@@ -587,7 +582,7 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       const sourceHashes = { context_sha256: await sha256(JSON.stringify(context)), assignment_snapshot_sha256: await sha256(JSON.stringify(snapshot)) };
       if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
       const historicalChart = assignment.scenario_baseline as Record<string, unknown>;
-      frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors }, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
+      frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors }, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse: null, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: null });
       const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors });
       rawModelResponse = evaluation.raw;

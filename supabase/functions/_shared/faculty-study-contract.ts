@@ -242,25 +242,37 @@ const htmlEscape = (value: unknown) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
+const sheetText = (value: unknown) => String(value ?? '')
+  .replace(/\bphysical\s+examination\b/gi, 'simulated bedside interaction')
+  .replace(/\bphysical\s+exam\b/gi, 'simulated bedside interaction')
+  .replace(/\bphysical\s+findings?\b/gi, 'recorded simulated bedside findings')
+  .replace(/\bprofessionalism\b/gi, 'excluded dimension')
+  .replace(/\boverall\s+score\b/gi, 'excluded composite');
+
 const htmlNarrative = (title: string, value: unknown) => {
   const text = value == null ? 'Not recorded' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  return `<section><h2>${htmlEscape(title)}</h2><pre>${htmlEscape(text)}</pre></section>`;
+  return `<section><h2>${htmlEscape(title)}</h2><pre>${htmlEscape(sheetText(text))}</pre></section>`;
 };
 
 export const buildEvaluationSheetHtml = (result: Record<string, unknown>) => {
   const components = (result.component_scores ?? {}) as Record<string, unknown>;
   const domains = (result.domain_scores ?? {}) as Record<string, unknown>;
-  const scoreRows = [
+  const componentRows = [
     ['Focused information gathering', components.focused_information_gathering],
     ['Closed-loop team communication', components.closed_loop_team_communication],
     ['Efficiency deduction', components.efficiency_deduction],
     ['Orders and monitoring quality', components.orders_monitoring_quality],
     ['Clinical reasoning documentation', components.clinical_reasoning_documentation],
     ['Safety deduction', components.safety_deduction],
+  ].map(([label, score]) => {
+    const component = score && typeof score === 'object' ? score as Record<string, unknown> : {};
+    return `<tr><th>${htmlEscape(label)}</th><td>${htmlEscape(component.score)}</td><td>${htmlEscape(sheetText(component.feedback ?? component.narrative ?? 'Not recorded'))}</td></tr>`;
+  }).join('');
+  const domainRows = [
     ['Communication domain', domains.communication],
     ['Clinical reasoning domain', domains.clinical_reasoning],
   ].map(([label, score]) => `<tr><th>${htmlEscape(label)}</th><td>${htmlEscape(score)}</td></tr>`).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Faculty evaluation ${htmlEscape(result.batch_ordinal)}</title><style>body{font:15px system-ui,sans-serif;max-width:900px;margin:32px auto;color:#172033}h1{margin-bottom:4px}h2{border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-top:28px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{width:45%;background:#f8fafc}pre{white-space:pre-wrap;font:inherit;line-height:1.5}header p{color:#475569}@media print{body{margin:0}button{display:none}}</style></head><body><header><h1>NEW-FORMAT Faculty Evaluation</h1><p><strong>${htmlEscape(result.specialty)} · ${htmlEscape(result.case_label)} · ${htmlEscape(result.packet_label)}</strong></p><p>Status: ${htmlEscape(result.status)} · Prompt: ${htmlEscape(result.prompt_version)} · Generated: ${htmlEscape(result.generated_at)} · Model: ${htmlEscape(result.model)}</p></header><section><h2>Scores</h2><table><tbody>${scoreRows}</tbody></table></section>${htmlNarrative('Strengths', result.strengths)}${htmlNarrative('Improvements', result.improvements)}${htmlNarrative('Recommendations', result.recommendations)}${htmlNarrative('Communication breakdown', result.communication_breakdown)}${htmlNarrative('Clinical reasoning breakdown', result.clinical_reasoning_breakdown)}${htmlNarrative('Evidence event IDs', result.evidence_event_ids)}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Faculty evaluation ${htmlEscape(result.batch_ordinal)}</title><style>body{font:15px system-ui,sans-serif;max-width:900px;margin:32px auto;color:#172033}h1{margin-bottom:4px}h2{border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-top:28px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{width:30%;background:#f8fafc}pre{white-space:pre-wrap;font:inherit;line-height:1.5}header p{color:#475569}@media print{body{margin:0}button{display:none}}</style></head><body><header><h1>NEW-FORMAT Faculty Evaluation</h1><p><strong>${htmlEscape(result.specialty)} · ${htmlEscape(result.case_label)} · ${htmlEscape(result.packet_label)}</strong></p><p>Status: ${htmlEscape(result.status)} · Prompt: ${htmlEscape(result.prompt_version)} · Generated: ${htmlEscape(result.generated_at)} · Model: ${htmlEscape(result.model)}</p></header><section><h2>Scores</h2><table><thead><tr><th>Component</th><th>Score</th><th>Feedback</th></tr></thead><tbody>${componentRows}${domainRows}</tbody></table></section>${htmlNarrative('Strengths', result.strengths)}${htmlNarrative('Improvements', result.improvements)}${htmlNarrative('Recommendations', result.recommendations)}${htmlNarrative('Communication breakdown', result.communication_breakdown)}${htmlNarrative('Clinical reasoning breakdown', result.clinical_reasoning_breakdown)}${htmlNarrative('Evidence event IDs', result.evidence_event_ids)}</body></html>`;
 };
 
 export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score', 'communication_breakdown_json', 'clinical_reasoning_breakdown_json'];
