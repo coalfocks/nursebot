@@ -292,7 +292,7 @@ const assertProtectedAssignmentReadback = async (client: ReturnType<typeof servi
   if (!readback.data || !protectedAssignmentUnchanged(before, readback.data as Record<string, unknown>)) throw new Error('STUDY_PROTECTED_ASSIGNMENT_CHANGED: feedback/status/grade readback differs from the frozen pre-model snapshot');
 };
 
-const run = async (client: ReturnType<typeof serviceClient>, batchId: string, requestedLimit: unknown) => {
+const run = async (client: ReturnType<typeof serviceClient>, batchId: string, requestedLimit: unknown, requestedOrdinals: unknown) => {
   const batchResult = await client.from('faculty_study_batches').select('*').eq('id', batchId).single();
   if (batchResult.error) throw batchResult.error;
   const batch = batchResult.data as Record<string, unknown>;
@@ -302,7 +302,11 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   const existingResult = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
   if (existingResult.error) throw existingResult.error;
   const doneOrdinals = new Set((existingResult.data ?? []).filter((row) => isTerminalStudyResult(row)).map((row) => row.batch_ordinal));
-  const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal)).slice(0, limit);
+  const targetOrdinals = Array.isArray(requestedOrdinals)
+    ? new Set(requestedOrdinals.filter((ordinal): ordinal is number => Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 30))
+    : null;
+  if (Array.isArray(requestedOrdinals) && (!targetOrdinals?.size || targetOrdinals.size !== requestedOrdinals.length)) throw new Error('STUDY_TARGET_ORDINALS_INVALID');
+  const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal) && (!targetOrdinals || targetOrdinals.has(item.batch_ordinal))).slice(0, limit);
   if (pending.length === 0) return { batch_id: batchId, learner_writes: 0, result_writes: doneOrdinals.size, status: 'completed' };
   const now = new Date();
   const nowIso = now.toISOString();
@@ -368,13 +372,16 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   }
 };
 
-const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: string) => {
+const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: string, requestedOrdinal: unknown) => {
   const [batchResult, resultsResult] = await Promise.all([client.from('faculty_study_batches').select('id, batch_key, manifest, prompt_version, model, generator_revision, evaluator_config_revision, protocol_version, created_at, attempt_attestations').eq('id', batchId).single(), client.from('faculty_study_results').select('batch_ordinal, assignment_id, historical_snapshot, frozen_input, canonical_result, raw_model_response, result, error, generated_at, prompt_version, model').eq('batch_id', batchId).order('batch_ordinal')]);
   if (batchResult.error) throw batchResult.error;
   if (resultsResult.error) throw resultsResult.error;
   const resultByCase = new Map((resultsResult.data ?? []).map((row) => [row.batch_ordinal, row]));
   const manifest = validateStudyManifest((batchResult.data as Record<string, unknown>).manifest);
-  const results = manifest.attempts.map((item) => {
+  const selectedOrdinal = requestedOrdinal === undefined || requestedOrdinal === null ? null : Number(requestedOrdinal);
+  if (selectedOrdinal !== null && (!Number.isInteger(selectedOrdinal) || selectedOrdinal < 1 || selectedOrdinal > 30)) throw new Error('STUDY_BATCH_ORDINAL_INVALID');
+  const selectedAttempts = selectedOrdinal === null ? manifest.attempts : manifest.attempts.filter((item) => item.batch_ordinal === selectedOrdinal);
+  const results = selectedAttempts.map((item) => {
     const row = resultByCase.get(item.batch_ordinal);
     if (!row) return { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', error: { code: 'STUDY_RESULT_MISSING', message: 'No isolated result was recorded for this batch ordinal.', phase: 'export', retryable: false }, generated_at: null, prompt_version: batchResult.data.prompt_version, model: batchResult.data.model } as Record<string, unknown>;
     const privateTerms = ((row.frozen_input as Record<string, unknown> | null)?.redaction_terms as string[] | undefined) ?? [];
@@ -396,14 +403,15 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
       evaluator_config_revision: batch.evaluator_config_revision,
       created_at: batch.created_at,
       protocol_version: FACULTY_STUDY_PROTOCOL_VERSION,
-      case_count: manifest.attempts.length,
-      batch_ordinals: manifest.attempts.map((item) => item.batch_ordinal),
+      case_count: results.length,
+      batch_ordinals: results.map((item) => item.batch_ordinal),
     },
     results,
   };
   const sheet = [STUDY_SHEET_COLUMNS.join(','), ...results.map((row) => studySheetRow(row).map(csvEscape).join(','))].join('\n');
   const documents = results.map((row) => ({ filename: `batch-${String(row.batch_ordinal).padStart(2, '0')}-feedback.json`, content: JSON.stringify(row, null, 2) }));
-  const coordinator = (resultsResult.data ?? []).map((row) => ({ batch_ordinal: row.batch_ordinal, assignment_id: row.assignment_id, historical_snapshot: row.historical_snapshot, frozen_input: row.frozen_input, canonical_result: row.canonical_result, raw_model_response: row.raw_model_response, error: row.error, generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model }));
+  const selectedOrdinals = new Set(results.map((row) => row.batch_ordinal));
+  const coordinator = (resultsResult.data ?? []).filter((row) => selectedOrdinals.has(row.batch_ordinal)).map((row) => ({ batch_ordinal: row.batch_ordinal, assignment_id: row.assignment_id, historical_snapshot: row.historical_snapshot, frozen_input: row.frozen_input, canonical_result: row.canonical_result, raw_model_response: row.raw_model_response, error: row.error, generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model }));
   return { raw, sheet, documents, coordinator, learner_writes: 0 };
 };
 
@@ -419,8 +427,8 @@ Deno.serve(async (req) => {
     if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'audit') return json(await historicalInputAudit(client, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
-    if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases), 200, requestId);
-    if (action === 'export') return json(await exportBatch(client, String(body.batch_id)), 200, requestId);
+    if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases, body.target_ordinals), 200, requestId);
+    if (action === 'export') return json(await exportBatch(client, String(body.batch_id), body.batch_ordinal), 200, requestId);
     throw new Error('STUDY_ACTION_INVALID');
   } catch (error) {
     const status = /AUTH|REQUIRED|INVALID|UNAVAILABLE|MISMATCH|UNVERIFIED|PREFLIGHT/.test(message(error)) ? 400 : 500;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, ClipboardList, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, ClipboardList, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -129,7 +129,6 @@ export default function AssignmentManager() {
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
   const pendingAssignmentStorageKey = user
     ? `assignment-create-pending:${user.id}:${scopedSchoolId ?? 'all-schools'}`
@@ -938,50 +937,6 @@ export default function AssignmentManager() {
     }
   };
 
-  const handleRerunAssessment = async (assignmentId: string) => {
-    if (!window.confirm('Are you sure you want to rerun the assessment for this submission? This will regenerate the feedback and scores.')) {
-      return;
-    }
-
-    setRerunningAssessments(prev => new Set(prev).add(assignmentId));
-
-    try {
-      console.log('Rerunning assessment for assignment:', assignmentId);
-      
-      const { data, error } = await supabase.functions.invoke('rerun-assessments', {
-        body: { 
-          assignment_ids: [assignmentId]
-        }
-      });
-
-      if (error) {
-        console.error('Error rerunning assessment:', error);
-        throw error;
-      }
-
-      console.log('Assessment rerun response:', data);
-
-      if (data?.success) {
-        // Show success message
-        alert(`Assessment rerun initiated successfully! ${data.message}`);
-        
-        // Refresh assignments to show updated status
-        await fetchAssignments();
-      } else {
-        throw new Error(data?.error || 'Failed to rerun assessment');
-      }
-    } catch (error) {
-      console.error('Error rerunning assessment:', error);
-      alert(`Error rerunning assessment: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setRerunningAssessments(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(assignmentId);
-        return newSet;
-      });
-    }
-  };
-
   const filteredStudents = assignableStudents.filter((student) => {
     const term = studentSearch.toLowerCase();
     return (
@@ -1459,16 +1414,11 @@ export default function AssignmentManager() {
                             </button>
                             {assignment.status === 'completed' && (
                               <button
-                                onClick={() => handleRerunAssessment(assignment.id)}
-                                disabled={rerunningAssessments.has(assignment.id)}
-                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                onClick={() => window.location.assign('/admin/faculty-study')}
+                                title="Open the isolated NEW-FORMAT evaluation workflow"
+                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
                               >
-                                {rerunningAssessments.has(assignment.id) ? (
-                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-4 h-4 mr-1" />
-                                )}
-                                {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
+                                Rerun evaluation
                               </button>
                             )}
                           </>
