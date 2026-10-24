@@ -32,10 +32,12 @@ export type EvidenceShape = { id?: string; kind: string; title: string; body?: s
 
 const positiveExamClaim = /\b(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\b|\blearner['’]?s\s+physical\s+findings\b/i;
 const unquotedText = (value: string) => value.replace(/"[^"\n]*"|'[^'\n]*'|“[^”\n]*”|‘[^’\n]*’/g, '');
-const containsPositivePhysicalExamEvidence = (value: string) => unquotedText(value).split(/[.!?\n]+/).some((sentence) =>
-  /\b(?:physical\s+(?:exam(?:ination)?|findings)|examined\s+(?:the\s+)?patient)\b/i.test(sentence)
-  && !/\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b/i.test(sentence),
-);
+const containsPositivePhysicalExamEvidence = (value: string) => unquotedText(value).split(/[.!?\n]+/).some((sentence) => {
+  const hasExamClaim = /\b(?:physical\s+(?:exam(?:ination)?|findings)|examined\s+(?:the\s+)?patient)\b/i.test(sentence);
+  const hasNegativeExamClaim = /\b(?:no\s+(?:physical\s+(?:exam(?:ination)?|findings)|examination)|not\s+(?:a\s+)?physical\s+(?:exam(?:ination)?|findings)|(?:did\s+not|didn['’]?t|never)\s+(?:perform|complete|do)\s+(?:a\s+)?physical\s+(?:exam(?:ination)?|findings)|(?:was|were)\s+not\s+examined)\b/i.test(sentence)
+    || /\b(?:not|never|did\s+not|didn['’]?t|no\s+evidence\s+that|without\s+evidence\s+that)\b/i.test(sentence);
+  return hasExamClaim && !hasNegativeExamClaim;
+});
 
 const containsUnsupportedPositiveExamAttribution = (value: unknown): boolean => {
   if (typeof value === 'string') {

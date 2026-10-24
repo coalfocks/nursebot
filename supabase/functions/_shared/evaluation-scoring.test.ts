@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, hasValidSixComponentEvaluation, sanitizeSimulationText } from './evaluation-scoring';
+import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, hasValidSixComponentEvaluation, sanitizeSimulationText, validateEvidenceAttributions } from './evaluation-scoring';
 
 describe('feedback v2 canonical contract', () => {
   it('preserves the two anchored composites and never subtracts safety', () => {
@@ -140,6 +140,35 @@ describe('feedback v2 canonical contract', () => {
     });
     expect(result.strengths[0]).toBe('The learner examined the patient and escalated.');
     expect(result.communication_breakdown.focused_information_gathering.feedback).toBe('physical exam observed');
+  });
+
+  it('does not treat a linked learner-authored negative exam statement as positive evidence', () => {
+    const result = validateEvidenceAttributions(canonicalizeEvaluation({
+      communication_breakdown: {
+        focused_information_gathering: {
+          score: 2,
+          feedback: 'The learner performed a physical examination.',
+          evidence_event_ids: ['learner-negative-exam'],
+        },
+      },
+      clinical_reasoning_breakdown: {
+        clinical_reasoning_documentation: { score: 2, feedback: 'Documented reasoning.', evidence_event_ids: [] },
+      },
+    }), [{
+      id: 'learner-negative-exam',
+      kind: 'learner-action',
+      title: 'Learner documentation',
+      body: 'No physical examination was performed.',
+      meta: ['Author: Student'],
+    }]);
+
+    expect(result.communication_breakdown.focused_information_gathering.feedback)
+      .toBe('The learner performed a physical examination.');
+    expect(result.communication_breakdown.focused_information_gathering.score).toBe(0);
+    expect(result.communication_breakdown.focused_information_gathering.evidence_event_ids).toEqual([]);
+    expect(result.communication_score).toBe(0);
+    expect(result.clinical_reasoning_score).toBe(2);
+    expect(result.evidence_validation_warnings).toContain('UNSUPPORTED_ATTRIBUTION: positive learner physical-examination attribution was not supported by learner-authored evidence; preserved as wording only and not credited as observed performance.');
   });
 
   it('applies the confirmed three-part deductions only when supplied by case-specific evidence', () => {
