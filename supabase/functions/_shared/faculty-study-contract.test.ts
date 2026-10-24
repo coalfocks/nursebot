@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
+import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, studyActionAllowed, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
 
 const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: index + 1, specialty: ['ED', 'ICU', 'Peds', 'OB', 'Med-Surg', 'Psych'][index % 6], case_label: `Case ${index % 5 + 1}`, packet_label: `Packet ${index % 5 + 1}`, assignment_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}` }));
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
@@ -123,5 +123,13 @@ describe('faculty study contract', () => {
     expect(isStudyRunLeaseExpired('2026-10-23T23:59:59.999Z', now)).toBe(true);
     expect(isStudyRunLeaseExpired('2026-10-24T00:00:00.001Z', now)).toBe(false);
     expect(isStudyRunLeaseExpired(null, now)).toBe(false);
+  });
+
+  it('server-denies prepare and run in preflight-only deployment mode', () => {
+    expect(studyActionAllowed('preflight', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('export', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('prepare', 'study-enabled')).toBe(true);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildAssignmentTimelineEntries } from './assignment-timeline';
 import { filterHistoricalRows } from './historical-context';
 
 const cutoff = '2026-10-24T12:00:00Z';
@@ -30,6 +31,14 @@ describe('historical context boundaries', () => {
     const result = filterHistoricalRows('imaging_studies', [{ id: 'study-1', order_time: '2026-10-24T10:00:00Z', report_generated_at: '2026-10-24T13:00:00Z', created_at: '2026-10-24T09:00:00Z', updated_at: '2026-10-24T09:00:00Z', deleted_at: null, report: 'current' }], cutoff, [{ id: 'version-row-id', study_id: 'study-1', version: 1, created_at: '2026-10-24T11:00:00Z', encounter_time: '2026-10-24T10:00:00Z', report: 'historical' }]);
     expect(result.rows[0]).toMatchObject({ id: 'study-1', report: 'historical', __historical_version_recovered: true });
     expect(result.availability.recovered_versions).toEqual([{ table: 'imaging_studies', id: 'study-1', version: 1, recorded_at: '2026-10-24T11:00:00Z' }]);
+  });
+
+  it('preserves historical nulls and uses the version availability time in the final timeline', () => {
+    const result = filterHistoricalRows('imaging_studies', [{ id: 'study-1', order_time: '2026-10-24T10:00:00Z', report_generated_at: '2026-10-24T13:00:00Z', created_at: '2026-10-24T09:00:00Z', updated_at: '2026-10-24T09:00:00Z', deleted_at: null, report: 'later report', impression: 'later impression' }], cutoff, [{ study_id: 'study-1', version: 1, created_at: '2026-10-24T11:00:00Z', encounter_time: '2026-10-24T10:30:00Z', report: null, impression: null }]);
+    const row = result.rows[0];
+    expect(row).toMatchObject({ id: 'study-1', report: null, impression: null, report_generated_at: '2026-10-24T10:30:00Z', historical_available_at: '2026-10-24T10:30:00Z' });
+    const entries = buildAssignmentTimelineEntries({ assignment: { id: 'assignment-1', completed_at: cutoff, student_progress_note: null }, assignmentId: 'assignment-1', targetRoomIds: null, messages: [{ id: 'message-1', assignment_id: 'assignment-1', role: 'student', content: 'history', created_at: '2026-10-24T09:00:00Z' }], orders: [], labs: [], vitals: [], imaging: [row as never] });
+    expect(entries.find((entry) => entry.id === 'imaging-study-1')?.timestamp).toBe('2026-10-24T10:30:00.000Z');
   });
 
   it('does not revive a study deleted before completion and never replaces its parent id', () => {

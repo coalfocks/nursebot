@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows } from '../_shared/historical-context.ts';
@@ -16,6 +16,7 @@ const errorCode = (error: unknown) => typeof error === 'object' && error && 'cod
 const message = (error: unknown) => error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String((error as { message?: unknown }).message) : String(error);
 
 const serviceClient = () => createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+const deploymentMode = (): FacultyStudyDeploymentMode => Deno.env.get('FACULTY_STUDY_DEPLOYMENT_MODE')?.trim().toLowerCase() === 'preflight-only' ? 'preflight-only' : 'study-enabled';
 
 const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>) => {
   const authorization = req.headers.get('authorization');
@@ -45,21 +46,38 @@ const generatorRevision = () => {
   return value;
 };
 
-const verifyRuntime = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
+const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
   const attestations: Array<Record<string, unknown>> = [];
+  const errors: Array<Record<string, unknown>> = [];
   for (const item of manifest.attempts) {
     const assignmentResult = await client.from('student_room_assignments').select('id, room_id, status, completed_at').eq('id', item.assignment_id).maybeSingle();
-    if (assignmentResult.error) throw new Error(`CONTEXT_UNRECOVERABLE:assignment:${assignmentResult.error.message}`);
-    if (!assignmentResult.data) throw new Error(`CONTEXT_UNRECOVERABLE:batch ordinal ${item.batch_ordinal} assignment not found`);
-    if (assignmentResult.data.status !== 'completed') throw new Error(`CONTEXT_UNRECOVERABLE:batch ordinal ${item.batch_ordinal} assignment is not completed`);
+    if (assignmentResult.error) { errors.push({ batch_ordinal: item.batch_ordinal, code: 'CONTEXT_UNRECOVERABLE', message: `assignment:${assignmentResult.error.message}` }); continue; }
+    if (!assignmentResult.data) { errors.push({ batch_ordinal: item.batch_ordinal, code: 'CONTEXT_UNRECOVERABLE', message: 'assignment not found' }); continue; }
+    if (assignmentResult.data.status !== 'completed') { errors.push({ batch_ordinal: item.batch_ordinal, code: 'CONTEXT_UNRECOVERABLE', message: 'assignment is not completed' }); continue; }
     const roomId = Number(assignmentResult.data.room_id);
-    const config = await activeConfig(client, roomId);
-    if (config.evaluator_prompt.trim() !== manifest.prompt_text.trim()) throw new Error(`PROMPT_CONFIG_MISMATCH:batch ordinal ${item.batch_ordinal} active ${config.scope} evaluator v${config.version} does not match the supplied frozen prompt`);
+    let config;
+    try { config = await activeConfig(client, roomId); }
+    catch (error) { errors.push({ batch_ordinal: item.batch_ordinal, code: errorCode(error) || message(error).split(':')[0], message: message(error) }); continue; }
     attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: (config as { scoring_anchors?: unknown }).scoring_anchors ?? {} });
+    if (config.evaluator_prompt.trim() !== manifest.prompt_text.trim()) errors.push({ batch_ordinal: item.batch_ordinal, code: 'PROMPT_CONFIG_MISMATCH', message: `active ${config.scope} evaluator v${config.version} does not match the supplied frozen prompt`, observed_config_id: config.id, observed_config_version: config.version, observed_config_scope: config.scope });
   }
-  const model = getOpenAIModel('generate_feedback');
-  if (model !== manifest.expected_model) throw new Error(`MODEL_MISMATCH:deployed generator resolves ${model}, manifest requires ${manifest.expected_model}`);
-  return { attestations, model, generator_revision: generatorRevision() };
+  let model: string | null = null;
+  try { model = getOpenAIModel('generate_feedback'); }
+  catch (error) { errors.push({ code: errorCode(error) || message(error).split(':')[0], message: message(error) }); }
+  if (model !== null && model !== manifest.expected_model) errors.push({ code: 'MODEL_MISMATCH', message: `deployed generator resolves ${model}, manifest requires ${manifest.expected_model}`, observed_model: model });
+  let revision: string | null = null;
+  try { revision = generatorRevision(); }
+  catch (error) { errors.push({ code: errorCode(error) || message(error).split(':')[0], message: message(error) }); }
+  return { ready: errors.length === 0, attestations, model, expected_model: manifest.expected_model, generator_revision: revision, errors };
+};
+
+const verifyRuntime = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
+  const inspected = await inspectRuntime(client, manifest);
+  if (!inspected.ready) {
+    const first = inspected.errors[0] ?? { code: 'STUDY_RUNTIME_UNREADY', message: 'Runtime readiness checks failed' };
+    throw new Error(`${String(first.code)}:${String(first.message)}`);
+  }
+  return { attestations: inspected.attestations, model: inspected.model as string, generator_revision: inspected.generator_revision as string };
 };
 
 const exactContext = async (client: ReturnType<typeof serviceClient>, assignmentId: string, completedAt: string) => {
@@ -67,7 +85,7 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
   const rows: Record<string, unknown[]> = {};
   const availability: Record<string, unknown> = { cutoff: completedAt, excluded_after_cutoff: {}, excluded_after_recorded_at: {}, excluded_after_event_time: {}, excluded_rows: [], missing_timestamp: [], missing_historical_version: [], unavailable_version_sources: [], recovered_versions: [], retained_deleted_after_cutoff: [] };
   for (const table of tables) {
-    let query = client.from(table).select('*').eq('assignment_id', assignmentId);
+    const query = client.from(table).select('*').eq('assignment_id', assignmentId);
     const result = await query;
     if (result.error) throw new Error(`CONTEXT_UNRECOVERABLE:${table}:${result.error.message}`);
     const sourceRows = (result.data ?? []) as Record<string, unknown>[];
@@ -147,22 +165,22 @@ const schemaReadiness = async (client: ReturnType<typeof serviceClient>) => {
 const preflight = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
   const assignmentsResult = await client.from('student_room_assignments').select('*').in('id', manifest.attempts.map((item) => item.assignment_id));
   const assignments = new Map((assignmentsResult.data ?? []).map((assignment) => [String(assignment.id), assignment as Record<string, unknown>]));
-  let runtime: Record<string, unknown>;
-  try {
-    const verified = await verifyRuntime(client, manifest);
-    runtime = { ready: true, model: verified.model, generator_revision: verified.generator_revision, attestations: verified.attestations };
-  } catch (error) {
-    runtime = { ready: false, error: { code: errorCode(error) || message(error).split(':')[0], message: message(error) } };
-  }
+  const runtime = await inspectRuntime(client, manifest);
+  const foundCount = manifest.attempts.filter((item) => assignments.has(item.assignment_id)).length;
+  const backupErrors = assignmentsResult.error ? [{ code: 'FEEDBACK_BACKUP_READ_FAILED', message: assignmentsResult.error.message }] : [];
+  const backupReady = !assignmentsResult.error && foundCount === manifest.attempts.length;
+  const schema = await schemaReadiness(client);
   return {
     action: 'model_free_preflight',
+    deployment_mode: deploymentMode(),
     batch_key: manifest.batch_key,
     attempt_count: manifest.attempts.length,
     model_calls: 0,
     learner_writes: 0,
-    schema: await schemaReadiness(client),
+    readiness: { ready: schema.ready && runtime.ready && backupReady, schema: schema.ready, runtime: runtime.ready, backups: backupReady },
+    schema,
     runtime,
-    feedback_backup_readiness: { ready: !assignmentsResult.error, error: assignmentsResult.error?.message ?? null },
+    feedback_backup_readiness: { ready: backupReady, found_count: foundCount, error_count: manifest.attempts.length - foundCount, errors: backupErrors },
     raw_feedback_backups: manifest.attempts.map((item) => buildStudyFeedbackBackup(item, assignments.get(item.assignment_id) ?? null)),
   };
 };
@@ -310,13 +328,14 @@ Deno.serve(async (req) => {
     const userId = await requireAdmin(req, client);
     const body = await req.json() as Record<string, unknown>;
     const action = body.action;
+    if (!studyActionAllowed(String(action), deploymentMode())) throw new Error(`STUDY_PREFLIGHT_ONLY: ${String(action)} is disabled while the deployment is preflight-only`);
     if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)));
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)));
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases));
     if (action === 'export') return json(await exportBatch(client, String(body.batch_id)));
     throw new Error('STUDY_ACTION_INVALID');
   } catch (error) {
-    const status = /AUTH|REQUIRED|INVALID|UNAVAILABLE|MISMATCH|UNVERIFIED/.test(message(error)) ? 400 : 500;
+    const status = /AUTH|REQUIRED|INVALID|UNAVAILABLE|MISMATCH|UNVERIFIED|PREFLIGHT/.test(message(error)) ? 400 : 500;
     return json({ error: { code: errorCode(error) || message(error).split(':')[0], message: message(error) } }, status);
   }
 });

@@ -70,6 +70,7 @@ export type TimelineImagingRow = {
   report: string | null;
   order_time: string | null;
   report_generated_at: string | null;
+  historical_available_at?: string | null;
   created_at: string | null;
   deleted_at?: string | null;
 };
@@ -169,7 +170,7 @@ const getLabTimelineTimestamp = (lab: TimelineLabRow) => {
 };
 
 const getImagingTimelineTimestamp = (study: TimelineImagingRow) =>
-  normalizeTimelineTimestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
+  normalizeTimelineTimestamp(study.historical_available_at ?? study.report_generated_at ?? study.order_time ?? study.created_at);
 
 const getTimelineSortValue = (timestamp: string) => {
   const parsed = new Date(timestamp);
