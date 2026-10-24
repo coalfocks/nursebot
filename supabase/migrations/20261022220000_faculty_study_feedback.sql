@@ -70,7 +70,24 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  locked_status text;
+  locked_lease_token uuid;
 begin
+  -- Claims/reclaims update this same row. Holding its lock through the result
+  -- write serializes a live worker with stale-run recovery: a paused worker
+  -- blocks reclaim, while a worker that lost the committed lease gets false
+  -- before it can touch the result row.
+  select b.status, b.lease_token
+    into locked_status, locked_lease_token
+    from public.faculty_study_batches b
+    where b.id = p_batch_id
+    for update;
+
+  if locked_status is distinct from 'running' or locked_lease_token is distinct from p_lease_token then
+    return false;
+  end if;
+
   insert into public.faculty_study_results (
     batch_id, batch_ordinal, assignment_id, historical_snapshot, frozen_input,
     result, canonical_result, raw_model_response, error, lease_token,
@@ -80,10 +97,7 @@ begin
     p_batch_id, p_batch_ordinal, p_assignment_id, p_historical_snapshot, p_frozen_input,
     p_result, p_canonical_result, p_raw_model_response, p_error, p_lease_token,
     p_prompt_version, p_model, p_generated_at
-  where exists (
-    select 1 from public.faculty_study_batches b
-    where b.id = p_batch_id and b.status = 'running' and b.lease_token = p_lease_token
-  )
+  where true
   on conflict (batch_id, batch_ordinal) do update set
     assignment_id = excluded.assignment_id,
     historical_snapshot = excluded.historical_snapshot,
@@ -96,10 +110,7 @@ begin
     prompt_version = excluded.prompt_version,
     model = excluded.model,
     generated_at = excluded.generated_at
-  where exists (
-    select 1 from public.faculty_study_batches b
-    where b.id = p_batch_id and b.status = 'running' and b.lease_token = p_lease_token
-  );
+  where true;
 
   return found;
 end;
