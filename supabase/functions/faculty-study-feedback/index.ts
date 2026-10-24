@@ -7,6 +7,7 @@ import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveC
 import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { filterHistoricalRows } from '../_shared/historical-context.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -61,36 +62,32 @@ const verifyRuntime = async (client: ReturnType<typeof serviceClient>, manifest:
   return { attestations, model, generator_revision: generatorRevision() };
 };
 
-const rowTimestamp = (table: string, row: Record<string, unknown>) => {
-  const keys: Record<string, string[]> = {
-    chat_messages: ['created_at'], medical_orders: ['order_time', 'created_at'], lab_results: ['result_time', 'collection_time', 'created_at'],
-    vital_signs: ['timestamp', 'created_at'], imaging_studies: ['report_generated_at', 'order_time', 'created_at'], learner_action_events: ['occurred_at', 'created_at'],
-    patient_chat_messages: ['created_at'], consultant_chat_messages: ['request_receipt_at', 'created_at'],
-  };
-  return (keys[table] ?? []).map((key) => row[key]).find((value) => typeof value === 'string' && !Number.isNaN(new Date(value).getTime())) as string | undefined;
-};
-
 const exactContext = async (client: ReturnType<typeof serviceClient>, assignmentId: string, completedAt: string) => {
   const tables = ['chat_messages', 'medical_orders', 'lab_results', 'vital_signs', 'imaging_studies', 'learner_action_events', 'patient_chat_messages', 'consultant_chat_messages'];
   const rows: Record<string, unknown[]> = {};
-  const availability: Record<string, unknown> = { cutoff: completedAt, excluded_after_cutoff: {}, missing_timestamp: [] };
+  const availability: Record<string, unknown> = { cutoff: completedAt, excluded_after_cutoff: {}, excluded_after_recorded_at: {}, excluded_after_event_time: {}, excluded_rows: [], missing_timestamp: [], missing_historical_version: [], unavailable_version_sources: [], recovered_versions: [], retained_deleted_after_cutoff: [] };
   for (const table of tables) {
     let query = client.from(table).select('*').eq('assignment_id', assignmentId);
-    if (['medical_orders', 'lab_results', 'vital_signs', 'imaging_studies'].includes(table)) query = query.is('deleted_at', null);
     const result = await query;
     if (result.error) throw new Error(`CONTEXT_UNRECOVERABLE:${table}:${result.error.message}`);
     const sourceRows = (result.data ?? []) as Record<string, unknown>[];
-    const kept = sourceRows.filter((row) => {
-      const timestamp = rowTimestamp(table, row);
-      if (!timestamp) { (availability.missing_timestamp as string[]).push(`${table}:${String(row.id ?? 'unknown')}`); return false; }
-      if (new Date(timestamp).getTime() > new Date(completedAt).getTime()) {
-        const excluded = availability.excluded_after_cutoff as Record<string, number>;
-        excluded[table] = (excluded[table] ?? 0) + 1;
-        return false;
+    let versions: Record<string, unknown>[] = [];
+    if (table === 'imaging_studies' && sourceRows.length) {
+      const versionResult = await client.from('imaging_study_versions').select('*').in('study_id', sourceRows.map((row) => String(row.id)));
+      if (versionResult.error) {
+        (availability.unavailable_version_sources as string[]).push(`imaging_study_versions:${versionResult.error.message}`);
+      } else {
+        versions = (versionResult.data ?? []) as Record<string, unknown>[];
       }
-      return true;
-    });
-    rows[table] = kept;
+    }
+    const filtered = filterHistoricalRows(table, sourceRows, completedAt, versions);
+    rows[table] = filtered.rows;
+    for (const key of ['excluded_after_recorded_at', 'excluded_after_event_time']) {
+      Object.assign(availability[key] as Record<string, number>, filtered.availability[key as 'excluded_after_recorded_at' | 'excluded_after_event_time']);
+    }
+    for (const key of ['excluded_rows', 'missing_timestamp', 'missing_historical_version', 'recovered_versions', 'retained_deleted_after_cutoff']) {
+      (availability[key] as unknown[]).push(...filtered.availability[key as 'excluded_rows' | 'missing_timestamp' | 'missing_historical_version' | 'recovered_versions' | 'retained_deleted_after_cutoff']);
+    }
   }
   if (!rows.chat_messages?.length) throw new Error('CONTEXT_UNRECOVERABLE:chat_messages has no available historical rows at the completion cutoff');
   return { rows, availability };
