@@ -51,6 +51,8 @@ type StudyHistoryResponse = {
   versions: Array<{ batch_id: string; batch_key: string | null; batch_ordinal: number; status: string; downloadable: boolean; prompt_version: string; model: string; generated_at: string | null; created_at: string; batch_status: string | null }>;
 };
 
+type IsolatedEvaluation = { id: string; assignment_id: string; version: number; status: 'queued' | 'running' | 'completed' | 'error' | 'blocked'; prompt_version: string; model: string; generator_revision: string; evaluator_config_revision: string; created_at: string; queued_at: string | null; started_at: string | null; completed_at: string | null; error?: { code?: string; message?: string } | null };
+
 type EvaluationState = 'idle' | 'running' | 'completed' | 'error';
 
 export default function FacultyStudy() {
@@ -70,6 +72,7 @@ export default function FacultyStudy() {
   const [auditIdentity, setAuditIdentity] = useState('');
   const [selectedOrdinal, setSelectedOrdinal] = useState<number | null>(null);
   const [historyData, setHistoryData] = useState<StudyHistoryResponse | null>(null);
+  const [isolatedHistory, setIsolatedHistory] = useState<{ available: boolean; deployment_mode: string; evaluations: IsolatedEvaluation[] } | null>(null);
 
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     setBusy(true); setError(''); setNotice('');
@@ -95,15 +98,25 @@ export default function FacultyStudy() {
     setEvaluationStates((current) => ({ ...current, ...Object.fromEntries(history.versions.map((version) => [version.batch_ordinal, version.status === 'completed' ? 'completed' : version.status === 'error' ? 'error' : 'idle'])) }));
   }, [invoke]);
 
+  const loadIsolatedHistory = useCallback(async (assignmentId: string) => {
+    const data = await invoke('evaluation_history', { assignment_id: assignmentId });
+    if (!data) return;
+    setIsolatedHistory(data as { available: boolean; deployment_mode: string; evaluations: IsolatedEvaluation[] });
+    setPreflightOnly(data.deployment_mode === 'preflight-only');
+    setDeploymentKnown(true);
+  }, [invoke]);
+
   useEffect(() => {
     if (selectedAssignmentId && !historyData) void loadHistory(selectedAssignmentId);
-  }, [historyData, loadHistory, selectedAssignmentId]);
+    if (selectedAssignmentId && !isolatedHistory) void loadIsolatedHistory(selectedAssignmentId);
+  }, [historyData, isolatedHistory, loadHistory, loadIsolatedHistory, selectedAssignmentId]);
 
   const handleManifestChange = (value: string) => {
     setManifestText(value);
     setAuditData(null);
     setAuditIdentity('');
     setHistoryData(null);
+    setIsolatedHistory(null);
     setSelectedOrdinal(null);
     setEvaluationBatches({});
     setEvaluationStates({});
@@ -184,26 +197,38 @@ export default function FacultyStudy() {
     setEvaluationStates((current) => ({ ...current, [ordinal]: 'running' }));
     setEvaluationErrors((current) => ({ ...current, [ordinal]: '' }));
     try {
-      const manifest = parseManifest();
-      if (!auditIdentity || JSON.stringify(manifest) !== auditIdentity) throw new Error('STUDY_AUDIT_STALE: manifest changed; rerun the historical-input audit before starting an evaluation');
-      const batchKey = `${String(manifest.batch_key ?? 'faculty-study').slice(0, 70)}-rerun-${ordinal}-${Date.now().toString(36)}`;
-      const prepared = await invoke('prepare', { manifest: { ...manifest, batch_key: batchKey, target_ordinals: [ordinal] } });
-      const isolatedBatchId = prepared?.batch?.id as string | undefined;
-      if (!isolatedBatchId) throw new Error('STUDY_PREPARE_UNCONFIRMED');
-      const runResult = await invoke('run', { batch_id: isolatedBatchId, max_cases: 1, target_ordinals: [ordinal] });
-      if (!runResult) throw new Error('STUDY_RUN_UNCONFIRMED');
-      const exported = await invoke('export', { batch_id: isolatedBatchId, batch_ordinal: ordinal });
-      const result = exported?.raw?.results?.[0];
-      if (!result || result.status === 'error') throw new Error(result?.error?.message ?? 'STUDY_RESULT_FAILED');
-      setEvaluationBatches((current) => ({ ...current, [ordinal]: isolatedBatchId }));
-      setEvaluationStates((current) => ({ ...current, [ordinal]: 'completed' }));
+      const queued = await invoke('rerun_evaluation', { assignment_id: item.assignment_id, idempotency_key: crypto.randomUUID() });
+      const evaluationId = queued?.evaluation?.id as string | undefined;
+      if (!evaluationId) throw new Error('EVALUATION_QUEUE_UNCONFIRMED');
+      const executed = await invoke('execute_evaluation', { evaluation_id: evaluationId });
+      if (!executed?.evaluation) throw new Error('EVALUATION_EXECUTION_UNCONFIRMED');
+      setEvaluationStates((current) => ({ ...current, [ordinal]: executed.evaluation.status === 'completed' ? 'completed' : 'error' }));
       void loadHistory(item.assignment_id);
-      setNotice(`Evaluation ${ordinal} completed as an isolated NEW-FORMAT result. Prompt ${result.prompt_version ?? 'unknown'} · generated ${result.generated_at ?? 'timestamp unavailable'}. Learner records were not changed.`);
+      void loadIsolatedHistory(item.assignment_id);
+      setNotice(`Evaluation v${executed.evaluation.version} ${executed.evaluation.status}. Prompt ${executed.evaluation.prompt_version} · completed ${executed.evaluation.completed_at ?? 'not yet'}. Learner records were not changed.`);
     } catch (value) {
       const text = value instanceof Error ? value.message : 'Rerun failed.';
       setEvaluationErrors((current) => ({ ...current, [ordinal]: text }));
       setEvaluationStates((current) => ({ ...current, [ordinal]: 'error' }));
     }
+  };
+
+  const rerunSelectedAttempt = async () => {
+    if (!selectedAssignmentId || preflightOnly) return;
+    const queued = await invoke('rerun_evaluation', { assignment_id: selectedAssignmentId, idempotency_key: crypto.randomUUID() });
+    const evaluationId = queued?.evaluation?.id as string | undefined;
+    if (!evaluationId) return;
+    const executed = await invoke('execute_evaluation', { evaluation_id: evaluationId });
+    if (executed?.evaluation) { await loadIsolatedHistory(selectedAssignmentId); setNotice(`Evaluation v${executed.evaluation.version} ${executed.evaluation.status}. Previous versions remain unchanged.`); }
+  };
+
+  const downloadStoredEvaluation = async (evaluation: IsolatedEvaluation) => {
+    const data = await invoke('download_evaluation', { evaluation_id: evaluation.id });
+    if (!data?.artifacts) return;
+    download(`evaluation-v${evaluation.version}.json`, data.artifacts.json, 'application/json');
+    download(`evaluation-v${evaluation.version}.html`, data.artifacts.html, 'text/html');
+    download(`evaluation-v${evaluation.version}.csv`, data.artifacts.csv, 'text/csv');
+    setNotice(`Downloaded stored NEW-FORMAT evaluation v${evaluation.version}; no model call occurred.`);
   };
 
   const run = async () => { const data = await invoke('run', { batch_id: batchId }); if (data) setNotice(data.status === 'completed' ? `Study complete: ${data.progress?.completed_count ?? data.result_writes}/${data.progress?.total_count ?? 30} isolated result rows.` : `Study progress: ${data.progress?.completed_count ?? data.result_writes}/${data.progress?.total_count ?? 30} complete; ${data.progress?.error_count ?? 0} errors; ${data.progress?.remaining_count ?? data.remaining ?? 'some'} pending. No learner rows were written.`); };
@@ -224,6 +249,7 @@ export default function FacultyStudy() {
     {error && <div role="alert" className="flex items-start gap-2 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900"><AlertCircle className="mt-0.5 h-4 w-4" />{error}</div>}
     <section className="rounded-lg border bg-white p-5 shadow-sm"><label className="font-semibold text-slate-900" htmlFor="study-manifest">Approved fixed manifest JSON</label><p className="mt-1 text-xs text-slate-500">The approved manifest is retained only in this browser so the selected completed attempt can reopen without developer scripts. Editing it invalidates the audit and all selected-result controls. The service still validates 30 unique assignments in ordinal order.</p><textarea id="study-manifest" disabled={busy} value={manifestText} onChange={(event) => handleManifestChange(event.target.value)} rows={18} className="mt-4 w-full rounded border p-3 font-mono text-xs disabled:bg-slate-50" placeholder="Load the approved manifest privately, then audit the frozen 30." /><div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={busy || !manifestText} onClick={() => void preflight()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><ShieldCheck className="h-4 w-4" />Export backups + readiness</button><button type="button" disabled={busy || !manifestText} onClick={() => void audit()} className="inline-flex items-center gap-2 rounded border border-violet-300 px-4 py-2 text-sm text-violet-800 disabled:opacity-50"><FileCheck2 className="h-4 w-4" />Audit historical inputs</button><button type="button" disabled={busy} onClick={() => void exportRoomPdfs()} className="inline-flex items-center gap-2 rounded border border-amber-300 px-4 py-2 text-sm text-amber-900 disabled:opacity-50"><Download className="h-4 w-4" />Export candidate room PDF bundle</button><button type="button" disabled={busy || !manifestText || preflightOnly} onClick={() => void prepare()} className="rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{preflightOnly ? 'Prepare disabled (preflight-only)' : 'Prepare and attest'}</button><input aria-label="Prepared batch ID" value={batchId} onChange={(event) => setBatchId(event.target.value)} placeholder="Prepared batch ID" className="min-w-72 rounded border px-3 py-2 text-sm" /></div></section>
     {historyData && <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Stored evaluation versions{selectedAssignmentId ? ` · ${selectedAssignmentId}` : ''}</h2><p className="mt-1 text-xs text-slate-500">Versions are discovered from the server by assignment and batch, so reloads do not lose completed downloads.</p>{!historyData.available && <p className="mt-3 text-sm text-amber-800">No study tables are available yet; stored-version discovery will resume after the reviewed study schema release.</p>}{historyData.available && historyData.batches.length === 0 && <p className="mt-3 text-sm text-slate-600">No isolated evaluation versions exist for this attempt yet.</p>}{historyData.batches.map((batch) => <div key={batch.id} className="mt-3 rounded border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{batch.batch_key} · {batch.progress_status}</p><button type="button" disabled={busy || !deploymentKnown || preflightOnly || batch.progress_status === 'completed'} onClick={() => void resumeBatch(batch)} className="rounded border px-2 py-1 text-xs disabled:opacity-50">{preflightOnly || !deploymentKnown ? 'Resume unavailable (preflight-only)' : batch.progress_status === 'completed' ? 'Completed' : 'Resume evaluation'}</button></div><p className="text-xs text-slate-500">{batch.completed_count}/{batch.total_count} completed · {batch.error_count} errors · {batch.pending_count} pending · prompt {batch.prompt_version} · created {batch.created_at}</p>{historyData.versions.filter((version) => version.batch_id === batch.id).map((version) => <div key={`${version.batch_id}-${version.batch_ordinal}`} className="mt-2 flex items-center justify-between gap-3 text-sm"><span>Ordinal {version.batch_ordinal}: {version.status} {version.generated_at ? `· ${version.generated_at}` : ''}</span>{version.downloadable && <button type="button" disabled={busy} onClick={() => void downloadEvaluation({ batch_id: version.batch_id, batch_ordinal: version.batch_ordinal, specialty: '', case_label: '', packet_label: '', assignment_id: selectedAssignmentId ?? '', status: 'audited' })} className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs disabled:opacity-50"><Download className="h-3 w-3" />Download evaluation</button>}</div>)}</div>)}</section>}
+    {selectedAssignmentId && isolatedHistory && <section className="rounded-lg border border-orange-200 bg-orange-50 p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Single-attempt evaluation</h2><p className="mt-1 text-xs text-slate-600">The server resolves the completed attempt, immutable snapshot, and exact evaluator configuration. No manifest is required.</p></div><button type="button" disabled={busy || preflightOnly || !isolatedHistory.available} onClick={() => void rerunSelectedAttempt()} className="inline-flex items-center gap-2 rounded border border-orange-300 px-3 py-2 text-sm text-orange-900 disabled:opacity-50"><RefreshCw className="h-4 w-4" />{preflightOnly ? 'Rerun unavailable (preflight-only)' : 'Rerun evaluation'}</button></div>{!isolatedHistory.available && <p className="mt-3 text-sm text-amber-800">Persistent isolated evaluation storage is not applied in this environment.</p>}{isolatedHistory.evaluations.map((evaluation) => <div key={evaluation.id} className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded border border-orange-200 bg-white p-3 text-sm"><span><strong>v{evaluation.version}</strong> · {evaluation.status} · {evaluation.prompt_version} · {evaluation.completed_at ?? evaluation.created_at}{evaluation.error?.message ? ` · ${evaluation.error.message}` : ''}</span>{evaluation.status === 'completed' && <button type="button" disabled={busy} onClick={() => void downloadStoredEvaluation(evaluation)} className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs"><Download className="h-3 w-3" />Download evaluation</button>}{(evaluation.status === 'queued' || evaluation.status === 'running') && <button type="button" disabled={busy || preflightOnly} onClick={() => void invoke('execute_evaluation', { evaluation_id: evaluation.id }).then(() => selectedAssignmentId && loadIsolatedHistory(selectedAssignmentId))} className="rounded border px-2 py-1 text-xs">Resume</button>}</div>)}</section>}
     {auditData && <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Audited attempts{selectedOrdinal ? ` · selected ordinal ${selectedOrdinal}` : ''}</h2><p className="mt-1 text-xs text-slate-500">Each rerun creates a separate isolated result. Existing learner feedback, grades, history, and prior evaluations are preserved. Downloads read the stored result and never call the model.</p><div className="mt-4 space-y-2">{auditData.results.map((item) => { const state = evaluationStates[item.batch_ordinal] ?? 'idle'; return <div key={item.batch_ordinal} className={`flex flex-wrap items-center justify-between gap-3 rounded border p-3 ${selectedOrdinal === item.batch_ordinal ? 'border-violet-400 bg-violet-50' : ''}`}><div><p className="font-medium text-slate-900">{item.batch_ordinal}. {item.specialty} · {item.case_label} · {item.packet_label}</p><p className="text-xs text-slate-500">{item.status === 'error' ? `Audit error: ${item.error?.message ?? 'unavailable'}` : state === 'completed' ? 'NEW-FORMAT evaluation ready' : state === 'running' ? 'Running isolated evaluation…' : 'Historical input audited; no evaluation generated yet.'}</p>{evaluationErrors[item.batch_ordinal] && <p className="text-xs text-red-700">{evaluationErrors[item.batch_ordinal]}</p>}</div><div className="flex gap-2"><button type="button" disabled={busy || item.status !== 'audited' || !deploymentKnown || preflightOnly || state === 'running' || !auditIdentity} onClick={() => void rerunEvaluation(item)} className="inline-flex items-center gap-2 rounded border border-orange-300 px-3 py-2 text-sm text-orange-800 disabled:opacity-50">{state === 'running' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{preflightOnly || !deploymentKnown ? 'Rerun unavailable (preflight-only)' : state === 'running' ? 'Rerunning…' : 'Rerun evaluation'}</button>{state === 'completed' && <button type="button" disabled={busy} onClick={() => void downloadEvaluation(item)} className="inline-flex items-center gap-2 rounded border px-3 py-2 text-sm disabled:opacity-50"><Download className="h-4 w-4" />Download evaluation</button>}</div></div>; })}</div></section>}
     <section className="rounded-lg border bg-white p-5 shadow-sm"><h2 className="font-semibold">Execution and export</h2><p className="mt-1 text-xs text-slate-500">Preparation must succeed before execution. Results are separate study records; failed attempts remain explicit error records.</p><div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={busy || !batchId || preflightOnly} onClick={() => void run()} className="inline-flex items-center gap-2 rounded bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Play className="h-4 w-4" />{preflightOnly ? 'Run disabled (preflight-only)' : 'Run isolated study'}</button><button type="button" disabled={busy || !batchId} onClick={() => void exportBatch()} className="inline-flex items-center gap-2 rounded border px-4 py-2 text-sm disabled:opacity-50"><Download className="h-4 w-4" />Export artifacts</button></div></section>
   </main></AdminLayout>;

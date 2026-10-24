@@ -471,6 +471,13 @@ const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManife
   const caseKey = resolveCaseEvaluationKey(room);
   const generatorRevision = String(evaluator.generator_revision ?? '');
   const prompt = `${EVALUATION_SYSTEM_PROMPT}\n\n${CANONICAL_RUBRIC}\n\nREVIEWED NEW-FORMAT INSTRUCTION (exact):\n${NEW_FORMAT_EVALUATOR_INSTRUCTION}\n\nREVIEWED COMPONENT ANCHORS (exact):\n${JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS, null, 2)}\n\nREVIEWED SPEC BINDING: version=${NEW_FORMAT_EVALUATOR_SPEC_VERSION}; sha256=${NEW_FORMAT_EVALUATOR_SPEC_SHA256}; expected_model=${NEW_FORMAT_EXPECTED_MODEL}; generator_revision=${generatorRevision}\n\nThis is a deidentified faculty study. Evaluate only this immutable historical assignment context. Do not infer missing events. The evidence boundary is exactly the following assignment-scoped timeline, reconstructed with the deployed case key version ${caseKey.version || CASE_KEY_VERSION}, rubric ${FEEDBACK_RUBRIC_VERSION}, and assessment ${ASSESSMENT_VERSION}.\n\nCASE LABELS (preserve in output): specialty=${item.specialty}; case=${item.case_label}; packet=${item.packet_label}\n\nASSIGNMENT SNAPSHOT:\n${JSON.stringify({ status: assignment.status, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note, room_id: assignment.room_id, scenario_baseline_version: assignment.scenario_baseline_version })}\n\nHISTORICAL CHART RECONSTRUCTION:\n${JSON.stringify(room)}\n\nAVAILABILITY:\n${JSON.stringify(context.availability)}\n\nHISTORICAL EVIDENCE:\n${renderTimelineEntriesForEvaluation(entries)}\n\nReturn JSON with the six scored components, domain scores, strengths, improvements, recommendations, safety_result, and evidence_event_ids copied only from this evidence boundary. Any unsupported claim must be rejected or explicitly flagged as unsupported; do not relabel source narrative.`;
+  if (Deno.env.get('FACULTY_STUDY_EVALUATOR_MODE') === 'deterministic') {
+    const learnerIds = entries.filter((entry) => entry.kind === 'learner-action').map((entry) => entry.id);
+    const component = (score: number, feedback: string) => ({ score, feedback, evidence_event_ids: learnerIds.slice(0, 2) });
+    const raw = { learning_objectives: 'Synthetic deterministic evaluator: score only the captured evidence.', communication_breakdown: { focused_information_gathering: component(learnerIds.length ? 2 : 0, learnerIds.length ? 'Learner-authored evidence was captured.' : 'Not observed in the immutable snapshot.'), closed_loop_team_communication: component(learnerIds.length ? 1 : 0, learnerIds.length ? 'A learner-authored action is present.' : 'Not observed in the immutable snapshot.'), efficiency_deduction: component(0, 'No case-specific efficiency deduction was observed.') }, clinical_reasoning_breakdown: { orders_monitoring_quality: component(0, 'Not observed in the immutable snapshot.'), clinical_reasoning_documentation: component(0, 'Not observed in the immutable snapshot.'), safety_deduction: component(0, 'No actual unsafe learner action or order was observed.') }, safety_result: { level: 'none' as const, action: null, rationale: null, evidence_event_ids: [] }, strengths: [], improvements: ['Use the captured evidence to document the next observed action.'], recommendations: ['Review the evidence-linked component feedback.'] };
+    const canonical = validateEvidenceAttributions(canonicalizeEvaluation(raw), entries);
+    return { raw, canonical, evidenceEventIds: allowedEvidence(canonical, sourceIds), entries, caseKey };
+  }
   const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
   const completion = await openai.chat.completions.create({ model, messages: [{ role: 'system', content: 'You are a clinical education feedback evaluator. Treat the supplied historical context as the complete evidence boundary.' }, { role: 'user', content: prompt }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
   const raw = JSON.parse(completion.choices[0].message.content ?? '{}') as Record<string, unknown>;
@@ -704,6 +711,131 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
   return { raw, sheet, documents, coordinator, learner_writes: 0 };
 };
 
+type IsolatedEvaluationRow = Record<string, unknown> & { id: string; assignment_id: string; status: string; version: number };
+
+const isolatedPublicRow = (row: IsolatedEvaluationRow) => Object.fromEntries([
+  'id', 'assignment_id', 'version', 'status', 'prompt_version', 'prompt_sha256',
+  'evaluator_spec_version', 'evaluator_spec_hash', 'evaluator_config_revision',
+  'model', 'generator_revision', 'created_at', 'queued_at', 'started_at',
+  'completed_at', 'error',
+].map((key) => [key, row[key] ?? null]));
+
+const isolatedConfig = async (client: ReturnType<typeof serviceClient>, roomId: number) => {
+  const config = await activeConfig(client, roomId);
+  const anchors = (config as Record<string, unknown>).scoring_anchors ?? {};
+  const model = getOpenAIModel('generate_feedback');
+  const revision = resolveGeneratorRevisionBinding('study-enabled', Deno.env);
+  assertReviewedNewFormatBinding({
+    prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+    prompt_text: config.evaluator_prompt,
+    evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+    evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256,
+    component_anchors: anchors,
+    expected_model: model,
+    generator_revision: revision,
+  });
+  return { config, model, revision, anchors };
+};
+
+const isolatedAssignment = async (client: ReturnType<typeof serviceClient>, assignmentId: string) => {
+  if (!/^[0-9a-f-]{36}$/i.test(assignmentId)) throw new Error('STUDY_ASSIGNMENT_ID_INVALID');
+  const result = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', assignmentId).maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) throw new Error('ASSIGNMENT_NOT_FOUND');
+  return result.data as Record<string, unknown>;
+};
+
+const isolatedInput = async (client: ReturnType<typeof serviceClient>, assignment: Record<string, unknown>) => {
+  if (assignment.status !== 'completed') throw new Error('EVALUATION_BLOCKED:assignment is not completed');
+  const completedAt = typeof assignment.completed_at === 'string' ? assignment.completed_at : '';
+  if (!completedAt) throw new Error('EVALUATION_BLOCKED:assignment has no completed_at cutoff');
+  if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('EVALUATION_BLOCKED:HISTORICAL_CHART_BASELINE_MISSING');
+  const context = await exactContext(client, String(assignment.id), completedAt);
+  const privateTerms = await privateTermsForAssignment(client, assignment);
+  const snapshot = { assignment_id: assignment.id, status: assignment.status, completed_at: completedAt, room_id: assignment.room_id, existing_feedback: snapshotAssignmentProtection(assignment), source_hashes: { context_sha256: await sha256(JSON.stringify(context)), assignment_snapshot_sha256: await sha256(JSON.stringify(snapshotAssignmentProtection(assignment))) } };
+  return { snapshot, context, privateTerms, chart: assignment.scenario_baseline as Record<string, unknown> };
+};
+
+const queueIsolatedEvaluation = async (client: ReturnType<typeof serviceClient>, userId: string, assignmentId: string, idempotencyKey: string) => {
+  if (!idempotencyKey || idempotencyKey.length > 120) throw new Error('EVALUATION_IDEMPOTENCY_KEY_INVALID');
+  const assignment = await isolatedAssignment(client, assignmentId);
+  const roomId = Number(assignment.room_id);
+  const { config, model, revision, anchors } = await isolatedConfig(client, roomId);
+  const input = await isolatedInput(client, assignment);
+  const item = { batch_ordinal: 0, specialty: String(assignment.specialty ?? 'Synthetic'), case_label: String(assignment.case_label ?? `Assignment ${assignment.id}`), packet_label: String(assignment.packet_label ?? 'Completed attempt'), assignment_id: assignmentId };
+  const inputSnapshot = { ...input.snapshot, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label };
+  const frozenInput = { assignment_snapshot: inputSnapshot, context: input.context, chart_reconstruction: input.chart, redaction_terms: input.privateTerms, case_key: resolveCaseEvaluationKey(input.chart), evaluator: { prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: anchors, generator_revision: revision }, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
+  const queued = await client.rpc('queue_faculty_evaluation_version', { p_assignment_id: assignmentId, p_idempotency_key: idempotencyKey, p_created_by: userId, p_input_snapshot: inputSnapshot, p_frozen_input: frozenInput, p_prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, p_prompt_sha256: await sha256(NEW_FORMAT_EVALUATOR_INSTRUCTION), p_evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, p_evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256, p_evaluator_config_revision: `${config.scope}:v${config.version}`, p_model: model, p_generator_revision: revision });
+  if (queued.error) throw queued.error;
+  return { action: 'rerun_evaluation', deployment_mode: deploymentMode(), evaluation: isolatedPublicRow(queued.data as IsolatedEvaluationRow), learner_writes: 0, model_calls: 0 };
+};
+
+const queueIsolatedBatch = async (client: ReturnType<typeof serviceClient>, userId: string, manifest: FacultyStudyManifest) => {
+  const target = manifest.target_ordinals ?? manifest.attempts.map((item) => item.batch_ordinal);
+  if (target.length !== 30 || target.some((ordinal, index) => ordinal !== index + 1)) throw new Error('EVALUATION_BATCH_SCOPE_INVALID: frozen batch must contain ordinals 1 through 30');
+  const evaluations = [];
+  for (const item of manifest.attempts) {
+    const queued = await queueIsolatedEvaluation(client, userId, item.assignment_id, `batch:${manifest.batch_key}:${item.batch_ordinal}`);
+    evaluations.push({ ordinal: item.batch_ordinal, assignment_id: item.assignment_id, evaluation: queued.evaluation });
+  }
+  return { action: 'rerun_batch', deployment_mode: deploymentMode(), batch_key: manifest.batch_key, evaluations, model_calls: 0, learner_writes: 0 };
+};
+
+const evaluationHistory = async (client: ReturnType<typeof serviceClient>, assignmentId: string) => {
+  const result = await client.from('faculty_evaluation_versions').select('id, assignment_id, version, status, prompt_version, prompt_sha256, evaluator_spec_version, evaluator_spec_hash, evaluator_config_revision, model, generator_revision, created_at, queued_at, started_at, completed_at, error').eq('assignment_id', assignmentId).order('version', { ascending: false });
+  if (missingStudyTable(result.error)) return { action: 'evaluation_history', assignment_id: assignmentId, deployment_mode: deploymentMode(), available: false, evaluations: [] };
+  if (result.error) throw result.error;
+  return { action: 'evaluation_history', assignment_id: assignmentId, deployment_mode: deploymentMode(), available: true, evaluations: (result.data ?? []).map((row) => isolatedPublicRow(row as IsolatedEvaluationRow)) };
+};
+
+const executeIsolatedEvaluation = async (client: ReturnType<typeof serviceClient>, evaluationId: string) => {
+  const loaded = await client.from('faculty_evaluation_versions').select('*').eq('id', evaluationId).maybeSingle();
+  if (loaded.error) throw loaded.error;
+  if (!loaded.data) throw new Error('EVALUATION_NOT_FOUND');
+  const row = loaded.data as IsolatedEvaluationRow;
+  if (row.status === 'completed' || row.status === 'error' || row.status === 'blocked') return { action: 'execute_evaluation', deployment_mode: deploymentMode(), evaluation: isolatedPublicRow(row), model_calls: 0, learner_writes: 0 };
+  const now = new Date();
+  const leaseToken = crypto.randomUUID();
+  const claim = await client.from('faculty_evaluation_versions').update({ status: 'running', started_at: now.toISOString(), lease_token: leaseToken, lease_expires_at: new Date(now.getTime() + STUDY_RUN_LEASE_MS).toISOString() }).eq('id', evaluationId).eq('status', 'queued').select('*').maybeSingle();
+  if (claim.error) throw claim.error;
+  if (!claim.data) {
+    const current = await client.from('faculty_evaluation_versions').select('*').eq('id', evaluationId).single();
+    if (current.error) throw current.error;
+    return { action: 'execute_evaluation', deployment_mode: deploymentMode(), evaluation: isolatedPublicRow(current.data as IsolatedEvaluationRow), model_calls: 0, learner_writes: 0 };
+  }
+  const running = claim.data as IsolatedEvaluationRow;
+  try {
+    const assignment = await isolatedAssignment(client, row.assignment_id);
+    const frozen = row.frozen_input as Record<string, unknown>;
+    const context = frozen.context as { rows: Record<string, unknown[]>; availability: Record<string, unknown> };
+    const item = { batch_ordinal: 0, specialty: String((row.input_snapshot as Record<string, unknown>).specialty ?? 'Synthetic'), case_label: String((row.input_snapshot as Record<string, unknown>).case_label ?? 'Completed attempt'), packet_label: String((row.input_snapshot as Record<string, unknown>).packet_label ?? 'Completed attempt'), assignment_id: row.assignment_id };
+    const evaluation = await evaluate({ batch_key: `single-${evaluationId}`, prompt_version: String(row.prompt_version), prompt_text: NEW_FORMAT_EVALUATOR_INSTRUCTION, expected_model: String(row.model), evaluator_spec_version: String(row.evaluator_spec_version), evaluator_spec_hash: String(row.evaluator_spec_hash), component_anchors: NEW_FORMAT_COMPONENT_ANCHORS, attempts: [item] }, item, assignment, context, String(row.model), { evaluator_prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS, evaluator_spec_version: String(row.evaluator_spec_version), evaluator_spec_hash: String(row.evaluator_spec_hash), expected_model: String(row.model), prompt_version: String(row.prompt_version), generator_revision: String(row.generator_revision) });
+    const key = resolveCaseEvaluationKey(frozen.chart_reconstruction as Record<string, unknown>);
+    const generatedAt = new Date().toISOString();
+    const result = { evaluation_version: row.version, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'completed', evaluation: evaluation.canonical, case_goals: key.goals, safety_result: evaluation.canonical.safety_result, critical_safety_action: evaluation.canonical.safety_result.level === 'critical' ? evaluation.canonical.safety_result.action : null, evidence_event_ids: evaluation.evidenceEventIds, generated_at: generatedAt, prompt_version: row.prompt_version, model: row.model, redaction_terms: frozen.redaction_terms };
+    const reviewer = deidentifyStudyResult(result);
+    const html = buildEvaluationSheetHtml(reviewer as Record<string, unknown>);
+    const sheet = [STUDY_SHEET_COLUMNS.join(','), studySheetRow(reviewer as Record<string, unknown>).map(csvEscape).join(',')].join('\n');
+    const artifacts = { json: JSON.stringify(reviewer, null, 2), html, csv: sheet, html_sha256: await sha256(html), artifact_version: 'new-format-evaluation-v1' };
+    const protectedBefore = (frozen.assignment_snapshot as Record<string, unknown>).existing_feedback ?? {};
+    await assertProtectedAssignmentReadback(client, row.assignment_id, { ...assignment, ...(protectedBefore as Record<string, unknown>) });
+    const updated = await client.from('faculty_evaluation_versions').update({ status: 'completed', result: reviewer, canonical_result: evaluation.canonical, raw_model_response: evaluation.raw, artifacts, completed_at: generatedAt, lease_token: null, lease_expires_at: null }).eq('id', evaluationId).eq('status', 'running').eq('lease_token', leaseToken).select('*').single();
+    if (updated.error) throw updated.error;
+    return { action: 'execute_evaluation', deployment_mode: deploymentMode(), evaluation: isolatedPublicRow(updated.data as IsolatedEvaluationRow), model_calls: Deno.env.get('FACULTY_STUDY_EVALUATOR_MODE') === 'deterministic' ? 0 : 1, learner_writes: 0 };
+  } catch (error) {
+    const failed = await client.from('faculty_evaluation_versions').update({ status: 'error', error: { code: errorCode(error) || message(error).split(':')[0], message: message(error), phase: 'evaluation', retryable: true }, lease_token: null, lease_expires_at: null }).eq('id', evaluationId).eq('status', 'running').eq('lease_token', leaseToken).select('*').single();
+    if (failed.error) throw failed.error;
+    return { action: 'execute_evaluation', deployment_mode: deploymentMode(), evaluation: isolatedPublicRow(failed.data as IsolatedEvaluationRow), model_calls: 0, learner_writes: 0 };
+  }
+};
+
+const downloadIsolatedEvaluation = async (client: ReturnType<typeof serviceClient>, evaluationId: string) => {
+  const result = await client.from('faculty_evaluation_versions').select('id, version, status, prompt_version, model, generator_revision, completed_at, artifacts').eq('id', evaluationId).single();
+  if (result.error) throw result.error;
+  if (result.data.status !== 'completed' || !result.data.artifacts) throw new Error('EVALUATION_NOT_COMPLETED');
+  return { action: 'download_evaluation', deployment_mode: deploymentMode(), evaluation_id: evaluationId, version: result.data.version, prompt_version: result.data.prompt_version, model: result.data.model, generator_revision: result.data.generator_revision, completed_at: result.data.completed_at, artifacts: result.data.artifacts, model_calls: 0, learner_writes: 0 };
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   const requestId = crypto.randomUUID();
@@ -717,6 +849,11 @@ Deno.serve(async (req) => {
     if (action === 'audit') return json(await historicalInputAudit(client, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'export_room_pdfs') return json(await exportRoomPdfs(client), 200, requestId);
     if (action === 'history') return json(await studyHistory(client, String(body.assignment_id ?? '')), 200, requestId);
+    if (action === 'evaluation_history') return json(await evaluationHistory(client, String(body.assignment_id ?? '')), 200, requestId);
+    if (action === 'rerun_evaluation') return json(await queueIsolatedEvaluation(client, userId, String(body.assignment_id ?? ''), String(body.idempotency_key ?? '')), 200, requestId);
+    if (action === 'rerun_batch') return json(await queueIsolatedBatch(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
+    if (action === 'execute_evaluation') return json(await executeIsolatedEvaluation(client, String(body.evaluation_id ?? '')), 200, requestId);
+    if (action === 'download_evaluation') return json(await downloadIsolatedEvaluation(client, String(body.evaluation_id ?? '')), 200, requestId);
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases, body.target_ordinals), 200, requestId);
     if (action === 'export') return json(await exportBatch(client, String(body.batch_id), body.batch_ordinal, body.assignment_id), 200, requestId);

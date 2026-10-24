@@ -5,6 +5,15 @@ const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: inde
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
 
 describe('faculty study contract', () => {
+  it('keeps persistent history/download reads safe while denying isolated writes in preflight', () => {
+    expect(studyActionAllowed('evaluation_history', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('download_evaluation', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('rerun_evaluation', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('execute_evaluation', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('rerun_batch', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('rerun_evaluation', 'study-enabled')).toBe(true);
+  });
+
   it('requires the fixed ordered 30-case manifest', () => {
     expect(validateStudyManifest(manifest).attempts).toHaveLength(30);
     expect(() => validateStudyManifest({ ...manifest, attempts: attempts.slice(1) })).toThrow('exactly 30');
