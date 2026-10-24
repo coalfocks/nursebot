@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyProgress, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/historical-context.ts';
@@ -215,11 +215,15 @@ const studyHistory = async (client: ReturnType<typeof serviceClient>, assignment
     const matchingBatches = (batchesQuery.data ?? []).filter((batch) => {
       const manifest = batch.manifest as { attempts?: Array<{ assignment_id?: string }> } | null;
       return manifest?.attempts?.some((attempt) => attempt.assignment_id === assignmentId);
-    }).map((batch) => ({ id: batch.id, batch_key: batch.batch_key, status: batch.status, prompt_version: batch.prompt_version, model: batch.model, generator_revision: null, created_at: batch.created_at, completed_at: batch.completed_at, total_count: 30, completed_count: 0, error_count: 0, pending_count: 30, progress_status: batch.status }));
+    }).map((batch) => {
+      const manifest = validateStudyManifest(batch.manifest);
+      const totalCount = manifest.target_ordinals?.length ?? manifest.attempts.length;
+      return { id: batch.id, batch_key: batch.batch_key, status: batch.status, prompt_version: batch.prompt_version, model: batch.model, generator_revision: null, created_at: batch.created_at, completed_at: batch.completed_at, total_count: totalCount, completed_count: 0, error_count: 0, pending_count: totalCount, progress_status: batch.status };
+    });
     return { action: 'study_history', assignment_id: assignmentId, available: true, batches: matchingBatches, versions: [] };
   }
   const [batchesQuery, allResultsQuery] = await Promise.all([
-    client.from('faculty_study_batches').select('id, batch_key, status, prompt_version, model, generator_revision, created_at, completed_at').in('id', batchIds),
+    client.from('faculty_study_batches').select('id, batch_key, status, prompt_version, model, generator_revision, created_at, completed_at, manifest').in('id', batchIds),
     client.from('faculty_study_results').select('batch_id, batch_ordinal, result, canonical_result, error').in('batch_id', batchIds),
   ]);
   if (missingStudyTable(batchesQuery.error) || missingStudyTable(allResultsQuery.error)) return { action: 'study_history', assignment_id: assignmentId, available: false, reason: 'study_tables_not_applied', batches: [], versions: [] };
@@ -235,9 +239,14 @@ const studyHistory = async (client: ReturnType<typeof serviceClient>, assignment
   };
   const batches = [...batchById.values()].map((batch) => {
     const batchRows = allByBatch.get(batch.id) ?? [];
-    const completedCount = batchRows.filter((row) => storedResultStatus(row) === 'completed').length;
-    const errorCount = batchRows.filter((row) => storedResultStatus(row) === 'error').length;
-    return { ...batch, total_count: 30, completed_count: completedCount, error_count: errorCount, pending_count: 30 - completedCount - errorCount, progress_status: batch.status === 'completed' && completedCount === 30 ? 'completed' : completedCount + errorCount > 0 ? 'partial' : batch.status };
+    const batchManifest = validateStudyManifest(batch.manifest);
+    const scopedOrdinals = new Set(batchManifest.target_ordinals ?? batchManifest.attempts.map((item) => item.batch_ordinal));
+    const scopedRows = batchRows.filter((row) => scopedOrdinals.has(row.batch_ordinal));
+    const completedCount = scopedRows.filter((row) => storedResultStatus(row) === 'completed').length;
+    const errorCount = scopedRows.filter((row) => storedResultStatus(row) === 'error').length;
+    const totalCount = scopedOrdinals.size;
+    const publicBatch = Object.fromEntries(Object.entries(batch).filter(([key]) => key !== 'manifest'));
+    return { ...publicBatch, total_count: totalCount, completed_count: completedCount, error_count: errorCount, pending_count: totalCount - completedCount - errorCount, progress_status: batch.status === 'completed' && completedCount === totalCount && errorCount === 0 ? 'completed' : completedCount + errorCount > 0 ? 'partial' : batch.status };
   });
   const versions = rows.map((row) => {
     const batch = batchById.get(row.batch_id);
@@ -352,14 +361,16 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   const existingResult = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
   if (existingResult.error) throw existingResult.error;
   const doneOrdinals = new Set((existingResult.data ?? []).filter((row) => isTerminalStudyResult(row)).map((row) => row.batch_ordinal));
-  const targetOrdinals = Array.isArray(requestedOrdinals)
-    ? new Set(requestedOrdinals.filter((ordinal): ordinal is number => Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 30))
+  const persistedOrRequestedOrdinals = requestedOrdinals === undefined ? manifest.target_ordinals : requestedOrdinals;
+  const targetOrdinals = Array.isArray(persistedOrRequestedOrdinals)
+    ? new Set(persistedOrRequestedOrdinals.filter((ordinal): ordinal is number => Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 30))
     : null;
-  if (Array.isArray(requestedOrdinals) && (!targetOrdinals?.size || targetOrdinals.size !== requestedOrdinals.length)) throw new Error('STUDY_TARGET_ORDINALS_INVALID');
+  if (Array.isArray(persistedOrRequestedOrdinals) && (!targetOrdinals?.size || targetOrdinals.size !== persistedOrRequestedOrdinals.length)) throw new Error('STUDY_TARGET_ORDINALS_INVALID');
+  const scopedOrdinals = targetOrdinals ?? new Set(manifest.attempts.map((item) => item.batch_ordinal));
   const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal) && (!targetOrdinals || targetOrdinals.has(item.batch_ordinal))).slice(0, limit);
   if (pending.length === 0) {
-    const targetComplete = targetOrdinals ? [...targetOrdinals].every((ordinal) => doneOrdinals.has(ordinal)) : doneOrdinals.size >= manifest.attempts.length;
-    return { batch_id: batchId, learner_writes: 0, result_writes: doneOrdinals.size, status: targetComplete ? 'completed' : 'partial', progress: { completed_count: doneOrdinals.size, total_count: manifest.attempts.length, remaining_count: manifest.attempts.length - doneOrdinals.size }, target_ordinals: targetOrdinals ? [...targetOrdinals] : null };
+    const progress = studyProgress(existingResult.data ?? [], scopedOrdinals);
+    return { batch_id: batchId, learner_writes: 0, result_writes: progress.completedCount, status: progress.pendingCount === 0 && progress.errorCount === 0 ? 'completed' : progress.errorCount > 0 && progress.pendingCount === 0 ? 'error' : 'partial', progress: { completed_count: progress.completedCount, error_count: progress.errorCount, pending_count: progress.pendingCount, total_count: progress.totalCount, remaining_count: progress.pendingCount }, target_ordinals: targetOrdinals ? [...targetOrdinals] : null };
   }
   const now = new Date();
   const nowIso = now.toISOString();
@@ -413,19 +424,21 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse, error: result.error as Record<string, unknown>, promptVersion: String(batch.prompt_version), model, generatedAt: null });
     }
   }
-    const completedCount = doneOrdinals.size + pending.length;
-    const finished = completedCount >= manifest.attempts.length;
-    const done = await client.from('faculty_study_batches').update({ status: finished ? 'completed' : 'prepared', completed_at: finished ? new Date().toISOString() : null, lease_token: null, lease_expires_at: null, next_batch_ordinal: finished ? null : manifest.attempts.find((item) => !doneOrdinals.has(item.batch_ordinal) && !pending.some((processed) => processed.batch_ordinal === item.batch_ordinal))?.batch_ordinal ?? null }).eq('id', batchId).eq('status', 'running').eq('lease_token', leaseToken).select('id').maybeSingle();
+    const refreshed = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
+    if (refreshed.error) throw refreshed.error;
+    const progress = studyProgress(refreshed.data ?? [], scopedOrdinals);
+    const finished = progress.pendingCount === 0 && progress.errorCount === 0;
+    const done = await client.from('faculty_study_batches').update({ status: finished ? 'completed' : 'prepared', completed_at: finished ? new Date().toISOString() : null, lease_token: null, lease_expires_at: null, next_batch_ordinal: finished ? null : manifest.attempts.find((item) => scopedOrdinals.has(item.batch_ordinal) && !(refreshed.data ?? []).some((row) => row.batch_ordinal === item.batch_ordinal && isTerminalStudyResult(row)))?.batch_ordinal ?? null }).eq('id', batchId).eq('status', 'running').eq('lease_token', leaseToken).select('id').maybeSingle();
     if (done.error) throw done.error;
     if (!done.data) throw new Error('STUDY_RUN_LEASE_LOST');
-    return { batch_id: batchId, learner_writes: 0, result_writes: completedCount, status: finished ? 'completed' : 'partial', progress: { completed_count: completedCount, total_count: manifest.attempts.length, remaining_count: manifest.attempts.length - completedCount }, target_ordinals: targetOrdinals ? [...targetOrdinals] : null };
+    return { batch_id: batchId, learner_writes: 0, result_writes: progress.completedCount, status: finished ? 'completed' : progress.errorCount > 0 && progress.pendingCount === 0 ? 'error' : 'partial', progress: { completed_count: progress.completedCount, error_count: progress.errorCount, pending_count: progress.pendingCount, total_count: progress.totalCount, remaining_count: progress.pendingCount }, target_ordinals: targetOrdinals ? [...targetOrdinals] : null };
   } catch (error) {
     await client.from('faculty_study_batches').update({ status: 'failed', completed_at: new Date().toISOString(), lease_token: null, lease_expires_at: null, error: { code: errorCode(error), message: message(error) } }).eq('id', batchId).eq('status', 'running').eq('lease_token', leaseToken);
     throw error;
   }
 };
 
-const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: string, requestedOrdinal: unknown) => {
+const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: string, requestedOrdinal: unknown, requestedAssignmentId: unknown) => {
   const [batchResult, resultsResult] = await Promise.all([client.from('faculty_study_batches').select('id, batch_key, manifest, prompt_version, model, generator_revision, evaluator_config_revision, protocol_version, created_at, attempt_attestations').eq('id', batchId).single(), client.from('faculty_study_results').select('batch_ordinal, assignment_id, historical_snapshot, frozen_input, canonical_result, raw_model_response, result, error, generated_at, prompt_version, model').eq('batch_id', batchId).order('batch_ordinal')]);
   if (batchResult.error) throw batchResult.error;
   if (resultsResult.error) throw resultsResult.error;
@@ -436,10 +449,12 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
   const selectedAttempts = selectedOrdinal === null ? manifest.attempts : manifest.attempts.filter((item) => item.batch_ordinal === selectedOrdinal);
   const results = selectedAttempts.map((item) => {
     const row = resultByCase.get(item.batch_ordinal);
-    if (!row) return { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', error: { code: 'STUDY_RESULT_MISSING', message: 'No isolated result was recorded for this batch ordinal.', phase: 'export', retryable: false }, generated_at: null, prompt_version: batchResult.data.prompt_version, model: batchResult.data.model } as Record<string, unknown>;
-    if (row.error || !row.result) return { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', error: row.error ?? { code: 'STUDY_RESULT_NOT_COMPLETED', message: 'The isolated result is still pending and cannot be downloaded.', phase: 'export', retryable: true }, generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model } as Record<string, unknown>;
+    const errorReviewer = (error: unknown, rowData?: Record<string, unknown>) => deidentifyStudyResult({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', communication_score: null, component_scores: {}, error, generated_at: rowData?.generated_at ?? null, prompt_version: rowData?.prompt_version ?? batchResult.data.prompt_version, model: rowData?.model ?? batchResult.data.model, redaction_terms: ((rowData?.frozen_input as Record<string, unknown> | null)?.redaction_terms as string[] | undefined) ?? [] }) as Record<string, unknown>;
+    if (!row) return errorReviewer({ code: 'STUDY_RESULT_MISSING', message: 'No isolated result was recorded for this batch ordinal.', phase: 'export', retryable: false });
+    if (row.assignment_id !== item.assignment_id || (requestedAssignmentId !== undefined && requestedAssignmentId !== null && String(row.assignment_id) !== String(requestedAssignmentId))) return errorReviewer({ code: 'STUDY_RESULT_ASSIGNMENT_MISMATCH', message: 'The stored result does not match the requested assignment.', phase: 'export', retryable: false }, row as Record<string, unknown>);
+    if (row.error || !row.result) return errorReviewer(row.error ?? { code: 'STUDY_RESULT_NOT_COMPLETED', message: 'The isolated result is still pending and cannot be downloaded.', phase: 'export', retryable: true }, row as Record<string, unknown>);
     const storedEvaluation = row.canonical_result && typeof row.canonical_result === 'object' ? row.canonical_result as Record<string, unknown> : row.result && typeof row.result === 'object' && 'evaluation' in row.result && row.result.evaluation && typeof row.result.evaluation === 'object' ? row.result.evaluation as Record<string, unknown> : null;
-    if (!storedEvaluation || !hasValidSixComponentEvaluation(storedEvaluation)) return { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'error', error: { code: 'STUDY_RESULT_INVALID', message: 'The stored result does not satisfy the six-component contract.', phase: 'export', retryable: false }, generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model } as Record<string, unknown>;
+    if (!storedEvaluation || !hasValidSixComponentEvaluation(storedEvaluation)) return errorReviewer({ code: 'STUDY_RESULT_INVALID', message: 'The stored result does not satisfy the six-component contract.', phase: 'export', retryable: false }, row as Record<string, unknown>);
     const privateTerms = ((row.frozen_input as Record<string, unknown> | null)?.redaction_terms as string[] | undefined) ?? [];
     const canonical = row.result && typeof row.result === 'object' ? row.result as Record<string, unknown> : { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: row.error ? 'error' : 'completed' };
     const reviewerCanonical = deidentifyStudyResult({ ...canonical, batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: studyResultStatus(row), error: row.error, redaction_terms: privateTerms });
@@ -488,7 +503,7 @@ Deno.serve(async (req) => {
     if (action === 'history') return json(await studyHistory(client, String(body.assignment_id ?? '')), 200, requestId);
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases, body.target_ordinals), 200, requestId);
-    if (action === 'export') return json(await exportBatch(client, String(body.batch_id), body.batch_ordinal), 200, requestId);
+    if (action === 'export') return json(await exportBatch(client, String(body.batch_id), body.batch_ordinal, body.assignment_id), 200, requestId);
     throw new Error('STUDY_ACTION_INVALID');
   } catch (error) {
     const status = /AUTH|REQUIRED|INVALID|UNAVAILABLE|MISMATCH|UNVERIFIED|PREFLIGHT/.test(message(error)) ? 400 : 500;

@@ -16,6 +16,7 @@ export type FacultyStudyManifest = {
   prompt_text: string;
   expected_model: string;
   attempts: StudyManifestItem[];
+  target_ordinals?: number[];
 };
 
 export const STUDY_ASSIGNMENT_PROTECTED_FIELDS = [
@@ -61,6 +62,13 @@ export const protectedAssignmentUnchanged = (before: Record<string, unknown>, af
 
 export const isTerminalStudyResult = (row: { result?: unknown; error?: unknown }) => Boolean(row.result || row.error);
 export const studyResultStatus = (row: { result?: unknown; error?: unknown }) => row.result ? 'completed' : row.error ? 'error' : 'pending';
+export const studyProgress = (rows: Array<{ batch_ordinal: number; result?: unknown; error?: unknown }>, scopedOrdinals: Set<number>) => {
+  const scopedRows = rows.filter((row) => scopedOrdinals.has(row.batch_ordinal));
+  const completedCount = scopedRows.filter((row) => Boolean(row.result) && !row.error).length;
+  const errorCount = scopedRows.filter((row) => Boolean(row.error)).length;
+  const totalCount = scopedOrdinals.size;
+  return { completedCount, errorCount, totalCount, pendingCount: totalCount - completedCount - errorCount };
+};
 export const STUDY_RUN_LEASE_MS = 15 * 60 * 1000;
 export const isStudyRunLeaseExpired = (leaseExpiresAt: unknown, now = Date.now()) =>
   typeof leaseExpiresAt === 'string' && Number.isFinite(new Date(leaseExpiresAt).getTime()) && new Date(leaseExpiresAt).getTime() <= now;
@@ -96,7 +104,11 @@ export const validateStudyManifest = (value: unknown): FacultyStudyManifest => {
   const numbers = attempts.map((item) => item.batch_ordinal);
   if (new Set(numbers).size !== 30 || numbers.some((number, index) => number !== index + 1)) throw new Error('STUDY_MANIFEST_INVALID: batch_ordinal must contain 1 through 30 in order');
   if (new Set(attempts.map((item) => item.assignment_id)).size !== 30) throw new Error('STUDY_MANIFEST_INVALID: assignment ids must be unique');
-  return { batch_key: batchKey, prompt_version: promptVersion, prompt_text: promptText, expected_model: expectedModel, attempts };
+  const targetOrdinals = source.target_ordinals === undefined ? undefined : source.target_ordinals;
+  if (targetOrdinals !== undefined && (!Array.isArray(targetOrdinals) || targetOrdinals.length === 0 || targetOrdinals.some((ordinal) => !Number.isInteger(ordinal) || ordinal < 1 || ordinal > 30) || new Set(targetOrdinals).size !== targetOrdinals.length)) {
+    throw new Error('STUDY_MANIFEST_INVALID: target_ordinals must contain unique ordinals from 1 through 30');
+  }
+  return { batch_key: batchKey, prompt_version: promptVersion, prompt_text: promptText, expected_model: expectedModel, attempts, ...(targetOrdinals ? { target_ordinals: [...targetOrdinals] } : {}) };
 };
 
 const scrub = (value: unknown, privateTerms: string[]): unknown => {
@@ -112,7 +124,7 @@ const scrub = (value: unknown, privateTerms: string[]): unknown => {
 export const redactStudyValue = (value: unknown, privateTerms: string[] = []) => scrub(value, privateTerms);
 
 export const deidentifyStudyResult = (result: Record<string, unknown>) => {
-  const flat = !result.evaluation && ('component_scores' in result || 'communication_score' in result);
+  const flat = !result.evaluation && ('component_scores' in result || 'communication_score' in result || result.status === 'error');
   if (flat) {
     const privateTerms = (result.redaction_terms as string[] | undefined) ?? [];
     return {
@@ -223,7 +235,10 @@ const htmlEscape = (value: unknown) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
-const htmlNarrative = (title: string, value: unknown) => `<section><h2>${htmlEscape(title)}</h2><pre>${htmlEscape(Array.isArray(value) ? value.join('\n\n') : value ?? 'Not recorded')}</pre></section>`;
+const htmlNarrative = (title: string, value: unknown) => {
+  const text = value == null ? 'Not recorded' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return `<section><h2>${htmlEscape(title)}</h2><pre>${htmlEscape(text)}</pre></section>`;
+};
 
 export const buildEvaluationSheetHtml = (result: Record<string, unknown>) => {
   const components = (result.component_scores ?? {}) as Record<string, unknown>;

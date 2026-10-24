@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, studyActionAllowed, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
+import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, studyActionAllowed, studyProgress, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
 
 const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: index + 1, specialty: ['ED', 'ICU', 'Peds', 'OB', 'Med-Surg', 'Psych'][index % 6], case_label: `Case ${index % 5 + 1}`, packet_label: `Packet ${index % 5 + 1}`, assignment_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}` }));
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
@@ -10,6 +10,8 @@ describe('faculty study contract', () => {
     expect(() => validateStudyManifest({ ...manifest, attempts: attempts.slice(1) })).toThrow('exactly 30');
     expect(() => validateStudyManifest({ ...manifest, attempts: [...attempts].reverse() })).toThrow('batch_ordinal');
     expect(validateStudyManifest({ ...manifest, attempts: attempts.map((item) => ({ ...item, case_label: 'Case 1' })) }).attempts[5].case_label).toBe('Case 1');
+    expect(validateStudyManifest({ ...manifest, target_ordinals: [7] }).target_ordinals).toEqual([7]);
+    expect(() => validateStudyManifest({ ...manifest, target_ordinals: [7, 7] })).toThrow('target_ordinals');
   });
 
   it('rejects duplicate assignments and malformed ids', () => {
@@ -116,6 +118,24 @@ describe('faculty study contract', () => {
     expect(studyResultStatus({ result: { status: 'completed' }, error: null })).toBe('completed');
     expect(STUDY_SHEET_COLUMNS.slice(0, 4)).toEqual(['batch_ordinal', 'specialty', 'case_label', 'packet_label']);
     expect(studySheetRow({ batch_ordinal: 1, specialty: 'OB', case_label: 'Case 3', packet_label: 'Packet 2', status: 'pending' }).slice(0, 4)).toEqual([1, 'OB', 'Case 3', 'Packet 2']);
+  });
+
+  it('separates successful, error, and pending progress within the persisted scope', () => {
+    const progress = studyProgress([
+      { batch_ordinal: 1, result: { ok: true }, error: null },
+      { batch_ordinal: 2, result: null, error: { code: 'CONTEXT_UNRECOVERABLE' } },
+      { batch_ordinal: 3, result: null, error: null },
+      { batch_ordinal: 9, result: { ok: true }, error: null },
+    ], new Set([1, 2, 3]));
+    expect(progress).toEqual({ completedCount: 1, errorCount: 1, totalCount: 3, pendingCount: 1 });
+  });
+
+  it('redacts reviewer-visible errors and renders object breakdowns readably', () => {
+    const error = deidentifyStudyResult({ status: 'error', batch_ordinal: 7, specialty: 'ED', case_label: 'Case 7', packet_label: 'Packet 7', communication_score: null, component_scores: {}, error: { message: 'Learner Jane Doe could not be evaluated' }, redaction_terms: ['Jane Doe'] });
+    expect(error.error).toEqual({ message: 'Learner [redacted-name] could not be evaluated' });
+    const html = buildEvaluationSheetHtml({ ...error, communication_breakdown: { focused_information_gathering: { score: 2, narrative: 'Asked the right questions' } } });
+    expect(html).toContain('Asked the right questions');
+    expect(html).not.toContain('[object Object]');
   });
 
   it('recognizes expired and active run leases for stale-run recovery controls', () => {
