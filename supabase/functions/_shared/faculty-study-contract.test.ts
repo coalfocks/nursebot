@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, studyActionAllowed, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
+import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, studyActionAllowed, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
 
 const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: index + 1, specialty: ['ED', 'ICU', 'Peds', 'OB', 'Med-Surg', 'Psych'][index % 6], case_label: `Case ${index % 5 + 1}`, packet_label: `Packet ${index % 5 + 1}`, assignment_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}` }));
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
@@ -128,6 +128,7 @@ describe('faculty study contract', () => {
   it('server-denies prepare and run in preflight-only deployment mode', () => {
     expect(studyActionAllowed('preflight', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('audit', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('history', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('export', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
@@ -139,5 +140,18 @@ describe('faculty study contract', () => {
   it('does not treat missing or unknown deployment configuration as study-enabled', () => {
     expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
+  });
+
+  it('renders a printable new-format sheet with all six components and both domains', () => {
+    const html = buildEvaluationSheetHtml({
+      batch_ordinal: 1, specialty: 'ED', case_label: 'Case 1', packet_label: 'Packet 1', status: 'completed', prompt_version: 'new-format-v1', generated_at: '2026-10-24T00:00:00Z', model: 'gpt-6-luna',
+      component_scores: { focused_information_gathering: 2, closed_loop_team_communication: 3, efficiency_deduction: 0, orders_monitoring_quality: 3, clinical_reasoning_documentation: 2, safety_deduction: 0 },
+      domain_scores: { communication: 5, clinical_reasoning: 5 }, strengths: ['clear'], improvements: ['reassess'], recommendations: ['continue'], communication_breakdown: { focused_information_gathering: { feedback: 'clear' } }, clinical_reasoning_breakdown: { orders_monitoring_quality: { feedback: 'clear' } }, evidence_event_ids: ['event-1'],
+    });
+    expect(html).toContain('Focused information gathering');
+    expect(html).toContain('Safety deduction');
+    expect(html).toContain('Communication domain');
+    expect(html).toContain('Clinical reasoning domain');
+    expect(html).toContain('new-format-v1');
   });
 });

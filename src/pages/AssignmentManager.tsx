@@ -1414,7 +1414,7 @@ export default function AssignmentManager() {
                             </button>
                             {assignment.status === 'completed' && (
                               <button
-                                onClick={() => window.location.assign('/admin/faculty-study')}
+                                onClick={() => window.location.assign(`/admin/faculty-study?assignment_id=${encodeURIComponent(assignment.id)}`)}
                                 title="Open the isolated NEW-FORMAT evaluation workflow"
                                 className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
                               >
