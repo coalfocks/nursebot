@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
@@ -140,6 +140,7 @@ const privateTermsForAssignment = async (client: ReturnType<typeof serviceClient
   if (student.error) throw new Error(`IDENTITY_REDACTION_UNAVAILABLE:student lookup failed:${student.error.message}`);
   if (!student.data) throw new Error('IDENTITY_REDACTION_UNAVAILABLE:student identity was not found');
   terms.push(student.data.full_name, student.data.email);
+  if (typeof student.data.full_name === 'string') terms.push(...student.data.full_name.split(/\s+/));
   return terms.filter((term): term is string => typeof term === 'string' && term.trim().length > 1);
 };
 
@@ -161,7 +162,19 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   const doneOrdinals = new Set((existingResult.data ?? []).filter((row) => isTerminalStudyResult(row)).map((row) => row.batch_ordinal));
   const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal)).slice(0, limit);
   if (pending.length === 0) return { batch_id: batchId, learner_writes: 0, result_writes: doneOrdinals.size, status: 'completed' };
-  const claim = await client.from('faculty_study_batches').update({ status: 'running', started_at: new Date().toISOString(), error: null }).eq('id', batchId).in('status', ['prepared', 'failed']).select('id').maybeSingle();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const leaseExpiresAt = new Date(now.getTime() + STUDY_RUN_LEASE_MS).toISOString();
+  const leaseToken = crypto.randomUUID();
+  const stale = await client.from('faculty_study_batches')
+    .update({ status: 'prepared', started_at: null, completed_at: null, lease_token: null, lease_expires_at: null, error: { code: 'STUDY_RUN_LEASE_EXPIRED', message: 'Recovered an interrupted study run before resuming.' } })
+    .eq('id', batchId)
+    .eq('status', 'running')
+    .or(`lease_expires_at.lte.${nowIso},and(lease_expires_at.is.null,started_at.lte.${nowIso}),and(lease_expires_at.is.null,started_at.is.null)`)
+    .select('id')
+    .maybeSingle();
+  if (stale.error) throw stale.error;
+  const claim = await client.from('faculty_study_batches').update({ status: 'running', started_at: nowIso, completed_at: null, lease_token: leaseToken, lease_expires_at: leaseExpiresAt, error: null }).eq('id', batchId).in('status', ['prepared', 'failed']).select('id').maybeSingle();
   if (claim.error) throw claim.error;
   if (!claim.data) throw new Error('STUDY_BATCH_NOT_PREPARED_OR_ALREADY_RUNNING');
   try { for (const item of pending) {
@@ -205,11 +218,12 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   }
     const completedCount = doneOrdinals.size + pending.length;
     const finished = completedCount >= manifest.attempts.length;
-    const done = await client.from('faculty_study_batches').update({ status: finished ? 'completed' : 'prepared', completed_at: finished ? new Date().toISOString() : null, next_batch_ordinal: finished ? null : manifest.attempts.find((item) => !doneOrdinals.has(item.batch_ordinal) && !pending.some((processed) => processed.batch_ordinal === item.batch_ordinal))?.batch_ordinal ?? null }).eq('id', batchId).eq('status', 'running');
+    const done = await client.from('faculty_study_batches').update({ status: finished ? 'completed' : 'prepared', completed_at: finished ? new Date().toISOString() : null, lease_token: null, lease_expires_at: null, next_batch_ordinal: finished ? null : manifest.attempts.find((item) => !doneOrdinals.has(item.batch_ordinal) && !pending.some((processed) => processed.batch_ordinal === item.batch_ordinal))?.batch_ordinal ?? null }).eq('id', batchId).eq('status', 'running').eq('lease_token', leaseToken).select('id').maybeSingle();
     if (done.error) throw done.error;
+    if (!done.data) throw new Error('STUDY_RUN_LEASE_LOST');
     return { batch_id: batchId, learner_writes: 0, result_writes: completedCount, status: finished ? 'completed' : 'prepared', remaining: manifest.attempts.length - completedCount };
   } catch (error) {
-    await client.from('faculty_study_batches').update({ status: 'failed', completed_at: new Date().toISOString(), error: { code: errorCode(error), message: message(error) } }).eq('id', batchId).eq('status', 'running');
+    await client.from('faculty_study_batches').update({ status: 'failed', completed_at: new Date().toISOString(), lease_token: null, lease_expires_at: null, error: { code: errorCode(error), message: message(error) } }).eq('id', batchId).eq('status', 'running').eq('lease_token', leaseToken);
     throw error;
   }
 };
@@ -248,7 +262,7 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
     results,
   };
   const sheet = [STUDY_SHEET_COLUMNS.join(','), ...results.map((row) => studySheetRow(row).map(csvEscape).join(','))].join('\n');
-  const documents = results.map((row) => ({ filename: `batch-${String(row.batch_ordinal).padStart(2, '0')}-feedback.json`, content: JSON.stringify(deidentifyStudyResult(row), null, 2) }));
+  const documents = results.map((row) => ({ filename: `batch-${String(row.batch_ordinal).padStart(2, '0')}-feedback.json`, content: JSON.stringify(row, null, 2) }));
   const coordinator = (resultsResult.data ?? []).map((row) => ({ batch_ordinal: row.batch_ordinal, assignment_id: row.assignment_id, historical_snapshot: row.historical_snapshot, frozen_input: row.frozen_input, canonical_result: row.canonical_result, raw_model_response: row.raw_model_response, error: row.error, generated_at: row.generated_at, prompt_version: row.prompt_version, model: row.model }));
   return { raw, sheet, documents, coordinator, learner_writes: 0 };
 };

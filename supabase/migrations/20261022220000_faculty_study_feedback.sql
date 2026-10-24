@@ -16,6 +16,8 @@ create table if not exists public.faculty_study_batches (
   created_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   started_at timestamptz,
+  lease_token uuid,
+  lease_expires_at timestamptz,
   completed_at timestamptz,
   error jsonb
 );
@@ -41,6 +43,10 @@ create table if not exists public.faculty_study_results (
 
 alter table public.faculty_study_batches
   add column if not exists next_batch_ordinal integer;
+alter table public.faculty_study_batches
+  add column if not exists lease_expires_at timestamptz;
+alter table public.faculty_study_batches
+  add column if not exists lease_token uuid;
 
 alter table public.faculty_study_batches enable row level security;
 alter table public.faculty_study_results enable row level security;

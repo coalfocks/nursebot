@@ -27,6 +27,28 @@ begin
     end if;
   end loop;
 
+  foreach required_column in array array['id', 'manifest', 'status', 'lease_token', 'lease_expires_at'] loop
+    if not exists (
+      select 1 from information_schema.columns c
+      where table_schema = 'public'
+        and table_name = 'faculty_study_batches'
+        and c.column_name = required_column
+    ) then
+      raise exception 'FACULTY_STUDY_SCHEMA_MISSING:faculty_study_batches.%', required_column;
+    end if;
+  end loop;
+
+  foreach required_column in array array['batch_id', 'batch_ordinal', 'result', 'canonical_result', 'raw_model_response', 'error'] loop
+    if not exists (
+      select 1 from information_schema.columns c
+      where table_schema = 'public'
+        and table_name = 'faculty_study_results'
+        and c.column_name = required_column
+    ) then
+      raise exception 'FACULTY_STUDY_SCHEMA_MISSING:faculty_study_results.%', required_column;
+    end if;
+  end loop;
+
   foreach context_table in array array[
     'chat_messages', 'medical_orders', 'lab_results', 'vital_signs',
     'imaging_studies', 'learner_action_events', 'patient_chat_messages',

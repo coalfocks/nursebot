@@ -48,6 +48,9 @@ export const protectedAssignmentUnchanged = (before: Record<string, unknown>, af
 
 export const isTerminalStudyResult = (row: { result?: unknown; error?: unknown }) => Boolean(row.result || row.error);
 export const studyResultStatus = (row: { result?: unknown; error?: unknown }) => row.result ? 'completed' : row.error ? 'error' : 'pending';
+export const STUDY_RUN_LEASE_MS = 15 * 60 * 1000;
+export const isStudyRunLeaseExpired = (leaseExpiresAt: unknown, now = Date.now()) =>
+  typeof leaseExpiresAt === 'string' && Number.isFinite(new Date(leaseExpiresAt).getTime()) && new Date(leaseExpiresAt).getTime() <= now;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -96,6 +99,31 @@ const scrub = (value: unknown, privateTerms: string[]): unknown => {
 export const redactStudyValue = (value: unknown, privateTerms: string[] = []) => scrub(value, privateTerms);
 
 export const deidentifyStudyResult = (result: Record<string, unknown>) => {
+  const flat = !result.evaluation && ('component_scores' in result || 'communication_score' in result);
+  if (flat) {
+    const privateTerms = (result.redaction_terms as string[] | undefined) ?? [];
+    return {
+      batch_ordinal: result.batch_ordinal,
+      specialty: result.specialty,
+      case_label: result.case_label,
+      packet_label: result.packet_label,
+      status: result.status,
+      strengths: redactStudyValue(result.strengths ?? [], privateTerms),
+      improvements: redactStudyValue(result.improvements ?? [], privateTerms),
+      recommendations: redactStudyValue(result.recommendations ?? [], privateTerms),
+      communication_score: result.communication_score ?? null,
+      clinical_reasoning_score: result.clinical_reasoning_score ?? null,
+      component_scores: result.component_scores ?? {},
+      domain_scores: result.domain_scores ?? { communication: result.communication_score ?? null, clinical_reasoning: result.clinical_reasoning_score ?? null },
+      communication_breakdown: redactStudyValue(result.communication_breakdown ?? null, privateTerms),
+      clinical_reasoning_breakdown: redactStudyValue(result.clinical_reasoning_breakdown ?? null, privateTerms),
+      evidence_event_ids: result.evidence_event_ids ?? [],
+      generated_at: result.generated_at ?? null,
+      prompt_version: result.prompt_version ?? null,
+      model: result.model ?? null,
+      error: redactStudyValue(result.error ?? null, privateTerms),
+    };
+  }
   const evaluation = result.evaluation && typeof result.evaluation === 'object' ? result.evaluation as Record<string, unknown> : {};
   const communication = evaluation.communication_breakdown && typeof evaluation.communication_breakdown === 'object' ? evaluation.communication_breakdown as Record<string, unknown> : {};
   const reasoning = (evaluation.clinical_reasoning_breakdown ?? evaluation.mdm_breakdown) && typeof (evaluation.clinical_reasoning_breakdown ?? evaluation.mdm_breakdown) === 'object'
@@ -137,32 +165,36 @@ export const deidentifyStudyResult = (result: Record<string, unknown>) => {
   };
 };
 
+// Export callers pass the already-flattened reviewer shape returned by
+// deidentifyStudyResult. Keeping this boundary explicit prevents a second
+// canonicalization/deidentification pass from dropping narrative or scores.
 export const studySheetRow = (result: Record<string, unknown>) => {
-  const safe = deidentifyStudyResult(result) as Record<string, unknown>;
-  const components = safe.component_scores as Record<string, unknown>;
+  const components = (result.component_scores ?? {}) as Record<string, unknown>;
   const flatten = (value: unknown) => JSON.stringify(value ?? null);
   return [
-    safe.batch_ordinal,
-    safe.specialty,
-    safe.case_label,
-    safe.packet_label,
-    safe.status,
-    safe.communication_score,
-    safe.clinical_reasoning_score,
-    flatten(safe.strengths),
-    flatten(safe.improvements),
-    flatten(safe.recommendations),
-    flatten(safe.evidence_event_ids),
-    safe.generated_at,
-    safe.prompt_version,
-    safe.model,
-    flatten(safe.error),
+    result.batch_ordinal,
+    result.specialty,
+    result.case_label,
+    result.packet_label,
+    result.status,
+    result.communication_score,
+    result.clinical_reasoning_score,
+    flatten(result.strengths),
+    flatten(result.improvements),
+    flatten(result.recommendations),
+    flatten(result.evidence_event_ids),
+    result.generated_at,
+    result.prompt_version,
+    result.model,
+    flatten(result.error),
     components.focused_information_gathering,
     components.closed_loop_team_communication,
     components.efficiency_deduction,
     components.orders_monitoring_quality,
     components.clinical_reasoning_documentation,
     components.safety_deduction,
+    flatten(result.communication_breakdown),
+    flatten(result.clinical_reasoning_breakdown),
   ];
 };
 
@@ -171,4 +203,4 @@ export const csvEscape = (value: unknown) => {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 
-export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score'];
+export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score', 'communication_breakdown_json', 'clinical_reasoning_breakdown_json'];
