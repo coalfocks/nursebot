@@ -1,6 +1,6 @@
 export const FACULTY_STUDY_PROTOCOL_VERSION = 'faculty-study-v1';
 export type FacultyStudyDeploymentMode = 'study-enabled' | 'preflight-only';
-export const studyActionAllowed = (action: string, mode: FacultyStudyDeploymentMode) => mode !== 'preflight-only' || action === 'preflight' || action === 'audit' || action === 'history' || action === 'export';
+export const studyActionAllowed = (action: string, mode: FacultyStudyDeploymentMode) => mode !== 'preflight-only' || action === 'preflight' || action === 'audit' || action === 'history' || action === 'export' || action === 'export_room_pdfs';
 
 export type StudyManifestItem = {
   batch_ordinal: number;
