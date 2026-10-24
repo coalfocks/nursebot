@@ -132,4 +132,9 @@ describe('faculty study contract', () => {
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('prepare', 'study-enabled')).toBe(true);
   });
+
+  it('does not treat missing or unknown deployment configuration as study-enabled', () => {
+    expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
+    expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
+  });
 });

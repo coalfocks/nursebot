@@ -16,7 +16,12 @@ const errorCode = (error: unknown) => typeof error === 'object' && error && 'cod
 const message = (error: unknown) => error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String((error as { message?: unknown }).message) : String(error);
 
 const serviceClient = () => createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
-const deploymentMode = (): FacultyStudyDeploymentMode => Deno.env.get('FACULTY_STUDY_DEPLOYMENT_MODE')?.trim().toLowerCase() === 'preflight-only' ? 'preflight-only' : 'study-enabled';
+const deploymentMode = (): FacultyStudyDeploymentMode => {
+  const configured = Deno.env.get('FACULTY_STUDY_DEPLOYMENT_MODE')?.trim().toLowerCase();
+  if (configured === 'preflight-only') return 'preflight-only';
+  // Fail closed: an absent or unknown mode must never expose study-enabled actions.
+  return 'preflight-only';
+};
 
 const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>) => {
   const authorization = req.headers.get('authorization');
