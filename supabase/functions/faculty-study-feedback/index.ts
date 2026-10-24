@@ -11,6 +11,7 @@ import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/histo
 import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shared/faculty-study-auth.ts';
 import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '../_shared/legacy-case-provenance.ts';
 import { classifySourceReadError } from '../_shared/source-read-classification.ts';
+import { optionalHistoryScope } from '../_shared/history-query-scope.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -130,9 +131,11 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
 
 const optionalHistoryRows = async (client: ReturnType<typeof serviceClient>, table: string, columns: string, assignmentId: string, roomId: number, caseVersion: string | null) => {
   let query = client.from(table).select(columns);
-  query = table === 'manual_mar_packet_audit'
-    ? query.eq('room_id', roomId).eq('case_version', caseVersion ?? '')
-    : query.eq('assignment_id', assignmentId);
+  const scope = optionalHistoryScope(table, assignmentId, roomId, caseVersion);
+  query = scope.kind === 'room'
+    ? query.eq('room_id', scope.room_id)
+    : query.eq('assignment_id', scope.assignment_id);
+  if (scope.kind === 'room' && scope.case_version !== null) query = query.eq('case_version', scope.case_version);
   const result = await query;
   if (result.error) {
     const failure = classifySourceReadError(result.error);
@@ -143,9 +146,10 @@ const optionalHistoryRows = async (client: ReturnType<typeof serviceClient>, tab
       error_category: failure.category,
       error_code: failure.code,
       error_message: failure.message,
+      scope,
     };
   }
-  return { available: true, rows: (result.data ?? []) as unknown as Record<string, unknown>[], reason: null, error_category: null, error_code: null, error_message: null };
+  return { available: true, rows: (result.data ?? []) as unknown as Record<string, unknown>[], reason: null, error_category: null, error_code: null, error_message: null, scope };
 };
 
 const historicalSourceInventory = async (
@@ -179,6 +183,21 @@ const historicalSourceInventory = async (
     recorded_at: firstDefined(assignment, ['student_progress_note_created_at', 'progress_note_created_at']),
     updated_at: firstDefined(assignment, ['student_progress_note_updated_at', 'progress_note_updated_at']),
   };
+  const packetAuditScope = packetAudit.scope;
+  const packetAuditInventory = {
+    ...packetAudit,
+    // When the assignment's legacy case version is unknown, these are room-
+    // scoped version references only. They are never matched history proof.
+    rows: packetAudit.rows.map((row) => ({
+      ...row,
+      case_version_match: packetAuditScope?.kind === 'room' && packetAuditScope.case_version !== null
+        ? row.case_version === packetAuditScope.case_version
+        : null,
+      history_match_status: packetAuditScope?.kind === 'room' && packetAuditScope.case_version !== null
+        ? row.case_version === packetAuditScope.case_version ? 'exact_version_match' : 'version_mismatch'
+        : 'case_version_unknown_unmatched',
+    })),
+  };
   return {
     cutoff: completedAt,
     full_case_sources: {
@@ -191,7 +210,7 @@ const historicalSourceInventory = async (
       scoped_current_rows: (context.rows.medical_orders ?? []).length,
       excluded_after_completion_rows: orderUpdates,
       shared_update_timestamp_groups: updateGroups,
-      migration_or_audit_rows: { mar_save_operations: saveOperations, manual_mar_packet_audit: packetAudit },
+      migration_or_audit_rows: { mar_save_operations: saveOperations, manual_mar_packet_audit: packetAuditInventory },
       content_recovery_proven: false,
       correlation_note: updateGroups.length ? 'Shared updated_at values are correlated with available audit rows only; metadata alone does not prove pre-edit content.' : null,
     },
