@@ -12,6 +12,7 @@ import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shar
 import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '../_shared/legacy-case-provenance.ts';
 import { classifySourceReadError } from '../_shared/source-read-classification.ts';
 import { optionalHistoryScope } from '../_shared/history-query-scope.ts';
+import { configuredRoomPdfCandidates, exportAllowlistedRoomPdfs } from '../_shared/room-pdf-export.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -355,6 +356,31 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
   };
 };
 
+const exportRoomPdfs = async (client: ReturnType<typeof serviceClient>) => {
+  const candidates = configuredRoomPdfCandidates(Deno.env.get('FACULTY_ROOM_PDF_CANDIDATE_PATHS') ?? '');
+  const storage = client.storage.from('room_pdfs');
+  const listed = await storage.list('', { limit: 1000 });
+  if (listed.error) throw new Error(`ROOM_PDF_LIST_FAILED:${listed.error.message}`);
+  const metadataByName = new Map((listed.data ?? []).filter((entry) => candidates.includes(entry.name)).map((entry) => [entry.name, {
+    name: entry.name,
+    created_at: entry.created_at,
+    updated_at: entry.updated_at,
+    last_accessed_at: entry.last_accessed_at,
+    metadata: entry.metadata as Record<string, unknown> | null,
+  }]));
+  const exported = await exportAllowlistedRoomPdfs(storage, metadataByName, candidates);
+  return {
+    action: 'export_room_pdfs',
+    deployment_mode: deploymentMode(),
+    bucket: 'room_pdfs',
+    manifest: exported.manifest,
+    files: exported.files,
+    learner_writes: 0,
+    study_writes: 0,
+    model_calls: 0,
+  };
+};
+
 const missingStudyTable = (error: { code?: string; message?: string } | null) => classifySourceReadError(error).category === 'missing_table';
 
 const studyHistory = async (client: ReturnType<typeof serviceClient>, assignmentId: string) => {
@@ -654,6 +680,7 @@ Deno.serve(async (req) => {
     if (!studyActionAllowed(String(action), deploymentMode())) throw new Error(`STUDY_PREFLIGHT_ONLY: ${String(action)} is disabled while the deployment is preflight-only`);
     if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'audit') return json(await historicalInputAudit(client, validateStudyManifest(body.manifest)), 200, requestId);
+    if (action === 'export_room_pdfs') return json(await exportRoomPdfs(client), 200, requestId);
     if (action === 'history') return json(await studyHistory(client, String(body.assignment_id ?? '')), 200, requestId);
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases, body.target_ordinals), 200, requestId);

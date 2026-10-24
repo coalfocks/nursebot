@@ -156,6 +156,7 @@ describe('faculty study contract', () => {
     expect(studyActionAllowed('audit', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('history', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('export', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('export_room_pdfs', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
     expect(STUDY_ASSIGNMENT_PROTECTED_FIELDS).not.toContain('evaluator_config_id');
