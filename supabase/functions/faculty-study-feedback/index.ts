@@ -5,6 +5,7 @@ import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, typ
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
@@ -198,22 +199,20 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       const sourceHashes = { context_sha256: await sha256(JSON.stringify(context)), assignment_snapshot_sha256: await sha256(JSON.stringify(snapshot)) };
       const historicalChart = (assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' ? assignment.scenario_baseline : assignment.room ?? {}) as Record<string, unknown>;
       frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors }, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
-      const frozen = await client.from('faculty_study_results').upsert({ batch_id: batchId, batch_ordinal: item.batch_ordinal, assignment_id: item.assignment_id, historical_snapshot: snapshot, frozen_input: frozenInput, result: null, canonical_result: null, raw_model_response: null, error: null, prompt_version: batch.prompt_version, model }, { onConflict: 'batch_id,batch_ordinal' });
-      if (frozen.error) throw frozen.error;
+      await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse: null, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: null });
       const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors });
       rawModelResponse = evaluation.raw;
       await assertProtectedAssignmentReadback(client, item.assignment_id, { ...assignment, status: snapshot.status });
       result = { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, status: 'completed', evaluation: evaluation.canonical, evidence_event_ids: evaluation.evidenceEventIds, generated_at: new Date().toISOString(), prompt_version: batch.prompt_version, model, redaction_terms: privateTerms };
-      const completed = await client.from('faculty_study_results').update({ result, canonical_result: evaluation.canonical, raw_model_response: evaluation.raw, generated_at: result.generated_at }).eq('batch_id', batchId).eq('batch_ordinal', item.batch_ordinal);
-      if (completed.error) throw completed.error;
+      await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result, canonicalResult: evaluation.canonical as unknown as Record<string, unknown>, rawModelResponse: evaluation.raw, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: String(result.generated_at) });
     } catch (error) {
+      if (message(error) === 'STUDY_RUN_LEASE_LOST') throw error;
       result.error = { code: errorCode(error) || message(error).split(':')[0], message: message(error), phase: 'attempt', retryable: false };
       if (snapshot.assignment_id) {
         try { await assertProtectedAssignmentReadback(client, item.assignment_id, { ...snapshot, ...snapshot.existing_feedback as Record<string, unknown> }); }
         catch (readbackError) { result.error = { code: errorCode(readbackError) || message(readbackError).split(':')[0], message: message(readbackError), phase: 'protection-readback', retryable: false }; }
       }
-      const failed = await client.from('faculty_study_results').upsert({ batch_id: batchId, batch_ordinal: item.batch_ordinal, assignment_id: item.assignment_id, historical_snapshot: snapshot, frozen_input: frozenInput, result: null, canonical_result: null, raw_model_response: rawModelResponse, error: result.error, prompt_version: batch.prompt_version, model }, { onConflict: 'batch_id,batch_ordinal' });
-      if (failed.error) throw failed.error;
+      await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse, error: result.error as Record<string, unknown>, promptVersion: String(batch.prompt_version), model, generatedAt: null });
     }
   }
     const completedCount = doneOrdinals.size + pending.length;

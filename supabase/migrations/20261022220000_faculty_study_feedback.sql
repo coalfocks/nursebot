@@ -33,6 +33,7 @@ create table if not exists public.faculty_study_results (
   canonical_result jsonb,
   raw_model_response jsonb,
   error jsonb,
+  lease_token uuid,
   generated_at timestamptz,
   prompt_version text not null,
   model text not null,
@@ -47,6 +48,65 @@ alter table public.faculty_study_batches
   add column if not exists lease_expires_at timestamptz;
 alter table public.faculty_study_batches
   add column if not exists lease_token uuid;
+alter table public.faculty_study_results
+  add column if not exists lease_token uuid;
+
+create or replace function public.write_faculty_study_result_owned(
+  p_batch_id uuid,
+  p_batch_ordinal integer,
+  p_lease_token uuid,
+  p_assignment_id uuid,
+  p_historical_snapshot jsonb,
+  p_frozen_input jsonb,
+  p_result jsonb,
+  p_canonical_result jsonb,
+  p_raw_model_response jsonb,
+  p_error jsonb,
+  p_prompt_version text,
+  p_model text,
+  p_generated_at timestamptz
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.faculty_study_results (
+    batch_id, batch_ordinal, assignment_id, historical_snapshot, frozen_input,
+    result, canonical_result, raw_model_response, error, lease_token,
+    prompt_version, model, generated_at
+  )
+  select
+    p_batch_id, p_batch_ordinal, p_assignment_id, p_historical_snapshot, p_frozen_input,
+    p_result, p_canonical_result, p_raw_model_response, p_error, p_lease_token,
+    p_prompt_version, p_model, p_generated_at
+  where exists (
+    select 1 from public.faculty_study_batches b
+    where b.id = p_batch_id and b.status = 'running' and b.lease_token = p_lease_token
+  )
+  on conflict (batch_id, batch_ordinal) do update set
+    assignment_id = excluded.assignment_id,
+    historical_snapshot = excluded.historical_snapshot,
+    frozen_input = excluded.frozen_input,
+    result = excluded.result,
+    canonical_result = excluded.canonical_result,
+    raw_model_response = excluded.raw_model_response,
+    error = excluded.error,
+    lease_token = excluded.lease_token,
+    prompt_version = excluded.prompt_version,
+    model = excluded.model,
+    generated_at = excluded.generated_at
+  where exists (
+    select 1 from public.faculty_study_batches b
+    where b.id = p_batch_id and b.status = 'running' and b.lease_token = p_lease_token
+  );
+
+  return found;
+end;
+$$;
+
+revoke all on function public.write_faculty_study_result_owned(uuid, integer, uuid, uuid, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, text, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.write_faculty_study_result_owned(uuid, integer, uuid, uuid, jsonb, jsonb, jsonb, jsonb, jsonb, jsonb, text, text, timestamptz) to service_role;
 
 alter table public.faculty_study_batches enable row level security;
 alter table public.faculty_study_results enable row level security;

@@ -38,7 +38,7 @@ begin
     end if;
   end loop;
 
-  foreach required_column in array array['batch_id', 'batch_ordinal', 'result', 'canonical_result', 'raw_model_response', 'error'] loop
+  foreach required_column in array array['batch_id', 'batch_ordinal', 'result', 'canonical_result', 'raw_model_response', 'error', 'lease_token'] loop
     if not exists (
       select 1 from information_schema.columns c
       where table_schema = 'public'
