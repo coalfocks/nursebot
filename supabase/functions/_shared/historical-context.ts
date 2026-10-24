@@ -22,7 +22,7 @@ const count = (target: Record<string, number>, table: string) => {
   target[table] = (target[table] ?? 0) + 1;
 };
 
-const eventTimestamp = (table: string, row: Record<string, unknown>) => {
+export const historicalEventTimestamp = (table: string, row: Record<string, unknown>) => {
   const keys: Record<string, string[]> = {
     chat_messages: ['created_at'],
     medical_orders: ['order_time', 'created_at'],
@@ -91,7 +91,7 @@ export const filterHistoricalRows = (
   for (const row of sourceRows) {
     const id = String(row.id ?? 'unknown');
     const recordedAt = row.created_at;
-    const eventAt = eventTimestamp(table, row);
+    const eventAt = historicalEventTimestamp(table, row);
     const deletedAt = validTime(row.deleted_at) ? new Date(row.deleted_at).getTime() : null;
     const updatedAt = validTime(row.updated_at) ? new Date(row.updated_at).getTime() : null;
     const history = versionById.get(id) ?? [];

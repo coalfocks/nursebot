@@ -127,9 +127,12 @@ describe('faculty study contract', () => {
 
   it('server-denies prepare and run in preflight-only deployment mode', () => {
     expect(studyActionAllowed('preflight', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('audit', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('export', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
+    expect(STUDY_ASSIGNMENT_PROTECTED_FIELDS).not.toContain('evaluator_config_id');
+    expect(STUDY_ASSIGNMENT_PROTECTED_FIELDS).not.toContain('evaluator_version');
     expect(studyActionAllowed('prepare', 'study-enabled')).toBe(true);
   });
 

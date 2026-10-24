@@ -7,7 +7,7 @@ import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveC
 import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
-import { filterHistoricalRows } from '../_shared/historical-context.ts';
+import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/historical-context.ts';
 import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shared/faculty-study-auth.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
@@ -124,6 +124,77 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
   }
   if (!rows.chat_messages?.length) throw new Error('CONTEXT_UNRECOVERABLE:chat_messages has no available historical rows at the completion cutoff');
   return { rows, availability };
+};
+
+const firstDefined = (row: Record<string, unknown>, keys: string[]) => keys.map((key) => row[key]).find((value) => value !== undefined) ?? null;
+
+const historicalEvidence = (rows: Record<string, unknown[]>) => Object.entries(rows).flatMap(([table, sourceRows]) => (sourceRows as Record<string, unknown>[]).map((row) => ({
+  table,
+  source_id: row.id ?? null,
+  recorded_at: typeof row.created_at === 'string' ? row.created_at : null,
+  event_at: historicalEventTimestamp(table, row) ?? null,
+  available_at: typeof row.historical_available_at === 'string' ? row.historical_available_at : (typeof row.created_at === 'string' ? row.created_at : null),
+  deleted_at: typeof row.deleted_at === 'string' ? row.deleted_at : null,
+  recovered_version: row.__historical_version_recovered === true ? { version: row.record_version ?? null, available_at: row.historical_available_at ?? null } : null,
+})));
+
+const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
+  const results: Array<Record<string, unknown>> = [];
+  for (const item of manifest.attempts) {
+    const base = { batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id };
+    try {
+      const assignmentResult = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', item.assignment_id).maybeSingle();
+      if (assignmentResult.error) throw new Error(`ASSIGNMENT_READ_FAILED:${assignmentResult.error.message}`);
+      if (!assignmentResult.data) throw new Error('ASSIGNMENT_NOT_FOUND');
+      const assignment = assignmentResult.data as Record<string, unknown>;
+      if (assignment.status !== 'completed') throw new Error('CONTEXT_UNRECOVERABLE:assignment is not completed');
+      if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
+      const completedAt = typeof assignment.completed_at === 'string' ? assignment.completed_at : '';
+      if (!completedAt) throw new Error('CONTEXT_UNRECOVERABLE:assignment has no completed_at cutoff');
+      const context = await exactContext(client, item.assignment_id, completedAt);
+      const historicalChart = assignment.scenario_baseline as Record<string, unknown>;
+      const baselineVersion = firstDefined(assignment, ['scenario_baseline_version', 'baseline_version']);
+      const progressNoteVersion = firstDefined(assignment, ['student_progress_note_version', 'progress_note_version', 'student_progress_note_revision']);
+      const entries = buildAssignmentTimelineEntries({ assignment: { id: String(assignment.id), completed_at: completedAt, student_progress_note: typeof assignment.student_progress_note === 'string' ? assignment.student_progress_note : null }, assignmentId: item.assignment_id, targetRoomIds: null, messages: (context.rows.chat_messages ?? []) as TimelineChatMessageRow[], orders: (context.rows.medical_orders ?? []) as TimelineOrderRow[], labs: (context.rows.lab_results ?? []) as TimelineLabRow[], vitals: (context.rows.vital_signs ?? []) as TimelineVitalRow[], imaging: (context.rows.imaging_studies ?? []) as TimelineImagingRow[], learnerActions: (context.rows.learner_action_events ?? []) as TimelineLearnerActionRow[], patientMessages: (context.rows.patient_chat_messages ?? []) as TimelinePatientMessageRow[], consultantMessages: (context.rows.consultant_chat_messages ?? []) as TimelineConsultantMessageRow[] });
+      const caseKey = resolveCaseEvaluationKey(historicalChart);
+      results.push({
+        ...base,
+        status: 'audited',
+        assignment: { id: assignment.id, room_id: assignment.room_id ?? null, status: assignment.status, completed_at: completedAt },
+        case: { specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, key_version: caseKey.version || CASE_KEY_VERSION },
+        baseline: { value: historicalChart, version: baselineVersion },
+        progress_note: { value: assignment.student_progress_note ?? null, version: progressNoteVersion, recorded_at: firstDefined(assignment, ['student_progress_note_created_at', 'progress_note_created_at']), updated_at: firstDefined(assignment, ['student_progress_note_updated_at', 'progress_note_updated_at']) },
+        evidence: historicalEvidence(context.rows),
+        evidence_ids: [...new Set(Object.values(context.rows).flatMap((rows) => (rows as Record<string, unknown>[]).map((row) => row.id).filter((id): id is string | number => typeof id === 'string' || typeof id === 'number')).map(String))],
+        availability: context.availability,
+        missing_history_flags: [
+          ...(baselineVersion === null ? ['baseline_version_unavailable'] : []),
+          ...(progressNoteVersion === null ? ['progress_note_version_unavailable'] : []),
+          ...((context.availability as { missing_historical_version?: unknown[] }).missing_historical_version ?? []).map((entry) => ({ kind: 'historical_version_unavailable', ...entry as Record<string, unknown> })),
+        ],
+        final_evaluation_timeline: entries,
+        rendered_evaluation_timeline: renderTimelineEntriesForEvaluation(entries),
+      });
+    } catch (error) {
+      results.push({ ...base, status: 'error', error: { code: errorCode(error) || message(error).split(':')[0], message: message(error), phase: 'historical-input-audit', retryable: false } });
+    }
+  }
+  const promptTextHash = await sha256(manifest.prompt_text);
+  const canonicalPromptHash = await sha256(`${EVALUATION_SYSTEM_PROMPT}\n\n${CANONICAL_RUBRIC}`);
+  return {
+    action: 'model_free_historical_input_audit',
+    deployment_mode: deploymentMode(),
+    batch_key: manifest.batch_key,
+    protocol_version: FACULTY_STUDY_PROTOCOL_VERSION,
+    prompt_provenance: { prompt_version: manifest.prompt_version, supplied_prompt_sha256: promptTextHash, canonical_prompt_sha256: canonicalPromptHash, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: CASE_KEY_VERSION, expected_model: manifest.expected_model, active_evaluator_config: null, scoring_anchors: null },
+    attempt_count: manifest.attempts.length,
+    audited_count: results.filter((result) => result.status === 'audited').length,
+    error_count: results.filter((result) => result.status === 'error').length,
+    model_calls: 0,
+    learner_writes: 0,
+    study_writes: 0,
+    results,
+  };
 };
 
 const allowedEvidence = (evaluation: EvaluationScoringResponse, sourceIds: Set<string>) => {
@@ -346,6 +417,7 @@ Deno.serve(async (req) => {
     const action = body.action;
     if (!studyActionAllowed(String(action), deploymentMode())) throw new Error(`STUDY_PREFLIGHT_ONLY: ${String(action)} is disabled while the deployment is preflight-only`);
     if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)), 200, requestId);
+    if (action === 'audit') return json(await historicalInputAudit(client, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases), 200, requestId);
     if (action === 'export') return json(await exportBatch(client, String(body.batch_id)), 200, requestId);

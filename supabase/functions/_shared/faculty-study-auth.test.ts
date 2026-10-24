@@ -33,6 +33,7 @@ describe('faculty study bearer authentication', () => {
     expect(isFacultyStudySuperAdmin({ role: 'student' })).toBe(false);
     expect(isFacultyStudySuperAdmin({ role: 'super_admin' })).toBe(true);
     expect(studyActionAllowed('preflight', 'preflight-only')).toBe(true);
+    expect(studyActionAllowed('audit', 'preflight-only')).toBe(true);
     expect(studyActionAllowed('prepare', 'preflight-only')).toBe(false);
     expect(studyActionAllowed('run', 'preflight-only')).toBe(false);
   });

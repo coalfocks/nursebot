@@ -1,6 +1,6 @@
 export const FACULTY_STUDY_PROTOCOL_VERSION = 'faculty-study-v1';
 export type FacultyStudyDeploymentMode = 'study-enabled' | 'preflight-only';
-export const studyActionAllowed = (action: string, mode: FacultyStudyDeploymentMode) => mode !== 'preflight-only' || action === 'preflight' || action === 'export';
+export const studyActionAllowed = (action: string, mode: FacultyStudyDeploymentMode) => mode !== 'preflight-only' || action === 'preflight' || action === 'audit' || action === 'export';
 
 export type StudyManifestItem = {
   batch_ordinal: number;
@@ -37,8 +37,6 @@ export const STUDY_ASSIGNMENT_PROTECTED_FIELDS = [
   'source_event_ids',
   'technical_incomplete',
   'safety_result',
-  'evaluator_config_id',
-  'evaluator_version',
 ] as const;
 
 export const snapshotAssignmentProtection = (assignment: Record<string, unknown>) =>

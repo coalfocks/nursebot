@@ -10,8 +10,7 @@ declare
     'communication_breakdown', 'mdm_breakdown', 'learning_objectives',
     'feedback_generated_at', 'scoring_start_at', 'rubric_version',
     'case_key_version', 'assessment_version', 'source_event_ids',
-    'technical_incomplete', 'safety_result', 'evaluator_config_id',
-    'evaluator_version'
+    'technical_incomplete', 'safety_result'
   ];
   required_column text;
   context_table text;
@@ -46,6 +45,17 @@ begin
         and c.column_name = required_column
     ) then
       raise exception 'FACULTY_STUDY_SCHEMA_MISSING:faculty_study_results.%', required_column;
+    end if;
+  end loop;
+
+  foreach required_column in array array['assignment_id', 'evaluator_config_id', 'evaluator_version'] loop
+    if not exists (
+      select 1 from information_schema.columns c
+      where c.table_schema = 'public'
+        and c.table_name = 'feedback_assessment_runs'
+        and c.column_name = required_column
+    ) then
+      raise exception 'FACULTY_STUDY_SCHEMA_MISSING:feedback_assessment_runs.%', required_column;
     end if;
   end loop;
 
