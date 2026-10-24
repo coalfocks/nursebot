@@ -164,6 +164,7 @@ export const deidentifyStudyResult = (result: Record<string, unknown>) => {
       case_goals: result.case_goals ?? [],
       safety_result: result.safety_result ?? null,
       critical_safety_action: result.critical_safety_action ?? null,
+      evidence_validation_warnings: redactStudyValue(result.evidence_validation_warnings ?? [], privateTerms),
     };
   }
   const evaluation = result.evaluation && typeof result.evaluation === 'object' ? result.evaluation as Record<string, unknown> : {};
@@ -207,6 +208,7 @@ export const deidentifyStudyResult = (result: Record<string, unknown>) => {
     case_goals: result.case_goals ?? [],
     safety_result: result.safety_result ?? evaluation.safety_result ?? null,
     critical_safety_action: result.critical_safety_action ?? null,
+    evidence_validation_warnings: redactStudyValue(evaluation.evidence_validation_warnings ?? result.evidence_validation_warnings ?? [], (result.redaction_terms as string[] | undefined) ?? []),
   };
 };
 
@@ -240,6 +242,7 @@ export const studySheetRow = (result: Record<string, unknown>) => {
     components.safety_deduction,
     flatten(result.communication_breakdown),
     flatten(result.clinical_reasoning_breakdown),
+    flatten(result.evidence_validation_warnings),
   ];
 };
 
@@ -255,7 +258,7 @@ const htmlEscape = (value: unknown) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#39;');
 
-const sheetText = (value: unknown) => String(value ?? '');
+const sheetText = (value: unknown) => value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 
 const htmlNarrative = (title: string, value: unknown) => {
   const text = value == null ? 'Not recorded' : typeof value === 'string' ? value : JSON.stringify(value, null, 2);
@@ -283,14 +286,23 @@ export const buildEvaluationSheetHtml = (result: Record<string, unknown>) => {
   const goals = Array.isArray(result.case_goals) ? result.case_goals : [];
   const safety = result.safety_result && typeof result.safety_result === 'object' ? result.safety_result as Record<string, unknown> : null;
   const safetyAction = safety?.action ?? result.critical_safety_action ?? 'Not observed';
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Faculty evaluation ${htmlEscape(result.batch_ordinal)}</title><style>@page{size:Letter;margin:.5in}body{font:15px system-ui,sans-serif;max-width:900px;margin:32px auto;color:#172033}h1{margin-bottom:4px}h2{border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-top:28px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{width:30%;background:#f8fafc}pre{white-space:pre-wrap;font:inherit;line-height:1.5}header p{color:#475569}.sheet-section{break-inside:avoid}.safety{border:2px solid #b45309;padding:10px}.page-proof{break-before:avoid}@media print{body{margin:0}button{display:none}}</style></head><body><header><h1>NEW-FORMAT Faculty Evaluation</h1><p><strong>${htmlEscape(result.specialty)} · ${htmlEscape(result.case_label)} · ${htmlEscape(result.packet_label)}</strong></p><p>Status: ${htmlEscape(result.status)} · Prompt: ${htmlEscape(result.prompt_version)} · Generated: ${htmlEscape(result.generated_at)} · Model: ${htmlEscape(result.model)}</p></header><section class="sheet-section"><h2>Case goals</h2>${goals.length ? `<ul>${goals.map((goal) => `<li>${htmlEscape(goal)}</li>`).join('')}</ul>` : '<p>Not recorded</p>'}</section><section class="sheet-section safety"><h2>Separate critical safety action</h2><p>${htmlEscape(safetyAction)}</p><p>Safety result: ${htmlEscape(safety?.level ?? 'none')}</p></section><section class="sheet-section"><h2>Scores</h2><table><thead><tr><th>Component</th><th>Score</th><th>Feedback</th></tr></thead><tbody>${componentRows}${domainRows}</tbody></table></section>${htmlNarrative('Strengths', result.strengths)}${htmlNarrative('Improvements', result.improvements)}${htmlNarrative('Recommendations', result.recommendations)}${htmlNarrative('Communication breakdown', result.communication_breakdown)}${htmlNarrative('Clinical reasoning breakdown', result.clinical_reasoning_breakdown)}${htmlNarrative('Evidence event IDs', result.evidence_event_ids)}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Faculty evaluation ${htmlEscape(result.batch_ordinal)}</title><style>@page{size:Letter;margin:.5in}body{font:15px system-ui,sans-serif;max-width:900px;margin:32px auto;color:#172033}h1{margin-bottom:4px}h2{border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin-top:28px}table{border-collapse:collapse;width:100%;margin-top:12px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{width:30%;background:#f8fafc}pre{white-space:pre-wrap;font:inherit;line-height:1.5}header p{color:#475569}.sheet-section{break-inside:avoid}.safety{border:2px solid #b45309;padding:10px}.page-proof{break-before:avoid}@media print{body{margin:0}button{display:none}}</style></head><body><header><h1>NEW-FORMAT Faculty Evaluation</h1><p><strong>${htmlEscape(result.specialty)} · ${htmlEscape(result.case_label)} · ${htmlEscape(result.packet_label)}</strong></p><p>Status: ${htmlEscape(result.status)} · Prompt: ${htmlEscape(result.prompt_version)} · Generated: ${htmlEscape(result.generated_at)} · Model: ${htmlEscape(result.model)}</p></header><section class="sheet-section"><h2>Case goals</h2>${goals.length ? `<ul>${goals.map((goal) => `<li>${htmlEscape(goal)}</li>`).join('')}</ul>` : '<p>Not recorded</p>'}</section><section class="sheet-section safety"><h2>Separate critical safety action</h2><p>${htmlEscape(safetyAction)}</p><p>Safety result: ${htmlEscape(safety?.level ?? 'none')}</p></section><section class="sheet-section"><h2>Scores</h2><table><thead><tr><th>Component</th><th>Score</th><th>Feedback</th></tr></thead><tbody>${componentRows}${domainRows}</tbody></table></section>${htmlNarrative('Strengths', result.strengths)}${htmlNarrative('Improvements', result.improvements)}${htmlNarrative('Recommendations', result.recommendations)}${htmlNarrative('Communication breakdown', result.communication_breakdown)}${htmlNarrative('Clinical reasoning breakdown', result.clinical_reasoning_breakdown)}${htmlNarrative('Evidence event IDs', result.evidence_event_ids)}${htmlNarrative('Evidence validation warnings', result.evidence_validation_warnings)}</body></html>`;
 };
 
-/** Structural proof only: no browser/PDF engine is involved. */
-export const proveRenderedSheetStructure = (html: string) => {
+/** Validate the actual PDF bytes produced by the synthetic renderer. */
+export const countRenderedPdfPages = (pdf: Uint8Array): number => {
+  const text = new TextDecoder('latin1').decode(pdf);
+  if (!text.startsWith('%PDF-')) throw new Error('RENDERED_SHEET_PDF_INVALID');
+  const pageObjects = text.match(/\/Type\s*\/Page(?:\s|\/|>)/g) ?? [];
+  if (pageObjects.length === 0) throw new Error('RENDERED_SHEET_PDF_NO_PAGES');
+  return pageObjects.length;
+};
+
+export const proveRenderedSheetStructure = (html: string, renderedPdf?: Uint8Array) => {
   const required = ['Case goals', 'Separate critical safety action', 'Focused information gathering', 'Closed-loop team communication', 'Efficiency deduction', 'Orders and monitoring quality', 'Clinical reasoning documentation', 'Safety deduction', 'Communication domain', 'Clinical reasoning domain'];
   const missing = required.filter((text) => !html.includes(text));
-  return { valid: missing.length === 0 && (html.match(/<html>/g) ?? []).length === 1 && (html.match(/@page/g) ?? []).length === 1, missing, page_count: 1 };
+  const pageCount = renderedPdf ? countRenderedPdfPages(renderedPdf) : null;
+  return { valid: missing.length === 0 && (html.match(/<html>/g) ?? []).length === 1 && (html.match(/@page/g) ?? []).length === 1 && pageCount === 1, missing, ...(pageCount === null ? {} : { page_count: pageCount }) };
 };
 
-export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score', 'communication_breakdown_json', 'clinical_reasoning_breakdown_json'];
+export const STUDY_SHEET_COLUMNS = ['batch_ordinal', 'specialty', 'case_label', 'packet_label', 'status', 'communication_score', 'clinical_reasoning_score', 'strengths_json', 'improvements_json', 'recommendations_json', 'evidence_event_ids_json', 'generated_at', 'prompt_version', 'model', 'error_json', 'focused_information_gathering_score', 'closed_loop_team_communication_score', 'efficiency_deduction_score', 'orders_monitoring_quality_score', 'clinical_reasoning_documentation_score', 'safety_deduction_score', 'communication_breakdown_json', 'clinical_reasoning_breakdown_json', 'evidence_validation_warnings_json'];

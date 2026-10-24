@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
-import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasValidSixComponentEvaluation, validateEvidenceAttributions, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, resolveStudyTargetOrdinals, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyProgress, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
@@ -13,7 +13,7 @@ import { classifyHistoricalNoteCandidates, resolveLegacyCaseProvenance } from '.
 import { classifySourceReadError } from '../_shared/source-read-classification.ts';
 import { optionalHistoryScope } from '../_shared/history-query-scope.ts';
 import { configuredRoomPdfCandidates, exportAllowlistedRoomPdfs } from '../_shared/room-pdf-export.ts';
-import { assertReviewedNewFormatBinding, NEW_FORMAT_COMPONENT_ANCHORS, NEW_FORMAT_EVALUATOR_INSTRUCTION, NEW_FORMAT_EVALUATOR_SPEC, NEW_FORMAT_EVALUATOR_SPEC_SHA256, NEW_FORMAT_EVALUATOR_SPEC_VERSION, NEW_FORMAT_EXPECTED_MODEL, resolveGeneratorRevisionBinding } from '../_shared/new-format-evaluator-spec.ts';
+import { assertReviewedNewFormatBinding, NEW_FORMAT_COMPONENT_ANCHORS, NEW_FORMAT_EVALUATOR_INSTRUCTION, NEW_FORMAT_EVALUATOR_SPEC, NEW_FORMAT_EVALUATOR_SPEC_SHA256, NEW_FORMAT_EVALUATOR_SPEC_VERSION, NEW_FORMAT_EXPECTED_MODEL, resolveGeneratorRevisionBinding, stableCanonicalJson } from '../_shared/new-format-evaluator-spec.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -86,7 +86,7 @@ const inspectRuntime = async (client: ReturnType<typeof serviceClient>, manifest
     const anchors = (config as { scoring_anchors?: unknown }).scoring_anchors ?? {};
     attestations.push({ batch_ordinal: item.batch_ordinal, specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, assignment_id: item.assignment_id, room_id: roomId, config_id: config.id, config_version: config.version, config_scope: config.scope, evaluator_prompt: config.evaluator_prompt, scoring_anchors: anchors, evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC });
     if (config.evaluator_prompt !== NEW_FORMAT_EVALUATOR_INSTRUCTION || manifest.prompt_text !== NEW_FORMAT_EVALUATOR_INSTRUCTION) errors.push({ batch_ordinal: item.batch_ordinal, code: 'PROMPT_CONFIG_MISMATCH', message: `active ${config.scope} evaluator v${config.version} does not exactly match the reviewed instruction`, observed_config_id: config.id, observed_config_version: config.version, observed_config_scope: config.scope });
-    if (JSON.stringify(anchors) !== JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS)) errors.push({ batch_ordinal: item.batch_ordinal, code: 'COMPONENT_ANCHORS_MISMATCH', message: 'active evaluator anchors do not exactly match the reviewed component anchors' });
+    if (stableCanonicalJson(anchors) !== stableCanonicalJson(NEW_FORMAT_COMPONENT_ANCHORS)) errors.push({ batch_ordinal: item.batch_ordinal, code: 'COMPONENT_ANCHORS_MISMATCH', message: 'active evaluator anchors do not exactly match the reviewed component anchors' });
   }
   let model: string | null = null;
   try { model = getOpenAIModel('generate_feedback'); }
@@ -455,6 +455,15 @@ const allowedEvidence = (evaluation: EvaluationScoringResponse, sourceIds: Set<s
 };
 
 const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManifest['attempts'][number], assignment: Record<string, unknown>, context: { rows: Record<string, unknown[]>; availability: Record<string, unknown> }, model: string, evaluator: Record<string, unknown>) => {
+  assertReviewedNewFormatBinding({
+    prompt_version: evaluator.prompt_version ?? manifest.prompt_version,
+    prompt_text: evaluator.evaluator_prompt,
+    evaluator_spec_version: evaluator.evaluator_spec_version ?? manifest.evaluator_spec_version,
+    evaluator_spec_hash: evaluator.evaluator_spec_hash ?? manifest.evaluator_spec_hash,
+    component_anchors: evaluator.scoring_anchors,
+    expected_model: evaluator.expected_model ?? model,
+    generator_revision: evaluator.generator_revision,
+  });
   const rows = context.rows;
   const entries = buildAssignmentTimelineEntries({ assignment: { id: String(assignment.id), completed_at: String(assignment.completed_at), student_progress_note: typeof assignment.student_progress_note === 'string' ? assignment.student_progress_note : null }, assignmentId: item.assignment_id, targetRoomIds: null, messages: (rows.chat_messages ?? []) as TimelineChatMessageRow[], orders: (rows.medical_orders ?? []) as TimelineOrderRow[], labs: (rows.lab_results ?? []) as TimelineLabRow[], vitals: (rows.vital_signs ?? []) as TimelineVitalRow[], imaging: (rows.imaging_studies ?? []) as TimelineImagingRow[], learnerActions: (rows.learner_action_events ?? []) as TimelineLearnerActionRow[], patientMessages: (rows.patient_chat_messages ?? []) as TimelinePatientMessageRow[], consultantMessages: (rows.consultant_chat_messages ?? []) as TimelineConsultantMessageRow[] });
   const sourceIds = new Set(entries.map((entry) => entry.id));
@@ -466,7 +475,7 @@ const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManife
   const completion = await openai.chat.completions.create({ model, messages: [{ role: 'system', content: 'You are a clinical education feedback evaluator. Treat the supplied historical context as the complete evidence boundary.' }, { role: 'user', content: prompt }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
   const raw = JSON.parse(completion.choices[0].message.content ?? '{}') as Record<string, unknown>;
   if (!hasValidSixComponentEvaluation(raw)) throw new Error('MODEL_OUTPUT_INVALID:six-component contract failed');
-  const canonical = canonicalizeEvaluation(raw);
+  const canonical = validateEvidenceAttributions(canonicalizeEvaluation(raw), entries);
   return { raw, canonical, evidenceEventIds: allowedEvidence(canonical, sourceIds), entries, caseKey };
 };
 
@@ -606,7 +615,15 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       assertEnabledManifestBinding(manifest, generatorRevision);
       frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS, generator_revision: generatorRevision }, evaluator_spec: NEW_FORMAT_EVALUATOR_SPEC, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse: null, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: null });
-      const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION, scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS, generator_revision: generatorRevision });
+      const evaluation = await evaluate(manifest, item, assignment, context, model, {
+        evaluator_prompt: NEW_FORMAT_EVALUATOR_INSTRUCTION,
+        scoring_anchors: NEW_FORMAT_COMPONENT_ANCHORS,
+        evaluator_spec_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION,
+        evaluator_spec_hash: NEW_FORMAT_EVALUATOR_SPEC_SHA256,
+        expected_model: NEW_FORMAT_EXPECTED_MODEL,
+        prompt_version: manifest.prompt_version,
+        generator_revision: generatorRevision,
+      });
       rawModelResponse = evaluation.raw;
       await assertProtectedAssignmentReadback(client, item.assignment_id, { ...assignment, status: snapshot.status });
       const evaluationKey = resolveCaseEvaluationKey(historicalChart);

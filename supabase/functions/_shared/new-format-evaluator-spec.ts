@@ -72,11 +72,21 @@ export const NEW_FORMAT_EVALUATOR_SPEC = Object.freeze({
 });
 
 /** Stable review hash input; hash this exact UTF-8 string before activation. */
+/** Canonical JSON for JSONB values: object key order is not semantic. */
+export const stableCanonicalJson = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableCanonicalJson).join(',')}]`;
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableCanonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+};
+
 export const NEW_FORMAT_EVALUATOR_SPEC_HASH_INPUT = [
   NEW_FORMAT_EVALUATOR_SPEC_VERSION,
   NEW_FORMAT_EXPECTED_MODEL,
   GENERATOR_REVISION_BINDING_KEY,
   NEW_FORMAT_EVALUATOR_INSTRUCTION,
+  // Keep the reviewed public hash immutable; stableCanonicalJson is used for
+  // semantic JSONB comparisons, while this exact input remains the published
+  // provenance string for the approved spec.
   JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS),
 ].join('\n');
 export const NEW_FORMAT_EVALUATOR_SPEC_SHA256 = 'f54980a6c1dcea628d6ed22540db7672f33306d5a3c0a98cf3acaa32a091b9fe';
@@ -113,7 +123,7 @@ export type NewFormatEvaluatorBinding = {
   generator_revision?: unknown;
 };
 
-const exactJson = (value: unknown) => JSON.stringify(value) === JSON.stringify(NEW_FORMAT_COMPONENT_ANCHORS);
+const exactJson = (value: unknown) => stableCanonicalJson(value) === stableCanonicalJson(NEW_FORMAT_COMPONENT_ANCHORS);
 
 /**
  * The study-enabled path is allowed to run only against the reviewed spec.

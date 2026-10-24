@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { canonicalizeEvaluation } from './evaluation-scoring';
 import { CANONICAL_RUBRIC, EVALUATION_SYSTEM_PROMPT } from './evaluation-prompts';
-import { buildEvaluationSheetHtml, proveRenderedSheetStructure } from './faculty-study-contract';
+import { buildEvaluationSheetHtml, deidentifyStudyResult, proveRenderedSheetStructure } from './faculty-study-contract';
 import {
   GENERATOR_REVISION_BINDING_KEY,
   NEW_FORMAT_COMPONENT_ANCHORS,
@@ -14,7 +15,9 @@ import {
   NEW_FORMAT_EXPECTED_MODEL,
   assertReviewedNewFormatBinding,
   resolveGeneratorRevisionBinding,
+  stableCanonicalJson,
 } from './new-format-evaluator-spec';
+import { validateEvidenceAttributions } from './evaluation-scoring';
 
 const ids = ['synthetic-1'];
 const component = (score: number, feedback: string) => ({ score, feedback, evidence_event_ids: ids });
@@ -129,18 +132,23 @@ describe('NEW-FORMAT evaluator specification', () => {
       generator_revision: 'revision-2026-10-24',
     };
     expect(assertReviewedNewFormatBinding(valid)).toBe(true);
+    const reorderedAnchors = Object.fromEntries(Object.entries(NEW_FORMAT_COMPONENT_ANCHORS).reverse().map(([key, value]) => [key, Object.fromEntries(Object.entries(value).reverse().map(([nestedKey, nestedValue]) => [nestedKey, nestedValue]))]));
+    expect(stableCanonicalJson(reorderedAnchors)).toBe(stableCanonicalJson(NEW_FORMAT_COMPONENT_ANCHORS));
+    expect(assertReviewedNewFormatBinding({ ...valid, component_anchors: reorderedAnchors })).toBe(true);
+    expect(() => assertReviewedNewFormatBinding({ ...valid, component_anchors: { ...reorderedAnchors, safety_deduction: { ...reorderedAnchors.safety_deduction, scores: { ...reorderedAnchors.safety_deduction.scores, '-1': 'changed' } } } })).toThrow('ANCHORS_MISMATCH');
     for (const key of ['prompt_version', 'prompt_text', 'evaluator_spec_version', 'evaluator_spec_hash', 'component_anchors', 'expected_model', 'generator_revision'] as const) {
       expect(() => assertReviewedNewFormatBinding({ ...valid, [key]: key === 'generator_revision' ? '' : 'mismatch' })).toThrow();
     }
   });
 
-  it('proves the synthetic printable sheet structure without a PDF or model call', () => {
+  it('proves the actual synthetic printable PDF is one page', () => {
     const html = buildEvaluationSheetHtml({
       batch_ordinal: 1, specialty: 'ED', case_label: 'Synthetic', packet_label: 'Fixture', status: 'completed', prompt_version: NEW_FORMAT_EVALUATOR_SPEC_VERSION, model: NEW_FORMAT_EXPECTED_MODEL,
       case_goals: ['Recognize deterioration', 'Escalate and reassess'], critical_safety_action: 'Do not administer the contraindicated order.', safety_result: { level: 'critical', action: 'Do not administer the contraindicated order.' },
       component_scores: { focused_information_gathering: 2, closed_loop_team_communication: 3, efficiency_deduction: 0, orders_monitoring_quality: 3, clinical_reasoning_documentation: 2, safety_deduction: -2 }, domain_scores: { communication: 5, clinical_reasoning: 3 },
     });
-    expect(proveRenderedSheetStructure(html)).toEqual({ valid: true, missing: [], page_count: 1 });
+    const pdf = new Uint8Array(readFileSync('artifacts/new-format-sheet-proof.pdf'));
+    expect(proveRenderedSheetStructure(html, pdf)).toEqual({ valid: true, missing: [], page_count: 1 });
     expect(html).toContain('Recognize deterioration');
     expect(html).toContain('Do not administer the contraindicated order.');
   });
@@ -154,5 +162,32 @@ describe('NEW-FORMAT evaluator specification', () => {
     });
     expect(html).toContain('The learner performed a physical examination; physical findings were documented.');
     expect(html).not.toContain('simulated bedside interaction');
+  });
+
+  it('flags unsupported positive exam attribution without rewriting the source wording or crediting it', () => {
+    const evaluation = canonicalizeEvaluation({
+      learning_objectives: 'The learner performed a physical examination.',
+      communication_breakdown: {
+        focused_information_gathering: component(2, 'The learner performed a physical examination.'),
+        closed_loop_team_communication: component(0, 'No linked communication.'),
+        efficiency_deduction: component(0, 'No deduction.'),
+      },
+      clinical_reasoning_breakdown: {
+        orders_monitoring_quality: component(0, 'No orders.'),
+        clinical_reasoning_documentation: component(2, 'The learner performed a physical examination.'),
+        safety_deduction: component(0, 'No unsafe action.'),
+      },
+      safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
+    });
+    const checked = validateEvidenceAttributions(evaluation, [{ kind: 'message', title: 'Nurse page', body: 'Patient is dizzy.', meta: ['Actor: nurse'] }]);
+    expect(checked.evidence_validation_warnings?.[0]).toContain('UNSUPPORTED_ATTRIBUTION');
+    expect(checked.communication_breakdown.focused_information_gathering.feedback).toContain('physical examination');
+    expect(checked.communication_breakdown.focused_information_gathering.score).toBe(0);
+    expect(checked.clinical_reasoning_breakdown.clinical_reasoning_documentation.score).toBe(0);
+    const reviewer = deidentifyStudyResult({ batch_ordinal: 1, specialty: 'ED', case_label: 'Synthetic', packet_label: 'Fixture', status: 'completed', evaluation: checked, redaction_terms: [] }) as Record<string, unknown>;
+    expect(reviewer.evidence_validation_warnings).toEqual(checked.evidence_validation_warnings);
+    expect(buildEvaluationSheetHtml(reviewer)).toContain('UNSUPPORTED_ATTRIBUTION');
+    const quoted = validateEvidenceAttributions(canonicalizeEvaluation({ learning_objectives: 'The note says “The learner performed a physical examination.”', communication_breakdown: { focused_information_gathering: component(1, 'Quoted source only.') }, clinical_reasoning_breakdown: {}, safety_result: { level: 'none', evidence_event_ids: [] } }), [{ kind: 'message', title: 'Nurse page', meta: ['Actor: nurse'] }]);
+    expect(quoted.evidence_validation_warnings).toEqual([]);
   });
 });

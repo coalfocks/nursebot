@@ -18,6 +18,7 @@ export interface EvaluationScoringResponse {
   strengths: string[];
   improvements: string[];
   recommendations: string[];
+  evidence_validation_warnings?: string[];
 };
 
 const clamp = (value: unknown, min: number, max: number) => {
@@ -26,6 +27,24 @@ const clamp = (value: unknown, min: number, max: number) => {
 };
 const text = (value: unknown, fallback: string) => typeof value === 'string' && value.trim() ? value : fallback;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+
+type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
+
+const containsUnsupportedPositiveExamAttribution = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    const quoted = /["'“”]\s*(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\s*[.!?]?\s*["'“”]/i.test(value);
+    const negated = /\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b.{0,100}\bphysical\s+examination\b/i.test(value);
+    return !quoted && !negated && (/\b(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\b|\blearner['’]?s\s+physical\s+findings\b/i.test(value));
+  }
+  if (Array.isArray(value)) return value.some(containsUnsupportedPositiveExamAttribution);
+  if (value && typeof value === 'object') return Object.values(value).some(containsUnsupportedPositiveExamAttribution);
+  return false;
+};
+
+const hasLearnerAuthoredEvidence = (entries: EvidenceShape[]) => entries.some((entry) =>
+  entry.kind === 'learner-action'
+  || entry.meta?.some((value) => /author:\s*student|learner-authored/i.test(value)),
+);
 
 /** Preserve model/source narratives verbatim; evidence-boundary instructions do the attribution work. */
 export const sanitizeSimulationText = (value: string): string => value;
@@ -71,6 +90,47 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
     strengths: Array.isArray(raw.strengths) ? raw.strengths.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 3) : [],
     improvements: Array.isArray(raw.improvements) ? raw.improvements.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 3) : [],
     recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText) : [],
+    evidence_validation_warnings: Array.isArray(raw.evidence_validation_warnings)
+      ? raw.evidence_validation_warnings.filter((v): v is string => typeof v === 'string').map(sanitizeSimulationText).slice(0, 5)
+      : [],
+  };
+};
+
+/**
+ * Keep the model's source wording intact, but do not let an unsupported
+ * positive physical-exam attribution become observed learner evidence.
+ * Quoted/negative wording is intentionally not matched by the positive-only
+ * detector above.
+ */
+export const validateEvidenceAttributions = (
+  evaluation: EvaluationScoringResponse,
+  entries: EvidenceShape[],
+): EvaluationScoringResponse => {
+  if (hasLearnerAuthoredEvidence(entries) || !containsUnsupportedPositiveExamAttribution(evaluation)) return evaluation;
+  const warning = 'UNSUPPORTED_ATTRIBUTION: positive learner physical-examination attribution was not supported by learner-authored evidence; preserved as wording only and not credited as observed performance.';
+  const warnings = Array.from(new Set([...(evaluation.evidence_validation_warnings ?? []), warning]));
+  const stripUnsupportedEvidence = (component: { score: number; evidence_event_ids?: string[]; feedback: string }) => ({
+    ...component,
+    score: 0,
+    evidence_event_ids: [],
+  });
+  const communication = {
+    ...evaluation.communication_breakdown,
+    focused_information_gathering: stripUnsupportedEvidence(evaluation.communication_breakdown.focused_information_gathering),
+  };
+  const clinicalReasoning = {
+    ...evaluation.clinical_reasoning_breakdown,
+    clinical_reasoning_documentation: stripUnsupportedEvidence(evaluation.clinical_reasoning_breakdown.clinical_reasoning_documentation),
+  };
+  return {
+    ...evaluation,
+    communication_breakdown: communication,
+    clinical_reasoning_breakdown: clinicalReasoning,
+    mdm_breakdown: clinicalReasoning,
+    communication_score: Math.max(0, Math.min(5, communication.focused_information_gathering.score + communication.closed_loop_team_communication.score + communication.efficiency_deduction.score)),
+    mdm_score: Math.max(0, Math.min(5, clinicalReasoning.orders_monitoring_quality.score + clinicalReasoning.clinical_reasoning_documentation.score + clinicalReasoning.safety_deduction.score)),
+    clinical_reasoning_score: Math.max(0, Math.min(5, clinicalReasoning.orders_monitoring_quality.score + clinicalReasoning.clinical_reasoning_documentation.score + clinicalReasoning.safety_deduction.score)),
+    evidence_validation_warnings: warnings,
   };
 };
 
@@ -112,7 +172,6 @@ export const hasValidSixComponentEvaluation = (raw: Record<string, unknown>) => 
   return componentsValid && safetyValid;
 };
 
-type EvidenceShape = { kind: string; title: string; body?: string; meta?: string[] };
 const learnerActionKinds = new Set(['learner-action']);
 const learnerCommunicationKinds = new Set(['learner-action']);
 
