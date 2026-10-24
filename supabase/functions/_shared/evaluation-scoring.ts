@@ -31,7 +31,7 @@ const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is 
 export type EvidenceShape = { id?: string; kind: string; title: string; body?: string; meta?: string[] };
 
 const positiveExamClaim = /\b(?:the\s+)?learner\s+(?:performed|completed|did)\s+(?:a\s+)?physical\s+examination\b|\blearner['’]?s\s+physical\s+findings\b/i;
-const unquotedText = (value: string) => value.replace(/"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’/g, '');
+const unquotedText = (value: string) => value.replace(/"[^"\n]*"|'[^'\n]*'|“[^”\n]*”|‘[^’\n]*’/g, '');
 const containsPositivePhysicalExamEvidence = (value: string) => unquotedText(value).split(/[.!?\n]+/).some((sentence) =>
   /\b(?:physical\s+(?:exam(?:ination)?|findings)|examined\s+(?:the\s+)?patient)\b/i.test(sentence)
   && !/\b(?:not|never|did\s+not|no\s+evidence\s+that|without\s+evidence\s+that)\b/i.test(sentence),
@@ -54,7 +54,7 @@ const isLearnerAuthored = (entry: EvidenceShape) => entry.kind === 'learner-acti
 const supportsPhysicalExamClaim = (ids: string[] | undefined, entriesById: Map<string, EvidenceShape>) => (ids ?? []).some((id) => {
   const entry = entriesById.get(id);
   if (!entry || !isLearnerAuthored(entry)) return false;
-  return containsPositivePhysicalExamEvidence(entry.body ?? '');
+  return containsPositivePhysicalExamEvidence(`${entry.title} ${entry.body ?? ''}`);
 });
 
 /** Preserve model/source narratives verbatim; evidence-boundary instructions do the attribution work. */
@@ -118,7 +118,7 @@ export const validateEvidenceAttributions = (
   entries: EvidenceShape[],
 ): EvaluationScoringResponse => {
   const entriesById = new Map(entries.flatMap((entry) => entry.id ? [[entry.id, entry] as const] : []));
-  const componentGroups = [evaluation.communication_breakdown, evaluation.clinical_reasoning_breakdown];
+  const componentGroups: Array<Record<string, { score: number; feedback: string; evidence_event_ids?: string[] }>> = [evaluation.communication_breakdown, evaluation.clinical_reasoning_breakdown];
   const unsupported = componentGroups.flatMap((group) => Object.values(group)).filter((component) => containsUnsupportedPositiveExamAttribution(component.feedback) && !supportsPhysicalExamClaim(component.evidence_event_ids, entriesById));
   const unsupportedNarrative = containsUnsupportedPositiveExamAttribution(evaluation.learning_objectives)
     || evaluation.strengths.some(containsUnsupportedPositiveExamAttribution)
@@ -132,7 +132,8 @@ export const validateEvidenceAttributions = (
     score: 0,
     evidence_event_ids: [],
   });
-  const invalidate = (group: EvaluationScoringResponse['communication_breakdown']) => Object.fromEntries(Object.entries(group).map(([key, component]) => [key, containsUnsupportedPositiveExamAttribution(component.feedback) && !supportsPhysicalExamClaim(component.evidence_event_ids, entriesById) ? stripUnsupportedEvidence(component) : component])) as EvaluationScoringResponse['communication_breakdown'];
+  type Component = { score: number; evidence_event_ids?: string[]; feedback: string };
+  const invalidate = <T extends Record<string, Component>>(group: T): T => Object.fromEntries(Object.entries(group).map(([key, component]) => [key, containsUnsupportedPositiveExamAttribution(component.feedback) && !supportsPhysicalExamClaim(component.evidence_event_ids, entriesById) ? stripUnsupportedEvidence(component) : component])) as T;
   const communication = invalidate(evaluation.communication_breakdown);
   const clinicalReasoning = invalidate(evaluation.clinical_reasoning_breakdown);
   return {
