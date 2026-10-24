@@ -42,6 +42,19 @@ export const STUDY_ASSIGNMENT_PROTECTED_FIELDS = [
 export const snapshotAssignmentProtection = (assignment: Record<string, unknown>) =>
   Object.fromEntries(STUDY_ASSIGNMENT_PROTECTED_FIELDS.map((field) => [field, assignment[field] ?? null]));
 
+export const buildStudyFeedbackBackup = (item: StudyManifestItem, assignment: Record<string, unknown> | null) => ({
+  batch_ordinal: item.batch_ordinal,
+  specialty: item.specialty,
+  case_label: item.case_label,
+  packet_label: item.packet_label,
+  assignment_id: item.assignment_id,
+  found: Boolean(assignment),
+  status: assignment?.status ?? null,
+  completed_at: assignment?.completed_at ?? null,
+  room_id: assignment?.room_id ?? null,
+  raw_feedback_backup: assignment ? snapshotAssignmentProtection(assignment) : null,
+});
+
 export const protectedAssignmentUnchanged = (before: Record<string, unknown>, after: Record<string, unknown>) =>
   before.status === after.status
   && JSON.stringify(snapshotAssignmentProtection(before)) === JSON.stringify(snapshotAssignmentProtection(after));

@@ -42,6 +42,22 @@ const usableVersion = (version: HistoricalVersion, cutoffMs: number) =>
   validTime(version.created_at) && new Date(version.created_at).getTime() <= cutoffMs &&
   (!versionTimestamp(version) || (validTime(versionTimestamp(version)) && new Date(versionTimestamp(version) as string).getTime() <= cutoffMs));
 
+const projectImagingVersion = (row: Record<string, unknown>, version: HistoricalVersion) => ({
+  ...row,
+  report: version.report ?? row.report,
+  body_site: version.body_site ?? row.body_site,
+  laterality: version.laterality ?? row.laterality,
+  contrast: version.contrast ?? row.contrast,
+  indication: version.indication ?? row.indication,
+  findings: version.findings ?? row.findings,
+  impression: version.impression ?? row.impression,
+  status: version.status ?? row.status,
+  encounter_time: version.encounter_time ?? row.encounter_time,
+  record_version: version.version ?? row.record_version,
+  updated_at: version.created_at ?? row.updated_at,
+  __historical_version_recovered: true,
+});
+
 export const filterHistoricalRows = (
   table: string,
   sourceRows: Record<string, unknown>[],
@@ -92,25 +108,26 @@ export const filterHistoricalRows = (
       availability.missing_timestamp.push(`${table}:${id}:event_time`);
       continue;
     }
-    if (new Date(eventAt).getTime() > cutoffMs) {
-      count(availability.excluded_after_event_time, table);
-      availability.excluded_rows.push({ table, id, recorded_at: recordedAt, event_at: eventAt, reason: 'event_after_completion' });
+    const eventAfterCutoff = new Date(eventAt).getTime() > cutoffMs;
+    const deletedBeforeCutoff = deletedAt !== null && deletedAt <= cutoffMs;
+    const needsHistoricalVersion = (updatedAt !== null && updatedAt > cutoffMs) || eventAfterCutoff || (deletedAt !== null && deletedAt > cutoffMs);
+    if (deletedBeforeCutoff) {
+      availability.missing_historical_version.push({ table, id, recorded_at: recordedAt, event_at: eventAt, updated_at: validTime(row.updated_at) ? row.updated_at : null, deleted_at: row.deleted_at as string, reason: 'deleted_before_completion' });
       continue;
     }
-
-    const needsHistoricalVersion = (updatedAt !== null && updatedAt > cutoffMs) || (deletedAt !== null && deletedAt <= cutoffMs);
-    if (needsHistoricalVersion && historicalVersion) {
-      const recovered = { ...row, ...historicalVersion, deleted_at: null, updated_at: historicalVersion.created_at ?? row.updated_at, __historical_version_recovered: true };
+    if (needsHistoricalVersion && historicalVersion && table === 'imaging_studies') {
+      const recovered = projectImagingVersion(row, historicalVersion);
       availability.recovered_versions.push({ table, id, version: historicalVersion.version ?? null, recorded_at: String(historicalVersion.created_at) });
       kept.push(recovered);
       continue;
     }
-    if (needsHistoricalVersion && table === 'imaging_studies' && !historicalVersion) {
-      availability.missing_historical_version.push({ table, id, recorded_at: recordedAt, event_at: eventAt, updated_at: validTime(row.updated_at) ? row.updated_at : null, deleted_at: validTime(row.deleted_at) ? row.deleted_at : null, reason: deletedAt !== null && deletedAt <= cutoffMs ? 'deleted_before_completion' : 'edited_after_completion' });
+    if (eventAfterCutoff) {
+      count(availability.excluded_after_event_time, table);
+      availability.excluded_rows.push({ table, id, recorded_at: recordedAt, event_at: eventAt, reason: 'event_after_completion' });
       continue;
     }
-    if (deletedAt !== null && deletedAt <= cutoffMs) {
-      availability.missing_historical_version.push({ table, id, recorded_at: recordedAt, event_at: eventAt, updated_at: validTime(row.updated_at) ? row.updated_at : null, deleted_at: row.deleted_at as string, reason: 'deleted_before_completion' });
+    if (needsHistoricalVersion && table === 'imaging_studies' && !historicalVersion) {
+      availability.missing_historical_version.push({ table, id, recorded_at: recordedAt, event_at: eventAt, updated_at: validTime(row.updated_at) ? row.updated_at : null, deleted_at: validTime(row.deleted_at) ? row.deleted_at : null, reason: deletedAt !== null && deletedAt <= cutoffMs ? 'deleted_before_completion' : 'edited_after_completion' });
       continue;
     }
     if (updatedAt !== null && updatedAt > cutoffMs) {

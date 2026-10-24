@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows } from '../_shared/historical-context.ts';
@@ -125,6 +125,46 @@ const prepare = async (client: ReturnType<typeof serviceClient>, userId: string,
   const insert = await client.from('faculty_study_batches').insert({ batch_key: manifest.batch_key, manifest, manifest_sha256: manifestHash, prompt_version: manifest.prompt_version, prompt_sha256: promptHash, model: runtime.model, protocol_version: FACULTY_STUDY_PROTOCOL_VERSION, generator_revision: runtime.generator_revision, evaluator_config_revision: configRevisions.length === 1 ? configRevisions[0] : `mixed:${configRevisions.join(',')}`, attempt_attestations: runtime.attestations, created_by: userId }).select('id, batch_key, status, prompt_version, model, generator_revision, evaluator_config_revision, attempt_attestations').single();
   if (insert.error) throw insert.error;
   return { batch: insert.data, writes: ['faculty_study_batches'], learner_writes: 0 };
+};
+
+const schemaReadiness = async (client: ReturnType<typeof serviceClient>) => {
+  const checks = [
+    ['student_room_assignments', ['id', 'room_id', 'student_id', 'status', 'completed_at', 'student_progress_note', ...STUDY_ASSIGNMENT_PROTECTED_FIELDS]],
+    ['faculty_study_batches', ['id', 'manifest', 'status', 'lease_token', 'lease_expires_at']],
+    ['faculty_study_results', ['batch_id', 'batch_ordinal', 'result', 'canonical_result', 'raw_model_response', 'error', 'lease_token']],
+    ['feedback_evaluator_configs', ['id', 'version', 'evaluator_prompt', 'scoring_anchors', 'scope', 'room_id', 'status']],
+    ...['chat_messages', 'medical_orders', 'lab_results', 'vital_signs', 'imaging_studies', 'learner_action_events', 'patient_chat_messages', 'consultant_chat_messages'].map((table) => [table, ['assignment_id']]),
+  ] as Array<[string, string[]]>;
+  const results = await Promise.all(checks.map(async ([table, columns]) => {
+    const probe = await client.from(table).select(columns.join(',')).limit(0);
+    return { table, columns, ready: !probe.error, error: probe.error?.message ?? null };
+  }));
+  const versionProbe = await client.from('imaging_study_versions').select('id, study_id, version, created_at, encounter_time').limit(0);
+  results.push({ table: 'imaging_study_versions', columns: ['id', 'study_id', 'version', 'created_at', 'encounter_time'], ready: !versionProbe.error, error: versionProbe.error?.message ?? null });
+  return { ready: results.filter((check) => check.table !== 'imaging_study_versions').every((check) => check.ready), version_recovery_supported: !versionProbe.error, checks: results };
+};
+
+const preflight = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
+  const assignmentsResult = await client.from('student_room_assignments').select('*').in('id', manifest.attempts.map((item) => item.assignment_id));
+  const assignments = new Map((assignmentsResult.data ?? []).map((assignment) => [String(assignment.id), assignment as Record<string, unknown>]));
+  let runtime: Record<string, unknown>;
+  try {
+    const verified = await verifyRuntime(client, manifest);
+    runtime = { ready: true, model: verified.model, generator_revision: verified.generator_revision, attestations: verified.attestations };
+  } catch (error) {
+    runtime = { ready: false, error: { code: errorCode(error) || message(error).split(':')[0], message: message(error) } };
+  }
+  return {
+    action: 'model_free_preflight',
+    batch_key: manifest.batch_key,
+    attempt_count: manifest.attempts.length,
+    model_calls: 0,
+    learner_writes: 0,
+    schema: await schemaReadiness(client),
+    runtime,
+    feedback_backup_readiness: { ready: !assignmentsResult.error, error: assignmentsResult.error?.message ?? null },
+    raw_feedback_backups: manifest.attempts.map((item) => buildStudyFeedbackBackup(item, assignments.get(item.assignment_id) ?? null)),
+  };
 };
 
 const privateTermsForAssignment = async (client: ReturnType<typeof serviceClient>, assignment: Record<string, unknown>) => {
@@ -270,6 +310,7 @@ Deno.serve(async (req) => {
     const userId = await requireAdmin(req, client);
     const body = await req.json() as Record<string, unknown>;
     const action = body.action;
+    if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)));
     if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)));
     if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases));
     if (action === 'export') return json(await exportBatch(client, String(body.batch_id)));

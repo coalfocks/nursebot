@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
+import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, isStudyRunLeaseExpired, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_SHEET_COLUMNS, studyResultStatus, studySheetRow, validateStudyManifest } from './faculty-study-contract';
 
 const attempts = Array.from({ length: 30 }, (_, index) => ({ batch_ordinal: index + 1, specialty: ['ED', 'ICU', 'Peds', 'OB', 'Med-Surg', 'Psych'][index % 6], case_label: `Case ${index % 5 + 1}`, packet_label: `Packet ${index % 5 + 1}`, assignment_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}` }));
 const manifest = { batch_key: 'faculty-oct-2026', prompt_version: 'revised-v4', prompt_text: 'Evaluate only the frozen historical attempt.', expected_model: 'gpt-6-luna', attempts };
@@ -100,6 +100,12 @@ describe('faculty study contract', () => {
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'completed', ...assignment })).toBe(true);
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'completed', ...assignment, grade: 88 })).toBe(false);
     expect(protectedAssignmentUnchanged({ status: 'completed', ...assignment }, { status: 'failed', ...assignment })).toBe(false);
+  });
+
+  it('builds a private all-attempt feedback backup with explicit missing rows', () => {
+    const found = buildStudyFeedbackBackup(attempts[0], { id: attempts[0].assignment_id, status: 'completed', grade: 4, nurse_feedback: 'existing' });
+    expect(found).toMatchObject({ batch_ordinal: 1, assignment_id: attempts[0].assignment_id, found: true, raw_feedback_backup: { grade: 4, nurse_feedback: 'existing' } });
+    expect(buildStudyFeedbackBackup(attempts[1], null)).toMatchObject({ batch_ordinal: 2, found: false, raw_feedback_backup: null });
   });
 
   it('does not treat a pre-created empty row as terminal and keeps label columns in the sheet', () => {
