@@ -8,6 +8,20 @@ const download = (name: string, body: string, type: string) => {
   const link = document.createElement('a'); link.href = url; link.download = name; link.click(); URL.revokeObjectURL(url);
 };
 
+const formatInvokeError = async (value: unknown) => {
+  const candidate = value as { context?: Response; message?: string } | null;
+  const response = candidate?.context instanceof Response ? candidate.context : null;
+  let payload: { error?: { code?: string; message?: string; request_id?: string } } | null = null;
+  if (response) {
+    try { payload = await response.clone().json() as typeof payload; } catch { /* preserve the SDK message */ }
+  }
+  const detail = payload?.error;
+  const code = detail?.code ?? candidate?.message ?? 'FACULTY_STUDY_REQUEST_FAILED';
+  const message = detail?.message && detail.message !== code ? `: ${detail.message}` : '';
+  const requestId = detail?.request_id ? ` (request ${detail.request_id})` : '';
+  return `${response ? `HTTP ${response.status} · ` : ''}${code}${message}${requestId}`;
+};
+
 export default function FacultyStudy() {
   const [manifestText, setManifestText] = useState('');
   const [batchId, setBatchId] = useState('');
@@ -23,7 +37,7 @@ export default function FacultyStudy() {
       if (result.error) throw result.error;
       if (result.data?.error) throw new Error(`${result.data.error.code}: ${result.data.error.message}`);
       return result.data;
-    } catch (value) { setError(value instanceof Error ? value.message : 'Faculty study request failed.'); return null; }
+    } catch (value) { setError(await formatInvokeError(value)); return null; }
     finally { setBusy(false); }
   };
 

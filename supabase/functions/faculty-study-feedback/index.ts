@@ -10,7 +10,7 @@ import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows } from '../_shared/historical-context.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
-const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
 const sha256 = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 const errorCode = (error: unknown) => typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code) : 'UNKNOWN';
 const message = (error: unknown) => error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String((error as { message?: unknown }).message) : String(error);
@@ -23,15 +23,24 @@ const deploymentMode = (): FacultyStudyDeploymentMode => {
   return 'preflight-only';
 };
 
-const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>) => {
+const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>, requestId: string) => {
   const authorization = req.headers.get('authorization');
   if (!authorization) throw new Error('STUDY_AUTH_REQUIRED');
   const tokenClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', { global: { headers: { Authorization: authorization } } });
   const { data: userData, error: userError } = await tokenClient.auth.getUser();
-  if (userError || !userData.user) throw new Error('STUDY_AUTH_INVALID');
+  if (userError || !userData.user) {
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'auth.getUser', code: 'STUDY_AUTH_INVALID', provider_error: userError?.message ?? 'user missing' }));
+    throw new Error('STUDY_AUTH_INVALID');
+  }
   const { data: profile, error: profileError } = await client.from('profiles').select('id, role').eq('id', userData.user.id).maybeSingle();
-  if (profileError) throw profileError;
-  if (profile?.role !== 'super_admin') throw new Error('STUDY_SUPERADMIN_REQUIRED');
+  if (profileError) {
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'profiles.lookup', user_id: userData.user.id, code: 'STUDY_PROFILE_LOOKUP_FAILED', provider_error: profileError.message }));
+    throw new Error('STUDY_PROFILE_LOOKUP_FAILED');
+  }
+  if (profile?.role !== 'super_admin') {
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'role.check', user_id: userData.user.id, observed_role: profile?.role ?? null, code: 'STUDY_SUPERADMIN_REQUIRED' }));
+    throw new Error('STUDY_SUPERADMIN_REQUIRED');
+  }
   return userData.user.id;
 };
 
@@ -328,19 +337,20 @@ const exportBatch = async (client: ReturnType<typeof serviceClient>, batchId: st
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const requestId = crypto.randomUUID();
   try {
     const client = serviceClient();
-    const userId = await requireAdmin(req, client);
+    const userId = await requireAdmin(req, client, requestId);
     const body = await req.json() as Record<string, unknown>;
     const action = body.action;
     if (!studyActionAllowed(String(action), deploymentMode())) throw new Error(`STUDY_PREFLIGHT_ONLY: ${String(action)} is disabled while the deployment is preflight-only`);
-    if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)));
-    if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)));
-    if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases));
-    if (action === 'export') return json(await exportBatch(client, String(body.batch_id)));
+    if (action === 'preflight') return json(await preflight(client, validateStudyManifest(body.manifest)), 200, requestId);
+    if (action === 'prepare') return json(await prepare(client, userId, validateStudyManifest(body.manifest)), 200, requestId);
+    if (action === 'run') return json(await run(client, String(body.batch_id), body.max_cases), 200, requestId);
+    if (action === 'export') return json(await exportBatch(client, String(body.batch_id)), 200, requestId);
     throw new Error('STUDY_ACTION_INVALID');
   } catch (error) {
     const status = /AUTH|REQUIRED|INVALID|UNAVAILABLE|MISMATCH|UNVERIFIED|PREFLIGHT/.test(message(error)) ? 400 : 500;
-    return json({ error: { code: errorCode(error) || message(error).split(':')[0], message: message(error) } }, status);
+    return json({ error: { code: errorCode(error) || message(error).split(':')[0], message: message(error), request_id: requestId } }, status, requestId);
   }
 });
