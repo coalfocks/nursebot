@@ -4,7 +4,7 @@ import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluatio
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineChatMessageRow, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { canonicalizeEvaluation, hasValidSixComponentEvaluation, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, ASSESSMENT_VERSION, CASE_KEY_VERSION, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyProgress, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
+import { buildEvaluationSheetHtml, buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STUDY_PROTOCOL_VERSION, isTerminalStudyResult, protectedAssignmentUnchanged, redactStudyValue, resolveStudyTargetOrdinals, snapshotAssignmentProtection, STUDY_ASSIGNMENT_PROTECTED_FIELDS, STUDY_RUN_LEASE_MS, STUDY_SHEET_COLUMNS, studyActionAllowed, studyProgress, studyResultStatus, studySheetRow, validateStudyManifest, type FacultyStudyDeploymentMode, type FacultyStudyManifest } from '../_shared/faculty-study-contract.ts';
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/historical-context.ts';
@@ -98,7 +98,7 @@ const verifyRuntime = async (client: ReturnType<typeof serviceClient>, manifest:
 const exactContext = async (client: ReturnType<typeof serviceClient>, assignmentId: string, completedAt: string) => {
   const tables = ['chat_messages', 'medical_orders', 'lab_results', 'vital_signs', 'imaging_studies', 'learner_action_events', 'patient_chat_messages', 'consultant_chat_messages'];
   const rows: Record<string, unknown[]> = {};
-  const availability: Record<string, unknown> = { cutoff: completedAt, excluded_after_cutoff: {}, excluded_after_recorded_at: {}, excluded_after_event_time: {}, excluded_rows: [], missing_timestamp: [], missing_historical_version: [], unavailable_version_sources: [], recovered_versions: [], retained_deleted_after_cutoff: [] };
+  const availability: Record<string, unknown> = { cutoff: completedAt, excluded_after_cutoff: {}, excluded_after_recorded_at: {}, excluded_after_event_time: {}, excluded_rows: [], missing_timestamp: [], missing_historical_version: [], unavailable_version_sources: [], recovered_versions: [], retained_deleted_after_cutoff: [], empty_scoped_sources: [] };
   for (const table of tables) {
     const query = client.from(table).select('*').eq('assignment_id', assignmentId);
     const result = await query;
@@ -115,6 +115,7 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
     }
     const filtered = filterHistoricalRows(table, sourceRows, completedAt, versions);
     rows[table] = filtered.rows;
+    if (!sourceRows.length) (availability.empty_scoped_sources as string[]).push(table);
     for (const key of ['excluded_after_recorded_at', 'excluded_after_event_time']) {
       Object.assign(availability[key] as Record<string, number>, filtered.availability[key as 'excluded_after_recorded_at' | 'excluded_after_event_time']);
     }
@@ -122,7 +123,6 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
       (availability[key] as unknown[]).push(...filtered.availability[key as 'excluded_rows' | 'missing_timestamp' | 'missing_historical_version' | 'recovered_versions' | 'retained_deleted_after_cutoff']);
     }
   }
-  if (!rows.chat_messages?.length) throw new Error('CONTEXT_UNRECOVERABLE:chat_messages has no available historical rows at the completion cutoff');
   return { rows, availability };
 };
 
@@ -138,6 +138,44 @@ const historicalEvidence = (rows: Record<string, unknown[]>) => Object.entries(r
   recovered_version: row.__historical_version_recovered === true ? { version: row.record_version ?? null, available_at: row.historical_available_at ?? null } : null,
 })));
 
+const legacyCaseRecovery = async (client: ReturnType<typeof serviceClient>, assignment: Record<string, unknown>, completedAt: string) => {
+  const assignmentId = String(assignment.id);
+  const roomId = Number(assignment.room_id);
+  const explicitCaseVersion = typeof assignment.case_key_version === 'string' && assignment.case_key_version.trim() ? assignment.case_key_version.trim() : null;
+  const cutoff = new Date(completedAt).getTime();
+  const flags: string[] = [];
+  const references: Array<Record<string, unknown>> = [];
+  let assignmentVersions: Array<Record<string, unknown>> = [];
+  let authoredVersions: Array<Record<string, unknown>> = [];
+  const baselineQuery = await client.from('mar_assignment_baseline_versions').select('assignment_id, case_version, patient_id, room_id, event_snapshot, content_hash, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: false });
+  if (baselineQuery.error) {
+    if (missingStudyTable(baselineQuery.error)) flags.push('assignment_case_version_archive_unavailable');
+    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_assignment_baseline_versions:${baselineQuery.error.message}`);
+  } else assignmentVersions = (baselineQuery.data ?? []) as Array<Record<string, unknown>>;
+  const authoredQuery = await client.from('mar_authored_case_versions').select('room_id, patient_id, school_id, case_version, order_snapshot, event_snapshot, content_hash, created_at').eq('room_id', roomId).order('created_at', { ascending: false });
+  if (authoredQuery.error) {
+    if (missingStudyTable(authoredQuery.error)) flags.push('authored_case_version_archive_unavailable');
+    else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_authored_case_versions:${authoredQuery.error.message}`);
+  } else authoredVersions = (authoredQuery.data ?? []) as Array<Record<string, unknown>>;
+  const eligible = (row: Record<string, unknown>) => typeof row.created_at === 'string' && new Date(row.created_at).getTime() <= cutoff && (!explicitCaseVersion || row.case_version === explicitCaseVersion);
+  const assignmentVersion = assignmentVersions.filter(eligible)[0] ?? null;
+  const authoredVersion = authoredVersions.filter(eligible)[0] ?? null;
+  for (const row of assignmentVersions) references.push({ source_table: 'mar_assignment_baseline_versions', source_key: `${assignmentId}:${String(row.case_version)}`, case_version: row.case_version, content_hash: row.content_hash, recorded_at: row.created_at, available_at: row.created_at, usable_at_completion: row === assignmentVersion });
+  for (const row of authoredVersions) references.push({ source_table: 'mar_authored_case_versions', source_key: `${String(row.room_id)}:${String(row.case_version)}`, case_version: row.case_version, content_hash: row.content_hash, recorded_at: row.created_at, available_at: row.created_at, usable_at_completion: row === authoredVersion });
+  if (assignmentVersions.length && !assignmentVersion) flags.push('assignment_case_version_missing_at_completion');
+  if (authoredVersions.length && !authoredVersion) flags.push('authored_case_version_missing_at_completion');
+  const caseVersion = explicitCaseVersion ?? authoredVersion?.case_version ?? assignmentVersion?.case_version ?? null;
+  if (!caseVersion) flags.push('case_version_unavailable');
+  if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') flags.push('scenario_baseline_unavailable_legacy_assignment');
+  return {
+    resolved_case_version: caseVersion,
+    assignment_baseline_version: assignmentVersion ? { case_version: assignmentVersion.case_version, patient_id: assignmentVersion.patient_id, room_id: assignmentVersion.room_id, event_snapshot: assignmentVersion.event_snapshot, content_hash: assignmentVersion.content_hash, recorded_at: assignmentVersion.created_at } : null,
+    authored_case_version: authoredVersion ? { room_id: authoredVersion.room_id, patient_id: authoredVersion.patient_id, case_version: authoredVersion.case_version, order_snapshot: authoredVersion.order_snapshot, event_snapshot: authoredVersion.event_snapshot, content_hash: authoredVersion.content_hash, recorded_at: authoredVersion.created_at } : null,
+    references,
+    missing_history_flags: flags,
+  };
+};
+
 const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
   const results: Array<Record<string, unknown>> = [];
   for (const item of manifest.attempts) {
@@ -148,27 +186,29 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
       if (!assignmentResult.data) throw new Error('ASSIGNMENT_NOT_FOUND');
       const assignment = assignmentResult.data as Record<string, unknown>;
       if (assignment.status !== 'completed') throw new Error('CONTEXT_UNRECOVERABLE:assignment is not completed');
-      if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
       const completedAt = typeof assignment.completed_at === 'string' ? assignment.completed_at : '';
       if (!completedAt) throw new Error('CONTEXT_UNRECOVERABLE:assignment has no completed_at cutoff');
+      const legacyRecovery = await legacyCaseRecovery(client, assignment, completedAt);
       const context = await exactContext(client, item.assignment_id, completedAt);
-      const historicalChart = assignment.scenario_baseline as Record<string, unknown>;
+      const historicalChart = assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' ? assignment.scenario_baseline as Record<string, unknown> : null;
       const baselineVersion = firstDefined(assignment, ['scenario_baseline_version', 'baseline_version']);
       const progressNoteVersion = firstDefined(assignment, ['student_progress_note_version', 'progress_note_version', 'student_progress_note_revision']);
       const entries = buildAssignmentTimelineEntries({ assignment: { id: String(assignment.id), completed_at: completedAt, student_progress_note: typeof assignment.student_progress_note === 'string' ? assignment.student_progress_note : null }, assignmentId: item.assignment_id, targetRoomIds: null, messages: (context.rows.chat_messages ?? []) as TimelineChatMessageRow[], orders: (context.rows.medical_orders ?? []) as TimelineOrderRow[], labs: (context.rows.lab_results ?? []) as TimelineLabRow[], vitals: (context.rows.vital_signs ?? []) as TimelineVitalRow[], imaging: (context.rows.imaging_studies ?? []) as TimelineImagingRow[], learnerActions: (context.rows.learner_action_events ?? []) as TimelineLearnerActionRow[], patientMessages: (context.rows.patient_chat_messages ?? []) as TimelinePatientMessageRow[], consultantMessages: (context.rows.consultant_chat_messages ?? []) as TimelineConsultantMessageRow[] });
-      const caseKey = resolveCaseEvaluationKey(historicalChart);
+      const caseKey = historicalChart ? resolveCaseEvaluationKey(historicalChart) : { version: legacyRecovery.resolved_case_version ?? (typeof assignment.case_key_version === 'string' ? assignment.case_key_version : CASE_KEY_VERSION) };
       results.push({
         ...base,
         status: 'audited',
         assignment: { id: assignment.id, room_id: assignment.room_id ?? null, status: assignment.status, completed_at: completedAt },
         case: { specialty: item.specialty, case_label: item.case_label, packet_label: item.packet_label, key_version: caseKey.version || CASE_KEY_VERSION },
-        baseline: { value: historicalChart, version: baselineVersion },
+        baseline: { value: historicalChart, version: baselineVersion, source: historicalChart ? 'student_room_assignments.scenario_baseline' : null },
+        legacy_case_recovery: legacyRecovery,
         progress_note: { value: assignment.student_progress_note ?? null, version: progressNoteVersion, recorded_at: firstDefined(assignment, ['student_progress_note_created_at', 'progress_note_created_at']), updated_at: firstDefined(assignment, ['student_progress_note_updated_at', 'progress_note_updated_at']) },
         evidence: historicalEvidence(context.rows),
         evidence_ids: [...new Set(Object.values(context.rows).flatMap((rows) => (rows as Record<string, unknown>[]).map((row) => row.id).filter((id): id is string | number => typeof id === 'string' || typeof id === 'number')).map(String))],
         availability: context.availability,
         missing_history_flags: [
           ...(baselineVersion === null ? ['baseline_version_unavailable'] : []),
+          ...legacyRecovery.missing_history_flags,
           ...(progressNoteVersion === null ? ['progress_note_version_unavailable'] : []),
           ...((context.availability as { missing_historical_version?: unknown[] }).missing_historical_version ?? []).map((entry) => ({ kind: 'historical_version_unavailable', ...entry as Record<string, unknown> })),
         ],
@@ -268,7 +308,7 @@ const evaluate = async (manifest: FacultyStudyManifest, item: FacultyStudyManife
   const rows = context.rows;
   const entries = buildAssignmentTimelineEntries({ assignment: { id: String(assignment.id), completed_at: String(assignment.completed_at), student_progress_note: typeof assignment.student_progress_note === 'string' ? assignment.student_progress_note : null }, assignmentId: item.assignment_id, targetRoomIds: null, messages: (rows.chat_messages ?? []) as TimelineChatMessageRow[], orders: (rows.medical_orders ?? []) as TimelineOrderRow[], labs: (rows.lab_results ?? []) as TimelineLabRow[], vitals: (rows.vital_signs ?? []) as TimelineVitalRow[], imaging: (rows.imaging_studies ?? []) as TimelineImagingRow[], learnerActions: (rows.learner_action_events ?? []) as TimelineLearnerActionRow[], patientMessages: (rows.patient_chat_messages ?? []) as TimelinePatientMessageRow[], consultantMessages: (rows.consultant_chat_messages ?? []) as TimelineConsultantMessageRow[] });
   const sourceIds = new Set(entries.map((entry) => entry.id));
-  const room = (assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' ? assignment.scenario_baseline : assignment.room ?? {}) as Record<string, unknown>;
+  const room = assignment.scenario_baseline as Record<string, unknown>;
   const caseKey = resolveCaseEvaluationKey(room);
   const prompt = `${EVALUATION_SYSTEM_PROMPT}\n\n${CANONICAL_RUBRIC}\n\nACTIVE EVALUATOR PROMPT (frozen at preparation):\n${String(evaluator.evaluator_prompt ?? '')}\n\nSCORING ANCHORS (frozen at preparation):\n${JSON.stringify(evaluator.scoring_anchors ?? {}, null, 2)}\n\nThis is a deidentified faculty study. Evaluate only this immutable historical assignment context. Do not infer missing events. The evidence boundary is exactly the following assignment-scoped timeline, reconstructed with the deployed case key version ${caseKey.version || CASE_KEY_VERSION}, rubric ${FEEDBACK_RUBRIC_VERSION}, and assessment ${ASSESSMENT_VERSION}.\n\nCASE LABELS (preserve in output): specialty=${item.specialty}; case=${item.case_label}; packet=${item.packet_label}\n\nASSIGNMENT SNAPSHOT:\n${JSON.stringify({ status: assignment.status, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note, room_id: assignment.room_id, scenario_baseline_version: assignment.scenario_baseline_version })}\n\nHISTORICAL CHART RECONSTRUCTION:\n${JSON.stringify(room)}\n\nAVAILABILITY:\n${JSON.stringify(context.availability)}\n\nHISTORICAL EVIDENCE:\n${renderTimelineEntriesForEvaluation(entries)}\n\nReturn JSON with the six scored components, domain scores, strengths, improvements, recommendations, safety_result, and evidence_event_ids copied only from this evidence boundary.`;
   const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
@@ -361,11 +401,8 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
   const existingResult = await client.from('faculty_study_results').select('batch_ordinal, result, error').eq('batch_id', batchId);
   if (existingResult.error) throw existingResult.error;
   const doneOrdinals = new Set((existingResult.data ?? []).filter((row) => isTerminalStudyResult(row)).map((row) => row.batch_ordinal));
-  const persistedOrRequestedOrdinals = requestedOrdinals === undefined ? manifest.target_ordinals : requestedOrdinals;
-  const targetOrdinals = Array.isArray(persistedOrRequestedOrdinals)
-    ? new Set(persistedOrRequestedOrdinals.filter((ordinal): ordinal is number => Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= 30))
-    : null;
-  if (Array.isArray(persistedOrRequestedOrdinals) && (!targetOrdinals?.size || targetOrdinals.size !== persistedOrRequestedOrdinals.length)) throw new Error('STUDY_TARGET_ORDINALS_INVALID');
+  const resolvedTargetOrdinals = resolveStudyTargetOrdinals(manifest.target_ordinals, requestedOrdinals);
+  const targetOrdinals = resolvedTargetOrdinals ? new Set(resolvedTargetOrdinals) : null;
   const scopedOrdinals = targetOrdinals ?? new Set(manifest.attempts.map((item) => item.batch_ordinal));
   const pending = manifest.attempts.filter((item) => !doneOrdinals.has(item.batch_ordinal) && (!targetOrdinals || targetOrdinals.has(item.batch_ordinal))).slice(0, limit);
   if (pending.length === 0) {
@@ -406,7 +443,8 @@ const run = async (client: ReturnType<typeof serviceClient>, batchId: string, re
       const context = await exactContext(client, item.assignment_id, completedAt);
       const attestation = (batch.attempt_attestations as Array<Record<string, unknown>>).find((candidate) => candidate.batch_ordinal === item.batch_ordinal) ?? {};
       const sourceHashes = { context_sha256: await sha256(JSON.stringify(context)), assignment_snapshot_sha256: await sha256(JSON.stringify(snapshot)) };
-      const historicalChart = (assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' ? assignment.scenario_baseline : assignment.room ?? {}) as Record<string, unknown>;
+      if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') throw new Error('CONTEXT_UNRECOVERABLE:HISTORICAL_CHART_BASELINE_MISSING');
+      const historicalChart = assignment.scenario_baseline as Record<string, unknown>;
       frozenInput = { assignment_snapshot: snapshot, context, chart_reconstruction: historicalChart, source_hashes: sourceHashes, redaction_terms: privateTerms, case_key: resolveCaseEvaluationKey(historicalChart), evaluator: { prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors }, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION };
       await writeOwnedFacultyStudyResult(client, { batchId, batchOrdinal: item.batch_ordinal, leaseToken, assignmentId: item.assignment_id, historicalSnapshot: snapshot, frozenInput, result: null, canonicalResult: null, rawModelResponse: null, error: null, promptVersion: String(batch.prompt_version), model, generatedAt: null });
       const evaluation = await evaluate(manifest, item, assignment, context, model, { evaluator_prompt: attestation.evaluator_prompt, scoring_anchors: attestation.scoring_anchors });

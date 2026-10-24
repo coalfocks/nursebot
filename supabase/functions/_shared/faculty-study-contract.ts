@@ -69,6 +69,13 @@ export const studyProgress = (rows: Array<{ batch_ordinal: number; result?: unkn
   const totalCount = scopedOrdinals.size;
   return { completedCount, errorCount, totalCount, pendingCount: totalCount - completedCount - errorCount };
 };
+export const resolveStudyTargetOrdinals = (persisted: number[] | undefined, requested: unknown) => {
+  const source = requested === undefined || requested === null ? persisted : requested;
+  if (source === undefined) return null;
+  if (!Array.isArray(source) || source.length === 0 || source.some((ordinal) => !Number.isInteger(ordinal) || ordinal < 1 || ordinal > 30) || new Set(source).size !== source.length) throw new Error('STUDY_TARGET_ORDINALS_INVALID');
+  if (persisted && requested !== undefined && requested !== null && source.some((ordinal) => !persisted.includes(ordinal))) throw new Error('STUDY_TARGET_ORDINALS_OUTSIDE_SCOPE');
+  return [...source] as number[];
+};
 export const STUDY_RUN_LEASE_MS = 15 * 60 * 1000;
 export const isStudyRunLeaseExpired = (leaseExpiresAt: unknown, now = Date.now()) =>
   typeof leaseExpiresAt === 'string' && Number.isFinite(new Date(leaseExpiresAt).getTime()) && new Date(leaseExpiresAt).getTime() <= now;
