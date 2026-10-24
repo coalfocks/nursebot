@@ -5,6 +5,7 @@ export type LegacyCaseIdentity = {
   schoolId: string | null;
   roomId: number | null;
   pinnedCaseVersion: string | null;
+  identityProvenance: 'assignment' | 'joined-room' | 'missing';
 };
 
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -42,6 +43,8 @@ export const resolveLegacyCaseProvenance = ({
   const flags: string[] = [];
   const references: LegacyArchiveRow[] = [];
   const identityExcluded: LegacyArchiveRow[] = [];
+  const identityUnresolved = identity.identityProvenance !== 'assignment';
+  if (identityUnresolved) flags.push('historical_assignment_identity_unresolved');
   const usableAssignmentRows = assignmentRows.filter((row) => {
     if (identityMatches(row, identity)) return true;
     identityExcluded.push({ ...row, exclusion_reason: 'patient_school_or_room_mismatch' });
@@ -61,7 +64,9 @@ export const resolveLegacyCaseProvenance = ({
   // silently filtered out and the lineage problem would disappear.
   const authored = usableAuthoredRows.filter((row) => completionEligible(row, cutoffMs, null))[0] ?? null;
   const authoredConflict = Boolean(pinned && authored && pinned.case_version !== authored.case_version);
+  const explicitVersionMismatch = Boolean(identity.pinnedCaseVersion && authored && authored.case_version !== identity.pinnedCaseVersion && !pinned);
   if (authoredConflict) flags.push('case_lineage_conflict_pinned_assignment_over_authored');
+  if (explicitVersionMismatch) flags.push('case_version_source_mismatch_pinned_assignment_archive_missing');
 
   for (const row of assignmentRows) references.push({
     source_table: 'mar_assignment_baseline_versions',
@@ -74,8 +79,8 @@ export const resolveLegacyCaseProvenance = ({
     available_at: row.created_at ?? null,
     source_scope: 'assignment-pinned',
     complete_case_snapshot: false,
-    usable_at_completion: row === pinned,
-    exclusion_reason: row === pinned ? null : identityMatches(row, identity) ? 'not_selected_pinned_version' : 'patient_school_or_room_mismatch',
+    usable_at_completion: row === pinned && !identityUnresolved,
+    exclusion_reason: row === pinned ? identityUnresolved ? 'historical_assignment_identity_unresolved' : null : identityMatches(row, identity) ? 'not_selected_pinned_version' : 'patient_school_or_room_mismatch',
   });
   for (const row of authoredRows) references.push({
     source_table: 'mar_authored_case_versions',
@@ -88,14 +93,14 @@ export const resolveLegacyCaseProvenance = ({
     available_at: row.created_at ?? null,
     source_scope: 'room-authored',
     complete_case_snapshot: false,
-    usable_at_completion: row === authored && !pinned,
-    exclusion_reason: row === authored && !pinned ? null : identityMatches(row, identity) ? (pinned ? 'pinned_assignment_version_takes_precedence' : 'not_selected_completion_version') : 'patient_school_or_room_mismatch',
+    usable_at_completion: row === authored && !pinned && !explicitVersionMismatch && !identityUnresolved,
+    exclusion_reason: row === authored && !pinned && !explicitVersionMismatch ? identityUnresolved ? 'historical_assignment_identity_unresolved' : null : identityMatches(row, identity) ? (explicitVersionMismatch ? 'pinned_assignment_version_not_recovered' : pinned ? 'pinned_assignment_version_takes_precedence' : 'not_selected_completion_version') : 'patient_school_or_room_mismatch',
   });
 
   if (assignmentRows.length && !pinned) flags.push('assignment_case_version_missing_at_completion');
   if (authoredRows.length && !authored) flags.push('authored_case_version_missing_at_completion');
-  const selected = pinned ?? (authoredConflict ? null : authored);
-  const resolvedCaseVersion = identity.pinnedCaseVersion ?? selected?.case_version ?? null;
+  const selected = pinned && !identityUnresolved ? pinned : explicitVersionMismatch || authoredConflict || identityUnresolved ? null : authored;
+  const resolvedCaseVersion = selected?.case_version ?? (identity.pinnedCaseVersion && !explicitVersionMismatch && !identityUnresolved ? identity.pinnedCaseVersion : null);
   if (!resolvedCaseVersion) flags.push('case_version_unavailable');
   if (!hasFullScenarioBaseline) {
     flags.push('historical_full_case_source_missing');
@@ -107,9 +112,10 @@ export const resolveLegacyCaseProvenance = ({
     resolved_case_version: resolvedCaseVersion,
     selected_source: hasFullScenarioBaseline ? 'student_room_assignments.scenario_baseline' : selected ? (pinned ? 'mar_assignment_baseline_versions_partial' : 'mar_authored_case_versions_partial') : null,
     full_case_source_available: hasFullScenarioBaseline,
+    resolved_case_version_verified: Boolean(selected && (!identity.pinnedCaseVersion || selected.case_version === identity.pinnedCaseVersion)),
     archive_content_scope: selected && !hasFullScenarioBaseline ? 'orders_and_events_only' : hasFullScenarioBaseline ? 'full_assignment_scenario_baseline' : null,
-    assignment_baseline_version: pinned,
-    authored_case_version: authored,
+    assignment_baseline_version: pinned ? { ...pinned, usable_at_completion: Boolean(!identityUnresolved) } : null,
+    authored_case_version: authored ? { ...authored, usable_at_completion: Boolean(!pinned && !explicitVersionMismatch && !identityUnresolved) } : null,
     references,
     identity_excluded_references: identityExcluded,
     missing_history_flags: flags,

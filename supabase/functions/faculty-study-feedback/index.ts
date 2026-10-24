@@ -127,6 +127,81 @@ const exactContext = async (client: ReturnType<typeof serviceClient>, assignment
   return { rows, availability };
 };
 
+const optionalHistoryRows = async (client: ReturnType<typeof serviceClient>, table: string, columns: string, assignmentId: string, roomId: number, caseVersion: string | null) => {
+  let query = client.from(table).select(columns);
+  query = table === 'manual_mar_packet_audit'
+    ? query.eq('room_id', roomId).eq('case_version', caseVersion ?? '')
+    : query.eq('assignment_id', assignmentId);
+  const result = await query;
+  if (result.error) {
+    return missingStudyTable(result.error)
+      ? { available: false, rows: [], reason: 'source_table_unavailable' }
+      : { available: false, rows: [], reason: `source_read_failed:${result.error.message}` };
+  }
+  return { available: true, rows: (result.data ?? []) as unknown as Record<string, unknown>[], reason: null };
+};
+
+const historicalSourceInventory = async (
+  client: ReturnType<typeof serviceClient>,
+  assignment: Record<string, unknown>,
+  completedAt: string,
+  legacyRecovery: Record<string, unknown>,
+  context: { rows: Record<string, unknown[]>; availability: Record<string, unknown> },
+) => {
+  const assignmentId = String(assignment.id);
+  const roomId = Number(assignment.room_id);
+  const caseVersion = typeof assignment.case_key_version === 'string' ? assignment.case_key_version : null;
+  const [assignmentMar, saveOperations, packetAudit, noteVersions, clinicalNoteVersions] = await Promise.all([
+    optionalHistoryRows(client, 'manual_mar_assignment_snapshots', 'id, assignment_id, source_packet_id, patient_id, room_id, case_version, packet_revision, content_hash, created_at', assignmentId, roomId, caseVersion),
+    optionalHistoryRows(client, 'mar_save_operations', 'request_id, patient_id, room_id, assignment_id, case_version, content_hash, expected_revision, created_at', assignmentId, roomId, caseVersion),
+    optionalHistoryRows(client, 'manual_mar_packet_audit', 'id, packet_id, request_id, patient_id, room_id, case_version, prior_revision, next_revision, payload_hash, created_at', assignmentId, roomId, caseVersion),
+    optionalHistoryRows(client, 'student_progress_note_versions', 'id, assignment_id, version, content_hash, created_at, updated_at, deleted_at', assignmentId, roomId, caseVersion),
+    optionalHistoryRows(client, 'clinical_note_versions', 'id, assignment_id, version, content_hash, created_at, updated_at, deleted_at', assignmentId, roomId, caseVersion),
+  ]);
+  const missingVersions = (context.availability.missing_historical_version ?? []) as Array<Record<string, unknown>>;
+  const orderUpdates = missingVersions.filter((row) => row.table === 'medical_orders');
+  const updateGroups = Object.entries(orderUpdates.reduce<Record<string, string[]>>((groups, row) => {
+    const timestamp = typeof row.updated_at === 'string' ? row.updated_at : 'missing';
+    (groups[timestamp] ??= []).push(String(row.id));
+    return groups;
+  }, {})).map(([updated_at, order_ids]) => ({ updated_at, order_ids, order_count: order_ids.length }));
+  const noteMetadata = {
+    assignment_value_present: typeof assignment.student_progress_note === 'string' && assignment.student_progress_note.length > 0,
+    version: firstDefined(assignment, ['student_progress_note_version', 'progress_note_version', 'student_progress_note_revision']),
+    recorded_at: firstDefined(assignment, ['student_progress_note_created_at', 'progress_note_created_at']),
+    updated_at: firstDefined(assignment, ['student_progress_note_updated_at', 'progress_note_updated_at']),
+  };
+  return {
+    cutoff: completedAt,
+    full_case_sources: {
+      assignment_scenario_baseline: Boolean(assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object'),
+      mar_assignment_snapshot: assignmentMar,
+      historical_full_case_source_proven: Boolean(assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object'),
+      missing_full_case_source: !assignment.scenario_baseline,
+    },
+    order_history: {
+      scoped_current_rows: (context.rows.medical_orders ?? []).length,
+      excluded_after_completion_rows: orderUpdates,
+      shared_update_timestamp_groups: updateGroups,
+      migration_or_audit_rows: { mar_save_operations: saveOperations, manual_mar_packet_audit: packetAudit },
+      content_recovery_proven: false,
+      correlation_note: updateGroups.length ? 'Shared updated_at values are correlated with available audit rows only; metadata alone does not prove pre-edit content.' : null,
+    },
+    completed_note_history: {
+      current_assignment_metadata: noteMetadata,
+      progress_note_versions: noteVersions,
+      clinical_note_versions: clinicalNoteVersions,
+      version_proven: noteVersions.available && noteVersions.rows.length > 0,
+      missing_history: !noteVersions.available || noteVersions.rows.length === 0,
+    },
+    archive_recovery: {
+      references: legacyRecovery.references ?? [],
+      identity_excluded_references: legacyRecovery.identity_excluded_references ?? [],
+      missing_history_flags: legacyRecovery.missing_history_flags ?? [],
+    },
+  };
+};
+
 const firstDefined = (row: Record<string, unknown>, keys: string[]) => keys.map((key) => row[key]).find((value) => value !== undefined) ?? null;
 
 const historicalEvidence = (rows: Record<string, unknown[]>) => Object.entries(rows).flatMap(([table, sourceRows]) => (sourceRows as Record<string, unknown>[]).map((row) => ({
@@ -156,15 +231,17 @@ const legacyCaseRecovery = async (client: ReturnType<typeof serviceClient>, assi
     if (missingStudyTable(authoredQuery.error)) { archiveFlags.push('authored_case_version_archive_unavailable'); authoredVersions = []; }
     else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_authored_case_versions:${authoredQuery.error.message}`);
   } else authoredVersions = (authoredQuery.data ?? []) as Array<Record<string, unknown>>;
-  const room = assignment.room && typeof assignment.room === 'object' ? assignment.room as Record<string, unknown> : {};
   const provenance = resolveLegacyCaseProvenance({
     assignmentRows: assignmentVersions,
     authoredRows: authoredVersions,
     identity: {
-      patientId: typeof assignment.patient_id === 'string' ? assignment.patient_id : typeof room.patient_id === 'string' ? room.patient_id : null,
-      schoolId: typeof assignment.school_id === 'string' ? assignment.school_id : typeof room.school_id === 'string' ? room.school_id : null,
+      // Never inherit patient/school identity from the current joined room for
+      // a legacy assignment: that room may have been edited after completion.
+      patientId: typeof assignment.patient_id === 'string' ? assignment.patient_id : null,
+      schoolId: typeof assignment.school_id === 'string' ? assignment.school_id : null,
       roomId: Number.isFinite(roomId) ? roomId : null,
       pinnedCaseVersion: explicitCaseVersion,
+      identityProvenance: typeof assignment.patient_id === 'string' && typeof assignment.school_id === 'string' ? 'assignment' : 'missing',
     },
     completedAt,
     hasFullScenarioBaseline: Boolean(assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object'),
@@ -186,6 +263,7 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
       if (!completedAt) throw new Error('CONTEXT_UNRECOVERABLE:assignment has no completed_at cutoff');
       const legacyRecovery = await legacyCaseRecovery(client, assignment, completedAt);
       const context = await exactContext(client, item.assignment_id, completedAt);
+      const sourceInventory = await historicalSourceInventory(client, assignment, completedAt, legacyRecovery, context);
       const historicalChart = assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' ? assignment.scenario_baseline as Record<string, unknown> : null;
       const baselineVersion = firstDefined(assignment, ['scenario_baseline_version', 'baseline_version']);
       const progressNoteVersion = firstDefined(assignment, ['student_progress_note_version', 'progress_note_version', 'student_progress_note_revision']);
@@ -202,6 +280,7 @@ const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, ma
         evidence: historicalEvidence(context.rows),
         evidence_ids: [...new Set(Object.values(context.rows).flatMap((rows) => (rows as Record<string, unknown>[]).map((row) => row.id).filter((id): id is string | number => typeof id === 'string' || typeof id === 'number')).map(String))],
         availability: context.availability,
+        source_inventory: sourceInventory,
         missing_history_flags: [
           ...(baselineVersion === null ? ['baseline_version_unavailable'] : []),
           ...legacyRecovery.missing_history_flags,

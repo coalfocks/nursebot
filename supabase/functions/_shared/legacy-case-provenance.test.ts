@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveLegacyCaseProvenance } from './legacy-case-provenance';
 
-const identity = { patientId: 'patient-1', schoolId: 'school-1', roomId: 7, pinnedCaseVersion: 'case-v1' };
+const identity = { patientId: 'patient-1', schoolId: 'school-1', roomId: 7, pinnedCaseVersion: 'case-v1', identityProvenance: 'assignment' as const };
 const completedAt = '2026-10-24T00:00:00.000Z';
 
 describe('legacy case provenance', () => {
@@ -49,5 +49,33 @@ describe('legacy case provenance', () => {
     expect(result.selected_source).toBe('student_room_assignments.scenario_baseline');
     expect(result.archive_content_scope).toBe('full_assignment_scenario_baseline');
     expect(result.missing_history_flags).not.toContain('historical_full_case_source_missing');
+  });
+
+  it('does not treat authored v2 as a recovery for an explicit pinned v1', () => {
+    const result = resolveLegacyCaseProvenance({
+      identity,
+      completedAt,
+      hasFullScenarioBaseline: false,
+      assignmentRows: [],
+      authoredRows: [{ room_id: 7, patient_id: 'patient-1', school_id: 'school-1', case_version: 'case-v2', created_at: '2026-10-23T00:00:00.000Z' }],
+    });
+    expect(result.authored_case_version?.case_version).toBe('case-v2');
+    expect(result.authored_case_version?.usable_at_completion).toBe(false);
+    expect(result.resolved_case_version).toBeNull();
+    expect(result.missing_history_flags).toContain('case_version_source_mismatch_pinned_assignment_archive_missing');
+  });
+
+  it('does not use the joined room when assignment identity is absent', () => {
+    const result = resolveLegacyCaseProvenance({
+      identity: { patientId: null, schoolId: null, roomId: 7, pinnedCaseVersion: 'case-v1', identityProvenance: 'missing' },
+      completedAt,
+      hasFullScenarioBaseline: false,
+      assignmentRows: [{ assignment_id: 'assignment-1', case_version: 'case-v1', patient_id: 'historical-patient', room_id: 7, created_at: '2026-10-23T00:00:00.000Z' }],
+      authoredRows: [],
+    });
+    expect(result.assignment_baseline_version?.case_version).toBe('case-v1');
+    expect(result.assignment_baseline_version?.usable_at_completion).toBe(false);
+    expect(result.resolved_case_version).toBeNull();
+    expect(result.missing_history_flags).toContain('historical_assignment_identity_unresolved');
   });
 });
