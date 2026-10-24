@@ -8,6 +8,7 @@ import { buildStudyFeedbackBackup, csvEscape, deidentifyStudyResult, FACULTY_STU
 import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-lease.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows } from '../_shared/historical-context.ts';
+import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shared/faculty-study-auth.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -24,24 +25,24 @@ const deploymentMode = (): FacultyStudyDeploymentMode => {
 };
 
 const requireAdmin = async (req: Request, client: ReturnType<typeof serviceClient>, requestId: string) => {
-  const authorization = req.headers.get('authorization');
-  if (!authorization) throw new Error('STUDY_AUTH_REQUIRED');
-  const tokenClient = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', { global: { headers: { Authorization: authorization } } });
-  const { data: userData, error: userError } = await tokenClient.auth.getUser();
-  if (userError || !userData.user) {
-    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'auth.getUser', code: 'STUDY_AUTH_INVALID', provider_error: userError?.message ?? 'user missing' }));
-    throw new Error('STUDY_AUTH_INVALID');
+  let userId: string;
+  try {
+    userId = await authenticateFacultyStudyUser(req, (options) => createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_ANON_KEY') ?? '', options));
+  } catch (error) {
+    const authError = error instanceof Error ? error.message : String(error);
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'auth.getUser', code: authError === 'STUDY_AUTH_REQUIRED' ? authError : 'STUDY_AUTH_INVALID', provider_error: authError }));
+    throw error instanceof Error ? error : new Error('STUDY_AUTH_INVALID');
   }
-  const { data: profile, error: profileError } = await client.from('profiles').select('id, role').eq('id', userData.user.id).maybeSingle();
+  const { data: profile, error: profileError } = await client.from('profiles').select('id, role').eq('id', userId).maybeSingle();
   if (profileError) {
-    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'profiles.lookup', user_id: userData.user.id, code: 'STUDY_PROFILE_LOOKUP_FAILED', provider_error: profileError.message }));
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'profiles.lookup', user_id: userId, code: 'STUDY_PROFILE_LOOKUP_FAILED', provider_error: profileError.message }));
     throw new Error('STUDY_PROFILE_LOOKUP_FAILED');
   }
-  if (profile?.role !== 'super_admin') {
-    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'role.check', user_id: userData.user.id, observed_role: profile?.role ?? null, code: 'STUDY_SUPERADMIN_REQUIRED' }));
+  if (!isFacultyStudySuperAdmin(profile)) {
+    console.error(JSON.stringify({ event: 'faculty_study_auth', request_id: requestId, stage: 'role.check', user_id: userId, observed_role: profile?.role ?? null, code: 'STUDY_SUPERADMIN_REQUIRED' }));
     throw new Error('STUDY_SUPERADMIN_REQUIRED');
   }
-  return userData.user.id;
+  return userId;
 };
 
 const activeConfig = async (client: ReturnType<typeof serviceClient>, roomId: number) => {
