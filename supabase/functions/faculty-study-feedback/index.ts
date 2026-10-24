@@ -9,6 +9,7 @@ import { writeOwnedFacultyStudyResult } from '../_shared/faculty-study-result-le
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { filterHistoricalRows, historicalEventTimestamp } from '../_shared/historical-context.ts';
 import { authenticateFacultyStudyUser, isFacultyStudySuperAdmin } from '../_shared/faculty-study-auth.ts';
+import { resolveLegacyCaseProvenance } from '../_shared/legacy-case-provenance.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const json = (value: unknown, status = 200, requestId?: string) => new Response(JSON.stringify(value), { status, headers: { ...corsHeaders, ...(requestId ? { 'X-Study-Request-Id': requestId } : {}), 'Content-Type': 'application/json' } });
@@ -142,38 +143,33 @@ const legacyCaseRecovery = async (client: ReturnType<typeof serviceClient>, assi
   const assignmentId = String(assignment.id);
   const roomId = Number(assignment.room_id);
   const explicitCaseVersion = typeof assignment.case_key_version === 'string' && assignment.case_key_version.trim() ? assignment.case_key_version.trim() : null;
-  const cutoff = new Date(completedAt).getTime();
-  const flags: string[] = [];
-  const references: Array<Record<string, unknown>> = [];
+  const archiveFlags: string[] = [];
   let assignmentVersions: Array<Record<string, unknown>> = [];
   let authoredVersions: Array<Record<string, unknown>> = [];
   const baselineQuery = await client.from('mar_assignment_baseline_versions').select('assignment_id, case_version, patient_id, room_id, event_snapshot, content_hash, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: false });
   if (baselineQuery.error) {
-    if (missingStudyTable(baselineQuery.error)) flags.push('assignment_case_version_archive_unavailable');
+    if (missingStudyTable(baselineQuery.error)) { archiveFlags.push('assignment_case_version_archive_unavailable'); assignmentVersions = []; }
     else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_assignment_baseline_versions:${baselineQuery.error.message}`);
   } else assignmentVersions = (baselineQuery.data ?? []) as Array<Record<string, unknown>>;
   const authoredQuery = await client.from('mar_authored_case_versions').select('room_id, patient_id, school_id, case_version, order_snapshot, event_snapshot, content_hash, created_at').eq('room_id', roomId).order('created_at', { ascending: false });
   if (authoredQuery.error) {
-    if (missingStudyTable(authoredQuery.error)) flags.push('authored_case_version_archive_unavailable');
+    if (missingStudyTable(authoredQuery.error)) { archiveFlags.push('authored_case_version_archive_unavailable'); authoredVersions = []; }
     else throw new Error(`LEGACY_CASE_ARCHIVE_READ_FAILED:mar_authored_case_versions:${authoredQuery.error.message}`);
   } else authoredVersions = (authoredQuery.data ?? []) as Array<Record<string, unknown>>;
-  const eligible = (row: Record<string, unknown>) => typeof row.created_at === 'string' && new Date(row.created_at).getTime() <= cutoff && (!explicitCaseVersion || row.case_version === explicitCaseVersion);
-  const assignmentVersion = assignmentVersions.filter(eligible)[0] ?? null;
-  const authoredVersion = authoredVersions.filter(eligible)[0] ?? null;
-  for (const row of assignmentVersions) references.push({ source_table: 'mar_assignment_baseline_versions', source_key: `${assignmentId}:${String(row.case_version)}`, case_version: row.case_version, content_hash: row.content_hash, recorded_at: row.created_at, available_at: row.created_at, usable_at_completion: row === assignmentVersion });
-  for (const row of authoredVersions) references.push({ source_table: 'mar_authored_case_versions', source_key: `${String(row.room_id)}:${String(row.case_version)}`, case_version: row.case_version, content_hash: row.content_hash, recorded_at: row.created_at, available_at: row.created_at, usable_at_completion: row === authoredVersion });
-  if (assignmentVersions.length && !assignmentVersion) flags.push('assignment_case_version_missing_at_completion');
-  if (authoredVersions.length && !authoredVersion) flags.push('authored_case_version_missing_at_completion');
-  const caseVersion = explicitCaseVersion ?? authoredVersion?.case_version ?? assignmentVersion?.case_version ?? null;
-  if (!caseVersion) flags.push('case_version_unavailable');
-  if (!assignment.scenario_baseline || typeof assignment.scenario_baseline !== 'object') flags.push('scenario_baseline_unavailable_legacy_assignment');
-  return {
-    resolved_case_version: caseVersion,
-    assignment_baseline_version: assignmentVersion ? { case_version: assignmentVersion.case_version, patient_id: assignmentVersion.patient_id, room_id: assignmentVersion.room_id, event_snapshot: assignmentVersion.event_snapshot, content_hash: assignmentVersion.content_hash, recorded_at: assignmentVersion.created_at } : null,
-    authored_case_version: authoredVersion ? { room_id: authoredVersion.room_id, patient_id: authoredVersion.patient_id, case_version: authoredVersion.case_version, order_snapshot: authoredVersion.order_snapshot, event_snapshot: authoredVersion.event_snapshot, content_hash: authoredVersion.content_hash, recorded_at: authoredVersion.created_at } : null,
-    references,
-    missing_history_flags: flags,
-  };
+  const room = assignment.room && typeof assignment.room === 'object' ? assignment.room as Record<string, unknown> : {};
+  const provenance = resolveLegacyCaseProvenance({
+    assignmentRows: assignmentVersions,
+    authoredRows: authoredVersions,
+    identity: {
+      patientId: typeof assignment.patient_id === 'string' ? assignment.patient_id : typeof room.patient_id === 'string' ? room.patient_id : null,
+      schoolId: typeof assignment.school_id === 'string' ? assignment.school_id : typeof room.school_id === 'string' ? room.school_id : null,
+      roomId: Number.isFinite(roomId) ? roomId : null,
+      pinnedCaseVersion: explicitCaseVersion,
+    },
+    completedAt,
+    hasFullScenarioBaseline: Boolean(assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object'),
+  });
+  return { ...provenance, missing_history_flags: [...archiveFlags, ...provenance.missing_history_flags] };
 };
 
 const historicalInputAudit = async (client: ReturnType<typeof serviceClient>, manifest: FacultyStudyManifest) => {
