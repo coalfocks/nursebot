@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, ClipboardList, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, ClipboardList, Download, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -54,8 +54,9 @@ type AssignmentCreateStatus = {
 type EvidenceAuditEvent = {
   id: string;
   type: string;
-  timestamp: string;
+  timestamp: string | null;
   details: string;
+  timestampSource?: string;
 };
 
 type EvidenceAudit = {
@@ -77,6 +78,24 @@ type EvidenceAudit = {
     source_event_ids: Database['public']['Tables']['feedback_assessment_runs']['Row']['source_event_ids'];
     result: Database['public']['Tables']['feedback_assessment_runs']['Row']['result'];
   } | null;
+};
+
+type IsolatedEvaluation = {
+  id: string;
+  assignment_id: string;
+  version: number;
+  status: 'queued' | 'running' | 'completed' | 'error' | 'blocked';
+  prompt_version: string;
+  model: string;
+  generator_revision: string;
+  evaluator_config_revision: string;
+  created_at: string;
+  completed_at: string | null;
+  error?: { code?: string; message?: string } | null;
+};
+
+type StoredEvaluation = IsolatedEvaluation & {
+  artifacts: { json: string; html: string; csv: string };
 };
 
 export default function AssignmentManager() {
@@ -127,6 +146,10 @@ export default function AssignmentManager() {
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [storedEvaluation, setStoredEvaluation] = useState<StoredEvaluation | null>(null);
   const [assignmentsWithPersistedChat, setAssignmentsWithPersistedChat] = useState<Set<string>>(new Set());
   const [chatEvidenceStatus, setChatEvidenceStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const assignableStudents = getEligibleAssignmentStudents(students, scopedSchoolId);
@@ -256,17 +279,18 @@ export default function AssignmentManager() {
 
         const loadedAssignments = ((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null);
         setAssignments(loadedAssignments);
-        try {
-          setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
-        } catch (error) {
-          console.error('Error fetching persisted chat evidence:', error);
-          // The assignment list remains usable, but every badge stays unknown.
-          setAssignmentsWithPersistedChat(new Set());
-        }
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
         setSchools(schoolsResult.data || []);
+        setAssignmentsWithPersistedChat(new Set());
+        setLoading(false);
+        void fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id))
+          .then(setAssignmentsWithPersistedChat)
+          .catch((error) => {
+            console.error('Error fetching persisted chat evidence:', error);
+            setAssignmentsWithPersistedChat(new Set());
+          });
       } catch (error) {
         console.error('Error fetching data:', error);
         setLoadError(error instanceof Error ? error.message : 'Unable to load case assignments.');
@@ -310,12 +334,13 @@ export default function AssignmentManager() {
     if (error) throw error;
     const loadedAssignments = ((data ?? []) as Assignment[]).filter(a => a.room !== null);
     setAssignments(loadedAssignments);
-    try {
-      setAssignmentsWithPersistedChat(await fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id)));
-    } catch (error) {
-      console.error('Error fetching persisted chat evidence:', error);
-      setAssignmentsWithPersistedChat(new Set());
-    }
+    setAssignmentsWithPersistedChat(new Set());
+    void fetchPersistedChatAssignmentIds(loadedAssignments.map((assignment) => assignment.id))
+      .then(setAssignmentsWithPersistedChat)
+      .catch((error) => {
+        console.error('Error fetching persisted chat evidence:', error);
+        setAssignmentsWithPersistedChat(new Set());
+      });
   };
 
   const getRoomOrdersReadiness = (room: Room) => assessOrdersConfig(room.orders_config);
@@ -818,6 +843,36 @@ export default function AssignmentManager() {
     setShowChatModal(true);
   };
 
+  const handleReviewFeedback = async (assignment: Assignment) => {
+    setSelectedAssignment(assignment);
+    setShowEvaluationModal(true);
+    setStoredEvaluation(null);
+    setEvaluationError(null);
+    setEvaluationLoading(true);
+    try {
+      const historyResponse = await supabase.functions.invoke('faculty-study-feedback', {
+        body: { action: 'evaluation_history', assignment_id: assignment.id },
+      });
+      if (historyResponse.error) throw historyResponse.error;
+      const history = historyResponse.data as { evaluations?: IsolatedEvaluation[]; available?: boolean };
+      const latest = (history.evaluations ?? []).find((evaluation) => evaluation.status === 'completed');
+      if (!latest) throw new Error(history.available === false ? 'Stored isolated evaluations are not available.' : 'No completed isolated evaluation is saved for this assignment.');
+
+      const downloadResponse = await supabase.functions.invoke('faculty-study-feedback', {
+        body: { action: 'download_evaluation', evaluation_id: latest.id },
+      });
+      if (downloadResponse.error) throw downloadResponse.error;
+      const artifacts = downloadResponse.data?.artifacts as StoredEvaluation['artifacts'] | undefined;
+      if (!artifacts?.json || !artifacts.html || !artifacts.csv) throw new Error('The saved evaluation artifacts were incomplete.');
+      setStoredEvaluation({ ...latest, artifacts });
+    } catch (error) {
+      console.error('Error loading stored isolated evaluation:', error);
+      setEvaluationError(error instanceof Error ? error.message : 'Unable to load the saved evaluation.');
+    } finally {
+      setEvaluationLoading(false);
+    }
+  };
+
   const handleViewEvidence = async (assignment: Assignment) => {
     setSelectedAssignment(assignment);
     setShowEvidenceModal(true);
@@ -825,7 +880,7 @@ export default function AssignmentManager() {
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
-      const [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
+      const [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, notesResult, learnerActionsResult, runResult] = await Promise.all([
         supabase.from('student_room_assignments')
           .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
           .eq('id', assignment.id)
@@ -837,10 +892,11 @@ export default function AssignmentManager() {
         supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
         supabase.from('imaging_studies').select('id, study_type, order_name, status, report, order_time, report_generated_at, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        supabase.from('clinical_notes').select('id, title, content, note_type, timestamp, created_at').eq('assignment_id', assignment.id).is('deleted_at', null).order('timestamp', { ascending: true }),
         (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
         supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
-      for (const result of [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
+      for (const result of [assignmentResult, messagesResult, patientMessagesResult, consultantMessagesResult, ordersResult, labsResult, vitalsResult, imagingResult, notesResult, learnerActionsResult, runResult]) {
         if (result.error) throw result.error;
       }
 
@@ -848,15 +904,16 @@ export default function AssignmentManager() {
       const firstPageMessage = messages
         .filter((message) => (message.role === 'assistant' || message.role === 'nurse') && message.content !== '<completed>' && message.created_at)
         .sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime())[0];
-      const persistedStart = assignmentResult.data.scoring_start_at;
-      const scoringStart = persistedStart ?? (firstPageMessage?.created_at ? new Date(firstPageMessage.created_at).toISOString() : null);
-      const isPostPage = (timestamp: string | null) => Boolean(timestamp && scoringStart && new Date(timestamp).getTime() >= new Date(scoringStart).getTime());
       const events: EvidenceAuditEvent[] = [];
-      const timestamp = (value: string | null) => value ? new Date(value).toISOString() : null;
+      const timestamp = (value: string | null) => {
+        if (!value) return null;
+        if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      };
 
       messages.forEach((message) => {
         const eventTimestamp = timestamp(message.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
         events.push({
           id: `message-${message.id}`,
           type: message.role === 'student' || message.role === 'user' ? 'student_chat' : 'nurse_chat',
@@ -869,11 +926,11 @@ export default function AssignmentManager() {
       (patientMessagesResult.data ?? []).forEach((message) => {
         const eventTimestamp = timestamp(message.created_at);
         const eventId = `patient-message-${message.id}`;
-        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        if (transcriptIds.has(eventId)) return;
         transcriptIds.add(eventId);
         events.push({
           id: eventId,
-          type: message.role === 'student' || message.role === 'user' ? 'student_patient_chat' : 'patient_chat',
+          type: message.role === 'student' || message.role === 'user' ? 'question_to_patient' : 'patient_reply',
           timestamp: eventTimestamp,
           details: message.content,
         });
@@ -881,51 +938,55 @@ export default function AssignmentManager() {
       (consultantMessagesResult.data ?? []).forEach((message: { id: string; role: string; content: string; created_at: string | null }) => {
         const eventTimestamp = timestamp(message.created_at);
         const eventId = `consultant-message-${message.id}`;
-        if (!eventTimestamp || !isPostPage(eventTimestamp) || transcriptIds.has(eventId)) return;
+        if (transcriptIds.has(eventId)) return;
         transcriptIds.add(eventId);
         events.push({
           id: eventId,
-          type: message.role === 'student' || message.role === 'user' ? 'student_consultant_chat' : 'consultant_chat',
+          type: message.role === 'student' || message.role === 'user' ? 'consultant_message' : 'consultant_reply',
           timestamp: eventTimestamp,
           details: message.content,
         });
       });
 
       (ordersResult.data ?? []).forEach((order) => {
-        const eventTimestamp = timestamp(order.order_time ?? order.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        const eventTimestamp = timestamp(order.order_time);
         events.push({ id: `order-${order.id}`, type: 'medical_order', timestamp: eventTimestamp, details: [order.order_name, order.dose, order.route, order.frequency, order.priority, order.status, order.instructions].filter(Boolean).join(' • ') });
       });
       const labsByTimestamp = new Map<string, string[]>();
       (labsResult.data ?? []).forEach((lab) => {
         const eventTimestamp = timestamp(lab.result_time ?? lab.collection_time ?? lab.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
+        if (!eventTimestamp) return;
         const details = [lab.test_name, lab.value !== null ? `${lab.value}${lab.unit ? ` ${lab.unit}` : ''}` : lab.text_value, lab.status, lab.interpretation].filter(Boolean).join(' • ');
         labsByTimestamp.set(eventTimestamp, [...(labsByTimestamp.get(eventTimestamp) ?? []), details]);
       });
       labsByTimestamp.forEach((details, eventTimestamp) => events.push({ id: `labs-assignment-${eventTimestamp.slice(0, 16)}`, type: 'lab_result', timestamp: eventTimestamp, details: details.join('\n') }));
       (vitalsResult.data ?? []).forEach((vital) => {
         const eventTimestamp = timestamp(vital.timestamp);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
         events.push({ id: `vital-${vital.id}`, type: 'vital_signs', timestamp: eventTimestamp, details: [vital.temperature !== null ? `T ${vital.temperature}` : null, vital.blood_pressure_systolic !== null && vital.blood_pressure_diastolic !== null ? `BP ${vital.blood_pressure_systolic}/${vital.blood_pressure_diastolic}` : null, vital.heart_rate !== null ? `HR ${vital.heart_rate}` : null, vital.respiratory_rate !== null ? `RR ${vital.respiratory_rate}` : null, vital.oxygen_saturation !== null ? `SpO2 ${vital.oxygen_saturation}%` : null, vital.pain !== null ? `Pain ${vital.pain}/10` : null].filter(Boolean).join(' • ') });
       });
       (imagingResult.data ?? []).forEach((study) => {
         const eventTimestamp = timestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
         events.push({ id: `imaging-${study.id}`, type: 'imaging_study', timestamp: eventTimestamp, details: [study.order_name || study.study_type, study.status, study.report].filter(Boolean).join(' • ') });
       });
       (learnerActionsResult.data ?? []).forEach((action) => {
         const eventTimestamp = timestamp(action.occurred_at ?? action.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
         events.push({ id: `learner-action-${action.id}`, type: `learner_${action.action_type} · ${action.channel}`, timestamp: eventTimestamp, details: action.content });
       });
-      if (assignment.student_progress_note?.trim() && assignment.completed_at && isPostPage(assignment.completed_at)) {
-        events.push({ id: `progress-note-${assignment.id}`, type: 'progress_note', timestamp: new Date(assignment.completed_at).toISOString(), details: assignment.student_progress_note.trim() });
+      if (assignment.student_progress_note?.trim()) {
+        events.push({ id: `progress-note-${assignment.id}`, type: 'progress_note', timestamp: null, details: assignment.student_progress_note.trim() });
       }
-      events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      (notesResult.data ?? []).forEach((note: { id: string; title: string; note_type: string; content: string; timestamp: string | null }) => {
+        events.push({ id: `clinical-note-${note.id}`, type: 'progress_note', timestamp: timestamp(note.timestamp), details: `${note.title || note.note_type}\n${note.content}` });
+      });
+      events.sort((a, b) => {
+        if (!a.timestamp && !b.timestamp) return 0;
+        if (!a.timestamp) return 1;
+        if (!b.timestamp) return -1;
+        return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      });
       setEvidenceAudit({
         assignment: assignmentResult.data,
-        firstPage: firstPageMessage?.created_at ? { id: String(firstPageMessage.id), timestamp: new Date(firstPageMessage.created_at).toISOString(), details: firstPageMessage.content } : null,
+        firstPage: firstPageMessage?.created_at && timestamp(firstPageMessage.created_at) ? { id: String(firstPageMessage.id), timestamp: timestamp(firstPageMessage.created_at) as string, details: firstPageMessage.content } : null,
         events,
         latestRun: runResult.data,
       });
@@ -1410,16 +1471,24 @@ export default function AssignmentManager() {
                               className="inline-flex items-center px-3 py-2 border border-indigo-300 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                             >
                               <ClipboardList className="w-4 h-4 mr-1" />
-                              View Evidence/Audit
+                              Student timeline
                             </button>
                             {assignment.status === 'completed' && (
-                              <button
-                                onClick={() => window.location.assign(`/admin/faculty-study?assignment_id=${encodeURIComponent(assignment.id)}`)}
-                                title="Open the isolated NEW-FORMAT evaluation workflow"
-                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
-                              >
-                                Rerun evaluation
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => window.location.assign(`/admin/faculty-study?assignment_id=${encodeURIComponent(assignment.id)}`)}
+                                  title="Open the isolated NEW-FORMAT evaluation workflow"
+                                  className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                                >
+                                  Rerun evaluation
+                                </button>
+                                <button
+                                  onClick={() => void handleReviewFeedback(assignment)}
+                                  className="inline-flex items-center px-3 py-2 border border-purple-300 shadow-sm text-sm leading-4 font-medium rounded-md text-purple-700 bg-white hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                                >
+                                  Review feedback
+                                </button>
+                              </>
                             )}
                           </>
                         )}
@@ -1993,8 +2062,63 @@ export default function AssignmentManager() {
           }}
         />
       )}
+      {showEvaluationModal && selectedAssignment && (
+        <StoredEvaluationModal
+          assignment={selectedAssignment}
+          evaluation={storedEvaluation}
+          loading={evaluationLoading}
+          error={evaluationError}
+          onClose={() => {
+            setShowEvaluationModal(false);
+            setStoredEvaluation(null);
+            setEvaluationError(null);
+          }}
+          onRerun={() => {
+            if (!window.confirm('Rerun this completed attempt? A new isolated evaluation version will be created; saved versions and learner records will remain unchanged.')) return;
+            window.location.assign(`/admin/faculty-study?assignment_id=${encodeURIComponent(selectedAssignment.id)}`);
+          }}
+        />
+      )}
     </AdminLayout>
   );
+}
+
+function StoredEvaluationModal({
+  assignment,
+  evaluation,
+  loading,
+  error,
+  onClose,
+  onRerun,
+}: {
+  assignment: Assignment;
+  evaluation: StoredEvaluation | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onRerun: () => void;
+}) {
+  const download = (name: string, body: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([body], { type }));
+    const link = document.createElement('a'); link.href = url; link.download = name; link.click(); URL.revokeObjectURL(url);
+  };
+  return <div className="fixed inset-0 z-30 overflow-y-auto" role="presentation">
+    <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={onClose} aria-hidden="true" />
+    <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+      <div role="dialog" aria-modal="true" aria-labelledby="stored-evaluation-title" className="relative inline-block w-full max-w-5xl transform overflow-hidden rounded-lg bg-white px-4 pt-5 pb-4 text-left align-bottom shadow-xl sm:my-8 sm:p-6 sm:align-middle">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 id="stored-evaluation-title" className="text-lg font-semibold text-gray-900">Review feedback — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2><p className="mt-1 text-sm text-gray-500">Saved isolated faculty evaluation. Opening this view does not run the evaluator or create a row.</p></div>
+          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">Close</button>
+        </div>
+        {loading && <p className="mt-5 rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading the most recent completed evaluation…</p>}
+        {!loading && error && <p role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Saved feedback could not be loaded: {error}</p>}
+        {!loading && !error && evaluation && <>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-purple-200 bg-purple-50 p-3 text-sm text-purple-950"><div><strong>Evaluation v{evaluation.version}</strong> · saved {new Date(evaluation.completed_at ?? evaluation.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' })}<div className="text-xs">Prompt {evaluation.prompt_version} · evaluator config {evaluation.evaluator_config_revision}</div></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => { download(`evaluation-v${evaluation.version}.json`, evaluation.artifacts.json, 'application/json'); download(`evaluation-v${evaluation.version}.html`, evaluation.artifacts.html, 'text/html'); download(`evaluation-v${evaluation.version}.csv`, evaluation.artifacts.csv, 'text/csv'); }} className="inline-flex items-center gap-1 rounded border border-purple-300 bg-white px-3 py-2 text-xs font-medium text-purple-800 hover:bg-purple-100"><Download className="h-3.5 w-3.5" />Download / extract</button><button type="button" onClick={onRerun} className="rounded border border-orange-300 bg-white px-3 py-2 text-xs font-medium text-orange-800 hover:bg-orange-50">Rerun evaluation</button></div></div>
+          <iframe title={`Saved evaluation v${evaluation.version}`} srcDoc={evaluation.artifacts.html} sandbox="" className="mt-4 h-[65vh] w-full rounded border border-gray-200 bg-white" />
+        </>}
+      </div>
+    </div>
+  </div>;
 }
 
 function EvidenceAuditModal({
@@ -2012,6 +2136,7 @@ function EvidenceAuditModal({
   closeButtonRef: React.RefObject<HTMLButtonElement>;
   onClose: () => void;
 }) {
+  const [technicalView, setTechnicalView] = useState(false);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -2029,21 +2154,33 @@ function EvidenceAuditModal({
       <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={onClose} aria-hidden="true" />
       <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         <div role="dialog" aria-modal="true" aria-labelledby="evidence-audit-title" className="relative inline-block w-full max-w-5xl transform overflow-hidden rounded-lg bg-white px-4 pt-5 pb-4 text-left align-bottom shadow-xl sm:my-8 sm:p-6 sm:align-middle">
-          <h2 id="evidence-audit-title" className="text-lg font-semibold text-gray-900">Evidence Audit — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2>
-          <p className="mt-1 text-sm text-gray-500">Read-only provenance for this assignment. Press Escape to close.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="evidence-audit-title" className="text-lg font-semibold text-gray-900">Student timeline — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2>
+              <p className="mt-1 text-sm text-gray-500">Chronological recorded events for physician review. Press Escape to close.</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setTechnicalView((current) => !current)} className="rounded-md border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">{technicalView ? 'Hide technical details' : 'Details / technical view'}</button>
+              {audit && <button type="button" onClick={() => {
+                const body = JSON.stringify({ assignment_id: assignment.id, events: audit.events }, null, 2);
+                const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+                const link = document.createElement('a'); link.href = url; link.download = `student-timeline-${assignment.id}.json`; link.click(); URL.revokeObjectURL(url);
+              }} className="inline-flex items-center gap-1 rounded-md border border-blue-300 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50"><Download className="h-3.5 w-3.5" />Export timeline</button>}
+            </div>
+          </div>
           <div className="mt-4 max-h-[70vh] space-y-5 overflow-y-auto pr-1">
             {loading && <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading read-only evidence…</p>}
             {!loading && error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Evidence audit could not be read: {error}</p>}
             {!loading && !error && audit && (
               <>
-                <section className="rounded-md border border-gray-200 p-4">
+                {technicalView && <section className="rounded-md border border-gray-200 p-4">
                   <h3 className="font-medium text-gray-900">Scoring boundary</h3>
                   <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                     <div><dt className="font-medium text-gray-500">First-page event</dt><dd className="break-words text-gray-900">{audit.firstPage ? `${audit.firstPage.id} · ${new Date(audit.firstPage.timestamp).toLocaleString()} · ${audit.firstPage.details}` : 'No first nurse page recorded'}</dd></div>
                     <div><dt className="font-medium text-gray-500">Scoring starts at</dt><dd className="text-gray-900">{audit.assignment.scoring_start_at ? new Date(audit.assignment.scoring_start_at).toLocaleString() : 'Not recorded'}</dd></div>
                   </dl>
-                </section>
-                <section className="rounded-md border border-gray-200 p-4">
+                </section>}
+                {technicalView && <section className="rounded-md border border-gray-200 p-4">
                   <h3 className="font-medium text-gray-900">Feedback provenance</h3>
                   <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                     <div><dt className="font-medium text-gray-500">Status / error</dt><dd className="text-gray-900">{audit.assignment.feedback_status ?? 'Not recorded'}{audit.assignment.feedback_error ? ` — ${audit.assignment.feedback_error}` : ''}</dd></div>
@@ -2052,14 +2189,19 @@ function EvidenceAuditModal({
                     <div><dt className="font-medium text-gray-500">Source event IDs</dt><dd className="break-words text-gray-900">{json(audit.assignment.source_event_ids)}</dd></div>
                   </dl>
                   <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><h4 className="font-semibold text-gray-600">Feedback debrief</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json(audit.assignment.feedback_debrief)}</pre></div><div><h4 className="font-semibold text-gray-600">Communication / MDM / safety</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json({ communication: audit.assignment.communication_breakdown, mdm: audit.assignment.mdm_breakdown, safety: audit.assignment.safety_result })}</pre></div></div>
-                </section>
-                <section className="rounded-md border border-gray-200 p-4">
+                </section>}
+                {technicalView && <section className="rounded-md border border-gray-200 p-4">
                   <h3 className="font-medium text-gray-900">Latest feedback assessment run</h3>
                   {!audit.latestRun ? <p className="mt-2 text-sm text-amber-700">No assessment run was recorded.</p> : <div className="mt-2 text-sm"><p><span className="font-medium">Run:</span> {audit.latestRun.id} · {new Date(audit.latestRun.created_at).toLocaleString()}</p><p><span className="font-medium">Attempt:</span> {audit.latestRun.attempt_id} · <span className="font-medium">Boundary:</span> {audit.latestRun.scoring_start_at ?? 'Not recorded'} · <span className="font-medium">Incomplete:</span> {audit.latestRun.technical_incomplete ? 'Yes' : 'No'}</p><p><span className="font-medium">Rubric / case key / assessment:</span> {audit.latestRun.rubric_version} / {audit.latestRun.case_key_version} / {audit.latestRun.assessment_version}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs">{json({ source_event_ids: audit.latestRun.source_event_ids, result: audit.latestRun.result })}</pre></div>}
-                </section>
+                </section>}
                 <section className="rounded-md border border-gray-200 p-4">
-                  <h3 className="font-medium text-gray-900">Post-page clinical evidence ({audit.events.length})</h3>
-                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No assignment-scoped clinical evidence was recorded at or after the scoring boundary.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => <div key={`${event.id}-${event.timestamp}`} className="rounded border border-gray-100 bg-gray-50 p-2 text-sm"><div className="font-medium text-gray-900">{event.type} · {event.id}</div><div className="text-xs text-gray-500">{new Date(event.timestamp).toLocaleString()}</div><div className="mt-1 whitespace-pre-wrap text-gray-700">{event.details || 'No details recorded'}</div></div>)}</div>}
+                  <h3 className="font-medium text-gray-900">Recorded events ({audit.events.length})</h3>
+                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No recorded events were found for this attempt.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => {
+                    const label = event.type.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+                    const content = event.details || 'No content recorded';
+                    const long = content.length > 600;
+                    return <div key={`${event.id}-${event.timestamp}`} className="rounded border border-gray-100 bg-gray-50 p-3 text-sm"><div className="font-medium text-gray-900">{label}</div><div className="text-xs text-gray-500">{event.timestamp ? new Date(event.timestamp).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }) : 'Timestamp not recorded or timezone not available; order is not inferred'}</div>{technicalView && <div className="text-xs text-gray-500">{event.id}</div>}{long ? <details className="mt-1"><summary className="cursor-pointer font-medium text-gray-700">Show full entry</summary><div className="mt-1 whitespace-pre-wrap text-gray-700">{content}</div></details> : <div className="mt-1 whitespace-pre-wrap text-gray-700">{content}</div>}</div>;
+                  })}</div>}
                 </section>
               </>
             )}
