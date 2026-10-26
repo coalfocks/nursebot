@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, ClipboardList, Download, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { buildStudentTimeline, type StudentTimelineEvent } from '../lib/studentTimeline';
 import {
   ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
   getAssignableStudentCutoffDate,
@@ -70,8 +71,16 @@ export default function AssignmentManager() {
     window_end: string;
   } | null>(null);
   const [showChatModal, setShowChatModal] = useState(false);
-  const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
+  const [selectedTimeline, setSelectedTimeline] = useState<StudentTimelineEvent[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [expandedTimelineEvents, setExpandedTimelineEvents] = useState<Set<string>>(new Set());
+  const [showTechnicalTimeline, setShowTechnicalTimeline] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [storedEvaluation, setStoredEvaluation] = useState<Record<string, unknown> | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
@@ -490,27 +499,124 @@ export default function AssignmentManager() {
     }
   };
 
-  const fetchChatMessages = async (assignmentId: string) => {
+  const fetchStudentTimeline = async (assignment: Assignment) => {
+    setTimelineLoading(true);
+    setTimelineError(null);
     try {
-      const { data, error } = await supabase
+      const [messagesResult, ordersResult, notesResult] = await Promise.all([
+        supabase
         .from('chat_messages')
         .select('*')
-        .eq('assignment_id', assignmentId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      return data || [];
+        .eq('assignment_id', assignment.id)
+        .order('created_at', { ascending: true }),
+        supabase
+          .from('medical_orders')
+          .select('id, order_name, category, dose, route, frequency, priority, status, instructions, order_time')
+          .eq('assignment_id', assignment.id)
+          .is('deleted_at', null)
+          .order('order_time', { ascending: true }),
+        supabase
+          .from('clinical_notes')
+          .select('id, title, note_type, content, timestamp')
+          .eq('assignment_id', assignment.id)
+          .is('deleted_at', null)
+          .order('timestamp', { ascending: true }),
+      ]);
+      const readOptionalMessages = async (table: 'patient_chat_messages' | 'consultant_chat_messages') => {
+        // These optional source tables are deployed independently of the current schema.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (supabase as any)
+          .from(table)
+          .select('id, role, content, created_at')
+          .eq('assignment_id', assignment.id)
+          .order('created_at', { ascending: true });
+        if (result.error) {
+          console.info(`Optional timeline source ${table} is unavailable`, result.error);
+          return [];
+        }
+        return result.data ?? [];
+      };
+      const [patientMessages, consultantMessages] = await Promise.all([
+        readOptionalMessages('patient_chat_messages'),
+        readOptionalMessages('consultant_chat_messages'),
+      ]);
+      if (messagesResult.error) throw messagesResult.error;
+      if (ordersResult.error) throw ordersResult.error;
+      if (notesResult.error) throw notesResult.error;
+      setSelectedTimeline(buildStudentTimeline(
+        (messagesResult.data ?? []) as ChatMessage[],
+        ordersResult.data ?? [],
+        notesResult.data ?? [],
+        assignment,
+        { patient: patientMessages, consultant: consultantMessages },
+      ));
     } catch (error) {
-      console.error('Error fetching chat messages:', error);
-      return [];
+      console.error('Error fetching student timeline:', error);
+      setTimelineError(error instanceof Error ? error.message : 'Unable to load the student timeline.');
+    } finally {
+      setTimelineLoading(false);
     }
   };
 
-  const handleViewChat = async (assignment: Assignment) => {
+  const handleViewTimeline = async (assignment: Assignment) => {
     setSelectedAssignment(assignment);
-    const messages = await fetchChatMessages(assignment.id);
-    setSelectedChatMessages(messages);
+    setShowTechnicalTimeline(false);
+    setExpandedTimelineEvents(new Set());
     setShowChatModal(true);
+    await fetchStudentTimeline(assignment);
+  };
+
+  const handleReviewFeedback = async (assignment: Assignment) => {
+    setSelectedAssignment(assignment);
+    setShowReviewModal(true);
+    setReviewLoading(true);
+    setReviewError(null);
+    setStoredEvaluation(null);
+    try {
+      const history = await supabase.functions.invoke('faculty-feedback-review', {
+        body: { action: 'evaluation_history', assignment_id: assignment.id },
+      });
+      if (history.error) throw history.error;
+      const response = history.data as { available?: boolean; reason?: string; evaluations?: Array<Record<string, unknown>> };
+      if (response.available === false) {
+        setReviewError(response.reason ?? 'Saved evaluation artifacts are unavailable.');
+      } else {
+        const latest = (response.evaluations ?? []).find((evaluation) => evaluation.status === 'completed');
+        if (!latest || typeof latest.id !== 'string') {
+          setReviewError('No completed saved evaluation is available for this assignment.');
+        } else {
+          const download = await supabase.functions.invoke('faculty-feedback-review', {
+            body: { action: 'download_evaluation', evaluation_id: latest.id },
+          });
+          if (download.error) throw download.error;
+          const result = download.data as { evaluation?: Record<string, unknown>; reason?: string; available?: boolean };
+          if (result.available === false) setReviewError(result.reason ?? 'Saved evaluation artifacts are unavailable.');
+          else setStoredEvaluation(result.evaluation ?? null);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading saved evaluation:', error);
+      setReviewError(error instanceof Error ? error.message : 'Unable to load the saved evaluation.');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const downloadText = (filename: string, content: string, contentType: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type: contentType }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadStoredEvaluation = () => {
+    if (!storedEvaluation || !selectedAssignment) return;
+    const artifacts = storedEvaluation.artifacts as { json?: string; html?: string; csv?: string } | undefined;
+    if (artifacts?.json) downloadText(`evaluation-${selectedAssignment.id}.json`, artifacts.json, 'application/json');
+    if (artifacts?.html) downloadText(`evaluation-${selectedAssignment.id}.html`, artifacts.html, 'text/html');
+    if (artifacts?.csv) downloadText(`evaluation-${selectedAssignment.id}.csv`, artifacts.csv, 'text/csv');
   };
 
   const handleRerunAssessment = async (assignmentId: string) => {
@@ -954,25 +1060,30 @@ export default function AssignmentManager() {
                         {['completed', 'bedside'].includes(assignment.status) && (
                           <>
                             <button
-                              onClick={() => handleViewChat(assignment)}
+                              onClick={() => void handleViewTimeline(assignment)}
                               className="inline-flex items-center px-3 py-2 border border-green-300 shadow-sm text-sm leading-4 font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                             >
-                              <MessageSquare className="w-4 h-4 mr-1" />
-                              View Chat
+                              <ClipboardList className="w-4 h-4 mr-1" />
+                              Student timeline
                             </button>
                             {assignment.status === 'completed' && (
-                              <button
-                                onClick={() => handleRerunAssessment(assignment.id)}
-                                disabled={rerunningAssessments.has(assignment.id)}
-                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {rerunningAssessments.has(assignment.id) ? (
-                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-4 h-4 mr-1" />
-                                )}
-                                {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => void handleReviewFeedback(assignment)}
+                                  className="inline-flex items-center px-3 py-2 border border-purple-300 shadow-sm text-sm leading-4 font-medium rounded-md text-purple-700 bg-white hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
+                                >
+                                  <MessageSquare className="w-4 h-4 mr-1" />
+                                  Review feedback
+                                </button>
+                                <button
+                                  onClick={() => handleRerunAssessment(assignment.id)}
+                                  disabled={rerunningAssessments.has(assignment.id)}
+                                  className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {rerunningAssessments.has(assignment.id) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                                  {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
+                                </button>
+                              </>
                             )}
                           </>
                         )}
@@ -1423,49 +1534,55 @@ export default function AssignmentManager() {
         </div>
       )}
 
-      {/* Chat Modal */}
+      {/* Student timeline */}
       {showChatModal && selectedAssignment && (
         <div className="fixed z-10 inset-0 overflow-y-auto">
           <div className="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
             <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6">
-              <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">
-                  Chat History - {selectedAssignment.student.full_name} in Room {selectedAssignment.room.room_number}
-                </h3>
-                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                  {selectedChatMessages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.role === 'student' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-[80%] p-4 rounded-lg ${
-                          message.role === 'student'
-                            ? 'bg-blue-500 text-white'
-                            : 'bg-gray-100 text-gray-900'
-                        }`}
-                      >
-                        <div className="flex items-center mb-1">
-                          <span className="text-xs font-medium">
-                            {message.role === 'student' ? 'Student' : 'Nurse'}
-                          </span>
-                          <span className="text-xs ml-2 opacity-75">
-                            {new Date(message.created_at).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                      </div>
-                    </div>
-                  ))}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900">Student timeline</h3>
+                  <p className="mt-1 text-sm text-gray-500">{selectedAssignment.student.full_name} · Room {selectedAssignment.room.room_number}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowTechnicalTimeline((value) => !value)} className="rounded border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                    {showTechnicalTimeline ? 'Hide technical details' : 'Details / technical view'}
+                  </button>
+                  <button type="button" onClick={() => downloadText(`student-timeline-${selectedAssignment.id}.json`, JSON.stringify({ assignment_id: selectedAssignment.id, events: selectedTimeline }, null, 2), 'application/json')} className="inline-flex items-center gap-1 rounded border border-blue-300 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50">
+                    <Download className="h-3.5 w-3.5" />Export
+                  </button>
                 </div>
               </div>
+              {timelineLoading && <p className="mt-5 rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading recorded events…</p>}
+              {!timelineLoading && timelineError && <p role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Timeline could not be loaded: {timelineError}</p>}
+              {!timelineLoading && !timelineError && selectedTimeline.length === 0 && <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No recorded events are available for this assignment.</p>}
+              {!timelineLoading && !timelineError && selectedTimeline.length > 0 && (
+                <div className="mt-5 space-y-3 max-h-[60vh] overflow-y-auto">
+                  {selectedTimeline.map((event) => {
+                    const expanded = expandedTimelineEvents.has(event.id);
+                    const isLong = event.content.length > 320;
+                    return (
+                      <div key={event.id} className="rounded-md border border-gray-200 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <span className="font-semibold text-gray-800">{event.label}</span>
+                          <time className="text-gray-500">{event.timestamp ? new Date(event.timestamp).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZoneName: 'short' }) : 'Time not recorded'}</time>
+                        </div>
+                        <p className={`mt-2 whitespace-pre-wrap text-sm text-gray-700 ${!expanded && isLong ? 'line-clamp-5' : ''}`}>{event.content}</p>
+                        {isLong && <button type="button" onClick={() => setExpandedTimelineEvents((current) => { const next = new Set(current); if (next.has(event.id)) next.delete(event.id); else next.add(event.id); return next; })} className="mt-2 text-xs font-medium text-blue-700 hover:text-blue-900">{expanded ? 'Show less' : 'Show more'}</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {showTechnicalTimeline && <p className="mt-4 rounded-md bg-gray-50 p-3 text-xs text-gray-600">Patient questions/replies and consultant messages are not persisted by the current origin/main schema. They are included automatically when their assignment-scoped source tables are deployed; this view does not infer or fabricate them.</p>}
               <div className="mt-5 sm:mt-6">
                 <button
                   type="button"
                   onClick={() => {
                     setShowChatModal(false);
-                    setSelectedChatMessages([]);
+                    setSelectedTimeline([]);
+                    setTimelineError(null);
                     setSelectedAssignment(null);
                   }}
                   className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -1473,6 +1590,45 @@ export default function AssignmentManager() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReviewModal && selectedAssignment && (
+        <div className="fixed inset-0 z-20 overflow-y-auto">
+          <div className="fixed inset-0 bg-gray-500 bg-opacity-75" />
+          <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div role="dialog" aria-modal="true" className="relative inline-block w-full max-w-4xl rounded-lg bg-white p-6 text-left align-bottom shadow-xl sm:my-8 sm:align-middle">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Review feedback</h2>
+                  <p className="mt-1 text-sm text-gray-500">Read-only saved evaluation for {selectedAssignment.student.full_name} · Room {selectedAssignment.room.room_number}</p>
+                </div>
+                <button type="button" onClick={() => { setShowReviewModal(false); setStoredEvaluation(null); setReviewError(null); setSelectedAssignment(null); }} className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">Close</button>
+              </div>
+              {reviewLoading && <p className="mt-5 rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading the most recent saved evaluation…</p>}
+              {!reviewLoading && reviewError && (
+                <div className="mt-5 space-y-4">
+                  <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{reviewError}</p>
+                  {(selectedAssignment.nurse_feedback || selectedAssignment.feedback || selectedAssignment.communication_score !== null || selectedAssignment.mdm_score !== null) && (
+                    <div className="rounded-md border border-gray-200 p-4">
+                      <h3 className="font-medium text-gray-900">Existing assignment feedback</h3>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-gray-700">{selectedAssignment.feedback ?? (selectedAssignment.nurse_feedback ? JSON.stringify(selectedAssignment.nurse_feedback, null, 2) : 'Scores are saved, but no legacy narrative is available.')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!reviewLoading && !reviewError && storedEvaluation && (
+                <div className="mt-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-purple-200 bg-purple-50 p-3 text-sm text-purple-950">
+                    <span>Evaluation v{String(storedEvaluation.version)} · saved {String(storedEvaluation.completed_at ?? storedEvaluation.created_at)}</span>
+                    <button type="button" onClick={downloadStoredEvaluation} className="inline-flex items-center gap-1 rounded border border-purple-300 bg-white px-3 py-2 text-xs font-medium text-purple-800 hover:bg-purple-100"><Download className="h-3.5 w-3.5" />Download / extract</button>
+                  </div>
+                  <pre className="mt-4 max-h-[60vh] overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-4 text-xs text-gray-800">{JSON.stringify(storedEvaluation, null, 2)}</pre>
+                </div>
+              )}
+              {!reviewLoading && !reviewError && !storedEvaluation && <p className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">No completed saved evaluation is available. Review feedback does not generate a new evaluation.</p>}
             </div>
           </div>
         </div>
