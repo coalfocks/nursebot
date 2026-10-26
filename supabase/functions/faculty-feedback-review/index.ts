@@ -24,14 +24,30 @@ Deno.serve(async (request) => {
 
     const { data: profile, error: profileError } = await admin
       .from('profiles')
-      .select('role')
+      .select('role, school_id')
       .eq('id', authData.user.id)
       .maybeSingle();
     if (profileError) throw profileError;
     if (!profile || !['school_admin', 'super_admin'].includes(profile.role)) throw new Error('Administrator access is required');
 
+    const assertAssignmentScope = async (assignmentId: string) => {
+      if (!assignmentId) throw new Error('Assignment ID is required');
+      const assignment = await admin
+        .from('student_room_assignments')
+        .select('id, school_id, student_id, room_id')
+        .eq('id', assignmentId)
+        .maybeSingle();
+      if (assignment.error) throw assignment.error;
+      if (!assignment.data) throw new Error('Assignment not found');
+      if (profile.role === 'school_admin' && profile.school_id !== assignment.data.school_id) {
+        throw new Error('Assignment is outside the administrator school scope');
+      }
+      return assignment.data;
+    };
+
     const body = await request.json() as { action?: string; assignment_id?: string; evaluation_id?: string };
     if (body.action === 'evaluation_history') {
+      await assertAssignmentScope(body.assignment_id ?? '');
       const result = await admin
         .from('faculty_evaluation_versions')
         .select('id, assignment_id, version, status, prompt_version, model, generator_revision, evaluator_config_revision, created_at, completed_at, error')
@@ -51,6 +67,7 @@ Deno.serve(async (request) => {
       if (isMissingTable(result.error)) return json({ action: body.action, evaluation_id: body.evaluation_id, ...missingArtifacts() });
       if (result.error) throw result.error;
       if (!result.data || result.data.status !== 'completed' || !result.data.artifacts) throw new Error('The selected saved evaluation has no completed artifacts.');
+      await assertAssignmentScope(result.data.assignment_id);
       return json({ action: body.action, available: true, evaluation: result.data });
     }
 
