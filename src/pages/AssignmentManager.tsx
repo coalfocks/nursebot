@@ -6,6 +6,7 @@ import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { fetchAssignmentList } from '../lib/assignmentQueries';
 import { FeedbackSheet, feedbackSheetStyles, mapFeedbackSheet, renderFeedbackSheetHtml } from '../lib/feedbackSheet';
 import type { FeedbackSheetAssignment } from '../lib/feedbackSheet';
 import {
@@ -90,29 +91,6 @@ export default function AssignmentManager() {
     const loadData = async () => {
       setLoading(true);
       try {
-        let assignmentsQuery = supabase
-          .from('student_room_assignments')
-          .select(`
-            *,
-            student:student_id (
-              id,
-              full_name,
-              study_year,
-              email,
-              school_id,
-              specialization_interest
-            ),
-            room:room_id (
-              id,
-              room_number,
-              specialty_id,
-              difficulty_level,
-              school_id,
-              case_goals
-            )
-          `)
-          .order('created_at', { ascending: false });
-
         let studentsQuery = supabase
           .from('profiles')
           .select('id, full_name, study_year, email, role, school_id, specialization_interest, created_at')
@@ -130,7 +108,6 @@ export default function AssignmentManager() {
           .order('name');
 
         if (scopedSchoolId) {
-          assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
           studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
           roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
           specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
@@ -143,7 +120,7 @@ export default function AssignmentManager() {
           specialtiesResult,
           schoolsResult,
         ] = await Promise.all([
-          assignmentsQuery,
+          fetchAssignmentList(supabase, scopedSchoolId),
           studentsQuery,
           roomsQuery,
           specialtiesQuery,
@@ -156,7 +133,7 @@ export default function AssignmentManager() {
         if (specialtiesResult.error) throw specialtiesResult.error;
         if (schoolsResult.error) throw schoolsResult.error;
 
-        setAssignments(((assignmentsResult.data ?? []) as Assignment[]).filter(a => a.room !== null));
+        setAssignments((assignmentsResult as Assignment[]).filter(a => a.room !== null));
         setStudents(studentsResult.data || []);
         setRooms(roomsResult.data || []);
         setSpecialties(specialtiesResult.data || []);
@@ -172,37 +149,8 @@ export default function AssignmentManager() {
   }, [hasAdmin, scopedSchoolId]);
 
   const fetchAssignments = async () => {
-    let query = supabase
-      .from('student_room_assignments')
-      .select(`
-        *,
-        student:student_id (
-          id,
-          full_name,
-          study_year,
-          email,
-          school_id,
-          specialization_interest
-        ),
-        room:room_id (
-          id,
-          room_number,
-          specialty_id,
-          difficulty_level,
-          school_id,
-          case_goals
-        )
-      `)
-      .order('created_at', { ascending: false });
-
-    if (scopedSchoolId) {
-      query = query.eq('school_id', scopedSchoolId);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    setAssignments(((data ?? []) as Assignment[]).filter(a => a.room !== null));
+    const data = await fetchAssignmentList(supabase, scopedSchoolId);
+    setAssignments((data as Assignment[]).filter(a => a.room !== null));
   };
 
   const validateRoomOrdersConfig = (room: Room): boolean => {
