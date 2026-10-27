@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, RefreshCw, Download, Eye, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { FeedbackSheet, feedbackSheetStyles, mapFeedbackSheet, renderFeedbackSheetHtml } from '../lib/feedbackSheet';
+import type { FeedbackSheetAssignment } from '../lib/feedbackSheet';
 import {
   ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
   getAssignableStudentCutoffDate,
@@ -27,6 +29,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
     specialty_id: string | null;
     difficulty_level: string | null;
     school_id: string;
+    case_goals: string | null;
   } | null;
 };
 
@@ -72,6 +75,7 @@ export default function AssignmentManager() {
   const [showChatModal, setShowChatModal] = useState(false);
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
+  const [reviewAssignment, setReviewAssignment] = useState<Assignment | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
@@ -98,7 +102,8 @@ export default function AssignmentManager() {
               room_number,
               specialty_id,
               difficulty_level,
-              school_id
+              school_id,
+              case_goals
             )
           `)
           .order('created_at', { ascending: false });
@@ -179,7 +184,8 @@ export default function AssignmentManager() {
           room_number,
           specialty_id,
           difficulty_level,
-          school_id
+          school_id,
+          case_goals
         )
       `)
       .order('created_at', { ascending: false });
@@ -555,6 +561,29 @@ export default function AssignmentManager() {
         return newSet;
       });
     }
+  };
+
+  const getFeedbackSheetModel = (assignment: Assignment) => mapFeedbackSheet({
+    ...assignment,
+    student: assignment.student,
+    room: assignment.room,
+  } as unknown as FeedbackSheetAssignment);
+
+  const handleReviewFeedback = (assignment: Assignment) => {
+    setReviewAssignment(assignment);
+  };
+
+  const handleDownloadFeedback = (assignment: Assignment) => {
+    const model = getFeedbackSheetModel(assignment);
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Feedback sheet</title><style>${feedbackSheetStyles}</style></head><body>${renderFeedbackSheetHtml(model)}</body></html>`;
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `feedback-sheet-${assignment.id}.html`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   };
 
   const filteredStudents = assignableStudents.filter((student) => {
@@ -961,18 +990,32 @@ export default function AssignmentManager() {
                               View Chat
                             </button>
                             {assignment.status === 'completed' && (
-                              <button
-                                onClick={() => handleRerunAssessment(assignment.id)}
-                                disabled={rerunningAssessments.has(assignment.id)}
-                                className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {rerunningAssessments.has(assignment.id) ? (
-                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="w-4 h-4 mr-1" />
-                                )}
-                                {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleRerunAssessment(assignment.id)}
+                                  disabled={rerunningAssessments.has(assignment.id)}
+                                  className="inline-flex items-center px-3 py-2 border border-orange-300 shadow-sm text-sm leading-4 font-medium rounded-md text-orange-700 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {rerunningAssessments.has(assignment.id) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                                  {rerunningAssessments.has(assignment.id) ? 'Rerunning...' : 'Rerun Assessment'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadFeedback(assignment)}
+                                  className="inline-flex items-center px-3 py-2 border border-blue-300 shadow-sm text-sm leading-4 font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                >
+                                  <Download className="w-4 h-4 mr-1" />
+                                  Download feedback sheet
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReviewFeedback(assignment)}
+                                  className="inline-flex items-center px-3 py-2 border border-slate-300 shadow-sm text-sm leading-4 font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500"
+                                >
+                                  <Eye className="w-4 h-4 mr-1" />
+                                  Review feedback
+                                </button>
+                              </>
                             )}
                           </>
                         )}
@@ -1473,6 +1516,21 @@ export default function AssignmentManager() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reviewAssignment && (
+        <div className="fixed inset-0 z-20 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="review-feedback-title">
+          <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={() => setReviewAssignment(null)} />
+            <div className="relative max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-lg bg-gray-50 p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 id="review-feedback-title" className="text-lg font-semibold text-gray-900">Review feedback</h2>
+                <button type="button" aria-label="Close feedback review" onClick={() => setReviewAssignment(null)} className="rounded p-1 text-gray-500 hover:bg-gray-200"><X className="h-5 w-5" /></button>
+              </div>
+              <FeedbackSheet model={getFeedbackSheetModel(reviewAssignment)} />
             </div>
           </div>
         </div>
