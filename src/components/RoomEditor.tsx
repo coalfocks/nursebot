@@ -8,6 +8,7 @@ import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { isObgynSpecialtyName } from '../lib/roomHelpers';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
+import { useNavigate } from 'react-router-dom';
 import { LEARNER_PROGRAMS, type LearnerProgram } from '../lib/programTracks';
 import { DEFAULT_HOSPITAL_TIMELINE, hospitalTimelineChanged, mergeHospitalTimelineIntoNurseContext, parseHospitalTimeline, timelineTrend, validateHospitalTimeline, type EncounterType, type HospitalTimeline } from '../lib/hospitalTimeline';
 import { HospitalTimelineEditor } from './HospitalTimelineEditor';
@@ -119,6 +120,7 @@ interface RoomEditorProps {
 }
 
 export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: RoomEditorProps) {
+  const navigate = useNavigate();
   const { profile, activeSchoolId } = useAuthStore();
   const { schools } = useSchools();
   const [isLoading, setIsLoading] = useState(false);
@@ -1247,6 +1249,15 @@ export default function RoomEditor({ room, onSave, onCancel, onRoomPatch }: Room
               All labs are available. Instant labs will auto-generate results; pending labs will stay pending.
             </p>
           </div>
+          {room?.id && room.patient_id && (
+            <button
+              type="button"
+              onClick={() => navigate(`/ehr?roomId=${room.id}&patientId=${room.patient_id}&tab=mar`)}
+              className="rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
+            >
+              Open MAR history
+            </button>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Orders/Labs notes (optional)</label>
