@@ -16,6 +16,7 @@ import CaseManager from './pages/CaseManager';
 import RoomManagement from './pages/RoomManagement';
 import FeedbackProcessor from './components/FeedbackProcessor';
 import AssignmentView from './pages/AssignmentView';
+import AssignmentDebrief from './pages/AssignmentDebrief';
 import Landing from './pages/Landing';
 import AssignmentManager from './pages/AssignmentManager';
 import EmrDashboard from './pages/EmrDashboard';
@@ -236,6 +237,7 @@ function App() {
             )
           }
         />
+        <Route path="/assignment/:assignmentId/feedback" element={user ? <AssignmentDebrief /> : <Navigate to="/login" replace />} />
         <Route 
           path="/assignment/:assignmentId" 
           element={user ? <AssignmentView /> : <Navigate to="/login" replace />} 
