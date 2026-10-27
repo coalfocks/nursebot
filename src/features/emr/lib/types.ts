@@ -138,6 +138,37 @@ export interface MedicalOrder {
   recordVersion?: number;
 }
 
+export type MarCategory = 'scheduled' | 'prn' | 'one_time' | 'infusion';
+export type MarStatus = 'Given' | 'Held' | 'Refused' | 'Not given' | 'Started' | 'Rate changed' | 'Stopped' | 'Not documented';
+
+export interface MarAdministrationEvent {
+  id: string;
+  patientId: string;
+  roomId: number;
+  assignmentId?: string | null;
+  orderId?: string | null;
+  caseVersion?: string | null;
+  occurrenceKey: string;
+  relativeOffsetHours?: number | null;
+  administeredAt?: string | null;
+  medicationName: string;
+  orderedDose?: string | null;
+  administeredDose?: string | null;
+  unit?: string | null;
+  route?: string | null;
+  frequency?: string | null;
+  category: MarCategory;
+  status: MarStatus;
+  simulatedClinician?: string | null;
+  reason?: string | null;
+  prnIndication?: string | null;
+  response?: string | null;
+  infusionDetails?: Record<string, unknown> | null;
+  source: 'authored_scenario' | 'simulation' | 'learner';
+  actorLabel?: string | null;
+  recordVersion: number;
+}
+
 export type MutationConflict<T> = {
   conflict: true;
   current: T;

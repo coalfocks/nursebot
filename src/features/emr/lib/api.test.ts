@@ -189,4 +189,70 @@ describe('emrApi versioned note/order mutations', () => {
       expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded' }),
     ]);
   });
+
+  it('authorizes a shared-stage assignment even when the room has another primary school', async () => {
+    const assignmentQuery = builder({
+      data: {
+        id: 'assignment-1',
+        room_id: 20,
+        student_id: 'student-1',
+        school_id: 'school-b',
+        status: 'in_progress',
+        case_key_version: 'room-20-mar-v1',
+      },
+      error: null,
+    });
+    const roomQuery = builder({
+      data: { id: 20, patient_id: 'patient-20', school_id: 'school-a' },
+      error: null,
+    });
+    from.mockReturnValueOnce(assignmentQuery).mockReturnValueOnce(roomQuery);
+
+    const scope = await emrApi.getMarAssignmentContext(
+      'assignment-1',
+      'school-admin-1',
+      'school_admin',
+      'school-b',
+      20,
+    );
+
+    expect(scope).toMatchObject({
+      assignmentId: 'assignment-1',
+      roomId: 20,
+      patientId: 'patient-20',
+      schoolId: 'school-b',
+      caseVersion: 'room-20-mar-v1',
+    });
+    expect(assignmentQuery.eq).toHaveBeenCalledWith('school_id', 'school-b');
+  });
+
+  it('keeps the recorded legacy scenario version for old assignment snapshots', async () => {
+    from
+      .mockReturnValueOnce(builder({
+        data: {
+          id: 'assignment-old',
+          room_id: 20,
+          student_id: 'student-1',
+          school_id: 'school-b',
+          status: 'completed',
+          case_key_version: null,
+          scenario_baseline_version: 6,
+        },
+        error: null,
+      }))
+      .mockReturnValueOnce(builder({
+        data: { id: 20, patient_id: 'patient-20', school_id: 'school-a' },
+        error: null,
+      }));
+
+    const scope = await emrApi.getMarAssignmentContext(
+      'assignment-old',
+      'student-1',
+      'student',
+      'school-b',
+      20,
+    );
+
+    expect(scope?.caseVersion).toBe('6');
+  });
 });

@@ -15,6 +15,7 @@ import { ClinicalNotes } from '../features/emr/components/ClinicalNotes';
 import { LabResults } from '../features/emr/components/LabResults';
 import { VitalSignsComponent } from '../features/emr/components/VitalSigns';
 import { OrdersManagement } from '../features/emr/components/OrdersManagement';
+import { MedicationAdministrationRecord } from '../features/emr/components/MedicationAdministrationRecord';
 import { ImagingStudies } from '../features/emr/components/ImagingStudies';
 import { Card, CardContent, CardHeader, CardTitle } from '../features/emr/components/ui/Card';
 import { Button } from '../features/emr/components/ui/Button';
@@ -48,9 +49,12 @@ export default function EmrDashboard() {
   const [overviewVitals, setOverviewVitals] = useState<VitalSigns | null>(null);
   const [showVitalsModal, setShowVitalsModal] = useState(false);
   const [vitalsForm, setVitalsForm] = useState<Partial<VitalSigns>>({});
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') === 'mar' ? 'mar' : 'overview');
   const [derivedAssignmentId, setDerivedAssignmentId] = useState<string | undefined>(undefined);
   const [derivedAssignmentRoomId, setDerivedAssignmentRoomId] = useState<number | null>(null);
+  const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
+  const [assignmentStatusKey, setAssignmentStatusKey] = useState<string | null>(null);
+  const [assignmentCaseVersion, setAssignmentCaseVersion] = useState<string | null>(null);
   const [isEnsuringAssignment, setIsEnsuringAssignment] = useState(false);
   const [testAssignmentError, setTestAssignmentError] = useState<string | null>(null);
   const forceBaseline = isSuperAdmin(profile);
@@ -58,6 +62,11 @@ export default function EmrDashboard() {
   const effectiveAssignmentId = forceBaseline
     ? undefined
     : assignmentId ?? (selectedPatient?.roomId === derivedAssignmentRoomId ? derivedAssignmentId : undefined);
+  const educatorAccess = hasAdminAccess(profile);
+  const writableAssignmentStatuses = new Set(['assigned', 'in_progress', 'bedside']);
+  const studentEmrReadOnly = !educatorAccess && (
+    !effectiveAssignmentId || assignmentStatusKey !== effectiveAssignmentId || !assignmentStatus || !writableAssignmentStatuses.has(assignmentStatus)
+  );
   const patientRequest = useRequestIdentity(
     `${selectedPatient?.id ?? 'none'}:${selectedPatient?.roomId ?? 'none'}:${effectiveAssignmentId ?? 'none'}`,
   );
@@ -127,34 +136,104 @@ export default function EmrDashboard() {
   useEffect(() => {
     void (async () => {
       if (!user) return;
+      setTestAssignmentError(null);
+      const routeRoomId = searchParams.get('roomId');
+      // Assignment routes are scoped by the assignment, room, patient, and
+      // school before the chart is allowed to render. This prevents a shared
+      // stage URL or a stale broad list from selecting another patient's room.
+      if (assignmentId && routeRoomId) {
+        const routePatientId = searchParams.get('patientId');
+        const scope = await emrApi.getMarAssignmentContext(
+          assignmentId,
+          user.id,
+          profile?.role,
+          profile?.school_id,
+          Number.parseInt(routeRoomId, 10),
+        );
+        const patient = scope
+          ? await emrApi.getPatientByRoomId(Number.parseInt(routeRoomId, 10))
+          : null;
+        if (scope && patient && patient.id === scope.patientId) {
+          if (routePatientId && routePatientId !== patient.id) {
+            setPatients([]);
+            setSelectedPatient(null);
+            setTestAssignmentError('This assignment is not authorized for the requested room and patient.');
+            return;
+          }
+          setPatients([patient]);
+          setSelectedPatient(patient);
+        } else {
+          setPatients([]);
+          setSelectedPatient(null);
+          setTestAssignmentError('This assignment is not authorized for the requested room and patient.');
+        }
+        return;
+      }
+      if (assignmentId) {
+        setPatients([]);
+        setSelectedPatient(null);
+        setTestAssignmentError('This assignment link is missing its authorized room scope.');
+        return;
+      }
       if (hasAdminAccess(profile)) {
         const data = await emrApi.listPatients();
         if (data.length) {
           setPatients(data);
-          setSelectedPatient(data[0]);
+          if (!searchParams.get('roomId') && !searchParams.get('patientId')) setSelectedPatient(data[0]);
         }
         return;
       }
 
       const data = await emrApi.listPatientsForStudent(user.id);
       setPatients(data);
-      if (data.length) {
+      if (data.length && !searchParams.get('roomId') && !searchParams.get('patientId')) {
         setSelectedPatient(data[0]);
       } else {
-        setSelectedPatient(null);
+        if (!data.length) setSelectedPatient(null);
       }
     })();
-  }, [profile, user]);
+  }, [assignmentId, profile, searchParams, user]);
 
   useEffect(() => {
     const patientIdParam = searchParams.get('patientId');
     const roomIdParam = searchParams.get('roomId');
+    if (assignmentId && roomIdParam) return;
+
+    if (!hasAdminAccess(profile) && (roomIdParam || patientIdParam)) {
+      if (!patients.length) return;
+      const matchingPatient = patients.find((patient) =>
+        (!patientIdParam || patient.id === patientIdParam) &&
+        (!roomIdParam || String(patient.roomId) === roomIdParam),
+      );
+      if (matchingPatient) {
+        setSelectedPatient(matchingPatient);
+      } else {
+        setSelectedPatient(null);
+        setTestAssignmentError('This patient or room is not authorized for your assignment.');
+      }
+      return;
+    }
+
+    if (roomIdParam) {
+      void (async () => {
+        const patient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
+        if (!patient || (patientIdParam && patient.id !== patientIdParam)) {
+          setSelectedPatient(null);
+          setPatients([]);
+          return;
+        }
+        setTestAssignmentError(null);
+        setPatients((prev) => prev.some((p) => p.id === patient.id) ? prev : [...prev, patient]);
+        setSelectedPatient(patient);
+      })();
+      return;
+    }
+
     if (patients.length) {
       const matchingPatient =
         patients.find(
           (p) =>
-            (patientIdParam && p.id === patientIdParam) ||
-            (roomIdParam && p.roomId && String(p.roomId) === roomIdParam),
+            patientIdParam && p.id === patientIdParam,
         ) || null;
 
       if (matchingPatient) {
@@ -163,18 +242,7 @@ export default function EmrDashboard() {
       }
     }
 
-    if (roomIdParam) {
-      void (async () => {
-        const patient = await emrApi.getPatientByRoomId(Number.parseInt(roomIdParam, 10));
-        if (patient) {
-          setPatients((prev) => {
-            if (prev.some((p) => p.id === patient.id)) return prev;
-            return [...prev, patient];
-          });
-          setSelectedPatient(patient);
-        }
-      })();
-    } else if (patientIdParam) {
+    if (patientIdParam) {
       void (async () => {
         const patient = await emrApi.getPatient(patientIdParam);
         if (patient) {
@@ -192,7 +260,7 @@ export default function EmrDashboard() {
         }
       })();
     }
-  }, [patients, searchParams]);
+  }, [assignmentId, patients, profile?.role, profile?.school_id, searchParams]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -339,6 +407,33 @@ export default function EmrDashboard() {
   const testAssignmentPending = Boolean(
     isTestUserProfile && selectedPatient?.roomId && !effectiveAssignmentId,
   );
+
+  useEffect(() => {
+    setAssignmentStatus(null);
+    setAssignmentStatusKey(null);
+    setAssignmentCaseVersion(null);
+    if (!effectiveAssignmentId || forceBaseline || !selectedPatient?.roomId || !user) return;
+    let active = true;
+    void emrApi.getMarAssignmentContext(
+      effectiveAssignmentId,
+      user.id,
+      profile?.role,
+      profile?.school_id,
+      selectedPatient.roomId,
+    ).then((scope) => {
+      if (!active) return;
+      if (!scope || scope.patientId !== selectedPatient.id || scope.roomId !== selectedPatient.roomId) {
+        setAssignmentStatusKey(effectiveAssignmentId);
+        return;
+      }
+      setAssignmentStatus(scope.status);
+      setAssignmentStatusKey(effectiveAssignmentId);
+      // scenario_baseline_version is not a MAR case key. Only the immutable
+      // case_key_version can authorize an assignment snapshot read.
+      setAssignmentCaseVersion(scope.caseVersion);
+    });
+    return () => { active = false; };
+  }, [effectiveAssignmentId, forceBaseline, profile?.role, profile?.school_id, selectedPatient, user]);
 
   const startEditCustomSections = () => {
     if (!selectedPatient) return;
@@ -547,7 +642,7 @@ export default function EmrDashboard() {
             </div>
           ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
+            <TabsList className="grid w-full grid-cols-7">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Activity className="h-4 w-4" />
                 Overview
@@ -571,6 +666,10 @@ export default function EmrDashboard() {
               <TabsTrigger value="orders" className="flex items-center gap-2">
                 <Pill className="h-4 w-4" />
                 Orders
+              </TabsTrigger>
+              <TabsTrigger value="mar" className="flex items-center gap-2">
+                <Pill className="h-4 w-4" />
+                MAR
               </TabsTrigger>
             </TabsList>
 
@@ -1103,6 +1202,16 @@ export default function EmrDashboard() {
               />
             </TabsContent>
 
+            <TabsContent value="mar">
+              <MedicationAdministrationRecord
+                patient={selectedPatient}
+                assignmentId={effectiveAssignmentId}
+                caseVersion={assignmentCaseVersion}
+                forceBaseline={forceBaseline}
+                readOnly={studentEmrReadOnly}
+              />
+            </TabsContent>
+
             {isEditingCustomSections && (
               <div className="mt-6 space-y-4">
                 <h3 className="text-lg font-semibold">Custom Overview Sections</h3>
@@ -1249,8 +1358,12 @@ export default function EmrDashboard() {
       <div className="main-content flex items-center justify-center">
         <div className="text-center">
           <User className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-foreground mb-2">Select a Patient</h2>
-          <p className="text-muted-foreground">Choose a patient from the sidebar to view their medical record</p>
+          <h2 className="text-xl font-semibold text-foreground mb-2">
+            {testAssignmentError ? 'Unable to open this EHR' : 'Select a Patient'}
+          </h2>
+          <p className="text-muted-foreground">
+            {testAssignmentError ?? 'Choose a patient from the sidebar to view their medical record'}
+          </p>
         </div>
       </div>
     </div>
