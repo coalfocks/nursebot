@@ -42,10 +42,18 @@ describe('feedback sheet mapping and rendering', () => {
       mdm_breakdown: {},
     }));
 
-    expect(html).toContain('Review feedback');
+    expect(html).toContain('Review your feedback');
     expect(html).toContain('A &lt; B');
     expect(html).toContain('Use &lt;closed-loop&gt; communication');
     expect(html).toContain('Not recorded.');
     expect(html).not.toContain('"feedback_debrief"');
+  });
+
+  it('removes authoring-only instructions from reader-facing goals', () => {
+    const model = mapFeedbackSheet({
+      room: { room_number: '7', case_goals: ['Reveal this goal only in post-case feedback.', 'Assess airway and escalate deterioration.'] },
+      feedback_debrief: { case_goals: ['Do not disclose the target diagnosis or goals through nurse or patient conversation before case completion.'] },
+    });
+    expect(model.goals).toEqual(['Assess airway and escalate deterioration.']);
   });
 });

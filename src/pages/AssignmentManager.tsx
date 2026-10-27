@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, RefreshCw, Download, Eye, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, RefreshCw, Download, Eye, X, ArrowUp, ArrowDown, ClipboardList } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -36,6 +36,7 @@ type Assignment = Database['public']['Tables']['student_room_assignments']['Row'
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
+type TimelineEvent = { id: string; label: string; timestamp: string | null; content: string };
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
 
@@ -76,6 +77,10 @@ export default function AssignmentManager() {
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [reviewAssignment, setReviewAssignment] = useState<Assignment | null>(null);
+  const [timelineAssignment, setTimelineAssignment] = useState<Assignment | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
@@ -517,6 +522,43 @@ export default function AssignmentManager() {
     const messages = await fetchChatMessages(assignment.id);
     setSelectedChatMessages(messages);
     setShowChatModal(true);
+  };
+
+  const handleViewTimeline = async (assignment: Assignment) => {
+    setTimelineAssignment(assignment);
+    setTimelineEvents([]);
+    setTimelineError(null);
+    setTimelineLoading(true);
+    const events: TimelineEvent[] = [];
+    const timestamp = (value: unknown) => {
+      if (typeof value !== 'string' || !value.trim()) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    };
+    try {
+      const [chat, patient, consultant, orders, notes, actions] = await Promise.all([
+        supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('patient_chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('consultant_chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
+        (supabase as any).from('medical_orders').select('id, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
+        (supabase as any).from('clinical_notes').select('id, title, note_type, content, timestamp, created_at').eq('assignment_id', assignment.id).is('deleted_at', null).order('timestamp', { ascending: true }),
+        (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
+      ]);
+      const firstError = [chat, patient, consultant, orders, notes, actions].find((result) => result.error && !String(result.error.message || '').toLowerCase().includes('does not exist'));
+      if (firstError?.error) throw firstError.error;
+      (chat.data ?? []).forEach((item: any) => events.push({ id: `chat-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Student message' : 'Nurse message', timestamp: timestamp(item.created_at), content: item.content || '' }));
+      (patient.data ?? []).forEach((item: any) => events.push({ id: `patient-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Question to patient' : 'Patient reply', timestamp: timestamp(item.created_at), content: item.content || '' }));
+      (consultant.data ?? []).forEach((item: any) => events.push({ id: `consultant-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Consultant message' : 'Consultant reply', timestamp: timestamp(item.created_at), content: item.content || '' }));
+      (orders.data ?? []).forEach((item: any) => events.push({ id: `order-${item.id}`, label: 'Order placed', timestamp: timestamp(item.order_time ?? item.created_at), content: [item.order_name, item.dose, item.route, item.frequency, item.priority, item.status, item.instructions].filter(Boolean).join(' • ') }));
+      (notes.data ?? []).forEach((item: any) => events.push({ id: `note-${item.id}`, label: 'Progress note', timestamp: timestamp(item.timestamp ?? item.created_at), content: [item.title || item.note_type, item.content].filter(Boolean).join('\n') }));
+      (actions.data ?? []).forEach((item: any) => events.push({ id: `action-${item.id}`, label: item.action_type === 'hint_request' || item.channel === 'hint' ? 'Hint request' : `Student ${String(item.action_type || 'action').replace(/_/g, ' ')}`, timestamp: timestamp(item.occurred_at ?? item.created_at), content: item.content || '' }));
+      events.sort((a, b) => (a.timestamp ? new Date(a.timestamp).getTime() : Number.MAX_SAFE_INTEGER) - (b.timestamp ? new Date(b.timestamp).getTime() : Number.MAX_SAFE_INTEGER));
+      setTimelineEvents(events.filter((event) => event.content.trim()));
+    } catch (error) {
+      setTimelineError(error instanceof Error ? error.message : 'Unable to load the recorded student timeline.');
+    } finally {
+      setTimelineLoading(false);
+    }
   };
 
   const handleRerunAssessment = async (assignmentId: string) => {
@@ -983,11 +1025,11 @@ export default function AssignmentManager() {
                         {['completed', 'bedside'].includes(assignment.status) && (
                           <>
                             <button
-                              onClick={() => handleViewChat(assignment)}
+                              onClick={() => void handleViewTimeline(assignment)}
                               className="inline-flex items-center px-3 py-2 border border-green-300 shadow-sm text-sm leading-4 font-medium rounded-md text-green-700 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                             >
-                              <MessageSquare className="w-4 h-4 mr-1" />
-                              View Chat
+                              <ClipboardList className="w-4 h-4 mr-1" />
+                              Student timeline
                             </button>
                             {assignment.status === 'completed' && (
                               <>
@@ -1531,6 +1573,26 @@ export default function AssignmentManager() {
                 <button type="button" aria-label="Close feedback review" onClick={() => setReviewAssignment(null)} className="rounded p-1 text-gray-500 hover:bg-gray-200"><X className="h-5 w-5" /></button>
               </div>
               <FeedbackSheet model={getFeedbackSheetModel(reviewAssignment)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {timelineAssignment && (
+        <div className="fixed inset-0 z-20 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="student-timeline-title">
+          <div className="flex min-h-screen items-center justify-center px-4 py-8">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={() => setTimelineAssignment(null)} />
+            <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div><h2 id="student-timeline-title" className="text-lg font-semibold text-gray-900">Student timeline</h2><p className="mt-1 text-sm text-gray-500">Recorded events for {timelineAssignment.student.full_name} · Room {timelineAssignment.room?.room_number || '—'} · times shown in your local timezone</p></div>
+                <button type="button" aria-label="Close student timeline" onClick={() => setTimelineAssignment(null)} className="rounded p-1 text-gray-500 hover:bg-gray-100"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="mt-5 space-y-3">
+                {timelineLoading && <p className="rounded border bg-gray-50 p-4 text-sm text-gray-600">Loading recorded timeline…</p>}
+                {timelineError && <p role="alert" className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">{timelineError}</p>}
+                {!timelineLoading && !timelineError && timelineEvents.length === 0 && <p className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No recorded timeline entries were found for this attempt.</p>}
+                {!timelineLoading && timelineEvents.map((event) => <details key={event.id} className="rounded-lg border border-gray-200 bg-gray-50 p-4"><summary className="cursor-pointer list-none"><span className="font-medium text-gray-900">{event.label}</span><span className="ml-3 text-xs text-gray-500">{event.timestamp ? new Date(event.timestamp).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'Time not recorded'}</span></summary><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700">{event.content}</p></details>)}
+              </div>
             </div>
           </div>
         </div>
