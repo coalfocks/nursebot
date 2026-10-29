@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Loader2, Play, RefreshCw } from 'lucide-react';
 import Navbar from '../components/Navbar';
@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import { isTestUser } from '../lib/roles';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
-import { testUserAssignmentInsert, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { testUserAssignmentRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -31,6 +31,7 @@ export default function TestRooms() {
   const [error, setError] = useState<string | null>(null);
   const [openingRoomId, setOpeningRoomId] = useState<number | null>(null);
   const [resettingRoomIds, setResettingRoomIds] = useState<Set<number>>(new Set());
+  const pendingAssignmentsRef = useRef<Map<number, AssignmentCreateRow>>(new Map());
 
   const canAccess = useMemo(() => isTestUser(profile), [profile]);
 
@@ -118,7 +119,7 @@ export default function TestRooms() {
     const existing = assignmentsByRoom.get(roomId);
     if (!forceNew && existing?.case_key_version) return existing;
 
-    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: roomId });
+    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
     const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
       ? (published as { caseVersion: string }).caseVersion.trim()
       : '';
@@ -134,24 +135,34 @@ export default function TestRooms() {
       return null;
     }
 
-    const assignment: AssignmentCreateRow = {
+    const pending = pendingAssignmentsRef.current.get(roomId);
+    const assignment: AssignmentCreateRow = pending ?? {
       id: crypto.randomUUID(), student_id: user.id, room_id: roomId, assigned_by: user.id, status: 'assigned',
       effective_date: new Date().toISOString(), window_start: new Date().toISOString(), window_end: null,
       school_id: profile.school_id, case_key_version: caseVersion,
     };
+    pendingAssignmentsRef.current.set(roomId, assignment);
 
-    const { data, error: insertError } = await supabase
-      .from('student_room_assignments')
-      .insert(testUserAssignmentInsert(assignment))
-      .select('id, room_id, status, created_at, case_key_version, is_sandbox')
-      .maybeSingle();
+    const { error: insertError } = await callGeneratedRpc('create_test_user_assignment_with_manual_snapshot', testUserAssignmentRpcArgs(assignment));
 
-    if (insertError || !data) {
+    if (insertError) {
       console.error('Failed to create test assignment', insertError);
       setError('Unable to start a test session for this room.');
       return null;
     }
 
+    const { data, error: readbackError } = await supabase
+      .from('student_room_assignments')
+      .select('id, room_id, status, created_at, case_key_version, is_sandbox')
+      .eq('id', assignment.id)
+      .maybeSingle();
+    if (readbackError || !data) {
+      console.error('Test assignment committed but readback failed', readbackError);
+      setError('The test session may have been created, but its readback failed. Retry the same room to reconcile it.');
+      return null;
+    }
+
+    pendingAssignmentsRef.current.delete(roomId);
     const nextMap = new Map(assignmentsByRoom);
     nextMap.set(roomId, data as AssignmentSummary);
     setAssignmentsByRoom(nextMap);

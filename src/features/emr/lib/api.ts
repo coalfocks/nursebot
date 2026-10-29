@@ -1088,6 +1088,14 @@ export const emrApi = {
     };
   },
 
+  async getMarAssignmentReader(assignmentId: string): Promise<{ reader: 'manual' | 'automatic' | 'unavailable'; caseVersion: string | null; error?: string }> {
+    const { data, error } = await manualMarRpc().rpc('get_mar_assignment_reader', { p_assignment_id: assignmentId });
+    if (error) return { reader: 'unavailable', caseVersion: null, error: error.message };
+    const value = data as { reader?: unknown; caseVersion?: unknown } | null;
+    const reader = value?.reader === 'manual' || value?.reader === 'automatic' ? value.reader : 'unavailable';
+    return { reader, caseVersion: typeof value?.caseVersion === 'string' ? value.caseVersion : null };
+  },
+
   async readManualMarPacket(
     patientId: string,
     roomId: number,

@@ -5,6 +5,14 @@
 
 create extension if not exists pgcrypto;
 create schema if not exists auth;
+do $$ begin
+  create role anon;
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create role authenticated;
+exception when duplicate_object then null;
+end $$;
 create table auth.users (id uuid primary key);
 
 create or replace function auth.uid() returns uuid
@@ -39,6 +47,18 @@ create table public.student_room_assignments (
   school_id uuid not null references public.schools(id),
   case_key_version text,
   scenario_baseline_version integer
+);
+
+-- Minimal order relation required by the exact authored-materialization
+-- migrations. The fixture intentionally omits unrelated clinical columns.
+create table public.medical_orders (
+  id uuid primary key default gen_random_uuid(),
+  patient_id uuid references public.patients(id),
+  room_id integer references public.rooms(id),
+  assignment_id uuid references public.student_room_assignments(id),
+  category text,
+  order_name text,
+  deleted_at timestamptz
 );
 
 create table public.manual_mar_packets (

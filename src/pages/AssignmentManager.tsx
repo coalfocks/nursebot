@@ -303,7 +303,7 @@ export default function AssignmentManager() {
       const publishedVersions = new Map<number, string>();
       for (const roomId of selectedRooms) {
         const numericRoomId = parseInt(roomId, 10);
-        const { data, error } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: numericRoomId });
+        const { data, error } = await callGeneratedRpc('publish_mar_case_version_from_manual_packet', { p_room_id: numericRoomId });
         const caseVersion = typeof (data as { caseVersion?: unknown } | null)?.caseVersion === 'string'
           ? (data as { caseVersion: string }).caseVersion.trim()
           : '';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { materializationRpcArgs, testUserAssignmentInsert } from './assignmentCreation';
+import { materializationRpcArgs, testUserAssignmentInsert, testUserAssignmentRpcArgs } from './assignmentCreation';
 
 describe('fresh assignment MAR materialization envelope', () => {
   it('binds the immutable case version and stable request identity', () => {
@@ -15,5 +15,16 @@ describe('fresh assignment MAR materialization envelope', () => {
       id: 'assignment-2', student_id: 'student-2', room_id: 304, assigned_by: 'student-2', status: 'assigned',
       effective_date: null, window_start: null, window_end: null, school_id: 'school-1', case_key_version: 'room-304-mar-v1',
     })).toMatchObject({ is_sandbox: true, case_key_version: 'room-304-mar-v1' });
+  });
+
+  it('freezes the complete test-user RPC envelope for response-loss reconciliation', () => {
+    expect(testUserAssignmentRpcArgs({
+      id: 'assignment-3', student_id: 'student-3', room_id: 204, assigned_by: 'student-3', status: 'assigned',
+      effective_date: '2026-10-29T16:00:00.000Z', window_start: '2026-10-29T15:30:00.000Z', window_end: null,
+      school_id: 'school-1', case_key_version: 'room-204-manual-r1',
+    })).toEqual({
+      p_assignment_id: 'assignment-3', p_room_id: 204, p_case_version: 'room-204-manual-r1',
+      p_effective_date: '2026-10-29T16:00:00.000Z', p_window_start: '2026-10-29T15:30:00.000Z', p_window_end: null,
+    });
   });
 });

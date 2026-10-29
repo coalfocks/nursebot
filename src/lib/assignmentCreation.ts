@@ -49,6 +49,15 @@ export const testUserAssignmentInsert = (assignment: AssignmentCreateRow) => ({
   case_key_version: assignment.case_key_version,
 });
 
+export const testUserAssignmentRpcArgs = (assignment: AssignmentCreateRow) => ({
+  p_assignment_id: assignment.id,
+  p_room_id: assignment.room_id,
+  p_case_version: assignment.case_key_version,
+  p_effective_date: assignment.effective_date,
+  p_window_start: assignment.window_start,
+  p_window_end: assignment.window_end,
+});
+
 export function getMissingAssignmentRows(
   assignments: AssignmentCreateRow[],
   existingIds: ReadonlySet<string>,

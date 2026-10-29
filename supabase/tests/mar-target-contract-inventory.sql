@@ -1,7 +1,5 @@
 -- READ-ONLY target inventory. Run with a connection that can inspect catalog
 -- metadata; do not run migration files from this script.
-\set ON_ERROR_STOP on
-
 select current_database() as database_name, current_user as database_role;
 
 select n.nspname as schema_name, c.relname as relation_name,
@@ -41,16 +39,14 @@ select t.tgname, n.nspname as schema_name, c.relname as relation_name,
    and c.relname = 'student_room_assignments'
    and t.tgname = 'manual_mar_snapshot_assignment_insert';
 
-select has_function_privilege(
-         'authenticated',
-         'public.create_test_user_assignment_with_manual_snapshot(uuid,integer,text,timestamptz,timestamptz,timestamptz)',
-         'EXECUTE'
-       ) as test_user_rpc_callable,
-       has_function_privilege(
-         'authenticated',
-         'public.create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamptz,timestamptz,timestamptz)',
-         'EXECUTE'
-       ) as normal_rpc_callable;
+select case
+         when to_regprocedure('public.create_test_user_assignment_with_manual_snapshot(uuid,integer,text,timestamptz,timestamptz,timestamptz)') is null then false
+         else has_function_privilege('authenticated', to_regprocedure('public.create_test_user_assignment_with_manual_snapshot(uuid,integer,text,timestamptz,timestamptz,timestamptz)'), 'EXECUTE')
+       end as test_user_rpc_callable,
+       case
+         when to_regprocedure('public.create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamptz,timestamptz,timestamptz)') is null then false
+         else has_function_privilege('authenticated', to_regprocedure('public.create_assignment_with_mar_materialization(uuid,uuid,uuid,integer,uuid,text,timestamptz,timestamptz,timestamptz)'), 'EXECUTE')
+       end as normal_rpc_callable;
 
 -- Supabase-managed migration history, when present. Missing rows are evidence
 -- for review only; this query never applies or replays anything.
