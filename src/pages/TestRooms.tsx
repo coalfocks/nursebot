@@ -7,7 +7,6 @@ import { useAuthStore } from '../stores/authStore';
 import { isTestUser } from '../lib/roles';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
-import { testUserAssignmentInsert, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -118,7 +117,7 @@ export default function TestRooms() {
     const existing = assignmentsByRoom.get(roomId);
     if (!forceNew && existing?.case_key_version) return existing;
 
-    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: roomId });
+    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
     const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
       ? (published as { caseVersion: string }).caseVersion.trim()
       : '';
@@ -134,21 +133,31 @@ export default function TestRooms() {
       return null;
     }
 
-    const assignment: AssignmentCreateRow = {
-      id: crypto.randomUUID(), student_id: user.id, room_id: roomId, assigned_by: user.id, status: 'assigned',
-      effective_date: new Date().toISOString(), window_start: new Date().toISOString(), window_end: null,
-      school_id: profile.school_id, case_key_version: caseVersion,
-    };
+    const assignmentId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const { data: created, error: insertError } = await callGeneratedRpc('create_test_user_assignment_with_manual_snapshot', {
+      p_assignment_id: assignmentId,
+      p_room_id: roomId,
+      p_case_version: caseVersion,
+      p_effective_date: now,
+      p_window_start: now,
+      p_window_end: null,
+    });
 
-    const { data, error: insertError } = await supabase
-      .from('student_room_assignments')
-      .insert(testUserAssignmentInsert(assignment))
-      .select('id, room_id, status, created_at, case_key_version, is_sandbox')
-      .maybeSingle();
-
-    if (insertError || !data) {
+    if (insertError || !created) {
       console.error('Failed to create test assignment', insertError);
       setError('Unable to start a test session for this room.');
+      return null;
+    }
+
+    const { data, error: readbackError } = await supabase
+      .from('student_room_assignments')
+      .select('id, room_id, status, created_at, case_key_version, is_sandbox')
+      .eq('id', assignmentId)
+      .maybeSingle();
+    if (readbackError || !data) {
+      console.error('Test assignment creation readback failed', readbackError);
+      setError('Test assignment was created but could not be read back safely.');
       return null;
     }
 

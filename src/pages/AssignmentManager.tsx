@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Loader2, Plus, Search, MessageSquare, RefreshCw, Download, Eye, X, ArrowUp, ArrowDown, ClipboardList } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
@@ -14,7 +14,7 @@ import {
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
-import { materializationRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -88,6 +88,7 @@ export default function AssignmentManager() {
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
+  const assignmentOperationRef = useRef<{ assignments: AssignmentCreateRow[] } | null>(null);
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
@@ -313,7 +314,7 @@ export default function AssignmentManager() {
         publishedVersions.set(numericRoomId, caseVersion);
       }
 
-      const assignments: AssignmentCreateRow[] = [];
+      const generatedAssignments: AssignmentCreateRow[] = [];
 
       for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
@@ -354,7 +355,7 @@ export default function AssignmentManager() {
           const studentEffectiveDate = new Date(currentCaseMs);
 
           const numericRoomId = parseInt(roomId, 10);
-          assignments.push({
+          generatedAssignments.push({
             id: crypto.randomUUID(),
             student_id: studentId,
             room_id: numericRoomId,
@@ -369,13 +370,32 @@ export default function AssignmentManager() {
         }
       }
 
+      // Keep the operation frozen across a partial commit, lost response, or
+      // a second click. Regenerating IDs here would create duplicate cases.
+      if (!assignmentOperationRef.current) {
+        assignmentOperationRef.current = { assignments: generatedAssignments };
+      }
+      const assignments = assignmentOperationRef.current.assignments;
+
       const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
       const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
       if (readinessError || !readinessValue?.ready || !readinessValue.atomic || Number(readinessValue.materializationVersion ?? 0) < 2) {
         throw new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed atomic snapshot/materialization setup is required before creating a new assignment.');
       }
 
-      for (const assignment of assignments) {
+      const assignmentIds = assignments.map((assignment) => assignment.id);
+      const [{ data: existingAssignments, error: existingError }, { data: materializedOperations, error: operationsError }] = await Promise.all([
+        supabase.from('student_room_assignments').select('id').in('id', assignmentIds),
+        supabase.from('mar_assignment_materialization_operations').select('assignment_id').in('assignment_id', assignmentIds),
+      ]);
+      if (existingError || operationsError) throw existingError ?? operationsError;
+      const existingIds = new Set((existingAssignments ?? []).map((row) => row.id));
+      const materializedIds = new Set((materializedOperations ?? []).map((row) => row.assignment_id));
+      const reconciliation = reconcileAssignmentRows(assignments, existingIds, materializedIds);
+      if (reconciliation.ambiguous.length > 0) {
+        throw new Error(`MAR_ASSIGNMENT_RECONCILIATION_REQUIRED: existing assignment ${reconciliation.ambiguous[0].id} has no materialization operation; inspect before retrying.`);
+      }
+      for (const assignment of reconciliation.toMaterialize) {
         const { error } = await callGeneratedRpc(
           'create_assignment_with_mar_materialization',
           materializationRpcArgs(assignment.id, assignment),
@@ -393,6 +413,7 @@ export default function AssignmentManager() {
       setBulkTargetSchoolId('');
       setBulkTargetSpecialty('');
       setSelectedBulkStudents([]);
+      assignmentOperationRef.current = null;
       await fetchAssignments();
     } catch (error) {
       console.error('Error assigning case:', error);

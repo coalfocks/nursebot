@@ -55,3 +55,18 @@ export function getMissingAssignmentRows(
 ): AssignmentCreateRow[] {
   return assignments.filter((assignment) => !existingIds.has(assignment.id));
 }
+
+export function reconcileAssignmentRows(
+  assignments: AssignmentCreateRow[],
+  existingIds: ReadonlySet<string>,
+  materializedIds: ReadonlySet<string>,
+): { toMaterialize: AssignmentCreateRow[]; ambiguous: AssignmentCreateRow[] } {
+  const missing = getMissingAssignmentRows(assignments, existingIds);
+  const ambiguous = assignments.filter((assignment) => existingIds.has(assignment.id) && !materializedIds.has(assignment.id));
+  return {
+    // Missing rows are first attempts; rows with an operation are safe
+    // idempotent readback/retries using the same assignment ID.
+    toMaterialize: [...missing, ...assignments.filter((assignment) => materializedIds.has(assignment.id))],
+    ambiguous,
+  };
+}

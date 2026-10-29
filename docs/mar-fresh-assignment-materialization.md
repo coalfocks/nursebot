@@ -21,13 +21,18 @@ assignment/request identity.
 
 ## `test_user` route
 
-`TestRooms` now creates only a fresh sandbox assignment with a published
-`case_key_version`, and refuses to launch if `get_manual_mar_readiness` is not
-ready. The insert relies on the reviewed append-only
-`manual_mar_snapshot_new_assignment` trigger to copy the already-published
-manual packet into an assignment snapshot. It never copies mutable room data
-into an old assignment and never treats `scenario_baseline_version` as a MAR
-version.
+`TestRooms` now obtains an eligible version through
+`get_mar_eligible_case_version`, which is explicitly limited to `test_user`,
+the account's school/available-room scope, and an existing manual packet. It
+then calls `create_test_user_assignment_with_manual_snapshot`; the RPC inserts
+only a new sandbox assignment and verifies the trigger-created immutable packet
+snapshot before returning. It never calls the admin-only publication RPC.
+
+Normal assignment publication from an accepted manual packet is an explicit,
+admin-reviewed operation: `publish_mar_case_version_from_manual_packet` reads
+the packet, records its packet ID/revision as provenance, and creates a new
+immutable authored version for subsequent normal materialization. It does not
+rewrite or repopulate the packet.
 
 The dashboard also exposes **Start fresh (preserve history)**. It creates a
 new sandbox assignment through this same path while leaving the existing test
@@ -44,10 +49,22 @@ On an isolated disposable database, in order:
 3. For the `test_user` sandbox contract, apply
    `supabase/migrations/20261021130000_manual_mar_packet_contract.sql` and
    `supabase/migrations/20261021141147_manual_mar_assignment_snapshot_hardening.sql`.
-4. Publish a room's authored Orders/MAR revision through the reviewed admin
-   publication operation. Verify both readiness RPCs and confirm a new
-   disposable assignment has a non-null `case_key_version`, one immutable
-   assignment snapshot, and assignment-scoped MAR events before learner QA.
+4. For each room, verify the accepted packet first, then use the explicit
+   manual-packet publication operation if a normal learner case is required.
+   Verify both readiness RPCs and confirm a new disposable assignment has a
+   non-null `case_key_version`, exactly one immutable assignment snapshot, and
+   assignment-scoped MAR events before learner QA.
+
+Reader selection is assignment-scoped. `get_mar_assignment_reader` selects the
+manual snapshot when one exists, otherwise the automatic baseline snapshot;
+the admin baseline route continues to prefer the existing manual packet view.
+This prevents enabling automatic readiness from hiding valid manual packets.
+
+AssignmentManager freezes the generated IDs/case versions in a client-side
+operation envelope. On retry it reconciles existing IDs against
+`mar_assignment_materialization_operations`, replays only idempotent RPCs, and
+stops on an existing assignment with no operation row instead of creating a
+new ID.
 
 These migrations are included in this review branch as prerequisites only;
 this branch does not apply them to any database. Apply them separately, in

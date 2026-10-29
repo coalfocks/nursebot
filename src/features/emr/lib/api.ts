@@ -1077,6 +1077,15 @@ export const emrApi = {
     return Boolean((data as { ready?: boolean } | null)?.ready);
   },
 
+  async getMarAssignmentReader(assignmentId: string): Promise<'automatic' | 'manual' | 'unavailable' | null> {
+    const { data, error } = await manualMarRpc().rpc('get_mar_assignment_reader', {
+      p_assignment_id: assignmentId,
+    });
+    if (error) return null;
+    const reader = (data as { reader?: unknown } | null)?.reader;
+    return reader === 'automatic' || reader === 'manual' || reader === 'unavailable' ? reader : null;
+  },
+
   async getManualMarReadiness(): Promise<ManualMarReadiness> {
     const { data, error } = await manualMarRpc().rpc('get_manual_mar_readiness');
     if (error) return { available: false, ready: false, error: error.message };

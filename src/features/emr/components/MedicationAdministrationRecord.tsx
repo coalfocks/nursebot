@@ -145,7 +145,13 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         return;
       }
     }
-    const marReady = await emrApi.getMarReadiness();
+    // Reader choice is assignment-scoped. A global automatic schema can be
+    // installed while a sandbox assignment is intentionally backed by the
+    // immutable manual packet contract; admin baseline reads also remain on
+    // the established manual packet path.
+    const assignmentReader = assignmentId ? await emrApi.getMarAssignmentReader(assignmentId) : null;
+    if (!isCurrent(request)) return;
+    const marReady = !forceBaseline && assignmentReader !== 'manual' && await emrApi.getMarReadiness();
     if (!isCurrent(request)) return;
     if (!marReady) {
       const manualReady = await emrApi.getManualMarReadiness();
