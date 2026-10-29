@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
 import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
+import { ConsultantPortal } from '../components/ConsultantPortal';
 import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
 import type { Database } from '../lib/database.types';
@@ -25,6 +26,7 @@ export default function AssignmentView() {
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [consultantOpen, setConsultantOpen] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -242,6 +244,7 @@ export default function AssignmentView() {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-gray-100">
       <Navbar />
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
@@ -284,6 +287,15 @@ export default function AssignmentView() {
                   >
                     <ExternalLink className="h-4 w-4 mr-1" />
                     Open EHR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConsultantOpen(true)}
+                    className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
+                    title="Open Consultant Portal"
+                  >
+                    <Book className="h-4 w-4 mr-1" />
+                    Consultant Portal
                   </button>
                 </div>
                 <ChatInterface
@@ -350,5 +362,7 @@ export default function AssignmentView() {
         </div>
       </div>
     </div>
+    {assignment && <ConsultantPortal assignmentId={assignment.id} open={consultantOpen} onClose={() => setConsultantOpen(false)} />}
+    </>
   );
-} 
+}
