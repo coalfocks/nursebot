@@ -93,3 +93,11 @@ export const getViewedCompletionHints = (
       content: hints[key].trim(),
       viewedAt: views[key]?.viewedAt ?? '',
     }));
+
+export const formatViewedCompletionHintsForEvaluation = (
+  viewedHints: ReturnType<typeof getViewedCompletionHints>,
+) => viewedHints.length
+  ? viewedHints
+      .map((hint) => `- ${hint.label} viewed at ${hint.viewedAt}\n  Content: ${hint.content}`)
+      .join('\n')
+  : 'No completion hints were viewed.';
