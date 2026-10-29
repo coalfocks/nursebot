@@ -365,7 +365,7 @@ export const emrApi = {
   } | null> {
     let assignmentQuery = marSupabase
       .from('student_room_assignments')
-      .select('id, room_id, student_id, school_id, status, case_key_version, scenario_baseline_version')
+      .select('id, room_id, student_id, school_id, status, case_key_version')
       .eq('id', assignmentId)
       .eq('room_id', roomId);
     if (actorRole === 'student' || actorRole === 'test_user') {
@@ -395,11 +395,9 @@ export const emrApi = {
       patientId: room.patient_id,
       schoolId: assignment.school_id,
       status: assignment.status ?? null,
-      caseVersion: typeof assignment.case_key_version === 'string'
+      caseVersion: typeof assignment.case_key_version === 'string' && assignment.case_key_version.trim()
         ? assignment.case_key_version
-        : assignment.scenario_baseline_version != null
-          ? String(assignment.scenario_baseline_version)
-          : null,
+        : null,
     };
   },
 

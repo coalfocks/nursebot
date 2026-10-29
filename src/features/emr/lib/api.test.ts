@@ -226,7 +226,7 @@ describe('emrApi versioned note/order mutations', () => {
     expect(assignmentQuery.eq).toHaveBeenCalledWith('school_id', 'school-b');
   });
 
-  it('keeps the recorded legacy scenario version for old assignment snapshots', async () => {
+  it('does not reinterpret a legacy scenario version as an MAR snapshot key', async () => {
     from
       .mockReturnValueOnce(builder({
         data: {
@@ -253,6 +253,6 @@ describe('emrApi versioned note/order mutations', () => {
       20,
     );
 
-    expect(scope?.caseVersion).toBe('6');
+    expect(scope?.caseVersion).toBeNull();
   });
 });
