@@ -104,4 +104,32 @@ describe('ChatInterface patient transport contract', () => {
     expect(screen.queryByText('I am having trouble answering right now.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
+
+  it('retries the frozen question and full body after an edited draft', async () => {
+    let patientCalls = 0;
+    mocks.invoke.mockImplementation((name: string) => {
+      if (name !== 'patient-chat') return Promise.resolve({ data: null, error: null });
+      patientCalls += 1;
+      return patientCalls === 1
+        ? Promise.resolve({ data: null, error: new Error('patient transport 409') })
+        : Promise.resolve({ data: { message: 'Recovered patient answer' }, error: null });
+    });
+
+    render(<ChatInterface assignmentId="assignment-1" roomNumber="204" roomId={204} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Go to Bedside' }));
+    const input = await screen.findByPlaceholderText('Ask the patient...');
+    fireEvent.change(input, { target: { value: 'What is your pain level?' } });
+    fireEvent.submit(input.closest('form')!);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument());
+    fireEvent.change(input, { target: { value: 'EDITED DIFFERENT QUESTION' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(screen.getByText('Recovered patient answer')).toBeInTheDocument());
+    const patientCallsByName = mocks.invoke.mock.calls.filter(([name]) => name === 'patient-chat');
+    expect(patientCallsByName).toHaveLength(2);
+    expect(patientCallsByName[1][1].body).toEqual(patientCallsByName[0][1].body);
+    expect(patientCallsByName[1][1].body.messages.at(-1)).toEqual({ role: 'user', content: 'What is your pain level?' });
+    expect(patientCallsByName[1][1].body.messages.at(-1)).not.toEqual({ role: 'user', content: 'EDITED DIFFERENT QUESTION' });
+  });
 });

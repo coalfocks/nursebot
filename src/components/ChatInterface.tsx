@@ -136,6 +136,12 @@ interface ChatInterfaceProps {
   assignmentStatus?: string;
 }
 
+interface PendingPatientRequest {
+  requestId: string;
+  question: string;
+  messages: BedsidePatientMessage[];
+}
+
 export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseline, assignmentStatus }: ChatInterfaceProps) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -168,6 +174,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const [isLoadingPatientConversation, setIsLoadingPatientConversation] = useState(false);
   const [patientConversationError, setPatientConversationError] = useState<string | null>(null);
   const patientRequestIdRef = useRef<string | null>(null);
+  const pendingPatientRequestRef = useRef<PendingPatientRequest | null>(null);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
@@ -825,15 +832,23 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     }
   };
 
-  const submitPatientQuestion = async (question: string) => {
+  const submitPatientQuestion = async (question: string, frozenRequest?: PendingPatientRequest) => {
     if (!question || !bedsideConfig.patientChatEnabled || !bedsideConfig.patientChatPrompt) return;
 
-    const clientMessageId = patientRequestIdRef.current ?? crypto.randomUUID();
+    // Keep an unresolved request's ID and complete transport body immutable.
+    // An edited draft must not be sent with the prior request ID.
+    if (pendingPatientRequestRef.current && !frozenRequest) return;
+
+    const hadUnresolvedRequest = Boolean(pendingPatientRequestRef.current);
+    const clientMessageId = frozenRequest?.requestId ?? patientRequestIdRef.current ?? crypto.randomUUID();
     patientRequestIdRef.current = clientMessageId;
-    const nextMessages: BedsidePatientMessage[] = [
-      ...bedsideMessages,
-      { role: 'student', content: question },
-    ];
+    const operation: PendingPatientRequest = frozenRequest ?? {
+      requestId: clientMessageId,
+      question,
+      messages: [...bedsideMessages, { role: 'student', content: question }],
+    };
+    pendingPatientRequestRef.current = operation;
+    const nextMessages = operation.messages;
     setPatientConversationError(null);
     setBedsideMessages(nextMessages);
     setIsPatientReplying(true);
@@ -864,11 +879,12 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       if (!data?.message) throw new Error('Patient response missing');
       setBedsideMessages((prev) => [...prev, { role: 'patient', content: data.message }]);
       patientRequestIdRef.current = null;
+      pendingPatientRequestRef.current = null;
       setBedsideInput('');
     } catch (error) {
       console.error('Error in bedside patient chat:', error);
-      setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === question)));
-      setBedsideInput(question);
+      setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === operation.question)));
+      if (!hadUnresolvedRequest) setBedsideInput(operation.question);
       setPatientConversationError(await getPatientChatErrorMessage(error));
     } finally {
       setIsPatientReplying(false);
@@ -878,6 +894,12 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const handlePatientChatSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     void submitPatientQuestion(bedsideInput.trim());
+  };
+
+  const handlePatientChatRetry = () => {
+    const frozenRequest = pendingPatientRequestRef.current;
+    if (!frozenRequest || isPatientReplying) return;
+    void submitPatientQuestion(frozenRequest.question, frozenRequest);
   };
 
   return (
@@ -1110,7 +1132,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">Loading {bedsideConfig.speaker} conversation…</div>
             )}
             {patientConversationError && (
-              <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"><div className="flex items-center justify-between gap-3"><span>{patientConversationError}</span><button type="button" className="font-semibold underline" disabled={isPatientReplying || !bedsideInput.trim()} onClick={() => { setPatientConversationError(null); void submitPatientQuestion(bedsideInput.trim()); }}>Retry</button></div></div>
+              <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"><div className="flex items-center justify-between gap-3"><span>{patientConversationError}</span><button type="button" className="font-semibold underline" disabled={isPatientReplying || !pendingPatientRequestRef.current} onClick={() => { setPatientConversationError(null); handlePatientChatRetry(); }}>Retry</button></div></div>
             )}
             {!isLoadingPatientConversation && !patientConversationError && !bedsideConfig.patientChatConfigured && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -1161,7 +1183,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
                   />
                   <button
                     type="submit"
-                    disabled={isPatientReplying || !bedsideInput.trim()}
+                    disabled={isPatientReplying || !bedsideInput.trim() || Boolean(patientConversationError)}
                     className="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     {isPatientReplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
