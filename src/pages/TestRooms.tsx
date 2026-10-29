@@ -113,10 +113,10 @@ export default function TestRooms() {
     };
   }, [user, canAccess, navigate]);
 
-  const ensureTestAssignment = async (roomId: number) => {
+  const ensureTestAssignment = async (roomId: number, forceNew = false) => {
     if (!user) return null;
     const existing = assignmentsByRoom.get(roomId);
-    if (existing?.case_key_version) return existing;
+    if (!forceNew && existing?.case_key_version) return existing;
 
     const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: roomId });
     const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
@@ -163,6 +163,19 @@ export default function TestRooms() {
     setError(null);
     try {
       const assignment = await ensureTestAssignment(roomId);
+      if (assignment) {
+        navigate(`/assignment/${assignment.id}`);
+      }
+    } finally {
+      setOpeningRoomId(null);
+    }
+  };
+
+  const handleStartFreshRoom = async (roomId: number) => {
+    setOpeningRoomId(roomId);
+    setError(null);
+    try {
+      const assignment = await ensureTestAssignment(roomId, true);
       if (assignment) {
         navigate(`/assignment/${assignment.id}`);
       }
@@ -332,6 +345,15 @@ export default function TestRooms() {
                         <RefreshCw className="mr-2 h-4 w-4" />
                       )}
                       Reset session
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStartFreshRoom(room.id)}
+                      className="inline-flex items-center rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isOpening}
+                      title="Creates a new immutable attempt and leaves this session's history unchanged"
+                    >
+                      Start fresh (preserve history)
                     </button>
                     {!assignment && (
                       <span className="inline-flex items-center text-xs text-gray-400">

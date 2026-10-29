@@ -29,6 +29,12 @@ manual packet into an assignment snapshot. It never copies mutable room data
 into an old assignment and never treats `scenario_baseline_version` as a MAR
 version.
 
+The dashboard also exposes **Start fresh (preserve history)**. It creates a
+new sandbox assignment through this same path while leaving the existing test
+room assignment and its clinical/chat history untouched. The existing Reset
+session action remains destructive and is not part of the supported QA flow
+for validating historical preservation.
+
 ## Database prerequisites to review/apply separately
 
 On an isolated disposable database, in order:
@@ -43,4 +49,6 @@ On an isolated disposable database, in order:
    disposable assignment has a non-null `case_key_version`, one immutable
    assignment snapshot, and assignment-scoped MAR events before learner QA.
 
-These operations are prerequisites only; this branch does not run them.
+These migrations are included in this review branch as prerequisites only;
+this branch does not apply them to any database. Apply them separately, in
+order, only after the normal migration review and authorization gates.

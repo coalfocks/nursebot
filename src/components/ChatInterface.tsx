@@ -168,6 +168,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const [isLoadingPatientConversation, setIsLoadingPatientConversation] = useState(false);
   const [patientConversationError, setPatientConversationError] = useState<string | null>(null);
   const patientRequestIdRef = useRef<string | null>(null);
+  const patientRequestQuestionRef = useRef<string | null>(null);
   const [showQualtrics, setShowQualtrics] = useState(false);
   const [refreshAfterQualtrics, setRefreshAfterQualtrics] = useState(false);
   const [progressNoteDraft, setProgressNoteDraft] = useState('');
@@ -372,6 +373,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     setBedsideMessages([]);
     setPatientConversationError(null);
     patientRequestIdRef.current = null;
+    patientRequestQuestionRef.current = null;
     void (async () => {
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
@@ -828,11 +830,19 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
   const submitPatientQuestion = async (question: string) => {
     if (!question || !bedsideConfig.patientChatEnabled || !bedsideConfig.patientChatPrompt) return;
 
+    const pendingQuestion = patientRequestQuestionRef.current;
+    if (patientRequestIdRef.current && pendingQuestion && question !== pendingQuestion) {
+      setBedsideInput(pendingQuestion);
+      return;
+    }
+
     const clientMessageId = patientRequestIdRef.current ?? crypto.randomUUID();
+    const exactQuestion = pendingQuestion ?? question;
+    patientRequestQuestionRef.current = exactQuestion;
     patientRequestIdRef.current = clientMessageId;
     const nextMessages: BedsidePatientMessage[] = [
       ...bedsideMessages,
-      { role: 'student', content: question },
+      { role: 'student', content: exactQuestion },
     ];
     setPatientConversationError(null);
     setBedsideMessages(nextMessages);
@@ -845,7 +855,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
         assignment_id: assignmentId,
         client_message_id: clientMessageId,
         role: 'student',
-        content: question,
+        content: exactQuestion,
       });
       if (saveQuestionError && saveQuestionError.code !== '23505') throw saveQuestionError;
 
@@ -864,11 +874,12 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       if (!data?.message) throw new Error('Patient response missing');
       setBedsideMessages((prev) => [...prev, { role: 'patient', content: data.message }]);
       patientRequestIdRef.current = null;
+      patientRequestQuestionRef.current = null;
       setBedsideInput('');
     } catch (error) {
       console.error('Error in bedside patient chat:', error);
-      setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === question)));
-      setBedsideInput(question);
+      setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === exactQuestion)));
+      setBedsideInput(exactQuestion);
       setPatientConversationError(await getPatientChatErrorMessage(error));
     } finally {
       setIsPatientReplying(false);
@@ -1110,7 +1121,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">Loading {bedsideConfig.speaker} conversation…</div>
             )}
             {patientConversationError && (
-              <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"><div className="flex items-center justify-between gap-3"><span>{patientConversationError}</span><button type="button" className="font-semibold underline" disabled={isPatientReplying || !bedsideInput.trim()} onClick={() => { setPatientConversationError(null); void submitPatientQuestion(bedsideInput.trim()); }}>Retry</button></div></div>
+              <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"><div className="flex items-center justify-between gap-3"><span>{patientConversationError}</span><button type="button" className="font-semibold underline" disabled={isPatientReplying || !patientRequestQuestionRef.current} onClick={() => { setPatientConversationError(null); void submitPatientQuestion(patientRequestQuestionRef.current ?? ''); }}>Retry</button></div></div>
             )}
             {!isLoadingPatientConversation && !patientConversationError && !bedsideConfig.patientChatConfigured && (
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -1157,7 +1168,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
                     onChange={(event) => setBedsideInput(event.target.value)}
                     className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder={`Ask the ${bedsideConfig.speaker}...`}
-                    disabled={isPatientReplying}
+                    disabled={isPatientReplying || Boolean(patientRequestIdRef.current && patientConversationError)}
                   />
                   <button
                     type="submit"

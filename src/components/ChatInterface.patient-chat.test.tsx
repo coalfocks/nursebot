@@ -91,10 +91,15 @@ describe('ChatInterface patient transport contract', () => {
     expect(patientCall[1].body.messages.at(-1)).toEqual({ role: 'user', content: 'Do you have nausea?' });
   });
 
-  it('removes the optimistic question and shows the truthful transport error instead of fabricating a reply', async () => {
-    mocks.invoke.mockImplementation((name: string) => name === 'patient-chat'
-      ? Promise.resolve({ data: null, error: new Error('patient transport 409') })
-      : Promise.resolve({ data: null, error: null }));
+  it('freezes the failed question and retries the identical ID and full body after an edited draft', async () => {
+    let patientAttempts = 0;
+    mocks.invoke.mockImplementation((name: string) => {
+      if (name !== 'patient-chat') return Promise.resolve({ data: null, error: null });
+      patientAttempts += 1;
+      return patientAttempts === 1
+        ? Promise.resolve({ data: null, error: new Error('patient transport 409') })
+        : Promise.resolve({ data: { message: 'Recovered patient answer' }, error: null });
+    });
     render(<ChatInterface assignmentId="assignment-1" roomNumber="204" roomId={204} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Go to Bedside' }));
     const input = await screen.findByPlaceholderText('Ask the patient...');
@@ -102,6 +107,14 @@ describe('ChatInterface patient transport contract', () => {
     fireEvent.submit(input.closest('form')!);
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('patient transport 409'));
     expect(screen.queryByText('I am having trouble answering right now.')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    const firstCall = mocks.invoke.mock.calls.find(([name]) => name === 'patient-chat');
+    const firstBody = firstCall[1].body;
+    fireEvent.change(input, { target: { value: 'Edited after failure' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getByText('Recovered patient answer')).toBeInTheDocument());
+    const patientCalls = mocks.invoke.mock.calls.filter(([name]) => name === 'patient-chat');
+    expect(patientCalls).toHaveLength(2);
+    expect(patientCalls[1][1].body).toEqual(firstBody);
+    expect(patientCalls[1][1].body.clientMessageId).toBe(firstBody.clientMessageId);
   });
 });
