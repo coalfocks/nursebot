@@ -145,16 +145,28 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
         return;
       }
     }
-    const marReady = await emrApi.getMarReadiness();
+    const assignmentReader = assignmentId && !forceBaseline
+      ? await emrApi.getMarAssignmentReader(assignmentId)
+      : null;
+    if (!isCurrent(request)) return;
+    if (assignmentReader?.reader === 'unavailable') {
+      setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setDirty(false);
+      setError(assignmentReader.error ?? 'Medication history is unavailable for this attempt because no immutable MAR snapshot is attached.');
+      setLoading(false);
+      return;
+    }
+    const resolvedCaseVersion = assignmentReader?.caseVersion ?? effectiveCaseVersion;
+    const resolvedManualCaseVersion = resolvedCaseVersion ?? manualCaseVersion;
+    const marReady = assignmentReader ? assignmentReader.reader === 'automatic' : await emrApi.getMarReadiness();
     if (!isCurrent(request)) return;
     if (!marReady) {
       const manualReady = await emrApi.getManualMarReadiness();
       if (!isCurrent(request)) return;
-      if (!manualReady.ready || (assignmentId && !effectiveCaseVersion)) {
+      if (!manualReady.ready || (assignmentId && !resolvedCaseVersion)) {
           if (!isCurrent(request)) return;
         setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setDirty(false); setError(manualReady.ready ? 'Medication history is unavailable for this attempt.' : 'Medication history is temporarily unavailable because the MAR reader is not ready.'); setLoading(false); return;
       }
-      const packet = await emrApi.readManualMarPacket(patient.id, patient.roomId, scopeAssignmentId, manualCaseVersion);
+      const packet = await emrApi.readManualMarPacket(patient.id, patient.roomId, scopeAssignmentId, resolvedManualCaseVersion);
       if (!isCurrent(request)) return;
       if (packet.status === 'unavailable' || packet.status === 'error') {
         if (!isCurrent(request)) return;
@@ -163,7 +175,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
       const loadedEvents = packet.packet?.events ?? [];
       const loadedHash = marPayloadHash(loadedEvents);
       const pendingMatchesScope = pendingSave && pendingSave.patientId === patient.id && pendingSave.roomId === patient.roomId
-        && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === manualCaseVersion && pendingSave.actorId === actorId;
+        && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === resolvedManualCaseVersion && pendingSave.actorId === actorId;
       const recovered = pendingMatchesScope && pendingSave.payloadHash !== loadedHash ? pendingSave.events : loadedEvents;
       if (pendingMatchesScope && pendingSave.payloadHash === loadedHash) {
         window.localStorage.removeItem(recoveryKey);
@@ -183,7 +195,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     }
     setPath('automatic');
     const [loadedEvents, loadedOrders, loadedRevision, baseline] = await Promise.all([
-      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, effectiveCaseVersion, (message) => { if (isCurrent(request)) setError(message); }),
+      emrApi.listMarEvents(patient.id, scopeAssignmentId ?? undefined, patient.roomId, resolvedCaseVersion, (message) => { if (isCurrent(request)) setError(message); }),
       emrApi.listOrders(patient.id, scopeAssignmentId ?? undefined, patient.roomId),
       emrApi.getMarHistoryRevision(patient.id, patient.roomId, scopeAssignmentId),
       assignmentId && !forceBaseline ? emrApi.getMarBaselineVersion(assignmentId) : Promise.resolve(null),
@@ -191,7 +203,7 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     if (!isCurrent(request)) return;
     const loadedHash = marPayloadHash(loadedEvents);
     const recovered = pendingSave && pendingSave.patientId === patient.id && pendingSave.roomId === patient.roomId
-      && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === effectiveCaseVersion
+      && pendingSave.assignmentId === scopeAssignmentId && pendingSave.caseVersion === resolvedCaseVersion
       && pendingSave.actorId === actorId
       && pendingSave.payloadHash !== loadedHash
       ? pendingSave.events
