@@ -39,7 +39,10 @@ const query = (table: string) => {
     in: vi.fn(() => builder),
     then: (resolve: (value: { data: unknown[]; error: null }) => unknown) => {
       const data = table === 'chat_messages'
-        ? [{ id: 'chat-complete', role: 'consultant', content: '<completed>', created_at: '2099-01-01T10:00:00Z' }]
+        ? [
+            { id: 'chat-reply', role: 'assistant', content: 'Keep monitoring the patient.', created_at: '2099-01-01T09:05:00Z' },
+            { id: 'chat-complete', role: 'consultant', content: '<completed>', created_at: '2099-01-01T10:00:00Z' },
+          ]
         : table === 'patient_chat_messages'
           ? [{ id: 'patient-1', role: 'patient', content: 'Patient reply', created_at: '2099-01-01T09:01:00Z' }]
           : table === 'consultant_chat_messages'
@@ -157,7 +160,9 @@ describe('AssignmentManager frozen creation operation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Student timeline' }));
     await waitFor(() => expect(screen.getByText('Student progress note (save time not recorded)')).toBeInTheDocument());
     expect(screen.getByText('Assessment hint viewed')).toBeInTheDocument();
+    expect(screen.getByText('Nurse message')).toBeInTheDocument();
+    expect(screen.getByText('Keep monitoring the patient.')).toBeInTheDocument();
+    expect(screen.queryByText('assistant message')).not.toBeInTheDocument();
     expect(screen.getByText('Assignment completed')).toBeInTheDocument();
-    expect(screen.queryByText('Nurse message')).not.toBeInTheDocument();
   });
 });

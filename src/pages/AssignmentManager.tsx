@@ -565,7 +565,7 @@ export default function AssignmentManager() {
         }
         const label = item.role === 'student' || item.role === 'user'
           ? 'Student message'
-          : item.role === 'nurse'
+          : item.role === 'nurse' || item.role === 'assistant'
             ? 'Nurse message'
             : `${String(item.role || 'Assistant')} message`;
         events.push({ id: `chat-${item.id}`, label, timestamp: timestamp(item.created_at), content: item.content || '' });
