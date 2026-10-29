@@ -14,7 +14,7 @@ import {
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
-import { materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -88,7 +88,7 @@ export default function AssignmentManager() {
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
-  const assignmentOperationRef = useRef<{ assignments: AssignmentCreateRow[] } | null>(null);
+  const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[] } | null>(null);
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
@@ -236,6 +236,24 @@ export default function AssignmentManager() {
       return;
     }
 
+    const operationKey = assignmentOperationKey({
+      actorId: user.id,
+      schoolId: scopedSchoolId,
+      targetingMode,
+      studentId: selectedStudent,
+      bulkStudentIds: selectedBulkStudents,
+      roomIds: selectedRooms,
+      windowStart,
+      windowEnd,
+      timezone: selectedTimezone,
+      bulkTargetSchoolId,
+      bulkTargetSpecialty,
+    });
+    if (assignmentOperationRef.current && assignmentOperationRef.current.key !== operationKey) {
+      alert('A previous assignment operation is still pending. Cancel or retry that exact operation before creating a different assignment set.');
+      return;
+    }
+
     // Validate that all selected rooms have orders configured
     const selectedRoomsData = rooms.filter(r => selectedRooms.includes(r.id.toString()));
     if (selectedRoomsData.length !== selectedRooms.length) {
@@ -373,7 +391,7 @@ export default function AssignmentManager() {
       // Keep the operation frozen across a partial commit, lost response, or
       // a second click. Regenerating IDs here would create duplicate cases.
       if (!assignmentOperationRef.current) {
-        assignmentOperationRef.current = { assignments: generatedAssignments };
+        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments };
       }
       const assignments = assignmentOperationRef.current.assignments;
 
@@ -1407,6 +1425,7 @@ export default function AssignmentManager() {
                 <button
                   type="button"
                   onClick={() => {
+                    assignmentOperationRef.current = null;
                     setShowAssignModal(false);
                     setSelectedStudent('');
                     setStudentSearch('');

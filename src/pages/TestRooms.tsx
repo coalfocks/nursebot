@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Loader2, Play, RefreshCw } from 'lucide-react';
 import Navbar from '../components/Navbar';
@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import { isTestUser } from '../lib/roles';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { freshAssignmentOperation, freshAssignmentRpcArgs, type FreshAssignmentOperation } from '../lib/freshAssignmentOperation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -30,6 +31,7 @@ export default function TestRooms() {
   const [error, setError] = useState<string | null>(null);
   const [openingRoomId, setOpeningRoomId] = useState<number | null>(null);
   const [resettingRoomIds, setResettingRoomIds] = useState<Set<number>>(new Set());
+  const pendingFreshOperations = useRef(new Map<number, FreshAssignmentOperation>());
 
   const canAccess = useMemo(() => isTestUser(profile), [profile]);
 
@@ -117,32 +119,30 @@ export default function TestRooms() {
     const existing = assignmentsByRoom.get(roomId);
     if (!forceNew && existing?.case_key_version) return existing;
 
-    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
-    const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
-      ? (published as { caseVersion: string }).caseVersion.trim()
-      : '';
-    if (publishedError || !caseVersion) {
-      setError(`Room ${roomId} has no published immutable MAR version. Publish the authored packet before starting a fresh test session.`);
-      return null;
+    const pending = pendingFreshOperations.current.get(roomId);
+    let operation = pending;
+    if (!pending) {
+      const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
+      const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+        ? (published as { caseVersion: string }).caseVersion.trim()
+        : '';
+      if (publishedError || !caseVersion) {
+        setError(`Room ${roomId} has no published immutable MAR version. Publish the authored packet before starting a fresh test session.`);
+        return null;
+      }
+
+      const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
+      const readinessValue = readiness as { ready?: boolean; available?: boolean } | null;
+      if (readinessError || !readinessValue?.ready || readinessValue.available === false) {
+        setError('Test-room MAR snapshots are not installed. Apply the reviewed manual MAR packet and assignment-snapshot prerequisites before starting a fresh session.');
+        return null;
+      }
+
+      operation = freshAssignmentOperation(caseVersion);
+      pendingFreshOperations.current.set(roomId, operation);
     }
 
-    const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
-    const readinessValue = readiness as { ready?: boolean; available?: boolean } | null;
-    if (readinessError || !readinessValue?.ready || readinessValue.available === false) {
-      setError('Test-room MAR snapshots are not installed. Apply the reviewed manual MAR packet and assignment-snapshot prerequisites before starting a fresh session.');
-      return null;
-    }
-
-    const assignmentId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const { data: created, error: insertError } = await callGeneratedRpc('create_test_user_assignment_with_manual_snapshot', {
-      p_assignment_id: assignmentId,
-      p_room_id: roomId,
-      p_case_version: caseVersion,
-      p_effective_date: now,
-      p_window_start: now,
-      p_window_end: null,
-    });
+    const { data: created, error: insertError } = await callGeneratedRpc('create_test_user_assignment_with_manual_snapshot', freshAssignmentRpcArgs(operation, roomId));
 
     if (insertError || !created) {
       console.error('Failed to create test assignment', insertError);
@@ -153,7 +153,7 @@ export default function TestRooms() {
     const { data, error: readbackError } = await supabase
       .from('student_room_assignments')
       .select('id, room_id, status, created_at, case_key_version, is_sandbox')
-      .eq('id', assignmentId)
+      .eq('id', operation.assignmentId)
       .maybeSingle();
     if (readbackError || !data) {
       console.error('Test assignment creation readback failed', readbackError);
@@ -161,6 +161,7 @@ export default function TestRooms() {
       return null;
     }
 
+    pendingFreshOperations.current.delete(roomId);
     const nextMap = new Map(assignmentsByRoom);
     nextMap.set(roomId, data as AssignmentSummary);
     setAssignmentsByRoom(nextMap);

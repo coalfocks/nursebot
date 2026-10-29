@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { materializationRpcArgs, reconcileAssignmentRows, testUserAssignmentInsert } from './assignmentCreation';
+import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, testUserAssignmentInsert } from './assignmentCreation';
 
 describe('fresh assignment MAR materialization envelope', () => {
   it('binds the immutable case version and stable request identity', () => {
@@ -32,5 +32,11 @@ describe('fresh assignment MAR materialization envelope', () => {
     const result = reconcileAssignmentRows([assignment], new Set(['a']), new Set());
     expect(result.ambiguous.map((row) => row.id)).toEqual(['a']);
     expect(result.toMaterialize).toEqual([]);
+  });
+
+  it('binds a frozen operation to actor and form inputs', () => {
+    const base = { actorId: 'admin-a', schoolId: 'school-a', targetingMode: 'individual' as const, studentId: 'student-a', bulkStudentIds: [], roomIds: ['204'], windowStart: '09:00', windowEnd: '10:00', timezone: 'UTC', bulkTargetSchoolId: '', bulkTargetSpecialty: '' };
+    expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, studentId: 'student-b' }));
+    expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, actorId: 'admin-b' }));
   });
 });
