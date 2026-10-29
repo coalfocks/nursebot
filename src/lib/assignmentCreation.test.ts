@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { materializationRpcArgs, testUserAssignmentInsert, testUserAssignmentRpcArgs } from './assignmentCreation';
+import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, testUserAssignmentInsert, testUserAssignmentRpcArgs } from './assignmentCreation';
 
 describe('fresh assignment MAR materialization envelope', () => {
   it('binds the immutable case version and stable request identity', () => {
@@ -26,5 +26,25 @@ describe('fresh assignment MAR materialization envelope', () => {
       p_assignment_id: 'assignment-3', p_room_id: 204, p_case_version: 'room-204-manual-r1',
       p_effective_date: '2026-10-29T16:00:00.000Z', p_window_start: '2026-10-29T15:30:00.000Z', p_window_end: null,
     });
+  });
+
+  it('reconciles a partial commit with the same assignment IDs and frozen envelopes', () => {
+    const assignments = [
+      { id: 'a', student_id: 's', room_id: 204, assigned_by: 'admin', status: 'assigned' as const, effective_date: '2026-10-29T16:00:00.000Z', window_start: '2026-10-29T15:30:00.000Z', window_end: '2026-10-29T17:30:00.000Z', school_id: 'school', case_key_version: 'v1' },
+      { id: 'b', student_id: 's', room_id: 304, assigned_by: 'admin', status: 'assigned' as const, effective_date: '2026-10-29T16:20:00.000Z', window_start: '2026-10-29T15:30:00.000Z', window_end: '2026-10-29T17:30:00.000Z', school_id: 'school', case_key_version: 'v1' },
+    ];
+    const retry = reconcileAssignmentRows(assignments, new Set(['a']), new Set(['a']));
+    expect(retry.ambiguous).toEqual([]);
+    expect(retry.toMaterialize.map((row) => row.id)).toEqual(['b', 'a']);
+    expect(retry.toMaterialize.map((row) => row.effective_date)).toEqual([
+      assignments[1].effective_date,
+      assignments[0].effective_date,
+    ]);
+  });
+
+  it('binds the frozen operation to actor and form inputs', () => {
+    const base = { actorId: 'admin-a', schoolId: 'school-a', targetingMode: 'individual' as const, studentId: 'student-a', bulkStudentIds: [], roomIds: ['204'], windowStart: '09:00', windowEnd: '10:00', timezone: 'UTC', bulkTargetSchoolId: '', bulkTargetSpecialty: '' };
+    expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, studentId: 'student-b' }));
+    expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, actorId: 'admin-b' }));
   });
 });

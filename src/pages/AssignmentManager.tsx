@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Loader2, Plus, Search, MessageSquare, RefreshCw, Download, Eye, X, ArrowUp, ArrowDown, ClipboardList } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
@@ -9,12 +9,13 @@ import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { fetchAssignmentList } from '../lib/assignmentQueries';
 import { FeedbackSheet, feedbackSheetStyles, mapFeedbackSheet, renderFeedbackSheetHtml } from '../lib/feedbackSheet';
 import type { FeedbackSheetAssignment } from '../lib/feedbackSheet';
+import { getCompletionHintLabel, parseCompletionHintViews } from '../lib/completionHints';
 import {
   ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
-import { materializationRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -88,6 +89,7 @@ export default function AssignmentManager() {
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
+  const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[] } | null>(null);
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
@@ -235,6 +237,24 @@ export default function AssignmentManager() {
       return;
     }
 
+    const operationKey = assignmentOperationKey({
+      actorId: user.id,
+      schoolId: scopedSchoolId,
+      targetingMode,
+      studentId: selectedStudent,
+      bulkStudentIds: selectedBulkStudents,
+      roomIds: selectedRooms,
+      windowStart,
+      windowEnd,
+      timezone: selectedTimezone,
+      bulkTargetSchoolId,
+      bulkTargetSpecialty,
+    });
+    if (assignmentOperationRef.current && assignmentOperationRef.current.key !== operationKey) {
+      alert('A previous assignment operation is still pending. Cancel or retry that exact operation before creating a different assignment set.');
+      return;
+    }
+
     // Validate that all selected rooms have orders configured
     const selectedRoomsData = rooms.filter(r => selectedRooms.includes(r.id.toString()));
     if (selectedRoomsData.length !== selectedRooms.length) {
@@ -313,9 +333,11 @@ export default function AssignmentManager() {
         publishedVersions.set(numericRoomId, caseVersion);
       }
 
-      const assignments: AssignmentCreateRow[] = [];
+      let generatedAssignments: AssignmentCreateRow[] = [];
 
-      for (const studentId of studentsToAssign) {
+      if (assignmentOperationRef.current) {
+        generatedAssignments = assignmentOperationRef.current.assignments;
+      } else for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
         const assignmentSchoolId = studentProfile?.school_id ?? scopedSchoolId;
 
@@ -354,7 +376,7 @@ export default function AssignmentManager() {
           const studentEffectiveDate = new Date(currentCaseMs);
 
           const numericRoomId = parseInt(roomId, 10);
-          assignments.push({
+          generatedAssignments.push({
             id: crypto.randomUUID(),
             student_id: studentId,
             room_id: numericRoomId,
@@ -369,13 +391,34 @@ export default function AssignmentManager() {
         }
       }
 
+      // Keep IDs and scheduling frozen across partial commits, lost responses,
+      // and a second click. Never regenerate a partially committed operation.
+      if (!assignmentOperationRef.current) {
+        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments };
+      }
+      const assignments = assignmentOperationRef.current.assignments;
+
       const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
       const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
       if (readinessError || !readinessValue?.ready || !readinessValue.atomic || Number(readinessValue.materializationVersion ?? 0) < 2) {
         throw new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed atomic snapshot/materialization setup is required before creating a new assignment.');
       }
 
-      for (const assignment of assignments) {
+      const assignmentIds = assignments.map((assignment) => assignment.id);
+      const [{ data: existingAssignments, error: existingError }, { data: materializedOperations, error: operationsError }] = await Promise.all([
+        supabase.from('student_room_assignments').select('id').in('id', assignmentIds),
+        supabase.from('mar_assignment_materialization_operations').select('assignment_id').in('assignment_id', assignmentIds),
+      ]);
+      if (existingError || operationsError) throw existingError ?? operationsError;
+      const reconciliation = reconcileAssignmentRows(
+        assignments,
+        new Set((existingAssignments ?? []).map((row) => row.id)),
+        new Set((materializedOperations ?? []).map((row) => row.assignment_id)),
+      );
+      if (reconciliation.ambiguous.length > 0) {
+        throw new Error(`MAR_ASSIGNMENT_RECONCILIATION_REQUIRED: existing assignment ${reconciliation.ambiguous[0].id} has no materialization operation; inspect before retrying.`);
+      }
+      for (const assignment of reconciliation.toMaterialize) {
         const { error } = await callGeneratedRpc(
           'create_assignment_with_mar_materialization',
           materializationRpcArgs(assignment.id, assignment),
@@ -393,6 +436,7 @@ export default function AssignmentManager() {
       setBulkTargetSchoolId('');
       setBulkTargetSpecialty('');
       setSelectedBulkStudents([]);
+      assignmentOperationRef.current = null;
       await fetchAssignments();
     } catch (error) {
       console.error('Error assigning case:', error);
@@ -514,12 +558,40 @@ export default function AssignmentManager() {
       ]);
       const firstError = [chat, patient, consultant, orders, notes, actions].find((result) => result.error && !String(result.error.message || '').toLowerCase().includes('does not exist'));
       if (firstError?.error) throw firstError.error;
-      (chat.data ?? []).forEach((item: any) => events.push({ id: `chat-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Student message' : 'Nurse message', timestamp: timestamp(item.created_at), content: item.content || '' }));
+      (chat.data ?? []).forEach((item: any) => {
+        if (item.content === '<completed>') {
+          events.push({ id: `completion-${item.id}`, label: 'Assignment completed', timestamp: timestamp(item.created_at), content: 'Recorded completion marker.' });
+          return;
+        }
+        const label = item.role === 'student' || item.role === 'user'
+          ? 'Student message'
+          : item.role === 'nurse'
+            ? 'Nurse message'
+            : `${String(item.role || 'Assistant')} message`;
+        events.push({ id: `chat-${item.id}`, label, timestamp: timestamp(item.created_at), content: item.content || '' });
+      });
       (patient.data ?? []).forEach((item: any) => events.push({ id: `patient-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Question to patient' : 'Patient reply', timestamp: timestamp(item.created_at), content: item.content || '' }));
       (consultant.data ?? []).forEach((item: any) => events.push({ id: `consultant-${item.id}`, label: item.role === 'student' || item.role === 'user' ? 'Consultant message' : 'Consultant reply', timestamp: timestamp(item.created_at), content: item.content || '' }));
       (orders.data ?? []).forEach((item: any) => events.push({ id: `order-${item.id}`, label: 'Order placed', timestamp: timestamp(item.order_time ?? item.created_at), content: [item.order_name, item.dose, item.route, item.frequency, item.priority, item.status, item.instructions].filter(Boolean).join(' • ') }));
       (notes.data ?? []).forEach((item: any) => events.push({ id: `note-${item.id}`, label: 'Progress note', timestamp: timestamp(item.timestamp ?? item.created_at), content: [item.title || item.note_type, item.content].filter(Boolean).join('\n') }));
       (actions.data ?? []).forEach((item: any) => events.push({ id: `action-${item.id}`, label: item.action_type === 'hint_request' || item.channel === 'hint' ? 'Hint request' : `Student ${String(item.action_type || 'action').replace(/_/g, ' ')}`, timestamp: timestamp(item.occurred_at ?? item.created_at), content: item.content || '' }));
+      if (assignment.student_progress_note?.trim()) {
+        events.push({
+          id: `assignment-note-${assignment.id}`,
+          label: 'Student progress note (save time not recorded)',
+          timestamp: timestamp(assignment.completed_at),
+          content: assignment.student_progress_note,
+        });
+      }
+      const hintViews = parseCompletionHintViews(assignment.completion_hint_views);
+      Object.entries(hintViews).forEach(([key, view]) => {
+        events.push({
+          id: `hint-${assignment.id}-${key}`,
+          label: `${getCompletionHintLabel(key as keyof typeof hintViews)} viewed`,
+          timestamp: timestamp(view.viewedAt),
+          content: `Recorded ${getCompletionHintLabel(key as keyof typeof hintViews)} view. Hint text is not included in the timeline evidence.`,
+        });
+      });
       events.sort((a, b) => (a.timestamp ? new Date(a.timestamp).getTime() : Number.MAX_SAFE_INTEGER) - (b.timestamp ? new Date(b.timestamp).getTime() : Number.MAX_SAFE_INTEGER));
       setTimelineEvents(events.filter((event) => event.content.trim()));
     } catch (error) {
@@ -1386,6 +1458,7 @@ export default function AssignmentManager() {
                 <button
                   type="button"
                   onClick={() => {
+                    assignmentOperationRef.current = null;
                     setShowAssignModal(false);
                     setSelectedStudent('');
                     setStudentSearch('');

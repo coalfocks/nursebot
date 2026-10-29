@@ -23,6 +23,26 @@ export type AssignmentMaterializationRpcArgs = {
   p_window_end: string | null;
 };
 
+export type AssignmentOperationKeyInput = {
+  actorId: string;
+  schoolId: string | null;
+  targetingMode: 'individual' | 'bulk';
+  studentId: string;
+  bulkStudentIds: string[];
+  roomIds: string[];
+  windowStart: string;
+  windowEnd: string;
+  timezone: string;
+  bulkTargetSchoolId: string;
+  bulkTargetSpecialty: string;
+};
+
+export const assignmentOperationKey = (input: AssignmentOperationKeyInput): string => JSON.stringify({
+  ...input,
+  bulkStudentIds: [...input.bulkStudentIds].sort(),
+  roomIds: [...input.roomIds].sort(),
+});
+
 export const materializationRpcArgs = (
   requestId: string,
   assignment: AssignmentCreateRow,
@@ -63,4 +83,17 @@ export function getMissingAssignmentRows(
   existingIds: ReadonlySet<string>,
 ): AssignmentCreateRow[] {
   return assignments.filter((assignment) => !existingIds.has(assignment.id));
+}
+
+export function reconcileAssignmentRows(
+  assignments: AssignmentCreateRow[],
+  existingIds: ReadonlySet<string>,
+  materializedIds: ReadonlySet<string>,
+): { toMaterialize: AssignmentCreateRow[]; ambiguous: AssignmentCreateRow[] } {
+  const missing = getMissingAssignmentRows(assignments, existingIds);
+  const ambiguous = assignments.filter((assignment) => existingIds.has(assignment.id) && !materializedIds.has(assignment.id));
+  return {
+    toMaterialize: [...missing, ...assignments.filter((assignment) => materializedIds.has(assignment.id))],
+    ambiguous,
+  };
 }
