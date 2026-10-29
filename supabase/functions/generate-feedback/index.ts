@@ -7,6 +7,7 @@ import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, typ
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { formatViewedCompletionHintsForEvaluation, getViewedCompletionHints, parseCompletionHints, parseCompletionHintViews } from '../_shared/completion-hints.ts';
+import { buildLearnerClosedLoopEvidenceIds, buildLearnerCommunicationEvidenceIds } from '../_shared/feedback-evidence.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -114,8 +115,8 @@ Deno.serve(async (req) => {
         .filter((entry) => kinds.includes(entry.kind))
         .filter((entry) => !learnerMessagesOnly || !['message', 'patient-message', 'consultant-message', 'learner-action'].includes(entry.kind) || entry.meta?.includes('Author: Student'))
         .map((entry) => entry.id);
-      const learnerCommunicationIds = idsForKinds(['message', 'patient-message', 'consultant-message', 'learner-action'], true);
-      const learnerClosedLoopIds = idsForKinds(['patient-message', 'consultant-message', 'learner-action'], true).filter((id) => scoredEntries.find((entry) => entry.id === id)?.meta?.some((value) => /team|escalat|patient|consult/i.test(value)));
+      const learnerCommunicationIds = buildLearnerCommunicationEvidenceIds(scoredEntries);
+      const learnerClosedLoopIds = buildLearnerClosedLoopEvidenceIds(scoredEntries);
       const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'patient-message', 'consultant-message', 'order', 'labs', 'vital', 'imaging'], true);
       const evidence = {
         communication: {
