@@ -14,6 +14,7 @@ import { projectMedicationRows } from '../lib/marProjection';
 import { marScopeKey } from '../lib/marScope';
 import { manualMarCanEdit, manualMarTimelineCellOffsetPercent } from '../lib/manualMar';
 import { authoredMarCaseVersion } from '../../../lib/marMaterialization';
+import { learnerMarLoadState } from '../lib/marReadiness';
 
 interface MedicationAdministrationRecordProps {
   patient: Patient;
@@ -129,14 +130,29 @@ export function MedicationAdministrationRecord({ patient, assignmentId, caseVers
     const request = capture();
     setLoading(true);
     setError(null);
+    if (assignmentId) {
+      const learnerState = learnerMarLoadState(effectiveCaseVersion, true);
+      if (learnerState.kind === 'missing_snapshot') {
+        setEvents([]);
+        setOrders([]);
+        setRevision(0);
+        setBaselineReady(false);
+        setSchemaReady(false);
+        setPath('unavailable');
+        setDirty(false);
+        setError(learnerState.message);
+        setLoading(false);
+        return;
+      }
+    }
     const marReady = await emrApi.getMarReadiness();
     if (!isCurrent(request)) return;
     if (!marReady) {
       const manualReady = await emrApi.getManualMarReadiness();
       if (!isCurrent(request)) return;
       if (!manualReady.ready || (assignmentId && !effectiveCaseVersion)) {
-        if (!isCurrent(request)) return;
-        setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setDirty(false); setLoading(false); return;
+          if (!isCurrent(request)) return;
+        setEvents([]); setOrders([]); setRevision(0); setBaselineReady(false); setSchemaReady(false); setPath('unavailable'); setDirty(false); setError(manualReady.ready ? 'Medication history is unavailable for this attempt.' : 'Medication history is temporarily unavailable because the MAR reader is not ready.'); setLoading(false); return;
       }
       const packet = await emrApi.readManualMarPacket(patient.id, patient.roomId, scopeAssignmentId, manualCaseVersion);
       if (!isCurrent(request)) return;
