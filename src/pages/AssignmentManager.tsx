@@ -14,6 +14,11 @@ import {
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
 } from '../lib/studentVisibility';
+import { materializationRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
+
+type RpcResult = { data: unknown; error: { message: string } | null };
+const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -295,16 +300,20 @@ export default function AssignmentManager() {
       const windowEndUTC = windowEndUTCDate.toISOString();
 
       // Create N x M assignments (each student gets each room)
-      const assignments: Array<{
-        student_id: string;
-        room_id: number;
-        assigned_by: string;
-        status: 'assigned';
-        effective_date: string | null;
-        window_start: string | null;
-        window_end: string | null;
-        school_id: string;
-      }> = [];
+      const publishedVersions = new Map<number, string>();
+      for (const roomId of selectedRooms) {
+        const numericRoomId = parseInt(roomId, 10);
+        const { data, error } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: numericRoomId });
+        const caseVersion = typeof (data as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+          ? (data as { caseVersion: string }).caseVersion.trim()
+          : '';
+        if (error || !caseVersion) {
+          throw new Error(`MAR_AUTHORED_VERSION_NOT_PUBLISHED: publish an authored Orders + MAR version for room ${numericRoomId} before creating an assignment.`);
+        }
+        publishedVersions.set(numericRoomId, caseVersion);
+      }
+
+      const assignments: AssignmentCreateRow[] = [];
 
       for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
@@ -344,24 +353,35 @@ export default function AssignmentManager() {
           }
           const studentEffectiveDate = new Date(currentCaseMs);
 
+          const numericRoomId = parseInt(roomId, 10);
           assignments.push({
+            id: crypto.randomUUID(),
             student_id: studentId,
-            room_id: parseInt(roomId),
+            room_id: numericRoomId,
             assigned_by: user.id,
             status: 'assigned' as const,
             effective_date: studentEffectiveDate.toISOString(),
             window_start: windowStartUTC,
             window_end: windowEndUTC,
             school_id: assignmentSchoolId,
+            case_key_version: publishedVersions.get(numericRoomId) as string,
           });
         }
       }
 
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .insert(assignments);
+      const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
+      const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
+      if (readinessError || !readinessValue?.ready || !readinessValue.atomic || Number(readinessValue.materializationVersion ?? 0) < 2) {
+        throw new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed atomic snapshot/materialization setup is required before creating a new assignment.');
+      }
 
-      if (error) throw error;
+      for (const assignment of assignments) {
+        const { error } = await callGeneratedRpc(
+          'create_assignment_with_mar_materialization',
+          materializationRpcArgs(assignment.id, assignment),
+        );
+        if (error) throw error;
+      }
 
       setShowAssignModal(false);
       setSelectedStudent('');

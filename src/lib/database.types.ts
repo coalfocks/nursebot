@@ -2056,6 +2056,7 @@ export type Database = {
       student_room_assignments: {
         Row: {
           assigned_by: string
+          case_key_version: string | null
           case_difficulty: string | null
           communication_breakdown: Json | null
           communication_score: number | null
@@ -2071,6 +2072,7 @@ export type Database = {
           feedback_status: Database["public"]["Enums"]["feedback_status"] | null
           grade: number | null
           id: string
+          is_sandbox: boolean
           learning_objectives: string | null
           mdm_breakdown: Json | null
           mdm_score: number | null
@@ -2091,6 +2093,7 @@ export type Database = {
         }
         Insert: {
           assigned_by: string
+          case_key_version?: string | null
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null
@@ -2108,6 +2111,7 @@ export type Database = {
             | null
           grade?: number | null
           id?: string
+          is_sandbox?: boolean
           learning_objectives?: string | null
           mdm_breakdown?: Json | null
           mdm_score?: number | null
@@ -2128,6 +2132,7 @@ export type Database = {
         }
         Update: {
           assigned_by?: string
+          case_key_version?: string | null
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null
@@ -2145,6 +2150,7 @@ export type Database = {
             | null
           grade?: number | null
           id?: string
+          is_sandbox?: boolean
           learning_objectives?: string | null
           mdm_breakdown?: Json | null
           mdm_score?: number | null
