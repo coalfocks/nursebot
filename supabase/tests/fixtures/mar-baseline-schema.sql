@@ -3,7 +3,10 @@
 -- migration chain. It contains only the relations/columns required by the
 -- reviewed 20261029170000/173000 contracts.
 
-create extension if not exists pgcrypto;
+-- Match Supabase's published layout: pgcrypto is installed in `extensions`,
+-- not in `public`. Reviewed MAR functions must therefore qualify digest().
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 create schema if not exists auth;
 do $$ begin
   create role anon;
