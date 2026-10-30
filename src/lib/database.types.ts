@@ -2057,6 +2057,7 @@ export type Database = {
         Row: {
           assigned_by: string
           case_key_version: string | null
+          assessment_version: string | null
           case_difficulty: string | null
           communication_breakdown: Json | null
           communication_score: number | null
@@ -2094,6 +2095,7 @@ export type Database = {
         Insert: {
           assigned_by: string
           case_key_version?: string | null
+          assessment_version?: string | null
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null
@@ -2133,6 +2135,7 @@ export type Database = {
         Update: {
           assigned_by?: string
           case_key_version?: string | null
+          assessment_version?: string | null
           case_difficulty?: string | null
           communication_breakdown?: Json | null
           communication_score?: number | null

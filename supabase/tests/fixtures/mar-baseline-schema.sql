@@ -49,6 +49,9 @@ create table public.student_room_assignments (
   is_sandbox boolean not null default false,
   school_id uuid not null references public.schools(id),
   case_key_version text,
+  -- Evaluation provenance is deliberately separate from the immutable MAR key.
+  -- The grader may update this after scoring without changing the snapshot scope.
+  assessment_version text,
   scenario_baseline_version integer
 );
 

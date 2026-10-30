@@ -70,6 +70,19 @@ migrations qualify `extensions.digest(...)`; the proof invokes publication,
 normal materialization, the normal assignment reader, test-user snapshot
 creation, and the manual assignment reader under the `authenticated` role.
 
+## Grading provenance is separate
+
+`student_room_assignments.case_key_version` is the immutable MAR scope key. It
+must remain the value used by snapshot creation, assignment readers, event RLS,
+and replay identity. Evaluation provenance belongs in the separate
+`assessment_version` field (and the corresponding feedback assessment-run
+record). A grading completion update may change `assessment_version`, rubric,
+scores, or feedback metadata, but must never replace `case_key_version` with an
+evaluation key. The post-grading regression in
+`mar-extensions-layout.integration.sql` changes only `assessment_version`
+under the authenticated-role fixture, then proves both readers and both
+frozen creation replays retain the original MAR key and seven-event snapshot.
+
 These migrations are included in this review branch as prerequisites only;
 this branch does not apply them to any database. Apply them separately, in
 order, only after the normal migration review and authorization gates.
