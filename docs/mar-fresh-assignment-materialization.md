@@ -36,6 +36,14 @@ room assignment and its clinical/chat history untouched. The existing Reset
 session action remains destructive and is not part of the supported QA flow
 for validating historical preservation.
 
+The target database must not enforce one sandbox row per student/room. The
+reviewed migration `20261030010848_mar_allow_history_preserving_sandbox_attempts.sql`
+drops only the obsolete partial unique index
+`student_room_assignments_sandbox_once_idx` and adds a non-unique lookup index.
+The RPC's actor, school, room, packet-version, snapshot, and exact replay
+checks remain authoritative; assignment UUIDs distinguish deliberate fresh
+attempts from retries. It does not delete or update the prior sandbox row.
+
 ## Database prerequisites to review/apply separately
 
 On an isolated disposable database, in order:
@@ -53,6 +61,11 @@ On an isolated disposable database, in order:
    by `get_mar_assignment_reader`: manual snapshots remain manual even when
    global automatic readiness is true; normal assignments use the immutable
    authored snapshot.
+5. For history-preserving sandbox QA, apply
+   `supabase/migrations/20261030010848_mar_allow_history_preserving_sandbox_attempts.sql`
+   after the installed index is inventoried. It removes only the obsolete
+   one-sandbox-per-room unique index; it does not alter the creation RPC's
+   authorization or replay checks.
 
 ## Retry invariant
 
