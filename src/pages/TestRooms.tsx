@@ -9,9 +9,80 @@ import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { testUserAssignmentInsert, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
-type RpcResult = { data: unknown; error: { message: string } | null };
+type RpcError = { code?: string; message?: string; details?: string; hint?: string };
+type RpcResult = { data: unknown; error: RpcError | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
   (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
+
+type EligibilityResponse = { caseVersion?: unknown; source?: unknown; packetRevision?: unknown; eventCount?: unknown };
+type ReadinessResponse = { ready?: unknown; available?: unknown; schemaVersion?: unknown; immutableAssignmentSnapshots?: unknown };
+type ReadinessDiagnostic = {
+  checkedAt: string;
+  eligibility:
+    | { kind: 'rpc-error'; error: RpcError }
+    | { kind: 'empty-case-version'; response: EligibilityResponse | null }
+    | { kind: 'case-version'; caseVersion: string; response: EligibilityResponse };
+  readiness?:
+    | { kind: 'rpc-error'; error: RpcError }
+    | { kind: 'not-ready'; response: ReadinessResponse | null }
+    | { kind: 'ready'; response: ReadinessResponse };
+};
+
+const rpcErrorText = (error: RpcError) =>
+  [error.code && `code ${error.code}`, error.message && `message ${error.message}`, error.details && `details ${error.details}`, error.hint && `hint ${error.hint}`]
+    .filter(Boolean)
+    .join(' — ') || 'No error code or message returned.';
+
+const inspectRoomReadiness = async (roomId: number): Promise<ReadinessDiagnostic> => {
+  const { data: eligibility, error: eligibilityError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
+  if (eligibilityError) {
+    return { checkedAt: new Date().toISOString(), eligibility: { kind: 'rpc-error', error: eligibilityError } };
+  }
+
+  const eligibilityResponse = (eligibility as EligibilityResponse | null) ?? null;
+  const caseVersion = typeof eligibilityResponse?.caseVersion === 'string' ? eligibilityResponse.caseVersion.trim() : '';
+  if (!caseVersion) {
+    return { checkedAt: new Date().toISOString(), eligibility: { kind: 'empty-case-version', response: eligibilityResponse } };
+  }
+
+  const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
+  if (readinessError) {
+    return {
+      checkedAt: new Date().toISOString(),
+      eligibility: { kind: 'case-version', caseVersion, response: eligibilityResponse },
+      readiness: { kind: 'rpc-error', error: readinessError },
+    };
+  }
+
+  const readinessResponse = (readiness as ReadinessResponse | null) ?? null;
+  if (!readinessResponse?.ready || readinessResponse.available === false) {
+    return {
+      checkedAt: new Date().toISOString(),
+      eligibility: { kind: 'case-version', caseVersion, response: eligibilityResponse },
+      readiness: { kind: 'not-ready', response: readinessResponse },
+    };
+  }
+
+  return {
+    checkedAt: new Date().toISOString(),
+    eligibility: { kind: 'case-version', caseVersion, response: eligibilityResponse },
+    readiness: { kind: 'ready', response: readinessResponse },
+  };
+};
+
+const diagnosticSummary = (roomId: number, diagnostic: ReadinessDiagnostic) => {
+  if (diagnostic.eligibility.kind === 'rpc-error') {
+    return `Room ${roomId} eligibility RPC failed: ${rpcErrorText(diagnostic.eligibility.error)}`;
+  }
+  if (diagnostic.eligibility.kind === 'empty-case-version') {
+    return `Room ${roomId} eligibility returned an empty caseVersion (successful RPC response, not an RPC error).`;
+  }
+  if (!diagnostic.readiness || diagnostic.readiness.kind === 'ready') return null;
+  if (diagnostic.readiness.kind === 'rpc-error') {
+    return `Room ${roomId} MAR readiness RPC failed: ${rpcErrorText(diagnostic.readiness.error)}`;
+  }
+  return `Room ${roomId} MAR snapshot readiness returned not ready.`;
+};
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialties?: Database['public']['Tables']['specialties']['Row'][];
@@ -31,6 +102,8 @@ export default function TestRooms() {
   const [error, setError] = useState<string | null>(null);
   const [openingRoomId, setOpeningRoomId] = useState<number | null>(null);
   const [resettingRoomIds, setResettingRoomIds] = useState<Set<number>>(new Set());
+  const [readinessByRoom, setReadinessByRoom] = useState<Map<number, ReadinessDiagnostic>>(new Map());
+  const [checkingRoomId, setCheckingRoomId] = useState<number | null>(null);
 
   const canAccess = useMemo(() => isTestUser(profile), [profile]);
 
@@ -118,19 +191,12 @@ export default function TestRooms() {
     const existing = assignmentsByRoom.get(roomId);
     if (!forceNew && existing?.case_key_version) return existing;
 
-    const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_published_case_version', { p_room_id: roomId });
-    const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
-      ? (published as { caseVersion: string }).caseVersion.trim()
-      : '';
-    if (publishedError || !caseVersion) {
-      setError(`Room ${roomId} has no published immutable MAR version. Publish the authored packet before starting a fresh test session.`);
-      return null;
-    }
-
-    const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
-    const readinessValue = readiness as { ready?: boolean; available?: boolean } | null;
-    if (readinessError || !readinessValue?.ready || readinessValue.available === false) {
-      setError('Test-room MAR snapshots are not installed. Apply the reviewed manual MAR packet and assignment-snapshot prerequisites before starting a fresh session.');
+    const diagnostic = await inspectRoomReadiness(roomId);
+    setReadinessByRoom((prev) => new Map(prev).set(roomId, diagnostic));
+    const caseVersion = diagnostic.eligibility.kind === 'case-version' ? diagnostic.eligibility.caseVersion : null;
+    const readinessError = diagnosticSummary(roomId, diagnostic);
+    if (!caseVersion || readinessError) {
+      setError(readinessError ?? `Room ${roomId} is not eligible for a test session.`);
       return null;
     }
 
@@ -156,6 +222,19 @@ export default function TestRooms() {
     nextMap.set(roomId, data as AssignmentSummary);
     setAssignmentsByRoom(nextMap);
     return data as AssignmentSummary;
+  };
+
+  const handleCheckReadiness = async (roomId: number) => {
+    setCheckingRoomId(roomId);
+    setError(null);
+    try {
+      const diagnostic = await inspectRoomReadiness(roomId);
+      setReadinessByRoom((prev) => new Map(prev).set(roomId, diagnostic));
+      const summary = diagnosticSummary(roomId, diagnostic);
+      if (summary) setError(summary);
+    } finally {
+      setCheckingRoomId(null);
+    }
   };
 
   const handleOpenRoom = async (roomId: number) => {
@@ -296,6 +375,8 @@ export default function TestRooms() {
               const assignment = assignmentsByRoom.get(room.id);
               const isOpening = openingRoomId === room.id;
               const isResetting = resettingRoomIds.has(room.id);
+              const isChecking = checkingRoomId === room.id;
+              const readiness = readinessByRoom.get(room.id);
               return (
                 <div key={room.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between">
@@ -355,6 +436,14 @@ export default function TestRooms() {
                     >
                       Start fresh (preserve history)
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCheckReadiness(room.id)}
+                      className="inline-flex items-center rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isChecking || isOpening}
+                    >
+                      {isChecking ? 'Checking…' : 'Check MAR readiness'}
+                    </button>
                     {!assignment && (
                       <span className="inline-flex items-center text-xs text-gray-400">
                         <AlertTriangle className="mr-1 h-3 w-3" />
@@ -362,6 +451,28 @@ export default function TestRooms() {
                       </span>
                     )}
                   </div>
+                  {readiness && (
+                    <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      <p className="font-semibold">Read-only eligibility diagnostic</p>
+                      {readiness.eligibility.kind === 'rpc-error' && (
+                        <p className="mt-1">Eligibility RPC error: {rpcErrorText(readiness.eligibility.error)}</p>
+                      )}
+                      {readiness.eligibility.kind === 'empty-case-version' && (
+                        <p className="mt-1">Eligibility RPC succeeded, but returned an empty caseVersion.</p>
+                      )}
+                      {readiness.eligibility.kind === 'case-version' && (
+                        <p className="mt-1">Eligible caseVersion: <code>{readiness.eligibility.caseVersion}</code> (source: {String(readiness.eligibility.response.source ?? 'unknown')})</p>
+                      )}
+                      {readiness.readiness?.kind === 'rpc-error' && (
+                        <p className="mt-1">Readiness RPC error: {rpcErrorText(readiness.readiness.error)}</p>
+                      )}
+                      {readiness.readiness?.kind === 'not-ready' && (
+                        <p className="mt-1">Snapshot readiness response: not ready ({JSON.stringify(readiness.readiness.response)}).</p>
+                      )}
+                      {readiness.readiness?.kind === 'ready' && <p className="mt-1">Snapshot/readiness RPC: ready.</p>}
+                      <p className="mt-1 text-slate-500">Checked {readiness.checkedAt}</p>
+                    </div>
+                  )}
                 </div>
               );
             })}
