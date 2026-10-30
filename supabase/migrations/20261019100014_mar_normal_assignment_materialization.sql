@@ -116,7 +116,7 @@ begin
     into event_snapshot
   from public.mar_administration_events e
   where e.room_id = p_room_id and e.patient_id = room_patient and e.assignment_id is null and e.deleted_at is null;
-  content_hash := encode(digest(convert_to(order_snapshot::text || ':' || event_snapshot::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex');
+  content_hash := encode(extensions.digest(convert_to(order_snapshot::text || ':' || event_snapshot::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex');
 
   insert into public.mar_authored_case_versions(room_id, patient_id, school_id, case_version, order_snapshot, event_snapshot, content_hash, created_by)
   values (p_room_id, room_patient, room_school, p_case_version, order_snapshot, event_snapshot, content_hash, actor)
@@ -133,7 +133,7 @@ begin
   end if;
 
   insert into public.mar_assignment_baseline_versions(assignment_id, case_version, patient_id, room_id, event_snapshot, content_hash, created_by)
-  values (p_assignment_id, p_case_version, room_patient, p_room_id, event_snapshot, encode(digest(convert_to(event_snapshot::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex'), actor)
+  values (p_assignment_id, p_case_version, room_patient, p_room_id, event_snapshot, encode(extensions.digest(convert_to(event_snapshot::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex'), actor)
   on conflict (assignment_id, case_version) do nothing;
   insert into public.mar_administration_events(
     id, patient_id, room_id, assignment_id, order_id, case_version, occurrence_key, relative_offset_hours, administered_at,

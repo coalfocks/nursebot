@@ -102,7 +102,7 @@ begin
   if actor_role <> 'super_admin' and not exists (select 1 from public.profiles p where p.id = auth.uid() and p.school_id = target.school_id) then
     raise exception 'MAR_SCHOOL_SCOPE_MISMATCH';
   end if;
-  digest := encode(digest(convert_to(p_event_snapshot::text, 'utf8'), 'sha256'), 'hex');
+  digest := encode(extensions.digest(convert_to(p_event_snapshot::text, 'utf8'), 'sha256'), 'hex');
   insert into public.mar_assignment_baseline_versions(assignment_id, case_version, patient_id, room_id, event_snapshot, content_hash, created_by)
   values (p_assignment_id, p_case_version, target.patient_id, target.room_id, p_event_snapshot, digest, auth.uid())
   on conflict (assignment_id, case_version) do nothing;

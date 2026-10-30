@@ -68,7 +68,7 @@ begin
     into event_snapshot
     from public.mar_administration_events e
     where e.patient_id = room_patient and e.deleted_at is null and e.room_id = p_room_id and e.assignment_id is null;
-  content_hash := encode(digest(convert_to(order_snapshot::text || ':' || event_snapshot::text, 'utf8'), 'sha256'), 'hex');
+  content_hash := encode(extensions.digest(convert_to(order_snapshot::text || ':' || event_snapshot::text, 'utf8'), 'sha256'), 'hex');
   select * into prior from public.mar_authored_case_versions where room_id = p_room_id and case_version = version_name for share;
   if found then
     if prior.content_hash is distinct from content_hash then raise exception 'MAR_AUTHORED_VERSION_IMMUTABLE'; end if;
@@ -151,7 +151,7 @@ begin
   select * into snapshot from public.mar_authored_case_versions where room_id = p_room_id and patient_id = room_patient and case_version = p_case_version for share;
   if not found then raise exception 'MAR_AUTHORED_VERSION_NOT_PUBLISHED'; end if;
   envelope := jsonb_build_object('requestId',p_request_id,'assignmentId',p_assignment_id,'studentId',p_student_id,'patientId',room_patient,'roomId',p_room_id,'schoolId',p_school_id,'caseVersion',p_case_version,'publishedContentHash',snapshot.content_hash,'effectiveDate',p_effective_date,'windowStart',p_window_start,'windowEnd',p_window_end,'actorId',actor);
-  envelope_hash := encode(digest(convert_to(envelope::text,'utf8'),'sha256'),'hex');
+  envelope_hash := encode(extensions.digest(convert_to(envelope::text,'utf8'),'sha256'),'hex');
   perform pg_advisory_xact_lock(hashtext('mar-materialize:' || p_request_id::text));
   select * into prior from public.mar_assignment_materialization_operations where request_id = p_request_id for update;
   if found then
@@ -163,7 +163,7 @@ begin
   insert into public.student_room_assignments(id,student_id,room_id,assigned_by,status,effective_date,window_start,window_end,school_id,case_key_version)
   values (p_assignment_id,p_student_id,p_room_id,actor,'assigned',p_effective_date,p_window_start,p_window_end,p_school_id,p_case_version);
   insert into public.mar_assignment_baseline_versions(assignment_id,case_version,patient_id,room_id,event_snapshot,content_hash,created_by)
-  values (p_assignment_id,p_case_version,room_patient,p_room_id,snapshot.event_snapshot,encode(digest(convert_to(snapshot.event_snapshot::text || ':' || p_case_version,'utf8'),'sha256'),'hex'),actor);
+  values (p_assignment_id,p_case_version,room_patient,p_room_id,snapshot.event_snapshot,encode(extensions.digest(convert_to(snapshot.event_snapshot::text || ':' || p_case_version,'utf8'),'sha256'),'hex'),actor);
   insert into public.mar_administration_events(id,patient_id,room_id,assignment_id,order_id,case_version,occurrence_key,relative_offset_hours,administered_at,medication_name,ordered_dose,administered_dose,unit,route,frequency,category,status,simulated_clinician,reason,prn_indication,response,infusion_details,source,actor_id,actor_label,record_version)
   select gen_random_uuid(),room_patient,p_room_id,p_assignment_id,nullif(value->>'order_id','')::uuid,p_case_version,value->>'occurrence_key',nullif(value->>'relative_offset_hours','')::numeric,nullif(value->>'administered_at','')::timestamptz,value->>'medication_name',value->>'ordered_dose',value->>'administered_dose',value->>'unit',value->>'route',value->>'frequency',coalesce(value->>'category','scheduled'),coalesce(value->>'status','Not documented'),value->>'simulated_clinician',value->>'reason',value->>'prn_indication',value->>'response',value->'infusion_details',coalesce(value->>'source','authored_scenario'),actor,value->>'actor_label',1
   from jsonb_array_elements(snapshot.event_snapshot) value;

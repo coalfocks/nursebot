@@ -88,7 +88,7 @@ begin
   if p_request_id is null or p_room_id is null or p_case_version is null or btrim(p_case_version) = '' or p_expected_revision is null or p_expected_revision < 0 or jsonb_typeof(p_events) <> 'array' then
     raise exception 'MAR_INVALID_BATCH';
   end if;
-  v_content_hash := encode(digest(convert_to(p_events::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex');
+  v_content_hash := encode(extensions.digest(convert_to(p_events::text || ':' || p_case_version, 'utf8'), 'sha256'), 'hex');
   if not exists (select 1 from public.rooms r where r.id = p_room_id and r.patient_id = p_patient_id
     and (actor_role = 'super_admin' or exists (select 1 from public.profiles p where p.id = actor_id_value and p.school_id = r.school_id))) then
     raise exception 'MAR_ROOM_PATIENT_MISMATCH';

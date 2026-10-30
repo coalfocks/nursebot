@@ -63,6 +63,13 @@ make a lost-response retry fail or replace the original snapshot. Only a new
 assignment reads the current packet. The executable regression is
 `supabase/tests/mar-replay-immutability.integration.sql`.
 
+When validating against a Supabase-shaped disposable database, install
+`pgcrypto` in the `extensions` schema and run
+`supabase/tests/mar-extensions-layout.integration.sql`. The reviewed MAR
+migrations qualify `extensions.digest(...)`; the proof invokes publication,
+normal materialization, the normal assignment reader, test-user snapshot
+creation, and the manual assignment reader under the `authenticated` role.
+
 These migrations are included in this review branch as prerequisites only;
 this branch does not apply them to any database. Apply them separately, in
 order, only after the normal migration review and authorization gates.

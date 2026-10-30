@@ -58,7 +58,7 @@ begin
     'actor_label', value->>'actorLabel'
   ) order by value->>'occurrenceKey'), '[]'::jsonb)
     into event_snapshot from jsonb_array_elements(packet.events) value;
-  content_hash := encode(digest(convert_to(order_snapshot::text || ':' || event_snapshot::text, 'utf8'), 'sha256'), 'hex');
+  content_hash := encode(extensions.digest(convert_to(order_snapshot::text || ':' || event_snapshot::text, 'utf8'), 'sha256'), 'hex');
   select * into prior from public.mar_authored_case_versions where room_id = p_room_id and case_version = version_name;
   if found then
     if prior.content_hash is distinct from content_hash or prior.source_packet_id is distinct from packet.id or prior.source_packet_revision is distinct from packet.revision then raise exception 'MAR_AUTHORED_VERSION_IMMUTABLE'; end if;
