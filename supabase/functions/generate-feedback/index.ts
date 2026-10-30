@@ -6,6 +6,7 @@ import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveSc
 import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineConsultantMessageRow, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelinePatientMessageRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
+import { withFrozenMarProvenance } from '../_shared/feedback-assignment-provenance.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -83,7 +84,7 @@ Deno.serve(async (req) => {
         const result = { technical_incomplete: true, summary: 'This attempt is technically incomplete because no first nurse page was recorded. No learner score was assigned.', formative_notice: formativeNotice };
         const incompleteRun = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, result });
         if (incompleteRun.error) throw new Error(incompleteRun.error.message);
-        await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, scoring_start_at: null, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: [], technical_incomplete: true, safety_result: null, feedback_debrief: result, nurse_feedback: result, communication_score: null, mdm_score: null, grade: null, feedback_generated_at: new Date().toISOString() }).eq('id', assignmentId);
+        await client.from('student_room_assignments').update(withFrozenMarProvenance(assignment, { feedback_status: 'completed', feedback_error: null, scoring_start_at: null, rubric_version: FEEDBACK_RUBRIC_VERSION, source_event_ids: [], technical_incomplete: true, safety_result: null, feedback_debrief: result, nurse_feedback: result, communication_score: null, mdm_score: null, grade: null, feedback_generated_at: new Date().toISOString() })).eq('id', assignmentId);
         return;
       }
       if (!hasMeaningfulEvidence(sourceEventIds)) throw new Error('Evidence-bearing attempt produced an empty post-page source event manifest');
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, evaluator_config_id: evaluator.id, evaluator_version: evaluator.version, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
       if (run.error) throw run.error;
       // mdm_* are retained database compatibility names; the canonical API/UI label is Clinical Reasoning.
-      const { error: updateError } = await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, communication_score: evaluation.communication_score, mdm_score: evaluation.clinical_reasoning_score, communication_breakdown: evaluation.communication_breakdown, mdm_breakdown: evaluation.clinical_reasoning_breakdown, learning_objectives: evaluation.learning_objectives, grade: null, nurse_feedback: legacy, feedback_generated_at: new Date().toISOString(), scoring_start_at: start.scoring_start_at, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: sourceEventIds, technical_incomplete: false, safety_result: evaluation.safety_result, feedback_debrief: debrief }).eq('id', assignmentId);
+      const { error: updateError } = await client.from('student_room_assignments').update(withFrozenMarProvenance(assignment, { feedback_status: 'completed', feedback_error: null, communication_score: evaluation.communication_score, mdm_score: evaluation.clinical_reasoning_score, communication_breakdown: evaluation.communication_breakdown, mdm_breakdown: evaluation.clinical_reasoning_breakdown, learning_objectives: evaluation.learning_objectives, grade: null, nurse_feedback: legacy, feedback_generated_at: new Date().toISOString(), scoring_start_at: start.scoring_start_at, rubric_version: FEEDBACK_RUBRIC_VERSION, source_event_ids: sourceEventIds, technical_incomplete: false, safety_result: evaluation.safety_result, feedback_debrief: debrief })).eq('id', assignmentId);
       if (updateError) throw updateError;
     })();
     await Promise.race([work, timeout(90000)]);
