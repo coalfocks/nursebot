@@ -3,6 +3,7 @@ import {
   ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
   getAssignableStudentCutoffDate,
   isAssignableStudentProfile,
+  isStudentVisibleForSearchRange,
 } from './studentVisibility';
 
 describe('studentVisibility', () => {
@@ -26,5 +27,14 @@ describe('studentVisibility', () => {
     expect(isAssignableStudentProfile({ created_at: '2025-09-12T11:59:59.000Z' }, now)).toBe(false);
     expect(isAssignableStudentProfile({ created_at: null }, now)).toBe(false);
     expect(isAssignableStudentProfile({ created_at: 'not-a-date' }, now)).toBe(false);
+  });
+
+  it('shows every already-loaded profile for the all-time range', () => {
+    const now = new Date('2026-03-12T12:00:00.000Z');
+
+    expect(isStudentVisibleForSearchRange({ created_at: '2020-01-01T00:00:00.000Z' }, 'all_time', now)).toBe(true);
+    expect(isStudentVisibleForSearchRange({ created_at: null }, 'all_time', now)).toBe(true);
+    expect(isStudentVisibleForSearchRange({ created_at: '2025-12-01T08:00:00.000Z' }, 'six_months', now)).toBe(true);
+    expect(isStudentVisibleForSearchRange({ created_at: '2020-01-01T00:00:00.000Z' }, 'six_months', now)).toBe(false);
   });
 });

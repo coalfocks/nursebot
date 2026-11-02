@@ -13,7 +13,8 @@ import { getCompletionHintLabel, parseCompletionHintViews } from '../lib/complet
 import {
   ASSIGNABLE_STUDENT_LOOKBACK_MONTHS,
   getAssignableStudentCutoffDate,
-  isAssignableStudentProfile,
+  isStudentVisibleForSearchRange,
+  type StudentSearchRange,
 } from '../lib/studentVisibility';
 import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
@@ -68,6 +69,7 @@ export default function AssignmentManager() {
   const [targetingMode, setTargetingMode] = useState<'individual' | 'bulk'>('individual');
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [studentSearch, setStudentSearch] = useState('');
+  const [studentSearchRange, setStudentSearchRange] = useState<StudentSearchRange>('six_months');
   const [selectedRooms, setSelectedRooms] = useState<string[]>([]);
   const [windowStart, setWindowStart] = useState<string>('');
   const [windowEnd, setWindowEnd] = useState<string>('');
@@ -90,8 +92,19 @@ export default function AssignmentManager() {
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[] } | null>(null);
-  const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
+  const assignableStudents = students.filter((student) => isStudentVisibleForSearchRange(student, studentSearchRange));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
+
+  const handleStudentSearchRangeChange = (range: StudentSearchRange) => {
+    setStudentSearchRange(range);
+    const visibleStudentIds = new Set(
+      students
+        .filter((student) => isStudentVisibleForSearchRange(student, range))
+        .map((student) => student.id),
+    );
+    if (selectedStudent && !visibleStudentIds.has(selectedStudent)) setSelectedStudent('');
+    setSelectedBulkStudents((selected) => selected.filter((studentId) => visibleStudentIds.has(studentId)));
+  };
 
   useEffect(() => {
     if (!hasAdmin) return;
@@ -1241,9 +1254,21 @@ export default function AssignmentManager() {
                   {targetingMode === 'individual' ? (
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Search Students</label>
+                      <label htmlFor="student-search-range" className="mt-3 block text-sm font-medium text-gray-700">Search range</label>
+                      <select
+                        id="student-search-range"
+                        aria-label="Student search range"
+                        value={studentSearchRange}
+                        onChange={(e) => handleStudentSearchRangeChange(e.target.value as StudentSearchRange)}
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                      >
+                        <option value="six_months">Last 6 months</option>
+                        <option value="all_time">All time</option>
+                      </select>
                       <p className="mt-1 text-xs text-gray-500">
-                        Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                        (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                        {studentSearchRange === 'six_months'
+                          ? `Showing students created within the last ${ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months (since ${assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).`
+                          : 'Showing all loaded student profiles.'}
                       </p>
                       <div className="mt-1">
                         <input
@@ -1326,9 +1351,21 @@ export default function AssignmentManager() {
                         <label className="block text-sm font-medium text-gray-700">
                           Select Students ({selectedBulkStudents.length} selected)
                         </label>
+                        <label htmlFor="bulk-student-search-range" className="mt-3 block text-sm font-medium text-gray-700">Search range</label>
+                        <select
+                          id="bulk-student-search-range"
+                          aria-label="Student search range"
+                          value={studentSearchRange}
+                          onChange={(e) => handleStudentSearchRangeChange(e.target.value as StudentSearchRange)}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                        >
+                          <option value="six_months">Last 6 months</option>
+                          <option value="all_time">All time</option>
+                        </select>
                         <p className="mt-1 text-xs text-gray-500">
-                          Showing students created within the last {ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months
-                          (since {assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).
+                          {studentSearchRange === 'six_months'
+                            ? `Showing students created within the last ${ASSIGNABLE_STUDENT_LOOKBACK_MONTHS} months (since ${assignableStudentCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}).`
+                            : 'Showing all loaded student profiles.'}
                         </p>
                         <div className="mt-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md">
                           {assignableStudents
