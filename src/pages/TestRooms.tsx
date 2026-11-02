@@ -9,9 +9,22 @@ import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { testUserAssignmentRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
 
-type RpcResult = { data: unknown; error: { message: string } | null };
+type RpcError = {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+};
+
+type RpcResult = { data: unknown; error: RpcError | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
   (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
+
+type MarReadinessCheck =
+  | { kind: 'rpc-error'; rpcName: string; error: RpcError }
+  | { kind: 'empty-case-version' }
+  | { kind: 'not-ready'; caseVersion: string; ready: boolean; available: boolean | undefined }
+  | { kind: 'ready'; caseVersion: string };
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialties?: Database['public']['Tables']['specialties']['Row'][];
@@ -31,7 +44,12 @@ export default function TestRooms() {
   const [error, setError] = useState<string | null>(null);
   const [openingRoomId, setOpeningRoomId] = useState<number | null>(null);
   const [resettingRoomIds, setResettingRoomIds] = useState<Set<number>>(new Set());
+  const [marReadinessByRoom, setMarReadinessByRoom] = useState<Map<number, MarReadinessCheck>>(new Map());
+  const [checkingMarRoomIds, setCheckingMarRoomIds] = useState<Set<number>>(new Set());
+  const [checkingRoomId, setCheckingRoomId] = useState<number | null>(null);
   const pendingAssignmentsRef = useRef<Map<number, AssignmentCreateRow>>(new Map());
+  const marReadinessRequestRef = useRef<Map<number, number>>(new Map());
+  const pendingMarReadinessRef = useRef<Set<string>>(new Set());
 
   const canAccess = useMemo(() => isTestUser(profile), [profile]);
 
@@ -167,6 +185,70 @@ export default function TestRooms() {
     nextMap.set(roomId, data as AssignmentSummary);
     setAssignmentsByRoom(nextMap);
     return data as AssignmentSummary;
+  };
+
+  const handleCheckMarReadiness = async (roomId: number) => {
+    const requestId = (marReadinessRequestRef.current.get(roomId) ?? 0) + 1;
+    marReadinessRequestRef.current.set(roomId, requestId);
+    const requestKey = `${roomId}:${requestId}`;
+    pendingMarReadinessRef.current.add(requestKey);
+    setCheckingMarRoomIds((prev) => new Set(prev).add(roomId));
+    setCheckingRoomId(roomId);
+
+    let result: MarReadinessCheck;
+    try {
+      const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', { p_room_id: roomId });
+      if (publishedError) {
+        result = { kind: 'rpc-error', rpcName: 'get_mar_eligible_case_version', error: publishedError };
+      } else {
+        const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+          ? (published as { caseVersion: string }).caseVersion.trim()
+          : '';
+        if (!caseVersion) {
+          result = { kind: 'empty-case-version' };
+        } else {
+          const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
+          if (readinessError) {
+            result = { kind: 'rpc-error', rpcName: 'get_manual_mar_readiness', error: readinessError };
+          } else {
+            const readinessValue = readiness as { ready?: unknown; available?: unknown } | null;
+            const ready = readinessValue?.ready === true;
+            const available = typeof readinessValue?.available === 'boolean' ? readinessValue.available : undefined;
+            result = ready && available !== false
+              ? { kind: 'ready', caseVersion }
+              : { kind: 'not-ready', caseVersion, ready, available };
+          }
+        }
+      }
+    } catch (err) {
+      result = {
+        kind: 'rpc-error',
+        rpcName: 'MAR readiness check',
+        error: { message: err instanceof Error ? err.message : String(err) },
+      };
+    } finally {
+      pendingMarReadinessRef.current.delete(requestKey);
+      if (marReadinessRequestRef.current.get(roomId) === requestId) {
+        setCheckingMarRoomIds((prev) => {
+          const next = new Set(prev);
+          next.delete(roomId);
+          return next;
+        });
+      }
+      setCheckingRoomId((current) => {
+        if (pendingMarReadinessRef.current.size === 0) return null;
+        if (current !== null && [...pendingMarReadinessRef.current].some((key) => key.startsWith(`${current}:`))) return current;
+        const nextKey = pendingMarReadinessRef.current.values().next().value;
+        return typeof nextKey === 'string' ? Number(nextKey.split(':')[0]) : null;
+      });
+    }
+
+    if (marReadinessRequestRef.current.get(roomId) !== requestId) return;
+    setMarReadinessByRoom((prev) => {
+      const next = new Map(prev);
+      next.set(roomId, result);
+      return next;
+    });
   };
 
   const handleOpenRoom = async (roomId: number) => {
@@ -307,6 +389,8 @@ export default function TestRooms() {
               const assignment = assignmentsByRoom.get(room.id);
               const isOpening = openingRoomId === room.id;
               const isResetting = resettingRoomIds.has(room.id);
+              const isCheckingMarReadiness = checkingMarRoomIds.has(room.id) || checkingRoomId === room.id;
+              const marReadiness = marReadinessByRoom.get(room.id);
               return (
                 <div key={room.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between">
@@ -366,6 +450,14 @@ export default function TestRooms() {
                     >
                       Start fresh (preserve history)
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCheckMarReadiness(room.id)}
+                      className="inline-flex items-center rounded-md border border-emerald-200 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isCheckingMarReadiness && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Check MAR readiness
+                    </button>
                     {!assignment && (
                       <span className="inline-flex items-center text-xs text-gray-400">
                         <AlertTriangle className="mr-1 h-3 w-3" />
@@ -373,6 +465,32 @@ export default function TestRooms() {
                       </span>
                     )}
                   </div>
+                  {marReadiness && (
+                    <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700" role="status">
+                      {marReadiness.kind === 'rpc-error' && (
+                        <div>
+                          <p className="font-semibold text-red-700">MAR readiness check RPC error ({marReadiness.rpcName})</p>
+                          <p>Code: {marReadiness.error.code ?? '—'}</p>
+                          <p>Message: {marReadiness.error.message ?? '—'}</p>
+                          <p>Details: {marReadiness.error.details ?? '—'}</p>
+                          <p>Hint: {marReadiness.error.hint ?? '—'}</p>
+                        </div>
+                      )}
+                      {marReadiness.kind === 'empty-case-version' && (
+                        <p className="font-semibold text-amber-700">MAR readiness unavailable: the case version is empty.</p>
+                      )}
+                      {marReadiness.kind === 'not-ready' && (
+                        <div>
+                          <p className="font-semibold text-amber-700">MAR is not ready.</p>
+                          <p>Case version: {marReadiness.caseVersion}</p>
+                          <p>Ready: {String(marReadiness.ready)}; Available: {String(marReadiness.available ?? 'unknown')}</p>
+                        </div>
+                      )}
+                      {marReadiness.kind === 'ready' && (
+                        <p className="font-semibold text-emerald-700">MAR is ready (case version: {marReadiness.caseVersion}).</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
