@@ -4,6 +4,16 @@ import { supabase } from './supabase';
 type Room = Database['public']['Tables']['rooms']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 
+export const isRoomAvailableToSchool = (
+  room: Pick<Room, 'school_id' | 'available_school_ids'>,
+  schoolId: string | null | undefined,
+): boolean => {
+  if (!schoolId) return false;
+  if (room.school_id === schoolId) return true;
+  if (room.available_school_ids === null || room.available_school_ids.length === 0) return true;
+  return room.available_school_ids.includes(schoolId);
+};
+
 export const isObgynSpecialtyName = (name?: string | null): boolean => {
   if (!name) return false;
   const lowered = name.toLowerCase();

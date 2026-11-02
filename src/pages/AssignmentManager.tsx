@@ -18,6 +18,7 @@ import {
 } from '../lib/studentVisibility';
 import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 import { assignmentDiagnosticError, normalizeAssignmentDiagnostic, type AssignmentDiagnostic } from '../lib/assignmentDiagnostics';
+import { isRoomAvailableToSchool } from '../lib/roomHelpers';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -216,7 +217,7 @@ export default function AssignmentManager() {
 
         if (scopedSchoolId) {
           studentsQuery = studentsQuery.eq('school_id', scopedSchoolId);
-          roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.cs.{${scopedSchoolId}},available_school_ids.cs.{}`);
+          roomsQuery = roomsQuery.or(`school_id.eq.${scopedSchoolId},available_school_ids.is.null,available_school_ids.eq.{},available_school_ids.cs.{${scopedSchoolId}}`);
           specialtiesQuery = specialtiesQuery.or(`school_id.eq.${scopedSchoolId},school_id.is.null`);
         }
 
@@ -242,7 +243,12 @@ export default function AssignmentManager() {
 
         setAssignments((assignmentsResult as Assignment[]).filter(a => a.room !== null));
         setStudents(studentsResult.data || []);
-        setRooms(roomsResult.data || []);
+        const loadedRooms = roomsResult.data || [];
+        const eligibleRooms = scopedSchoolId
+          ? loadedRooms.filter((room) => isRoomAvailableToSchool(room, scopedSchoolId))
+          : loadedRooms;
+        setRooms(eligibleRooms);
+        setSelectedRooms((selected) => selected.filter((roomId) => eligibleRooms.some((room) => room.id.toString() === roomId)));
         setSpecialties(specialtiesResult.data || []);
         setSchools(schoolsResult.data || []);
       } catch (error) {

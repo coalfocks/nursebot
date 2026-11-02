@@ -1,10 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getRoomDisplayName } from './roomHelpers';
+import { describe, it, expect, vi } from 'vitest';
+import { getRoomDisplayName, isRoomAvailableToSchool } from './roomHelpers';
 import type { Database } from './database.types';
 
 type Room = Database['public']['Tables']['rooms']['Row'];
 
 describe('roomHelpers', () => {
+  describe('isRoomAvailableToSchool', () => {
+    it('hides a room whose nonempty allowed list excludes the active school', () => {
+      expect(isRoomAvailableToSchool({ school_id: 'creighton', available_school_ids: ['school-other'] }, 'arizona')).toBe(false);
+    });
+
+    it('shows a room explicitly allowed for the active school', () => {
+      expect(isRoomAvailableToSchool({ school_id: 'creighton', available_school_ids: ['arizona'] }, 'arizona')).toBe(true);
+    });
+
+    it.each([
+      ['an empty list', []],
+      ['a null list', null],
+    ])('treats %s as available to all schools', (_label, availableSchoolIds) => {
+      expect(isRoomAvailableToSchool({ school_id: 'creighton', available_school_ids: availableSchoolIds }, 'arizona')).toBe(true);
+    });
+  });
+
   describe('getRoomDisplayName', () => {
     it('returns the role name when role is present', () => {
       const room: Pick<Room, 'role' | 'room_number'> = {
