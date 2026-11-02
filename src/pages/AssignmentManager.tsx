@@ -17,6 +17,7 @@ import {
   type StudentSearchRange,
 } from '../lib/studentVisibility';
 import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { assignmentDiagnosticError, normalizeAssignmentDiagnostic, type AssignmentDiagnostic } from '../lib/assignmentDiagnostics';
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -47,6 +48,32 @@ type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type TimelineEvent = { id: string; label: string; timestamp: string | null; content: string };
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
+type ReconciliationOperation = {
+  request_id: string;
+  assignment_id: string;
+  room_id: number;
+  case_version: string;
+  actor_id: string;
+  result: unknown;
+  created_at: string;
+};
+type ReconciliationAssignment = {
+  id: string;
+  student_id: string;
+  room_id: number;
+  status: string | null;
+  effective_date: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  created_at: string | null;
+};
+type ReconciliationPublication = {
+  room_id: number;
+  case_version: string;
+  source_packet_id: string | null;
+  source_packet_revision: number | null;
+  created_at: string;
+};
 
 export default function AssignmentManager() {
   const { user, profile, activeSchoolId } = useAuthStore();
@@ -90,10 +117,70 @@ export default function AssignmentManager() {
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [assignmentDiagnostic, setAssignmentDiagnostic] = useState<AssignmentDiagnostic | null>(null);
+  const [showReconciliation, setShowReconciliation] = useState(false);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState<AssignmentDiagnostic | null>(null);
+  const [reconciliationOperations, setReconciliationOperations] = useState<ReconciliationOperation[]>([]);
+  const [reconciliationAssignments, setReconciliationAssignments] = useState<ReconciliationAssignment[]>([]);
+  const [reconciliationPublications, setReconciliationPublications] = useState<ReconciliationPublication[]>([]);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[] } | null>(null);
   const assignableStudents = students.filter((student) => isStudentVisibleForSearchRange(student, studentSearchRange));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
+
+  const loadRecentReconciliation = async () => {
+    if (!user) return;
+    setShowReconciliation(true);
+    setReconciliationLoading(true);
+    setReconciliationError(null);
+    try {
+      const operationsQuery = supabase
+        .from('mar_assignment_materialization_operations')
+        .select('request_id, assignment_id, room_id, case_version, actor_id, result, created_at')
+        .eq('actor_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      const publicationsQuery = supabase
+        .from('mar_authored_case_versions')
+        .select('room_id, case_version, source_packet_id, source_packet_revision, created_at')
+        .eq('created_by', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (scopedSchoolId) publicationsQuery.eq('school_id', scopedSchoolId);
+      const [operationsResult, publicationsResult] = await Promise.all([operationsQuery, publicationsQuery]);
+      if (operationsResult.error) throw assignmentDiagnosticError(operationsResult.error, 'existing-row reconciliation', 'table mar_assignment_materialization_operations (recent actor rows)', 'read');
+      if (publicationsResult.error) throw assignmentDiagnosticError(publicationsResult.error, 'publication per room', 'table mar_authored_case_versions (recent actor rows)', 'read');
+
+      const operations = (operationsResult.data ?? []) as ReconciliationOperation[];
+      const assignmentIds = operations.map((operation) => operation.assignment_id);
+      let assignments: ReconciliationAssignment[] = [];
+      if (assignmentIds.length > 0) {
+        let assignmentsQuery = supabase
+          .from('student_room_assignments')
+          .select('id, student_id, room_id, status, effective_date, window_start, window_end, created_at')
+          .in('id', assignmentIds)
+          .eq('assigned_by', user.id);
+        if (scopedSchoolId) assignmentsQuery = assignmentsQuery.eq('school_id', scopedSchoolId);
+        const assignmentsResult = await assignmentsQuery;
+        if (assignmentsResult.error) throw assignmentDiagnosticError(assignmentsResult.error, 'existing-row reconciliation', 'table student_room_assignments (returned operation IDs)', 'read');
+        assignments = (assignmentsResult.data ?? []) as ReconciliationAssignment[];
+      }
+      setReconciliationOperations(operations);
+      setReconciliationAssignments(assignments);
+      setReconciliationPublications((publicationsResult.data ?? []) as ReconciliationPublication[]);
+    } catch (error) {
+      const diagnostic = error && typeof error === 'object' && 'phase' in error
+        ? error as AssignmentDiagnostic
+        : normalizeAssignmentDiagnostic(error, 'existing-row reconciliation', 'recent assignment reconciliation read', 'read');
+      setReconciliationError(diagnostic);
+      setReconciliationOperations([]);
+      setReconciliationAssignments([]);
+      setReconciliationPublications([]);
+    } finally {
+      setReconciliationLoading(false);
+    }
+  };
 
   const handleStudentSearchRangeChange = (range: StudentSearchRange) => {
     setStudentSearchRange(range);
@@ -341,7 +428,12 @@ export default function AssignmentManager() {
           ? (data as { caseVersion: string }).caseVersion.trim()
           : '';
         if (error || !caseVersion) {
-          throw new Error(`MAR_AUTHORED_VERSION_NOT_PUBLISHED: publish an authored Orders + MAR version for room ${numericRoomId} before creating an assignment.`);
+          throw assignmentDiagnosticError(
+            error ?? { code: 'MAR_AUTHORED_VERSION_NOT_PUBLISHED', message: `Publish an authored Orders + MAR version for room ${numericRoomId} before creating an assignment.` },
+            'publication per room',
+            'RPC publish_mar_case_version_from_manual_packet',
+            'write',
+          );
         }
         publishedVersions.set(numericRoomId, caseVersion);
       }
@@ -414,7 +506,12 @@ export default function AssignmentManager() {
       const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
       const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
       if (readinessError || !readinessValue?.ready || !readinessValue.atomic || Number(readinessValue.materializationVersion ?? 0) < 2) {
-        throw new Error('MAR_NORMAL_MATERIALIZATION_NOT_READY: reviewed atomic snapshot/materialization setup is required before creating a new assignment.');
+        throw assignmentDiagnosticError(
+          readinessError ?? { code: 'MAR_NORMAL_MATERIALIZATION_NOT_READY', message: 'Reviewed atomic snapshot/materialization setup is required before creating a new assignment.' },
+          'readiness',
+          'RPC get_mar_normal_materialization_readiness',
+          'read',
+        );
       }
 
       const assignmentIds = assignments.map((assignment) => assignment.id);
@@ -422,21 +519,27 @@ export default function AssignmentManager() {
         supabase.from('student_room_assignments').select('id').in('id', assignmentIds),
         supabase.from('mar_assignment_materialization_operations').select('assignment_id').in('assignment_id', assignmentIds),
       ]);
-      if (existingError || operationsError) throw existingError ?? operationsError;
+      if (existingError) throw assignmentDiagnosticError(existingError, 'existing-row reconciliation', 'table student_room_assignments (ID read)', 'read');
+      if (operationsError) throw assignmentDiagnosticError(operationsError, 'existing-row reconciliation', 'table mar_assignment_materialization_operations (ID read)', 'read');
       const reconciliation = reconcileAssignmentRows(
         assignments,
         new Set((existingAssignments ?? []).map((row) => row.id)),
         new Set((materializedOperations ?? []).map((row) => row.assignment_id)),
       );
       if (reconciliation.ambiguous.length > 0) {
-        throw new Error(`MAR_ASSIGNMENT_RECONCILIATION_REQUIRED: existing assignment ${reconciliation.ambiguous[0].id} has no materialization operation; inspect before retrying.`);
+        throw assignmentDiagnosticError(
+          { code: 'MAR_ASSIGNMENT_RECONCILIATION_REQUIRED', message: `Existing assignment ${reconciliation.ambiguous[0].id} has no materialization operation; inspect before retrying.` },
+          'existing-row reconciliation',
+          'tables student_room_assignments + mar_assignment_materialization_operations',
+          'read',
+        );
       }
       for (const assignment of reconciliation.toMaterialize) {
         const { error } = await callGeneratedRpc(
           'create_assignment_with_mar_materialization',
           materializationRpcArgs(assignment.id, assignment),
         );
-        if (error) throw error;
+        if (error) throw assignmentDiagnosticError(error, 'materialization per assignment', 'RPC create_assignment_with_mar_materialization', 'write');
       }
 
       setShowAssignModal(false);
@@ -453,7 +556,11 @@ export default function AssignmentManager() {
       await fetchAssignments();
     } catch (error) {
       console.error('Error assigning case:', error);
-      alert(`Error assigning case: ${error instanceof Error ? error.message : 'Please try again.'}`);
+      const diagnostic = error && typeof error === 'object' && 'phase' in error
+        ? error as AssignmentDiagnostic
+        : normalizeAssignmentDiagnostic(error, 'materialization per assignment', 'assignment creation', 'write');
+      setAssignmentDiagnostic(diagnostic);
+      alert(`Error assigning case: ${diagnostic.message}`);
     }
   };
 
@@ -818,6 +925,8 @@ export default function AssignmentManager() {
   const editWindowEndUTCPreview = editingAssignment?.window_end
     ? convertToUTC(editingAssignment.window_end, selectedTimezone)?.toISOString() ?? ''
     : '';
+  const roomLabel = (roomId: number) => rooms.find((room) => room.id === roomId)?.room_number ?? String(roomId);
+  const windowLabel = (windowEnd: string | null) => windowEnd && new Date(windowEnd).getTime() >= Date.now() ? 'current' : 'expired';
 
   if (!hasAdmin) {
     return <AdminLayout><div className="flex h-full items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div></AdminLayout>;
@@ -851,8 +960,39 @@ export default function AssignmentManager() {
               <Plus className="w-4 h-4 mr-2" />
               Assign Cases
             </button>
+            <button
+              type="button"
+              onClick={() => void loadRecentReconciliation()}
+              className="inline-flex items-center px-4 py-2 border border-slate-300 rounded-md shadow-sm text-sm font-medium text-slate-700 bg-white hover:bg-slate-50"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Recent attempt reconciliation
+            </button>
           </div>
         </div>
+
+        {assignmentDiagnostic && (
+          <div role="alert" className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-950">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Assignment attempt diagnostic</h2>
+                <p className="mt-1"><strong>Phase:</strong> {assignmentDiagnostic.phase}</p>
+                <p><strong>Boundary:</strong> {assignmentDiagnostic.boundary}</p>
+                <p><strong>Outcome:</strong> {assignmentDiagnostic.classification}</p>
+                <dl className="mt-2 grid gap-x-3 gap-y-1 sm:grid-cols-[max-content_1fr]">
+                  <dt className="font-medium">Code</dt><dd>{assignmentDiagnostic.code ?? '—'}</dd>
+                  <dt className="font-medium">Message</dt><dd>{assignmentDiagnostic.message}</dd>
+                  <dt className="font-medium">Details</dt><dd>{assignmentDiagnostic.details ?? '—'}</dd>
+                  <dt className="font-medium">Hint</dt><dd>{assignmentDiagnostic.hint ?? '—'}</dd>
+                  <dt className="font-medium">HTTP/status</dt><dd>{assignmentDiagnostic.status ?? '—'}</dd>
+                </dl>
+                <p className="mt-2 text-xs">A response-loss/unknown-commit means the server may have committed even when the response failed. Confirm with reconciliation before retrying.</p>
+              </div>
+              <button type="button" aria-label="Dismiss assignment diagnostic" onClick={() => setAssignmentDiagnostic(null)} className="text-red-700 hover:text-red-950"><X className="h-4 w-4" /></button>
+            </div>
+            <button type="button" onClick={() => void loadRecentReconciliation()} className="mt-3 rounded border border-red-300 bg-white px-3 py-1.5 font-medium text-red-800 hover:bg-red-100">Open recent attempt reconciliation</button>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white shadow rounded-lg mb-6">
@@ -1124,6 +1264,50 @@ export default function AssignmentManager() {
         </div>
       </div>
 
+      {showReconciliation && (
+        <div className="fixed inset-0 z-30 overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="reconciliation-title">
+          <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={() => setShowReconciliation(false)} />
+            <div className="relative inline-block w-full max-w-5xl transform overflow-hidden rounded-lg bg-white px-4 pt-5 pb-4 text-left align-bottom shadow-xl sm:my-8 sm:p-6 sm:align-middle">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 id="reconciliation-title" className="text-lg font-medium text-gray-900">Recent assignment attempt reconciliation</h2>
+                  <p className="mt-1 text-xs text-gray-600">Read-only, current-actor rows only. This view does not reload or reset the retained assignment form.</p>
+                </div>
+                <button type="button" aria-label="Close reconciliation" onClick={() => setShowReconciliation(false)} className="text-gray-500 hover:text-gray-900"><X className="h-5 w-5" /></button>
+              </div>
+              {reconciliationLoading ? <div className="py-8 text-sm text-gray-600">Loading recent durable rows…</div> : reconciliationError ? (
+                <div role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+                  <p className="font-medium">Reconciliation read failed ({reconciliationError.phase})</p>
+                  <p>{reconciliationError.boundary}: {reconciliationError.message}</p>
+                  <p>Code: {reconciliationError.code ?? '—'} · Status: {reconciliationError.status ?? '—'}</p>
+                </div>
+              ) : (
+                <div className="mt-4 max-h-[65vh] space-y-5 overflow-y-auto text-sm">
+                  <section>
+                    <h3 className="font-semibold text-gray-900">Materialization operations</h3>
+                    <p className="mt-1 text-xs text-gray-600">No durable operation row does not prove there is no in-memory pending envelope.</p>
+                    {reconciliationOperations.length === 0 ? <p className="mt-2 text-gray-500">No recent operation rows for this actor.</p> : (
+                      <div className="mt-2 overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-xs"><thead><tr className="text-left text-gray-500"><th className="px-2 py-1">Created</th><th className="px-2 py-1">Room</th><th className="px-2 py-1">Assignment</th><th className="px-2 py-1">Request</th><th className="px-2 py-1">Case version</th><th className="px-2 py-1">Result</th></tr></thead><tbody className="divide-y divide-gray-100">{reconciliationOperations.map((operation) => <tr key={operation.request_id}><td className="px-2 py-1">{formatDate(operation.created_at)}</td><td className="px-2 py-1">Room {roomLabel(operation.room_id)}</td><td className="px-2 py-1 font-mono">{operation.assignment_id}</td><td className="px-2 py-1 font-mono">{operation.request_id}</td><td className="px-2 py-1">{operation.case_version}</td><td className="px-2 py-1">{typeof operation.result === 'string' ? operation.result : 'recorded'}</td></tr>)}</tbody></table></div>
+                    )}
+                  </section>
+                  <section>
+                    <h3 className="font-semibold text-gray-900">Returned assignment rows</h3>
+                    {reconciliationAssignments.length === 0 ? <p className="mt-2 text-gray-500">No returned assignment rows for the recent operation IDs.</p> : <div className="mt-2 overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-xs"><thead><tr className="text-left text-gray-500"><th className="px-2 py-1">Created</th><th className="px-2 py-1">Room</th><th className="px-2 py-1">Assignment</th><th className="px-2 py-1">Status</th><th className="px-2 py-1">Window</th></tr></thead><tbody className="divide-y divide-gray-100">{reconciliationAssignments.map((assignment) => <tr key={assignment.id}><td className="px-2 py-1">{formatDate(assignment.created_at)}</td><td className="px-2 py-1">Room {roomLabel(assignment.room_id)}</td><td className="px-2 py-1 font-mono">{assignment.id}</td><td className="px-2 py-1">{assignment.status ?? '—'}</td><td className="px-2 py-1">{windowLabel(assignment.window_end)}<br />{formatDate(assignment.window_start)} – {formatDate(assignment.window_end)}</td></tr>)}</tbody></table></div>}
+                  </section>
+                  <section>
+                    <h3 className="font-semibold text-gray-900">Authored publication rows</h3>
+                    <p className="mt-1 text-xs text-gray-600">An authored-version row means publication committed; it does not mean assignment materialization committed.</p>
+                    {reconciliationPublications.length === 0 ? <p className="mt-2 text-gray-500">No recent authored publication rows for this actor.</p> : <div className="mt-2 overflow-x-auto"><table className="min-w-full divide-y divide-gray-200 text-xs"><thead><tr className="text-left text-gray-500"><th className="px-2 py-1">Created</th><th className="px-2 py-1">Room</th><th className="px-2 py-1">Case version</th><th className="px-2 py-1">Source packet</th><th className="px-2 py-1">Revision</th></tr></thead><tbody className="divide-y divide-gray-100">{reconciliationPublications.map((publication) => <tr key={`${publication.room_id}-${publication.case_version}`}><td className="px-2 py-1">{formatDate(publication.created_at)}</td><td className="px-2 py-1">Room {roomLabel(publication.room_id)}</td><td className="px-2 py-1">{publication.case_version}</td><td className="px-2 py-1 font-mono">{publication.source_packet_id ?? '—'}</td><td className="px-2 py-1">{publication.source_packet_revision ?? '—'}</td></tr>)}</tbody></table></div>}
+                  </section>
+                </div>
+              )}
+              <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => void loadRecentReconciliation()} className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Refresh reads</button><button type="button" onClick={() => setShowReconciliation(false)} className="rounded bg-gray-700 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800">Close</button></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Assignment Modal */}
       {showAssignModal && (
         <div className="fixed z-10 inset-0 overflow-y-auto">
@@ -1131,7 +1315,10 @@ export default function AssignmentManager() {
             <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
             <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6">
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Assign Case</h3>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-lg font-medium text-gray-900">Assign Case</h3>
+                  <button type="button" onClick={() => void loadRecentReconciliation()} className="text-xs font-medium text-blue-700 hover:text-blue-900">Recent attempt reconciliation</button>
+                </div>
                 <div className="space-y-4">
                   {/* Targeting Mode Selection */}
                   <div>

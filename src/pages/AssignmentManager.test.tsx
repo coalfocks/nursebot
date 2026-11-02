@@ -37,6 +37,7 @@ const query = (table: string) => {
     or: vi.fn(() => builder),
     is: vi.fn(() => builder),
     in: vi.fn(() => builder),
+    limit: vi.fn(() => builder),
     then: (resolve: (value: { data: unknown[]; error: null }) => unknown) => {
       const data = table === 'chat_messages'
         ? [
@@ -133,6 +134,8 @@ describe('AssignmentManager frozen creation operation', () => {
 
     const firstAttempt = rpcCalls.filter((call) => call.name === 'create_assignment_with_mar_materialization');
     expect(firstAttempt).toHaveLength(2);
+    expect(screen.getByRole('alert')).toHaveTextContent('materialization per assignment');
+    expect(screen.getByRole('alert')).toHaveTextContent('response-loss/unknown-commit');
     fireEvent.click(createButton());
     await waitFor(() => expect(screen.queryByText('Assign Case')).not.toBeInTheDocument());
 
@@ -141,6 +144,20 @@ describe('AssignmentManager frozen creation operation', () => {
     expect(attempts.slice(2).map((call) => call.args.p_assignment_id)).toEqual(firstAttempt.map((call) => call.args.p_assignment_id));
     expect(attempts.slice(2).map((call) => call.args.p_case_version)).toEqual(firstAttempt.map((call) => call.args.p_case_version));
     expect(attempts.slice(2).map((call) => call.args.p_effective_date)).toEqual(firstAttempt.map((call) => call.args.p_effective_date));
+  });
+
+  it('opens read-only recent reconciliation without changing the retained assignment form', async () => {
+    render(<AssignmentManager />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Case Assignments' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Assign Cases' }));
+    fireEvent.click(screen.getByRole('button', { name: /Room 204/ }));
+    expect(screen.getByRole('heading', { name: 'Assign Case' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Recent attempt reconciliation' })[1]);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Recent assignment attempt reconciliation' })).toBeInTheDocument());
+    expect(screen.getByText(/Read-only, current-actor rows only/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Assign Case' })).toBeInTheDocument();
+    expect(rpcCalls.filter((call) => call.name === 'create_assignment_with_mar_materialization')).toHaveLength(0);
   });
 
   it('shows saved note, hint view, and truthful completion role in the mounted timeline', async () => {
