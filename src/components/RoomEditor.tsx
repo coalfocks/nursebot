@@ -6,6 +6,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useSchools } from '../hooks/useSchools';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { isObgynSpecialtyName } from '../lib/roomHelpers';
+import { getClinicalRoomAvailabilityFields } from '../lib/clinicalRoomAvailability';
 import { instantLabs, pendingLabs } from '../features/emr/lib/labCatalog';
 import type { RoomOrdersConfig } from '../features/emr/lib/types';
 import { useNavigate } from 'react-router-dom';
@@ -254,11 +255,10 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
     ? room?.school_id ?? activeSchoolId ?? null
     : profile?.school_id ?? room?.school_id ?? null;
   const [schoolId, setSchoolId] = useState<string>(() => scopedSchoolId ?? '');
-  // Check if room is available to all schools (empty array or all school IDs)
+  // New rooms default to all schools; existing rooms reflect their current metadata.
   const isAllSchools = (() => {
-    if (!room?.available_school_ids) return false;
-    if (room.available_school_ids.length === 0) return true;
-    return false;
+    if (!room) return true;
+    return room.available_school_ids == null || room.available_school_ids.length === 0;
   })();
 
   const initialAvailableSchoolIds = (() => {
@@ -472,13 +472,6 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       const emrContextPayload =
         Object.keys(emrContextPayloadObject).length > 0 ? JSON.stringify(emrContextPayloadObject) : null;
 
-      // Normalize school IDs for saving
-      // - "All Schools" selected: save empty array []
-      // - "All Schools" NOT selected: save array with primary + selected schools
-      const normalizedSchoolIds = allSchoolsSelected
-        ? []
-        : Array.from(new Set([...(availableSchoolIds ?? []), finalSchoolId])).filter(Boolean);
-
       const completionHintPayload = buildCompletionHintPayload({
         assessmentHint,
         diagnosisDifferentiatorHint,
@@ -507,9 +500,8 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
         is_active: isActive,
         pdf_url: finalPdfUrl,
         school_id: finalSchoolId,
-        // Preserve empty array for "all schools" - only set to null if truly undefined
-        available_school_ids: normalizedSchoolIds ?? null,
         continues_from: continuesFrom ? Number.parseInt(continuesFrom, 10) : null,
+        ...getClinicalRoomAvailabilityFields(Boolean(room)),
       };
 
       if (room) {

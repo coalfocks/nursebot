@@ -7,6 +7,7 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import type { Database, Json } from '../lib/database.types';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
+import { getClinicalRoomAvailabilityFields } from '../lib/clinicalRoomAvailability';
 
 type CaseBlueprint = Database['public']['Tables']['case_blueprints']['Row'];
 type BedsideRequirement = 'yes' | 'no' | 'situational';
@@ -576,7 +577,7 @@ export default function CaseBuilder() {
             .single()
         : await supabase
             .from('rooms')
-            .insert([roomPayload])
+            .insert([{ ...roomPayload, ...getClinicalRoomAvailabilityFields(false) }])
             .select('id, patient_id, school_id')
             .single();
 
