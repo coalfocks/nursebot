@@ -25,6 +25,7 @@ import AdminPatients from './pages/AdminPatients';
 import TestRooms from './pages/TestRooms';
 import SuperAdminPortal from './pages/SuperAdminPortal';
 import DataDownload from './pages/DataDownload';
+import ClinicalCaseAvailabilityAudit from './pages/ClinicalCaseAvailabilityAudit';
 import ErrorBoundary from './components/ErrorBoundary';
 import { hasAdminAccess, isSuperAdmin, isTestUser } from './lib/roles';
 
@@ -222,6 +223,16 @@ function App() {
           element={
             user?.id && isSuperAdmin(profile) ? (
               <DataDownload />
+            ) : (
+              <Navigate to="/dashboard" replace />
+            )
+          }
+        />
+        <Route
+          path="/admin/clinical-case-availability"
+          element={
+            user?.id && hasAdmin ? (
+              <ClinicalCaseAvailabilityAudit />
             ) : (
               <Navigate to="/dashboard" replace />
             )

@@ -12,6 +12,7 @@ import {
   NotebookPen,
   UserPlus,
   Download,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -39,6 +40,7 @@ export default function AdminSidebar({ collapsed: collapsedProp, onToggle }: Adm
     { label: 'Case Builder', to: '/admin/case-builder', icon: NotebookPen },
     { label: 'Students', to: '/cases', icon: GraduationCap },
     { label: 'Data Download', to: '/admin/data-download', icon: Download },
+    { label: 'Clinical Availability', to: '/admin/clinical-case-availability', icon: ShieldCheck },
     { label: 'Patients', to: '/admin/patients', icon: UserPlus },
     { label: 'Rooms', to: '/admin/rooms', icon: School },
     { label: 'Profile Settings', to: '/profile', icon: Settings },
