@@ -6,7 +6,6 @@ import Navbar from '../components/Navbar';
 import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import { ConsultantPortal } from '../components/ConsultantPortal';
-import EmbeddedPdfViewer from '../components/EmbeddedPdfViewer';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
@@ -25,7 +24,6 @@ export default function AssignmentView() {
   
   const [loading, setLoading] = useState(true);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [consultantOpen, setConsultantOpen] = useState(false);
 
   useEffect(() => {
@@ -69,35 +67,6 @@ export default function AssignmentView() {
       channel.unsubscribe();
     };
   }, [assignmentId, assignment?.id]);
-
-  const getSignedUrl = async (path: string) => {
-    try {
-      console.log('Original PDF URL:', path);
-      
-      // Extract just the filename from the full URL
-      const filename = path.split('/').pop();
-      console.log('Extracted filename:', filename);
-
-      if (!filename) {
-        console.error('No filename found in path');
-        return null;
-      }
-
-      const { data, error } = await supabase.storage
-        .from('room_pdfs')
-        .createSignedUrl(filename, 3600); // URL valid for 1 hour
-
-      if (error) {
-        console.error('Error getting signed URL:', error);
-        throw error;
-      }
-      console.log('Signed URL response:', data);
-      return data?.signedUrl;
-    } catch (error) {
-      console.error('Error in getSignedUrl:', error);
-      return null;
-    }
-  };
 
   const fetchAssignment = async () => {
     try {
@@ -151,19 +120,6 @@ export default function AssignmentView() {
         setAssignment({ ...assignmentWithSpecialties, status: 'in_progress' });
       }
 
-      // Get signed URL for PDF if it exists
-      if (pinnedRoom.pdf_url) {
-        console.log('Found PDF URL in room data:', pinnedRoom.pdf_url);
-        const signedUrl = await getSignedUrl(pinnedRoom.pdf_url);
-        console.log('Generated signed URL:', signedUrl);
-        if (signedUrl) {
-          setPdfUrl(signedUrl);
-        } else {
-          console.log('Failed to generate signed URL');
-        }
-      } else {
-        console.log('No PDF URL found in room data');
-      }
     } catch (error) {
       console.error('Error fetching assignment:', error);
       navigate('/assignments');
@@ -349,13 +305,6 @@ export default function AssignmentView() {
                     Go to EHR
                   </button>
                 </div>
-                {pdfUrl ? (
-                  <div className="h-[240px] border rounded-lg overflow-hidden">
-                    <EmbeddedPdfViewer pdfUrl={pdfUrl} />
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500">No progress note provided for this room.</p>
-                )}
               </div>
             </div>
           </div>
