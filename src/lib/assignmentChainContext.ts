@@ -26,6 +26,12 @@ export type ChainAssignmentState = {
   active: boolean;
 };
 
+export type ChainMaterializationEvidence = {
+  complete: boolean;
+  envelopeKey: string;
+  assignmentIds: string[];
+};
+
 export type PriorStageSnapshot = {
   chainId: string;
   targetAssignmentId: string;
@@ -41,12 +47,30 @@ export type PriorStageSnapshot = {
 
 export type ChainVisibilityResult =
   | { status: 'visible'; snapshots: PriorStageSnapshot[] }
-  | { status: 'hidden'; reason: 'CHAIN_ENVELOPE_MISMATCH' | 'OWNER_MISMATCH' | 'TARGET_NOT_ACTIVE' | 'PREDECESSOR_NOT_COMPLETED' };
+  | { status: 'hidden'; reason: 'CHAIN_ENVELOPE_MISMATCH' | 'MATERIALIZATION_MISMATCH' | 'OWNER_MISMATCH' | 'TARGET_NOT_ACTIVE' | 'PREDECESSOR_NOT_COMPLETED' };
 
 const orderedStages: ChainStage[] = ['A', 'B', 'C'];
 
 const requireText = (value: string, field: string) => {
   if (!value.trim()) throw new Error(`CHAIN_ENVELOPE_INVALID:${field}`);
+  return value;
+};
+
+const canonicalize = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalize(nested)]));
+  }
+  return value;
+};
+
+const deepFreeze = <T>(value: T): T => {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    Object.values(value as Record<string, unknown>).forEach(deepFreeze);
+  }
   return value;
 };
 
@@ -78,18 +102,18 @@ export const freezeAssignmentChainEnvelope = (input: {
   if (new Set(assignments.map((assignment) => assignment.assignmentId)).size !== assignments.length) {
     throw new Error('CHAIN_ENVELOPE_INVALID:duplicate_assignment_id');
   }
-  return {
+  return deepFreeze({
     version: 1,
     chainId: input.chainId,
     ownerId: input.ownerId,
     windowStart: input.windowStart,
     windowEnd: input.windowEnd,
     assignments,
-  };
+  });
 };
 
-/** Stable comparison key. Array order is intentionally preserved. */
-export const assignmentChainEnvelopeKey = (envelope: FrozenAssignmentChainEnvelope): string => JSON.stringify(envelope);
+/** Stable comparison key. Object-key order is canonicalized; array order is meaningful. */
+export const assignmentChainEnvelopeKey = (envelope: FrozenAssignmentChainEnvelope): string => JSON.stringify(canonicalize(envelope));
 
 export const assertMatchingAssignmentChainEnvelope = (
   expected: FrozenAssignmentChainEnvelope,
@@ -112,10 +136,22 @@ export const readPriorStageSnapshots = (
   states: ChainAssignmentState[],
   targetAssignmentId: string,
   viewerId: string,
+  materialization: ChainMaterializationEvidence,
 ): ChainVisibilityResult => {
+  const expectedEnvelopeKey = assignmentChainEnvelopeKey(envelope);
+  const expectedAssignmentIds = envelope.assignments.map((assignment) => assignment.assignmentId);
+  if (!materialization.complete
+    || materialization.envelopeKey !== expectedEnvelopeKey
+    || materialization.assignmentIds.length !== expectedAssignmentIds.length
+    || materialization.assignmentIds.some((assignmentId, index) => assignmentId !== expectedAssignmentIds[index])) {
+    return { status: 'hidden', reason: 'MATERIALIZATION_MISMATCH' };
+  }
   const targetIndex = envelope.assignments.findIndex((assignment) => assignment.assignmentId === targetAssignmentId);
   if (targetIndex < 0) return { status: 'hidden', reason: 'CHAIN_ENVELOPE_MISMATCH' };
   const byId = new Map(states.map((state) => [state.assignmentId, state]));
+  if (expectedAssignmentIds.some((assignmentId) => !byId.has(assignmentId))) {
+    return { status: 'hidden', reason: 'MATERIALIZATION_MISMATCH' };
+  }
   const target = byId.get(targetAssignmentId);
   if (!target || target.ownerId !== viewerId || envelope.ownerId !== viewerId) {
     return { status: 'hidden', reason: 'OWNER_MISMATCH' };
