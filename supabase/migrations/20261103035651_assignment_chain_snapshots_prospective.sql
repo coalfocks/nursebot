@@ -104,7 +104,7 @@ begin
   end if;
   for position in 1..3 loop
     if p_envelope->'assignments'->(position - 1)->>'assignmentId' is distinct from p_ordered_assignment_ids[position]::text
-       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from case position when 1 then 'A' when 2 then 'B' else 'C' end then
+       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from (case position when 1 then 'A' when 2 then 'B' else 'C' end) then
       raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
     end if;
   end loop;
@@ -112,10 +112,14 @@ begin
   envelope_hash := encode(extensions.digest(convert_to(p_envelope::text, 'utf8'), 'sha256'), 'hex');
   perform pg_advisory_xact_lock(hashtext('assignment-chain:' || p_chain_id::text));
 
-  select count(*), min(a.student_id), min(a.window_start), min(a.window_end)
-    into assignment_count, owner_id, expected_window_start, expected_window_end
+  select count(*), min(a.window_start), min(a.window_end)
+    into assignment_count, expected_window_start, expected_window_end
   from unnest(p_ordered_assignment_ids) with ordinality requested(assignment_id, position)
   join public.student_room_assignments a on a.id = requested.assignment_id;
+  select a.student_id into owner_id
+  from unnest(p_ordered_assignment_ids) with ordinality requested(assignment_id, position)
+  join public.student_room_assignments a on a.id = requested.assignment_id
+  order by requested.position limit 1;
   if assignment_count <> 3 then raise exception 'ASSIGNMENT_CHAIN_MATERIALIZATION_INCOMPLETE'; end if;
   if exists (
     select 1

@@ -65,7 +65,7 @@ begin
   end if;
   for position in 1..3 loop
     if p_envelope->'assignments'->(position - 1)->>'assignmentId' is distinct from p_ordered_assignment_ids[position]::text
-       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from case position when 1 then 'A' when 2 then 'B' else 'C' end then
+       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from (case position when 1 then 'A' when 2 then 'B' else 'C' end) then
       raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
     end if;
     captured_room_id := nullif(p_envelope->'assignments'->(position - 1)->>'roomId', '')::integer;
@@ -129,7 +129,7 @@ begin
   end if;
   for position in 1..3 loop
     if p_envelope->'assignments'->(position - 1)->>'assignmentId' is distinct from p_ordered_assignment_ids[position]::text
-       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from case position when 1 then 'A' when 2 then 'B' else 'C' end then
+       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from (case position when 1 then 'A' when 2 then 'B' else 'C' end) then
       raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
     end if;
   end loop;
