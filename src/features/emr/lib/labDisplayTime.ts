@@ -1,5 +1,5 @@
 import type { LabResult } from './types';
-import { formatStudentRelativeTime } from './studentDisplayTime';
+import { formatPriorOffsetHours, formatStudentRelativeTime } from './studentDisplayTime';
 
 const hoursBetween = (newer: string, older: string) =>
   Math.round((new Date(newer).getTime() - new Date(older).getTime()) / 3_600_000);
@@ -20,7 +20,10 @@ export const formatLabColumnLabel = (time: string, labs: LabResult[], studentVie
     .filter((value): value is string => Boolean(value))
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
   const runtimeReference = runtimeTimes[runtimeTimes.length - 1] ?? null;
-  if (studentView) return isBaseline ? `Baseline · ${formatStudentRelativeTime(time, caseClock)}` : formatStudentRelativeTime(time, caseClock);
+  if (studentView) {
+    const authoredOffset = atTime.find((lab) => lab.baselineRelativeOffsetHours !== null && lab.baselineRelativeOffsetHours !== undefined)?.baselineRelativeOffsetHours;
+    return isBaseline ? `Baseline · ${authoredOffset === undefined ? 'Historical baseline' : formatPriorOffsetHours(authoredOffset)}` : formatStudentRelativeTime(time, caseClock);
+  }
   if (isBaseline && !runtimeReference) return `Baseline · ${new Date(time).toLocaleString()}`;
   const relative = formatLabRelativeTime(time, runtimeReference ?? time);
   return isBaseline ? `Baseline · ${relative}` : relative;

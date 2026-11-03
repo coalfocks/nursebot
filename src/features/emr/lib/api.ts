@@ -234,6 +234,7 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     deletedAt: row.deleted_at,
     sourceOrderId: (row as LabResultRow & { source_order_id?: string | null }).source_order_id,
     baselineSetId: (row as LabResultRow & { baseline_set_id?: string | null }).baseline_set_id,
+    baselineRelativeOffsetHours: (row as LabResultRow & { baseline_relative_offset_hours?: number | null }).baseline_relative_offset_hours,
   };
 };
 
@@ -713,7 +714,7 @@ export const emrApi = {
       const patientId = labs[0].patientId;
       const { data: existingLabs, error: existingError } = await supabase
         .from('lab_results')
-        .select('id, test_name, collection_time, result_time, baseline_set_id')
+        .select('id, test_name, collection_time, result_time, baseline_set_id, baseline_relative_offset_hours')
         .eq('patient_id', patientId)
         .eq('override_scope', 'baseline')
         .is('assignment_id', null)
@@ -752,6 +753,7 @@ export const emrApi = {
               result_time: lab.resultTime ?? lab.collectionTime ?? baselineTimestamp,
               ordered_by: lab.orderedBy,
               baseline_set_id: baselineSetId,
+              baseline_relative_offset_hours: lab.baselineRelativeOffsetHours ?? null,
             },
           };
         })
@@ -774,6 +776,7 @@ export const emrApi = {
           ordered_by: lab.orderedBy,
           source_order_id: null,
           baseline_set_id: baselineSetId,
+          baseline_relative_offset_hours: lab.baselineRelativeOffsetHours ?? null,
         }));
 
       if (updates.length) {
@@ -824,6 +827,23 @@ export const emrApi = {
       return { ok: false, error: error.message };
     }
     return { ok: true };
+  },
+
+  async updateBaselineSetRelativeOffset(patientId: string, baselineSetId: string, offsetHours: number | null): Promise<boolean> {
+    const { error } = await marSupabase
+      .from('lab_results')
+      .update({ baseline_relative_offset_hours: offsetHours })
+      .eq('patient_id', patientId)
+      .eq('baseline_set_id', baselineSetId)
+      .eq('override_scope', 'baseline')
+      .is('assignment_id', null)
+      .is('room_id', null)
+      .is('deleted_at', null);
+    if (error) {
+      console.error('Error updating baseline set relative offset', error);
+      return false;
+    }
+    return true;
   },
 
   async updateLabResult(

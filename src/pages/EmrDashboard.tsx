@@ -1063,6 +1063,7 @@ export default function EmrDashboard() {
                                     resultTime: authoredBaselineTime,
                                     orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
                                     baselineSetId: baselineLabSetId.trim() || 'baseline-set-1',
+                                    baselineRelativeOffsetHours: Number(baselineRelativeHours),
                                   },
                                 ];
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
@@ -1167,6 +1168,7 @@ export default function EmrDashboard() {
                                   resultTime: (lab as { resultTime?: string }).resultTime ?? authoredBaselineTime,
                                   orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
                                   baselineSetId: baselineLabSetId.trim() || 'baseline-set-1',
+                                  baselineRelativeOffsetHours: Number(baselineRelativeHours),
                                 }));
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
                                 setLabsRefreshToken((t) => t + 1);

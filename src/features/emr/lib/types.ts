@@ -94,6 +94,8 @@ export interface LabResult {
   deletedAt?: string | null;
   sourceOrderId?: string | null;
   baselineSetId?: string | null;
+  /** Shared authored learner-facing offset for this baseline set; null means legacy offset unknown. */
+  baselineRelativeOffsetHours?: number | null;
 }
 
 export type LabWriteResult =

@@ -18,3 +18,13 @@ export const formatStudentRelativeTime = (value?: string | null, caseClock?: str
   return `${deltaHours}h prior`;
 };
 
+export const formatPriorOffsetHours = (hours?: number | null) => {
+  if (hours === null || hours === undefined || !Number.isFinite(hours)) return 'Historical baseline';
+  const rounded = Math.round(hours);
+  if (rounded <= 0) return 'Now';
+  if (rounded >= 24 && rounded % 24 === 0) {
+    const days = rounded / 24;
+    return `${days} day${days === 1 ? '' : 's'} prior`;
+  }
+  return `${rounded}h prior`;
+};

@@ -15,7 +15,7 @@ import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 import { datetimeLocalToUtc, formatLabColumnLabel, formatLabRelativeTime } from '../lib/labDisplayTime';
-import { firstRuntimeTime, formatStudentRelativeTime } from '../lib/studentDisplayTime';
+import { firstRuntimeTime, formatPriorOffsetHours, formatStudentRelativeTime } from '../lib/studentDisplayTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -53,6 +53,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     resultTime: '',
   });
   const [isSavingLabEdit, setIsSavingLabEdit] = useState(false);
+  const [baselineOffsetDrafts, setBaselineOffsetDrafts] = useState<Record<string, string>>({});
+  const [savingBaselineSet, setSavingBaselineSet] = useState<string | null>(null);
   const [studentFallbackClock] = useState(() => new Date().toISOString());
   const [manualLabForm, setManualLabForm] = useState({
     testName: '',
@@ -95,6 +97,21 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       setLabResults(data);
     })();
   }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    setBaselineOffsetDrafts((current) => {
+      const next = { ...current };
+      labResults
+        .filter((lab) => (lab.overrideScope ?? 'baseline') === 'baseline' && lab.baselineSetId)
+        .forEach((lab) => {
+          if (!(lab.baselineSetId! in next)) {
+            next[lab.baselineSetId!] = lab.baselineRelativeOffsetHours == null ? '' : String(lab.baselineRelativeOffsetHours);
+          }
+        });
+      return next;
+    });
+  }, [canEdit, labResults]);
 
   useEffect(() => {
     const request = capture();
@@ -439,6 +456,42 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const formatCollectionLabel = (value: string) =>
     formatLabColumnLabel(value, labResults, studentView, studentCaseClock);
 
+  const formatStudentLabTime = (lab: LabResult, value?: string | null) => {
+    if ((lab.overrideScope ?? 'baseline') === 'baseline') return formatPriorOffsetHours(lab.baselineRelativeOffsetHours);
+    return formatStudentRelativeTime(value, studentCaseClock);
+  };
+
+  const baselineSets = useMemo(() => {
+    const sets = new Map<string, LabResult[]>();
+    labResults
+      .filter((lab) => (lab.overrideScope ?? 'baseline') === 'baseline')
+      .forEach((lab) => {
+        const setId = lab.baselineSetId ?? '';
+        if (!sets.has(setId)) sets.set(setId, []);
+        sets.get(setId)!.push(lab);
+      });
+    return Array.from(sets.entries()).map(([setId, labs]) => ({ setId, labs }));
+  }, [labResults]);
+
+  const saveBaselineOffset = async (setId: string) => {
+    if (!setId) return;
+    const raw = baselineOffsetDrafts[setId]?.trim() ?? '';
+    const offset = raw === '' ? null : Number(raw);
+    if (offset !== null && (!Number.isFinite(offset) || offset < 0 || offset > 720)) {
+      setLabSaveError('Baseline offset must be blank or between 0 and 720 hours prior.');
+      return;
+    }
+    setSavingBaselineSet(setId);
+    setLabSaveError(null);
+    const saved = await emrApi.updateBaselineSetRelativeOffset(patient.id, setId, offset);
+    if (!saved) {
+      setLabSaveError('Could not save this baseline set offset. No lab values or timestamps were changed.');
+    } else {
+      setLabResults((current) => current.map((lab) => lab.baselineSetId === setId ? { ...lab, baselineRelativeOffsetHours: offset } : lab));
+    }
+    setSavingBaselineSet(null);
+  };
+
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
     if (lab.status === 'Pending' || !lab.collectionTime) return acc;
@@ -614,6 +667,37 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         </div>
       )}
 
+      {canEdit && baselineSets.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Baseline set timing</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">Set the learner-facing relative offset for each authored baseline set. This changes timing metadata only; values, provenance, and stored timestamps remain unchanged.</p>
+            {baselineSets.map(({ setId, labs }) => (
+              <div key={setId || 'legacy'} className="flex flex-wrap items-center gap-2">
+                <span className="min-w-48 text-sm font-medium">{setId || 'Legacy baseline (no set ID)'}</span>
+                {setId ? <>
+                  <input
+                    aria-label={`Baseline offset ${setId}`}
+                    type="number"
+                    min="0"
+                    max="720"
+                    step="1"
+                    className="w-28 rounded-md border border-border px-3 py-2 text-sm"
+                    placeholder="Unknown"
+                    value={baselineOffsetDrafts[setId] ?? ''}
+                    onChange={(event) => setBaselineOffsetDrafts((current) => ({ ...current, [setId]: event.target.value }))}
+                  />
+                  <span className="text-sm text-muted-foreground">hours prior</span>
+                  <Button size="sm" variant="outline" disabled={savingBaselineSet === setId} onClick={() => void saveBaselineOffset(setId)}>
+                    {savingBaselineSet === setId ? 'Saving…' : 'Save set offset'}
+                  </Button>
+                </> : <span className="text-sm text-muted-foreground">{labs.length} result(s); assign a set ID before editing timing.</span>}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="results" className="w-full">
         <TabsList>
           <TabsTrigger value="results">Results Grid</TabsTrigger>
@@ -674,8 +758,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                         <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
                                         <div className="text-xs text-muted-foreground">{lab.status}</div>
                                         <div className="text-xs text-muted-foreground">
-                                          Collected {studentView ? formatStudentRelativeTime(lab.collectionTime, studentCaseClock) : (lab.collectionTime ? new Date(lab.collectionTime).toLocaleString() : 'Not recorded')}
-                                          {lab.resultTime && ` • Resulted ${studentView ? formatStudentRelativeTime(lab.resultTime, studentCaseClock) : new Date(lab.resultTime).toLocaleString()}`}
+                                          Collected {studentView ? formatStudentLabTime(lab, lab.collectionTime) : (lab.collectionTime ? new Date(lab.collectionTime).toLocaleString() : 'Not recorded')}
+                                          {lab.resultTime && ` • Resulted ${studentView ? formatStudentLabTime(lab, lab.resultTime) : new Date(lab.resultTime).toLocaleString()}`}
                                         </div>
                                         {canEdit && (
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
