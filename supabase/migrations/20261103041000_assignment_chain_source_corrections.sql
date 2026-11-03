@@ -21,6 +21,22 @@ create table if not exists public.assignment_chain_intents (
 alter table public.assignment_chain_intents enable row level security;
 revoke all on public.assignment_chain_intents from public, anon, authenticated;
 
+-- A prospective assignment may belong to only one chain intent.  This is the
+-- server-side reservation that prevents two different chain IDs from later
+-- claiming the same materialization operations.
+create table if not exists public.assignment_chain_intent_members (
+  assignment_id uuid primary key,
+  chain_id uuid not null references public.assignment_chain_intents(chain_id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete restrict,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists assignment_chain_intent_members_chain_idx
+  on public.assignment_chain_intent_members(chain_id, assignment_id);
+
+alter table public.assignment_chain_intent_members enable row level security;
+revoke all on public.assignment_chain_intent_members from public, anon, authenticated;
+
 create or replace function public.begin_assignment_chain_intent(
   p_chain_id uuid,
   p_ordered_assignment_ids uuid[],
@@ -40,6 +56,8 @@ declare
   first_patient uuid;
   authored_version text;
   authored_captured_at timestamptz;
+  member_id uuid;
+  reserved_chain_id uuid;
 begin
   if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
   select p.role into actor_role from public.profiles p where p.id = actor;
@@ -60,6 +78,10 @@ begin
     if prior.created_by <> actor or prior.ordered_assignment_ids <> p_ordered_assignment_ids
        or prior.envelope_hash is distinct from envelope_hash then
       raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
+    end if;
+    if (select count(*) from public.assignment_chain_intent_members m
+        where m.chain_id = p_chain_id and m.assignment_id = any(p_ordered_assignment_ids)) <> 3 then
+      raise exception 'ASSIGNMENT_CHAIN_MEMBERSHIP_INCOMPLETE';
     end if;
     return jsonb_build_object('chainId', p_chain_id, 'envelopeHash', envelope_hash, 'replayed', true);
   end if;
@@ -95,8 +117,29 @@ begin
     end if;
     previous_room_id := captured_room_id;
   end loop;
+  -- Lock all members in deterministic order before checking/reserving them.
+  -- A second intent over the same or a partially overlapping ordered set must
+  -- fail before it can create a chain that races the original membership.
+  for member_id in
+    select id from unnest(p_ordered_assignment_ids) ids(id) order by id
+  loop
+    perform pg_advisory_xact_lock(hashtext('assignment-chain-member:' || member_id::text));
+  end loop;
+  select m.chain_id into reserved_chain_id
+    from public.assignment_chain_intent_members m
+    where m.assignment_id = any(p_ordered_assignment_ids)
+    order by m.assignment_id limit 1;
+  if reserved_chain_id is not null then
+    raise exception 'ASSIGNMENT_CHAIN_MEMBER_CONFLICT';
+  end if;
   insert into public.assignment_chain_intents(chain_id, ordered_assignment_ids, envelope, envelope_hash, created_by)
   values (p_chain_id, p_ordered_assignment_ids, p_envelope, envelope_hash, actor);
+  begin
+    insert into public.assignment_chain_intent_members(assignment_id, chain_id, created_by)
+      select id, p_chain_id, actor from unnest(p_ordered_assignment_ids) ids(id);
+  exception when unique_violation then
+    raise exception 'ASSIGNMENT_CHAIN_MEMBER_CONFLICT';
+  end;
   return jsonb_build_object('chainId', p_chain_id, 'envelopeHash', envelope_hash, 'replayed', false);
 end;
 $$;
@@ -113,6 +156,7 @@ declare
   expected_window_start timestamptz; expected_window_end timestamptz;
   envelope_hash text; intent public.assignment_chain_intents%rowtype;
   prior public.assignment_chains%rowtype; snapshot_count integer;
+  intent_member_count integer;
   position integer;
 begin
   if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
@@ -141,6 +185,10 @@ begin
      or intent.envelope_hash is distinct from envelope_hash then
     raise exception 'ASSIGNMENT_CHAIN_INTENT_REQUIRED';
   end if;
+  select count(*) into intent_member_count
+    from public.assignment_chain_intent_members m
+    where m.chain_id = p_chain_id and m.assignment_id = any(p_ordered_assignment_ids);
+  if intent_member_count <> 3 then raise exception 'ASSIGNMENT_CHAIN_MEMBERSHIP_INCOMPLETE'; end if;
 
   -- Replay returns the immutable prior result before reading mutable rooms.
   select * into prior from public.assignment_chains where chain_id = p_chain_id for update;
@@ -294,11 +342,11 @@ declare
   actor uuid := auth.uid(); chain_id uuid;
 begin
   if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
-  select c.chain_id into chain_id
-  from public.assignment_chains c
-  join public.student_room_assignments a on a.id = p_target_assignment_id and a.student_id = actor
-  where c.owner_id = actor and p_target_assignment_id = any(c.ordered_assignment_ids)
-  order by c.created_at desc limit 1;
+  select m.chain_id into chain_id
+  from public.assignment_chain_intent_members m
+  join public.assignment_chains c on c.chain_id = m.chain_id and c.owner_id = actor
+  join public.student_room_assignments a on a.id = m.assignment_id and a.student_id = actor
+  where m.assignment_id = p_target_assignment_id;
   if chain_id is null then raise exception 'ASSIGNMENT_CHAIN_NOT_VISIBLE'; end if;
   return public.get_assignment_chain_prior_stage_context(chain_id, p_target_assignment_id);
 end;
@@ -310,10 +358,11 @@ grant execute on function public.get_assignment_chain_prior_stage_context_for_as
 create or replace function public.get_assignment_chain_readiness()
 returns jsonb language sql security definer set search_path = public as $$
   select jsonb_build_object('ready', to_regclass('public.assignment_chain_intents') is not null
+    and to_regclass('public.assignment_chain_intent_members') is not null
     and to_regclass('public.assignment_chains') is not null and to_regclass('public.assignment_chain_snapshots') is not null
     and to_regprocedure('public.begin_assignment_chain_intent(uuid,uuid[],jsonb)') is not null
     and to_regprocedure('public.create_assignment_chain_with_snapshots(uuid,uuid[],jsonb)') is not null
     and to_regprocedure('public.get_assignment_chain_prior_stage_context(uuid,uuid)') is not null
     and to_regprocedure('public.get_assignment_chain_prior_stage_context_for_assignment(uuid)') is not null,
-    'version', case when to_regclass('public.assignment_chain_intents') is not null then 2 else 0 end);
+    'version', case when to_regclass('public.assignment_chain_intent_members') is not null then 3 else 0 end);
 $$;

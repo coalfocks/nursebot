@@ -12,6 +12,9 @@ manifest_files=(
   supabase/tests/fixtures/mar-baseline-schema.sql
   supabase/tests/fixtures/assignment-chain-bootstrap.sql
   supabase/tests/assignment-chain-rpc.integration.sql
+  supabase/tests/assignment-chain-concurrent-a.sql
+  supabase/tests/assignment-chain-concurrent-b.sql
+  supabase/tests/assignment-chain-concurrent-verify.sql
   supabase/migrations/20261019100009_mar_authored_baseline_and_administrations.sql
   supabase/migrations/20261019100010_mar_authorized_scope_materialization.sql
   supabase/migrations/20261019100011_mar_read_scope_and_versions.sql
@@ -64,3 +67,21 @@ docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < "$stage_dir/supabase/tests/fixtures/assignment-chain-bootstrap.sql"
 docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   < "$stage_dir/supabase/tests/assignment-chain-rpc.integration.sql"
+
+concurrent_a_log="$stage_dir/concurrent-a.log"
+concurrent_b_log="$stage_dir/concurrent-b.log"
+docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < "$stage_dir/supabase/tests/assignment-chain-concurrent-a.sql" >"$concurrent_a_log" 2>&1 &
+pid_a=$!
+docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < "$stage_dir/supabase/tests/assignment-chain-concurrent-b.sql" >"$concurrent_b_log" 2>&1 &
+pid_b=$!
+wait "$pid_a"
+wait "$pid_b"
+if [[ "$(grep -h -c 'contender=granted' "$concurrent_a_log" "$concurrent_b_log" | awk '{sum += $1} END {print sum + 0}')" != 1 \
+   || "$(grep -h -c 'contender=denied' "$concurrent_a_log" "$concurrent_b_log" | awk '{sum += $1} END {print sum + 0}')" != 1 ]]; then
+  echo "concurrent chain contender contract did not produce exactly one grant and one denial" >&2
+  exit 1
+fi
+docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  < "$stage_dir/supabase/tests/assignment-chain-concurrent-verify.sql"
