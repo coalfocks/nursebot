@@ -8,7 +8,7 @@ import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
 import { emrApi } from '../lib/api';
-import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
+import { resolveLabTemplates } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
@@ -321,6 +321,9 @@ export function OrdersManagement({
           unit: template.unit,
           referenceRange: template.referenceRange,
         }));
+        if (!requestedTests.length) {
+          throw new Error('LAB_TEMPLATE_MISSING: no complete panel template is configured for this Instant Lab.');
+        }
         expectedLabCount = requestedTests.length;
 
         const aiResponse = await supabase.functions.invoke('lab-results', {
@@ -395,20 +398,8 @@ export function OrdersManagement({
             }>)
           : null;
 
-        const generatedLabs = validateCompleteLabPanel(
-          requestedTests,
-          aiLabs?.length && requestedTests.length
-            ? aiLabs
-            : await generateLabResults(patient.id, adjustedOrder.orderName, {
-                patient,
-                assignmentId: effectiveAssignmentId,
-                roomId: contextualRoomId,
-                orderName: adjustedOrder.orderName,
-                previousLabs,
-                clinicalNotes,
-                vitals,
-              }),
-        );
+        if (!aiLabs) throw new Error('LAB_RESULT_SHAPE_INVALID: lab-results returned no validated result array.');
+        const generatedLabs = validateCompleteLabPanel(requestedTests, aiLabs);
 
         const runTimestamp = new Date().toISOString();
         const labsWithScope: import('../lib/types').LabResult[] = generatedLabs.map((lab, index) => ({

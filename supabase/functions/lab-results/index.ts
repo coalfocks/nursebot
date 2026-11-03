@@ -205,7 +205,7 @@ const parseJsonFromString = (content: string) => {
   try {
     return JSON.parse(content);
   } catch {
-    const match = content.match(/\{[\s\S]*\}/);
+    const match = content.match(/[\[{][\s\S]*[\]}]/);
     if (match) {
       try {
         return JSON.parse(match[0]);
@@ -268,7 +268,19 @@ Deno.serve(async (req) => {
       throw new Error('Unable to parse AI response');
     }
 
-    const responseBody = isBatch ? { labs: parsed } : parsed;
+    if (isBatch) {
+      const labs = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === 'object' && Array.isArray((parsed as { labs?: unknown }).labs)
+          ? (parsed as { labs: unknown[] }).labs
+          : null;
+      if (!labs) throw new Error('LAB_RESULT_SHAPE_INVALID');
+      return new Response(JSON.stringify({ labs }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const responseBody = parsed;
 
     return new Response(JSON.stringify(responseBody), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

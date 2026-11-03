@@ -14,6 +14,7 @@ import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
+import { datetimeLocalToUtc, formatLabColumnLabel, formatLabRelativeTime } from '../lib/labDisplayTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -30,11 +31,6 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-const formatPriorLabLabel = (time: string, newestTime: string) => {
-  const deltaHours = Math.round((new Date(newestTime).getTime() - new Date(time).getTime()) / 3_600_000);
-  if (!Number.isFinite(deltaHours) || deltaHours <= 0) return 'Now';
-  return `${deltaHours}h prior`;
-};
 const formatStoredTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
@@ -432,9 +428,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const newestCollectionTime = sortedCollectionTimes[sortedCollectionTimes.length - 1];
   const formatCollectionLabel = (value: string) =>
-    newestCollectionTime ? formatPriorLabLabel(value, newestCollectionTime) : 'Now';
+    formatLabColumnLabel(value, labResults);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -460,7 +455,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
         .map((entry) => ({
           ...entry,
-          time: data.length ? formatPriorLabLabel(entry.time, data[data.length - 1].time) : 'Now',
+          time: formatLabRelativeTime(entry.time, data[data.length - 1]?.time),
         })),
     ]),
   );
@@ -767,7 +762,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 <input className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.referenceRange} onChange={(event) => setLabEditForm((prev) => ({ ...prev, referenceRange: event.target.value }))} />
               </label>
               <label className="block text-sm font-medium">Collection time
-                <input type="datetime-local" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.collectionTime.slice(0, 16)} onChange={(event) => setLabEditForm((prev) => ({ ...prev, collectionTime: new Date(event.target.value).toISOString() }))} />
+                <input type="datetime-local" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.collectionTime.slice(0, 16)} onChange={(event) => setLabEditForm((prev) => ({ ...prev, collectionTime: datetimeLocalToUtc(event.target.value) }))} />
               </label>
               <label className="block text-sm font-medium">Status
                 <select className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm" value={labEditForm.status} onChange={(event) => setLabEditForm((prev) => ({ ...prev, status: event.target.value as LabResult['status'] }))}>

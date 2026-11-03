@@ -28,6 +28,7 @@ import { hasAdminAccess, isSuperAdmin, isTestUser } from '../lib/roles';
 import { supabase } from '../lib/supabase';
 import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
 import { useRequestIdentity } from '../hooks/useRequestIdentity';
+import { datetimeLocalToUtc } from '../features/emr/lib/labDisplayTime';
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -1026,7 +1027,7 @@ export default function EmrDashboard() {
                             disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
                             onClick={async () => {
                               if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
-                              const authoredBaselineTime = new Date(baselineLabTimestamp).toISOString();
+                              const authoredBaselineTime = datetimeLocalToUtc(baselineLabTimestamp);
                               setIsSavingSandboxLab(true);
                               try {
                                 const labsWithAssignment = [
@@ -1071,7 +1072,7 @@ export default function EmrDashboard() {
                             disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
                             onClick={async () => {
                               if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
-                              const authoredBaselineTime = new Date(baselineLabTimestamp).toISOString();
+                              const authoredBaselineTime = datetimeLocalToUtc(baselineLabTimestamp);
                               setIsSavingSandboxLab(true);
                               try {
                                 const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
