@@ -27,13 +27,14 @@ describe('lab display time', () => {
     const firstRuntime = '2026-11-03T12:00:00.000Z';
     const laterRuntime = '2026-11-03T18:00:00.000Z';
     const labs = [lab(baseline, 'baseline', 12), lab(firstRuntime, 'assignment'), lab(laterRuntime, 'assignment')];
-    expect(formatLabColumnLabel(baseline, labs, true, firstRuntime)).toBe('Baseline · 12h prior');
+    expect(formatLabColumnLabel(baseline, labs, true, firstRuntime)).toBe('12 hours prior');
     expect(formatLabColumnLabel(laterRuntime, labs, true, firstRuntime)).toBe('Now');
+    expect(formatLabColumnLabel(baseline, labs, true, firstRuntime)).not.toContain('Baseline');
   });
   it('never exposes a calendar date in student time labels', () => {
     expect(formatStudentRelativeTime('2026-11-01T00:00:00.000Z', '2026-11-03T00:00:00.000Z')).toBe('2 days prior');
   });
   it('does not turn a legacy baseline timestamp into a huge elapsed-hour claim', () => {
-    expect(formatLabColumnLabel('2000-01-01T00:00:00.000Z', [lab('2000-01-01T00:00:00.000Z', 'baseline')], true, '2026-11-03T12:00:00.000Z')).toBe('Baseline · Historical baseline');
+    expect(formatLabColumnLabel('2000-01-01T00:00:00.000Z', [lab('2000-01-01T00:00:00.000Z', 'baseline')], true, '2026-11-03T12:00:00.000Z')).toBe('Time unavailable');
   });
 });

@@ -66,7 +66,7 @@ export const formatLabColumnLabel = (time: string, labs: LabResult[], studentVie
   const runtimeReference = runtimeTimes[runtimeTimes.length - 1] ?? null;
   if (studentView) {
     const authoredOffset = atTime.find((lab) => lab.baselineRelativeOffsetHours !== null && lab.baselineRelativeOffsetHours !== undefined)?.baselineRelativeOffsetHours;
-    return isBaseline ? `Baseline · ${authoredOffset === undefined ? 'Historical baseline' : formatPriorOffsetHours(authoredOffset)}` : formatStudentRelativeTime(time, caseClock);
+    return isBaseline ? formatPriorOffsetHours(authoredOffset) : formatStudentRelativeTime(time, caseClock);
   }
   if (isBaseline && !runtimeReference) return `Baseline · ${new Date(time).toLocaleString()}`;
   const relative = formatLabRelativeTime(time, runtimeReference ?? time);

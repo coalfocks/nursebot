@@ -846,6 +846,30 @@ export const emrApi = {
     return true;
   },
 
+  async assignLegacyBaselineSet(
+    patientId: string,
+    collectionTime: string,
+    offsetHours: number | null,
+  ): Promise<string | null> {
+    const baselineSetId = crypto.randomUUID();
+    const { data, error } = await marSupabase
+      .from('lab_results')
+      .update({ baseline_set_id: baselineSetId, baseline_relative_offset_hours: offsetHours })
+      .eq('patient_id', patientId)
+      .eq('collection_time', collectionTime)
+      .eq('override_scope', 'baseline')
+      .is('baseline_set_id', null)
+      .is('assignment_id', null)
+      .is('room_id', null)
+      .is('deleted_at', null)
+      .select('id');
+    if (error || !data?.length) {
+      console.error('Error assigning legacy baseline set', error);
+      return null;
+    }
+    return baselineSetId;
+  },
+
   async updateLabResult(
     labId: string,
     updates: Partial<Pick<LabResult, 'testName' | 'value' | 'valueType' | 'unit' | 'referenceRange' | 'status' | 'collectionTime' | 'resultTime' | 'interpretation' | 'abnormalFlag' | 'specimen' | 'lifecycleStatus'>>,
