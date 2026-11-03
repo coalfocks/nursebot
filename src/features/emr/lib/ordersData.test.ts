@@ -21,6 +21,17 @@ describe('clinical order catalog', () => {
     expect(resolveLabTemplates('Complete Blood Count with Differential').map((template) => template.testName)).toEqual(expected);
   });
 
+  it.each([
+    ['Basic Metabolic Panel', 8],
+    ['Basic Metabolic Panel (BMP)', 8],
+    ['BMP', 8],
+    ['Comprehensive Metabolic Panel', 13],
+    ['Comprehensive Metabolic Panel (CMP)', 13],
+    ['CMP', 13],
+  ])('resolves the complete %s panel for generation', (orderName, expectedCount) => {
+    expect(resolveLabTemplates(orderName)).toHaveLength(expectedCount);
+  });
+
   it('keeps acetaminophen choices explicitly PRN', () => {
     const acetaminophen = allOrders.find((order) => order.name === 'Acetaminophen');
     expect(acetaminophen?.frequencies).toEqual(['Once', 'q6h PRN', 'q8h PRN']);

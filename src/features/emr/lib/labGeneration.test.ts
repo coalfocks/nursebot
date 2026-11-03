@@ -19,4 +19,18 @@ describe('live lab generation rules', () => {
     expect(() => validateCompleteLabPanel(requested, [{ testName: 'Sodium', value: null }])).toThrow(/no value/);
     expect(validateCompleteLabPanel(requested, [{ testName: 'Sodium', value: 140 }])[0]).toMatchObject({ testName: 'Sodium', value: 140 });
   });
+
+  it('accepts safe model analyte aliases while preserving requested panel names', () => {
+    const requested = [
+      { testName: 'White Blood Cell Count', unit: 'K/uL', referenceRange: '4.0-11.0' },
+      { testName: 'CO2 (Bicarbonate)', unit: 'mmol/L', referenceRange: '22-29' },
+    ];
+    expect(validateCompleteLabPanel(requested, [
+      { testName: 'WBC', value: 7.1 },
+      { testName: 'Bicarbonate', value: 24 },
+    ])).toMatchObject([
+      { testName: 'White Blood Cell Count', unit: 'K/uL' },
+      { testName: 'CO2 (Bicarbonate)', unit: 'mmol/L' },
+    ]);
+  });
 });
