@@ -20,6 +20,7 @@ import {
   type ChatMessage,
 } from './chatTimeline';
 import { mapStudentConversationMessages, parseAuthoredPatientConversation } from '../lib/studentConversation';
+import { readSupabaseErrorDiagnostic } from '../lib/supabaseErrorDiagnostic';
 
 type BedsidePatientMessage = {
   role: 'student' | 'patient';
@@ -882,7 +883,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       pendingPatientRequestRef.current = null;
       setBedsideInput('');
     } catch (error) {
-      console.error('Error in bedside patient chat:', error);
+      console.error('Error in bedside patient chat:', await readSupabaseErrorDiagnostic(error));
       setBedsideMessages((prev) => prev.filter((message, index) => !(index === prev.length - 1 && message.role === 'student' && message.content === operation.question)));
       if (!hadUnresolvedRequest) setBedsideInput(operation.question);
       setPatientConversationError(await getPatientChatErrorMessage(error));

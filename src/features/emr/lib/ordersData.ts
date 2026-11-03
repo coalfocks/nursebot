@@ -250,7 +250,7 @@ const baseMedicationOrders: OrderItem[] = [
     name: 'Acetaminophen',
     category: 'Medication',
     subcategory: 'Analgesic',
-    frequencies: ['q6h', 'q8h', 'PRN'],
+    frequencies: ['q6h PRN', 'q8h PRN'],
     routes: ['PO', 'IV'],
     priorities: ['Routine'],
     defaultDose: '650',

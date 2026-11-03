@@ -13,6 +13,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -416,7 +417,7 @@ export function OrdersManagement({
         }
         onLabsGenerated?.();
       } catch (err) {
-        console.error('Failed to generate STAT labs', err);
+        console.error('Failed to generate STAT labs', await readSupabaseErrorDiagnostic(err));
       }
     }
     onOrderAdded?.(saved);

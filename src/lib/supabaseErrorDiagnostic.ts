@@ -27,6 +27,36 @@ const readContext = (error: unknown): Record<string, unknown> => {
   return context && typeof context === 'object' ? context as Record<string, unknown> : {};
 };
 
+const isResponseLike = (value: unknown): value is Response => Boolean(
+  value &&
+  typeof value === 'object' &&
+  typeof (value as { clone?: unknown }).clone === 'function' &&
+  typeof (value as { json?: unknown }).json === 'function',
+);
+
+const responseFrom = (error: unknown): Response | null => {
+  if (!error || typeof error !== 'object') return null;
+  const source = error as { context?: unknown; response?: unknown };
+  if (isResponseLike(source.context)) return source.context;
+  if (isResponseLike(source.response)) return source.response;
+  return null;
+};
+
+const structuredBody = (body: unknown): Record<string, unknown> => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
+  const root = body as Record<string, unknown>;
+  const nested = root.error && typeof root.error === 'object' && !Array.isArray(root.error)
+    ? root.error as Record<string, unknown>
+    : {};
+  return {
+    status: root.status ?? nested.status,
+    code: root.code ?? nested.code,
+    message: root.message ?? (typeof root.error === 'string' ? root.error : nested.message),
+    details: root.details ?? nested.details,
+    hint: root.hint ?? nested.hint,
+  };
+};
+
 export const describeSupabaseError = (error: unknown): SupabaseErrorDiagnostic => {
   const source = error && typeof error === 'object' ? error as Record<string, unknown> : {};
   const context = readContext(error);
@@ -46,4 +76,25 @@ export const describeSupabaseError = (error: unknown): SupabaseErrorDiagnostic =
     hint ? `hint=${hint}` : null,
   ].filter(Boolean);
   return { status, code, message, details, hint, description: fields.join('; ') };
+};
+
+export const readSupabaseErrorDiagnostic = async (error: unknown): Promise<SupabaseErrorDiagnostic> => {
+  const response = responseFrom(error);
+  if (!response) return describeSupabaseError(error);
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = structuredBody(await response.clone().json());
+  } catch {
+    // Preserve the original error and return the transport fields when the body is not JSON.
+  }
+
+  const base = describeSupabaseError(error);
+  return describeSupabaseError({
+    status: body.status ?? base.status,
+    code: body.code ?? base.code,
+    message: body.message ?? base.message,
+    details: body.details ?? base.details,
+    hint: body.hint ?? base.hint,
+  });
 };

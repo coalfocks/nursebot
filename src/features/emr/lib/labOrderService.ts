@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabase';
-import { describeSupabaseError } from '../../../lib/supabaseErrorDiagnostic';
+import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 import { labTypeByName } from './labCatalog';
 import type { LabResult, LabOrderSetting, RoomOrdersConfig } from './types';
 
@@ -136,7 +136,7 @@ export const generateLabResultForOrder = async ({
       };
     }
   } catch (error) {
-    console.error('AI lab generation failed, falling back to nominal values', describeSupabaseError(error));
+    console.error('AI lab generation failed, falling back to nominal values', await readSupabaseErrorDiagnostic(error));
   }
 
   return buildFallbackLabResult({ patientId, labName, orderedBy, priority, valueOverride, assignmentId });

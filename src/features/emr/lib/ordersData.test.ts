@@ -9,13 +9,20 @@ describe('clinical order catalog', () => {
   });
 
   it('generates the complete CBC differential panel', () => {
-    expect(resolveLabTemplates('CBC with Differential').map((template) => template.testName)).toEqual([
+    const expected = [
       'White Blood Cell Count',
       'Neutrophils %',
       'Lymphocytes %',
       'Hemoglobin',
       'Hematocrit',
       'Platelets',
-    ]);
+    ];
+    expect(resolveLabTemplates('CBC with Differential').map((template) => template.testName)).toEqual(expected);
+    expect(resolveLabTemplates('Complete Blood Count with Differential').map((template) => template.testName)).toEqual(expected);
+  });
+
+  it('keeps acetaminophen choices explicitly PRN', () => {
+    const acetaminophen = allOrders.find((order) => order.name === 'Acetaminophen');
+    expect(acetaminophen?.frequencies).toEqual(['q6h PRN', 'q8h PRN']);
   });
 });

@@ -13,6 +13,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 
 interface LabResultsProps {
   patient: Patient;
@@ -271,7 +272,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       setAiLabName('');
       setAiLabRequest('');
     } catch (error) {
-      console.error('Error generating labs:', error);
+      console.error('Error generating labs:', await readSupabaseErrorDiagnostic(error));
     } finally {
       setIsGenerating(false);
     }

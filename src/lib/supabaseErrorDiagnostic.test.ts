@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeSupabaseError } from './supabaseErrorDiagnostic';
+import { describeSupabaseError, readSupabaseErrorDiagnostic } from './supabaseErrorDiagnostic';
 
 describe('describeSupabaseError', () => {
   it('keeps structured RPC fields and bounds the safe description', () => {
@@ -33,5 +33,27 @@ describe('describeSupabaseError', () => {
     const diagnostic = describeSupabaseError(new Error('plain failure'));
     expect(diagnostic.description).toBe('message=plain failure');
     expect(describeSupabaseError(null).message).toBe('Unknown Supabase error');
+  });
+
+  it('reads an SDK Response body from a clone without consuming the original', async () => {
+    const response = new Response(JSON.stringify({
+      code: 'LAB_GENERATION_FAILED',
+      message: 'Failed to generate STAT labs',
+      details: 'panel validation failed',
+      hint: 'check requested tests',
+      authorization: 'never expose',
+    }), { status: 503, headers: { authorization: 'secret' } });
+    const error = Object.assign(new Error('FunctionsHttpError'), { context: response });
+
+    const diagnostic = await readSupabaseErrorDiagnostic(error);
+    expect(diagnostic).toMatchObject({
+      status: 503,
+      code: 'LAB_GENERATION_FAILED',
+      message: 'Failed to generate STAT labs',
+      details: 'panel validation failed',
+      hint: 'check requested tests',
+    });
+    expect(diagnostic.description).not.toContain('authorization');
+    await expect(response.json()).resolves.toMatchObject({ code: 'LAB_GENERATION_FAILED' });
   });
 });
