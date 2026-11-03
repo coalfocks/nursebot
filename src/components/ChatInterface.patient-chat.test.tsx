@@ -132,4 +132,40 @@ describe('ChatInterface patient transport contract', () => {
     expect(patientCallsByName[1][1].body.messages.at(-1)).toEqual({ role: 'user', content: 'What is your pain level?' });
     expect(patientCallsByName[1][1].body.messages.at(-1)).not.toEqual({ role: 'user', content: 'EDITED DIFFERENT QUESTION' });
   });
+
+  it('diagnoses direct completion feedback failures without changing completion state', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const response = new Response(JSON.stringify({
+      code: 'FEEDBACK_GENERATION_FAILED',
+      message: 'feedback unavailable',
+      details: 'provider timeout',
+      hint: 'inspect function logs',
+    }), { status: 503 });
+    mocks.invoke.mockImplementation((name: string, options?: { body?: { contentOverride?: string } }) => {
+      if (name === 'generate-feedback') {
+        return Promise.resolve({ data: null, error: Object.assign(new Error('FunctionsHttpError'), { context: response }) });
+      }
+      if (name === 'chat' && options?.body?.contentOverride === '<completed>') {
+        return Promise.resolve({ data: { chatMessage: { id: 'completed', role: 'assistant', content: '<completed>' } }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    render(<ChatInterface assignmentId="assignment-1" roomNumber="204" roomId={204} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Complete' }));
+    const note = await screen.findByPlaceholderText('Write your progress note...');
+    fireEvent.change(note, { target: { value: 'Completed the case.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete case' }));
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('generate-feedback', { body: { assignmentId: 'assignment-1' } }));
+    expect(errorSpy).toHaveBeenCalledWith('Error triggering feedback generation:', expect.objectContaining({
+      status: 503,
+      code: 'FEEDBACK_GENERATION_FAILED',
+      message: 'feedback unavailable',
+      details: 'provider timeout',
+      hint: 'inspect function logs',
+    }));
+    expect(screen.getByRole('button', { name: 'Complete' })).toBeInTheDocument();
+    errorSpy.mockRestore();
+  });
 });

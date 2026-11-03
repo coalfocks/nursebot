@@ -736,7 +736,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
       });
 
       if (feedbackError) {
-        console.error('Error triggering feedback generation:', feedbackError);
+        console.error('Error triggering feedback generation:', await readSupabaseErrorDiagnostic(feedbackError));
       }
 
       setShowCompletionConfirm(false);
