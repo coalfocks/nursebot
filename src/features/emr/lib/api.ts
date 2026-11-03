@@ -135,6 +135,9 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     instructions: row.instructions ?? undefined,
     deletedAt: row.deleted_at,
     recordVersion: row.record_version,
+    labGenerationStatus: (row as MedicalOrderRow & { lab_generation_status?: MedicalOrder['labGenerationStatus'] }).lab_generation_status,
+    labGenerationError: (row as MedicalOrderRow & { lab_generation_error?: string | null }).lab_generation_error,
+    labGenerationAttemptedAt: (row as MedicalOrderRow & { lab_generation_attempted_at?: string | null }).lab_generation_attempted_at,
   };
 };
 
@@ -228,6 +231,7 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     orderedBy: row.ordered_by ?? 'Unknown',
     createdAt: row.created_at ?? undefined,
     deletedAt: row.deleted_at,
+    sourceOrderId: (row as LabResultRow & { source_order_id?: string | null }).source_order_id,
   };
 };
 
@@ -799,6 +803,7 @@ export const emrApi = {
           collection_time: baselineTimestamp,
           result_time: baselineTimestamp,
           ordered_by: lab.orderedBy,
+          source_order_id: null,
         }));
 
       if (updates.length) {
@@ -841,6 +846,7 @@ export const emrApi = {
       collection_time: lab.collectionTime,
       result_time: lab.resultTime,
       ordered_by: lab.orderedBy,
+      source_order_id: lab.sourceOrderId ?? null,
     }));
     const { error } = await supabase.from('lab_results').insert(payload);
     if (error) {
@@ -1291,6 +1297,23 @@ export const emrApi = {
       return null;
     }
     return data ? mapMedicalOrder(data, order.patientId) : null;
+  },
+
+  async updateLabGenerationState(orderId: string, state: Pick<MedicalOrder, 'labGenerationStatus' | 'labGenerationError' | 'labGenerationAttemptedAt'>): Promise<void> {
+    const client = marSupabase;
+    const { error } = await client.from('medical_orders').update({
+      lab_generation_status: state.labGenerationStatus,
+      lab_generation_error: state.labGenerationError ?? null,
+      lab_generation_attempted_at: state.labGenerationAttemptedAt ?? new Date().toISOString(),
+    }).eq('id', orderId);
+    if (error) console.error('Error updating lab generation state', error);
+  },
+
+  async listLabResultsForOrder(orderId: string): Promise<LabResult[]> {
+    const client = marSupabase;
+    const { data, error } = await client.from('lab_results').select('*').eq('source_order_id', orderId).is('deleted_at', null);
+    if (error) return [];
+    return (data ?? []).map((row: LabResultRow) => mapLabResult(row, row.patient_id ?? ''));
   },
 
   async updateOrder(

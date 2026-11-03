@@ -14,6 +14,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
+import { shouldGenerateLabForOrder, validateCompleteLabPanel } from '../lib/labGeneration';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -46,6 +47,8 @@ const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] =>
     ? packageOrders.imaging.filter((item): item is string => typeof item === 'string')
     : [];
 };
+
+const formatStoredTime = (value?: string) => value ? new Date(value).toLocaleString() : 'Not recorded';
 
 export function OrdersManagement({
   patient,
@@ -295,8 +298,19 @@ export function OrdersManagement({
       );
     }
 
-    if (adjustedOrder.category === 'Lab' && adjustedOrder.priority === 'STAT') {
+    if (adjustedOrder.category === 'Lab' && shouldGenerateLabForOrder(adjustedOrder.orderName, adjustedOrder.priority)) {
+      void emrApi.updateLabGenerationState(saved.id, {
+        labGenerationStatus: 'generating',
+        labGenerationAttemptedAt: new Date().toISOString(),
+      });
+      let expectedLabCount = 0;
       try {
+        if ((await emrApi.listLabResultsForOrder(saved.id)).length) {
+          await emrApi.updateLabGenerationState(saved.id, { labGenerationStatus: 'completed' });
+          onLabsGenerated?.();
+          onOrderAdded?.(saved);
+          return;
+        }
         const [previousLabs, clinicalNotes, vitals] = await Promise.all([
           emrApi.listLabResults(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
@@ -307,6 +321,7 @@ export function OrdersManagement({
           unit: template.unit,
           referenceRange: template.referenceRange,
         }));
+        expectedLabCount = requestedTests.length;
 
         const aiResponse = await supabase.functions.invoke('lab-results', {
           body: {
@@ -380,7 +395,8 @@ export function OrdersManagement({
             }>)
           : null;
 
-        const generatedLabs =
+        const generatedLabs = validateCompleteLabPanel(
+          requestedTests,
           aiLabs?.length && requestedTests.length
             ? aiLabs
             : await generateLabResults(patient.id, adjustedOrder.orderName, {
@@ -391,33 +407,45 @@ export function OrdersManagement({
                 previousLabs,
                 clinicalNotes,
                 vitals,
-              });
+              }),
+        );
 
         const runTimestamp = new Date().toISOString();
-        const labsWithScope = generatedLabs.map((lab, index) => ({
+        const labsWithScope: import('../lib/types').LabResult[] = generatedLabs.map((lab, index) => ({
           id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
           patientId: patient.id,
           assignmentId: effectiveAssignmentId,
           roomId: effectiveRoomId,
-          overrideScope: forceBaseline ? 'baseline' : (lab as { overrideScope?: string }).overrideScope,
+          overrideScope: forceBaseline ? 'baseline' : undefined,
           testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
           value: (lab as { value?: string | number }).value ?? '',
           unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
           referenceRange:
             (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
-          status: (lab as { status?: string }).status ?? 'Normal',
-          collectionTime: runTimestamp,
-          resultTime: runTimestamp,
+          status: ((lab as { status?: import('../lib/types').LabResult['status'] }).status ?? 'Normal'),
+          collectionTime: (lab as { collectionTime?: string }).collectionTime ?? runTimestamp,
+          resultTime: (lab as { resultTime?: string }).resultTime ?? runTimestamp,
           orderedBy: adjustedOrder.orderedBy,
+          sourceOrderId: saved.id,
         }));
 
         const writeResult = await emrApi.addLabResults(labsWithScope, effectiveRoomId);
         if (!writeResult.ok) {
           throw new Error(`Could not save generated labs: ${writeResult.error}`);
         }
+        await emrApi.updateLabGenerationState(saved.id, { labGenerationStatus: 'completed' });
         onLabsGenerated?.();
       } catch (err) {
-        console.error('Failed to generate STAT labs', await readSupabaseErrorDiagnostic(err));
+        console.error('Failed to generate ordered labs', await readSupabaseErrorDiagnostic(err));
+        const persisted = await emrApi.listLabResultsForOrder(saved.id);
+        if (expectedLabCount > 0 && persisted.length >= expectedLabCount) {
+          await emrApi.updateLabGenerationState(saved.id, { labGenerationStatus: 'completed' });
+          onLabsGenerated?.();
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Lab generation failed. Retry this order.';
+        await emrApi.updateLabGenerationState(saved.id, { labGenerationStatus: 'failed', labGenerationError: message });
+        setOrderSaveError(`${adjustedOrder.orderName} was ordered, but results could not be generated: ${message}`);
       }
     }
     onOrderAdded?.(saved);
@@ -691,6 +719,13 @@ export function OrdersManagement({
                           {order.frequency && <div>Frequency: {order.frequency}</div>}
                           {order.route && <div>Route: {order.route}</div>}
                           {order.instructions && <div>Notes: {order.instructions}</div>}
+                          <div>Ordered: {formatStoredTime(order.orderTime)}</div>
+                          {order.scheduledTime && <div>Scheduled: {formatStoredTime(order.scheduledTime)}</div>}
+                          {order.labGenerationStatus === 'failed' && (
+                            <div className="text-red-600" title={order.labGenerationError ?? undefined}>
+                              Lab result generation failed — retry needed
+                            </div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>

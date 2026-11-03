@@ -92,12 +92,14 @@ const parseStandardFrequencies = (value: string): string[] => {
 };
 
 const normalizeFrequencies = (frequencies?: string[]): string[] | undefined => {
-  if (!frequencies?.length) return frequencies;
+  if (!frequencies?.length) return ['Once'];
   const normalized = frequencies
-    .flatMap(parseStandardFrequencies)
+    .flatMap((frequency) => {
+      const parsed = parseStandardFrequencies(frequency);
+      return parsed.length ? parsed : [frequency.trim()];
+    })
     .filter(Boolean);
-  const unique = Array.from(new Set(normalized));
-  return unique.length ? unique : undefined;
+  return Array.from(new Set(['Once', ...normalized]));
 };
 
 const curatedLabOrders: OrderItem[] = [

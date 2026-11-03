@@ -92,6 +92,7 @@ export interface LabResult {
   orderedBy: string;
   createdAt?: string;
   deletedAt?: string | null;
+  sourceOrderId?: string | null;
 }
 
 export type LabWriteResult =
@@ -136,6 +137,9 @@ export interface MedicalOrder {
   instructions?: string;
   deletedAt?: string | null;
   recordVersion?: number;
+  labGenerationStatus?: 'not_started' | 'generating' | 'completed' | 'failed';
+  labGenerationError?: string | null;
+  labGenerationAttemptedAt?: string | null;
 }
 
 export type MarCategory = 'scheduled' | 'prn' | 'one_time' | 'infusion';

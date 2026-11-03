@@ -23,6 +23,12 @@ describe('clinical order catalog', () => {
 
   it('keeps acetaminophen choices explicitly PRN', () => {
     const acetaminophen = allOrders.find((order) => order.name === 'Acetaminophen');
-    expect(acetaminophen?.frequencies).toEqual(['q6h PRN', 'q8h PRN']);
+    expect(acetaminophen?.frequencies).toEqual(['Once', 'q6h PRN', 'q8h PRN']);
+  });
+
+  it('offers Once on every order without dropping existing PRN schedules', () => {
+    expect(allOrders.every((order) => order.frequencies?.includes('Once'))).toBe(true);
+    const morphine = allOrders.find((order) => order.name === 'Morphine');
+    expect(morphine?.frequencies).toEqual(expect.arrayContaining(['Once', 'q4h PRN', 'q6h PRN', 'q2h PRN']));
   });
 });

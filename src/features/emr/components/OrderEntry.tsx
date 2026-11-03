@@ -83,7 +83,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
     }
     
     setOrderDetails({
-      frequency: '',
+      frequency: order.frequencies?.includes('Once') ? 'Once' : '',
       route: order.routes?.[0] || '',
       dose: extractedDose,
       unit: order.units?.[0] || extractedUnit,
@@ -124,7 +124,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: selectedOrder.category,
       orderName: isOtherOrder ? `${selectedOrder.name} - ${orderFor}` : selectedOrder.name,
-      frequency: orderDetails.frequency,
+      frequency: orderDetails.frequency || 'Once',
       route: orderDetails.route,
       dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
       priority: orderDetails.priority as OrderPriority,

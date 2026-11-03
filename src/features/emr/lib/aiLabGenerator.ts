@@ -133,6 +133,7 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
     cbc: ['white blood cell count', 'hemoglobin', 'hematocrit', 'platelets'],
     'complete blood count': ['white blood cell count', 'hemoglobin', 'hematocrit', 'platelets'],
     'basic metabolic panel': ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
+    'basic metabolic panel (bmp)': ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     bmp: ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     'comprehensive metabolic panel': [
       'sodium',
@@ -163,6 +164,10 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
       'alkaline phosphatase',
       'total bilirubin',
       'albumin',
+    ],
+    'comprehensive metabolic panel (cmp)': [
+      'sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium',
+      'ast', 'alt', 'alkaline phosphatase', 'total bilirubin', 'albumin',
     ],
     'liver function panel': ['ast', 'alt', 'alkaline phosphatase', 'total bilirubin', 'albumin'],
     magnesium: ['magnesium'],

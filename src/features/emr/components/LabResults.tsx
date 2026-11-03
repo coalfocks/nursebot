@@ -31,6 +31,7 @@ type LabTrendPoint = {
 };
 
 const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1 - index) * 24}h prior`;
+const formatStoredTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
@@ -235,7 +236,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
             });
 
       const runTimestamp = new Date().toISOString();
-      const labsWithAssignment = generatedLabs.map((lab, index) => ({
+      const labsWithAssignment: LabResult[] = generatedLabs.map((lab, index) => ({
         id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
         patientId: patient.id,
         assignmentId: assignmentForScope,
@@ -246,7 +247,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
         referenceRange:
           (lab as { referenceRange?: string }).referenceRange ?? requestedTests[index]?.referenceRange ?? '',
-        status: (lab as { status?: string }).status ?? 'Normal',
+        status: ((lab as { status?: LabResult['status'] }).status ?? 'Normal'),
         collectionTime: runTimestamp,
         resultTime: runTimestamp,
         orderedBy: patient.attendingPhysician ?? 'Attending',
@@ -658,6 +659,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                         </div>
                                         <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
                                         <div className="text-xs text-muted-foreground">{lab.status}</div>
+                                        <div className="text-xs text-muted-foreground" title={`Collected ${formatStoredTime(lab.collectionTime)}; resulted ${formatStoredTime(lab.resultTime)}`}>
+                                          Collected {formatStoredTime(lab.collectionTime)}
+                                          {lab.resultTime && ` • Resulted ${formatStoredTime(lab.resultTime)}`}
+                                        </div>
                                         {canEdit && (
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <button
