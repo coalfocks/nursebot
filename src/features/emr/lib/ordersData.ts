@@ -17,6 +17,8 @@ export interface OrderItem {
 }
 
 const standardFrequencies = new Set([
+  'Once',
+  'Now',
   'Daily',
   'BID',
   'TID',
@@ -34,6 +36,8 @@ const standardFrequencies = new Set([
 
 const frequencyAliases: Record<string, string[]> = {
   daily: ['Daily'],
+  once: ['Once'],
+  now: ['Now'],
   'q24h': ['Daily'],
   'every 24 hours': ['Daily'],
   bid: ['BID'],
@@ -102,7 +106,7 @@ const curatedLabOrders: OrderItem[] = [
     name: 'Complete Blood Count with Differential',
     category: 'Lab',
     subcategory: 'Instant Lab',
-    frequencies: ['Once', 'Daily', 'BID', 'q8h', 'q12h'],
+    frequencies: ['Once', 'Now', 'Daily', 'BID', 'q8h', 'q12h'],
     priorities: ['Routine', 'STAT', 'Timed'],
   },
   {
@@ -184,7 +188,7 @@ const instantLabOrders: OrderItem[] = instantLabs.map((name, index) => ({
   name,
   category: 'Lab',
   subcategory: 'Instant Lab',
-  frequencies: ['Once'],
+  frequencies: ['Once', 'Now'],
   priorities: ['Routine', 'STAT', 'Timed'],
 }));
 
@@ -193,7 +197,7 @@ const pendingLabOrders: OrderItem[] = pendingLabs.map((name, index) => ({
   name,
   category: 'Lab',
   subcategory: 'Pending Lab',
-  frequencies: ['Once'],
+  frequencies: ['Once', 'Now'],
   priorities: ['Routine', 'STAT'],
 }));
 

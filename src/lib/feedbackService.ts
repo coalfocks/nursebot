@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { isFeedbackEligibleStatus } from './feedbackEligibility';
+import { describeSupabaseError } from './supabaseErrorDiagnostic';
 
 export interface FeedbackResponse {
   overallScore: number;
@@ -75,7 +76,7 @@ export async function generateFeedback(assignmentId: string): Promise<void> {
     }
 
   } catch (error) {
-    console.error('Error generating feedback:', error);
+    console.error('Error generating feedback:', describeSupabaseError(error));
     throw error;
   }
 }
