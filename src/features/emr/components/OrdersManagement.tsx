@@ -15,6 +15,7 @@ import { isSuperAdmin } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 import { shouldGenerateLabForOrder, validateCompleteLabPanel } from '../lib/labGeneration';
+import { firstRuntimeTime, formatStudentRelativeTime } from '../lib/studentDisplayTime';
 
 interface OrdersManagementProps {
   patient: Patient;
@@ -23,6 +24,7 @@ interface OrdersManagementProps {
   onOrderAdded?: (order: MedicalOrder) => void;
   onLabsGenerated?: () => void;
   onImagingStudyUpdated?: () => void;
+  studentView?: boolean;
 }
 
 type RoomMeta = {
@@ -48,8 +50,6 @@ const generatedImagingNotes = (emrContext: RoomMeta['emr_context']): string[] =>
     : [];
 };
 
-const formatStoredTime = (value?: string) => value ? new Date(value).toLocaleString() : 'Not recorded';
-
 export function OrdersManagement({
   patient,
   assignmentId,
@@ -57,6 +57,7 @@ export function OrdersManagement({
   onOrderAdded,
   onLabsGenerated,
   onImagingStudyUpdated,
+  studentView = false,
 }: OrdersManagementProps) {
   const { profile } = useAuthStore();
   const canEditOrders = isSuperAdmin(profile);
@@ -76,6 +77,7 @@ export function OrdersManagement({
     instructions: '',
   });
   const requestIdentity = useRequestIdentity(`${patient.id}:${patient.roomId ?? 'none'}:${assignmentId ?? 'none'}`);
+  const studentCaseClock = firstRuntimeTime(orders.filter((order) => (order.overrideScope ?? 'baseline') !== 'baseline').map((order) => order.orderTime)) ?? patient.admissionDate ?? null;
 
   useEffect(() => {
     const request = requestIdentity.capture();
@@ -305,7 +307,18 @@ export function OrdersManagement({
       });
       let expectedLabCount = 0;
       try {
-        if ((await emrApi.listLabResultsForOrder(saved.id)).length) {
+        const requestedTests = resolveLabTemplates(adjustedOrder.orderName).map((template) => ({
+          testName: template.testName,
+          unit: template.unit,
+          referenceRange: template.referenceRange,
+        }));
+        if (!requestedTests.length) {
+          throw new Error('LAB_TEMPLATE_MISSING: no complete panel template is configured for this Instant Lab.');
+        }
+        expectedLabCount = requestedTests.length;
+        const existingResults = await emrApi.listLabResultsForOrder(saved.id);
+        if (existingResults.length) {
+          validateCompleteLabPanel(requestedTests, existingResults);
           await emrApi.updateLabGenerationState(saved.id, { labGenerationStatus: 'completed' });
           onLabsGenerated?.();
           onOrderAdded?.(saved);
@@ -316,16 +329,6 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const requestedTests = resolveLabTemplates(adjustedOrder.orderName).map((template) => ({
-          testName: template.testName,
-          unit: template.unit,
-          referenceRange: template.referenceRange,
-        }));
-        if (!requestedTests.length) {
-          throw new Error('LAB_TEMPLATE_MISSING: no complete panel template is configured for this Instant Lab.');
-        }
-        expectedLabCount = requestedTests.length;
-
         const aiResponse = await supabase.functions.invoke('lab-results', {
           body: {
             orderName: adjustedOrder.orderName,
@@ -710,8 +713,8 @@ export function OrdersManagement({
                           {order.frequency && <div>Frequency: {order.frequency}</div>}
                           {order.route && <div>Route: {order.route}</div>}
                           {order.instructions && <div>Notes: {order.instructions}</div>}
-                          <div>Ordered: {formatStoredTime(order.orderTime)}</div>
-                          {order.scheduledTime && <div>Scheduled: {formatStoredTime(order.scheduledTime)}</div>}
+                          <div>Ordered: {studentView ? formatStudentRelativeTime(order.orderTime, studentCaseClock) : (order.orderTime ? new Date(order.orderTime).toLocaleString() : 'Not recorded')}</div>
+                          {order.scheduledTime && <div>Scheduled: {studentView ? formatStudentRelativeTime(order.scheduledTime, studentCaseClock) : new Date(order.scheduledTime).toLocaleString()}</div>}
                           {order.labGenerationStatus === 'failed' && (
                             <div className="text-red-600" title={order.labGenerationError ?? undefined}>
                               Lab result generation failed — retry needed

@@ -98,7 +98,8 @@ export default function EmrDashboard() {
     status: 'Normal',
   });
   const [baselineLabSetId, setBaselineLabSetId] = useState('baseline-set-1');
-  const [baselineLabTimestamp, setBaselineLabTimestamp] = useState(() => new Date().toISOString().slice(0, 16));
+  const [baselineRelativeHours, setBaselineRelativeHours] = useState('12');
+  const [baselineLabTimestamp, setBaselineLabTimestamp] = useState(() => new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString().slice(0, 16));
   const [isSavingSandboxLab, setIsSavingSandboxLab] = useState(false);
   const [baselineEditForm, setBaselineEditForm] = useState({
     firstName: '',
@@ -613,7 +614,7 @@ export default function EmrDashboard() {
               </h1>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                 <span>MRN: {selectedPatient.mrn}</span>
-                <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
+                {educatorAccess && <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>}
                 <span className="font-semibold text-foreground">Age: {patientAge ?? '—'}</span>
                 <span className="font-semibold text-foreground">BMI: {patientBMI ?? '—'}</span>
                 <span>{selectedPatient.gender}</span>
@@ -990,6 +991,22 @@ export default function EmrDashboard() {
                             value={baselineLabTimestamp}
                             onChange={(e) => setBaselineLabTimestamp(e.target.value)}
                           />
+                          <select
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            aria-label="Baseline relative case time"
+                            value={baselineRelativeHours}
+                            onChange={(e) => {
+                              const hours = Number(e.target.value);
+                              setBaselineRelativeHours(e.target.value);
+                              setBaselineLabTimestamp(new Date(Date.now() - hours * 60 * 60 * 1000).toISOString().slice(0, 16));
+                            }}
+                          >
+                            <option value="6">6h prior</option>
+                            <option value="12">12h prior</option>
+                            <option value="24">1 day prior</option>
+                            <option value="36">36h prior</option>
+                            <option value="48">2 days prior</option>
+                          </select>
                           <input
                             className="rounded-md border border-border px-3 py-2 text-sm"
                             placeholder="Lab name"
@@ -1195,6 +1212,7 @@ export default function EmrDashboard() {
               <LabResults
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
+                studentView={!educatorAccess}
                 isSandbox={isSandbox}
                 sandboxLabs={sandboxLabs}
                 refreshToken={labsRefreshToken}
@@ -1206,6 +1224,7 @@ export default function EmrDashboard() {
               <ImagingStudies
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
+                studentView={!educatorAccess}
                 forceBaseline={forceBaseline}
                 refreshToken={imagingRefreshToken}
               />
@@ -1215,6 +1234,7 @@ export default function EmrDashboard() {
               <OrdersManagement
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
+                studentView={!educatorAccess}
                 forceBaseline={forceBaseline}
                 onOrderAdded={() => setLabsRefreshToken((token) => token + 1)}
                 onLabsGenerated={() => setLabsRefreshToken((token) => token + 1)}

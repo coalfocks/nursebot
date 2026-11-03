@@ -233,6 +233,7 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     createdAt: row.created_at ?? undefined,
     deletedAt: row.deleted_at,
     sourceOrderId: (row as LabResultRow & { source_order_id?: string | null }).source_order_id,
+    baselineSetId: (row as LabResultRow & { baseline_set_id?: string | null }).baseline_set_id,
   };
 };
 

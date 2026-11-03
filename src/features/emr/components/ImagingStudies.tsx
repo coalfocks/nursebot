@@ -11,6 +11,7 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { hasAdminAccess } from '../../../lib/roles';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
+import { firstRuntimeTime, formatStudentRelativeTime } from '../lib/studentDisplayTime';
 
 type PendingUpload = {
   id: string;
@@ -44,11 +45,12 @@ interface ImagingStudiesProps {
   assignmentId?: string;
   forceBaseline?: boolean;
   refreshToken?: number;
+  studentView?: boolean;
 }
 
 const studyTypes = ['CT', 'MRI', 'Ultrasound', 'Echocardiogram', 'X-ray'];
 
-export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshToken }: ImagingStudiesProps) {
+export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshToken, studentView = false }: ImagingStudiesProps) {
   const { profile } = useAuthStore();
   const canEdit = hasAdminAccess(profile);
   const [studies, setStudies] = useState<ImagingStudy[]>([]);
@@ -101,9 +103,10 @@ export function ImagingStudies({ patient, assignmentId, forceBaseline, refreshTo
     })();
   }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
 
+  const studentCaseClock = firstRuntimeTime(studies.filter((study) => (study.overrideScope ?? 'baseline') !== 'baseline').map((study) => study.orderTime ?? study.reportGeneratedAt)) ?? patient.admissionDate ?? null;
   const formatDate = (value?: string | null) => {
     if (!value) return '—';
-    return new Date(value).toLocaleString();
+    return studentView ? formatStudentRelativeTime(value, studentCaseClock) : new Date(value).toLocaleString();
   };
 
   const handleCreateStudy = async () => {

@@ -15,6 +15,7 @@ import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 import { datetimeLocalToUtc, formatLabColumnLabel, formatLabRelativeTime } from '../lib/labDisplayTime';
+import { firstRuntimeTime, formatStudentRelativeTime } from '../lib/studentDisplayTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -23,6 +24,7 @@ interface LabResultsProps {
   isSandbox?: boolean;
   sandboxLabs?: LabResult[];
   onSandboxLabsChange?: (labs: LabResult[]) => void;
+  studentView?: boolean;
 }
 
 type LabTrendPoint = {
@@ -31,9 +33,7 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-const formatStoredTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
-
-export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
+export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange, studentView = false }: LabResultsProps) {
   const [labResults, setLabResults] = useState<LabResult[]>(sandboxLabs ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
@@ -53,6 +53,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     resultTime: '',
   });
   const [isSavingLabEdit, setIsSavingLabEdit] = useState(false);
+  const [studentFallbackClock] = useState(() => new Date().toISOString());
   const [manualLabForm, setManualLabForm] = useState({
     testName: '',
     value: '',
@@ -305,6 +306,13 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     );
   }, [labResults]);
 
+  const studentCaseClock = useMemo(() => {
+    const runtimeTimes = labResults
+      .filter((lab) => (lab.overrideScope ?? 'baseline') !== 'baseline')
+      .map((lab) => lab.collectionTime ?? lab.resultTime);
+    return firstRuntimeTime(runtimeTimes) ?? patient.admissionDate ?? studentFallbackClock;
+  }, [labResults, patient.admissionDate, studentFallbackClock]);
+
   // Categorize labs by type
   const getLabCategory = (testName: string): string => {
     const name = testName.toLowerCase();
@@ -429,7 +437,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   }, [labsByTest]);
 
   const formatCollectionLabel = (value: string) =>
-    formatLabColumnLabel(value, labResults);
+    formatLabColumnLabel(value, labResults, studentView, studentCaseClock);
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -455,7 +463,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
         .map((entry) => ({
           ...entry,
-          time: formatLabRelativeTime(entry.time, data[data.length - 1]?.time),
+          time: studentView
+            ? formatStudentRelativeTime(entry.time, studentCaseClock)
+            : formatLabRelativeTime(entry.time, data[data.length - 1]?.time),
         })),
     ]),
   );
@@ -663,9 +673,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                         </div>
                                         <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
                                         <div className="text-xs text-muted-foreground">{lab.status}</div>
-                                        <div className="text-xs text-muted-foreground" title={`Collected ${formatStoredTime(lab.collectionTime)}; resulted ${formatStoredTime(lab.resultTime)}`}>
-                                          Collected {formatStoredTime(lab.collectionTime)}
-                                          {lab.resultTime && ` • Resulted ${formatStoredTime(lab.resultTime)}`}
+                                        <div className="text-xs text-muted-foreground">
+                                          Collected {studentView ? formatStudentRelativeTime(lab.collectionTime, studentCaseClock) : (lab.collectionTime ? new Date(lab.collectionTime).toLocaleString() : 'Not recorded')}
+                                          {lab.resultTime && ` • Resulted ${studentView ? formatStudentRelativeTime(lab.resultTime, studentCaseClock) : new Date(lab.resultTime).toLocaleString()}`}
                                         </div>
                                         {canEdit && (
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">

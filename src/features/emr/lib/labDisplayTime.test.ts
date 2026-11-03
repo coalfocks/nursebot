@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LabResult } from './types';
 import { datetimeLocalToUtc, formatLabColumnLabel } from './labDisplayTime';
+import { formatStudentRelativeTime } from './studentDisplayTime';
 
 const lab = (time: string, scope: LabResult['overrideScope']): LabResult => ({
   id: `${time}-${scope}`, patientId: 'p1', overrideScope: scope, testName: 'Glucose', value: 100,
@@ -20,5 +21,16 @@ describe('lab display time', () => {
   });
   it('does not apply the local timezone to authored datetime-local values', () => {
     expect(datetimeLocalToUtc('2026-11-03T10:00')).toBe('2026-11-03T10:00:00.000Z');
+  });
+  it('keeps student baseline labels relative to a stable case clock', () => {
+    const baseline = '2026-11-03T00:00:00.000Z';
+    const firstRuntime = '2026-11-03T12:00:00.000Z';
+    const laterRuntime = '2026-11-03T18:00:00.000Z';
+    const labs = [lab(baseline, 'baseline'), lab(firstRuntime, 'assignment'), lab(laterRuntime, 'assignment')];
+    expect(formatLabColumnLabel(baseline, labs, true, firstRuntime)).toBe('Baseline · 12h prior');
+    expect(formatLabColumnLabel(laterRuntime, labs, true, firstRuntime)).toBe('Now');
+  });
+  it('never exposes a calendar date in student time labels', () => {
+    expect(formatStudentRelativeTime('2026-11-01T00:00:00.000Z', '2026-11-03T00:00:00.000Z')).toBe('2 days prior');
   });
 });
