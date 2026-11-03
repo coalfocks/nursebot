@@ -40,7 +40,8 @@ export type AssignmentOperationKeyInput = {
 export const assignmentOperationKey = (input: AssignmentOperationKeyInput): string => JSON.stringify({
   ...input,
   bulkStudentIds: [...input.bulkStudentIds].sort(),
-  roomIds: [...input.roomIds].sort(),
+  // Room order is the A → B → C stage contract; sorting changes the batch.
+  roomIds: [...input.roomIds],
 });
 
 export const materializationRpcArgs = (

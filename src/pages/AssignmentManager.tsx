@@ -17,10 +17,11 @@ import {
   type StudentSearchRange,
 } from '../lib/studentVisibility';
 import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { beginAssignmentChain, createAssignmentChain } from '../../supabase/functions/_shared/assignment-chain';
 import { assignmentDiagnosticError, normalizeAssignmentDiagnostic, type AssignmentDiagnostic } from '../lib/assignmentDiagnostics';
 import { isRoomAvailableToSchool } from '../lib/roomHelpers';
 
-type RpcResult = { data: unknown; error: { message: string } | null };
+type RpcResult = { data: unknown; error: { code?: string | null; message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
   (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
 
@@ -126,7 +127,7 @@ export default function AssignmentManager() {
   const [reconciliationAssignments, setReconciliationAssignments] = useState<ReconciliationAssignment[]>([]);
   const [reconciliationPublications, setReconciliationPublications] = useState<ReconciliationPublication[]>([]);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
-  const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[] } | null>(null);
+  const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[]; chainIds: Record<string, string> } | null>(null);
   const assignableStudents = students.filter((student) => isStudentVisibleForSearchRange(student, studentSearchRange));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
@@ -505,9 +506,59 @@ export default function AssignmentManager() {
       // Keep IDs and scheduling frozen across partial commits, lost responses,
       // and a second click. Never regenerate a partially committed operation.
       if (!assignmentOperationRef.current) {
-        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments };
+        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments, chainIds: {} };
       }
       const assignments = assignmentOperationRef.current.assignments;
+
+      // A three-room selection is the prospective A → B → C chain. Begin one
+      // immutable intent per learner before the existing MAR creator runs;
+      // the finalized reader remains server-gated and optional until its
+      // migration is applied.
+      const chainInputs = new Map<string, {
+        chainId: string;
+        orderedAssignmentIds: string[];
+        envelope: Record<string, unknown>;
+      }>();
+      if (selectedRooms.length === 3) {
+        for (const studentId of studentsToAssign) {
+          const studentAssignments = assignments.filter((assignment) => assignment.student_id === studentId);
+          if (studentAssignments.length !== 3) continue;
+          const chainId = assignmentOperationRef.current.chainIds[studentId] ?? crypto.randomUUID();
+          assignmentOperationRef.current.chainIds[studentId] = chainId;
+          const ordered = selectedRooms.map((roomId) => studentAssignments.find((assignment) => assignment.room_id === Number(roomId))).filter((assignment): assignment is AssignmentCreateRow => Boolean(assignment));
+          if (ordered.length !== 3) continue;
+          chainInputs.set(studentId, {
+            chainId,
+            orderedAssignmentIds: ordered.map((assignment) => assignment.id),
+            envelope: {
+              version: 2,
+              assignments: ordered.map((assignment, index) => {
+                const room = selectedRoomsData.find((candidate) => candidate.id === assignment.room_id);
+                return {
+                  assignmentId: assignment.id,
+                  stage: ['A', 'B', 'C'][index],
+                  roomId: String(assignment.room_id),
+                  authoredSourceVersion: assignment.case_key_version,
+                  authoredProgressNote: room?.progress_note ?? null,
+                };
+              }),
+            },
+          });
+        }
+      }
+
+      const chainClient = {
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          const response = await callGeneratedRpc(name, args);
+          return { data: response.data, error: response.error ? { code: response.error.code, message: response.error.message } : null };
+        },
+      };
+      const activeChains = [] as Array<{ chainId: string; orderedAssignmentIds: string[]; envelope: Record<string, unknown> }>;
+      for (const input of chainInputs.values()) {
+        const begun = await beginAssignmentChain(chainClient, input);
+        if (begun.status === 'error') throw begun.error;
+        if (begun.status === 'ready') activeChains.push(input);
+      }
 
       const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
       const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
@@ -546,6 +597,14 @@ export default function AssignmentManager() {
           materializationRpcArgs(assignment.id, assignment),
         );
         if (error) throw assignmentDiagnosticError(error, 'materialization per assignment', 'RPC create_assignment_with_mar_materialization', 'write');
+      }
+
+      for (const input of activeChains) {
+        const finalized = await createAssignmentChain(chainClient, input);
+        if (finalized.status === 'error') throw finalized.error;
+        if (finalized.status === 'unavailable') {
+          throw new Error('Assignment chain schema became unavailable after its intent was recorded. Reconcile this exact operation before retrying.');
+        }
       }
 
       setShowAssignModal(false);

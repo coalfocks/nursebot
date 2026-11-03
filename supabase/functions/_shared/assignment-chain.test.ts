@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  beginAssignmentChain,
   createAssignmentChain,
   getAssignmentChainReadiness,
   readAssignmentChainPriorStageContext,
@@ -38,6 +39,22 @@ describe('assignment-chain server boundary', () => {
     await expect(readAssignmentChainPriorStageContext(rpc, { chainId: 'chain-1', targetAssignmentId: 'b' }))
       .resolves.toEqual({ status: 'unavailable' });
     await expect(getAssignmentChainReadiness(rpc)).resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it('does not classify assignment-chain business errors as missing schema', async () => {
+    const rpc = client({ data: null, error: { code: 'P0001', message: 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH' } });
+    await expect(createAssignmentChain(rpc, {
+      chainId: 'chain-1', orderedAssignmentIds: ['a', 'b', 'c'], envelope: { assignments: [] },
+    })).resolves.toEqual({ status: 'error', error: { code: 'P0001', message: 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH' } });
+  });
+
+  it('starts the prospective intent without exposing viewer identity', async () => {
+    const rpc = client({ data: { ready: true }, error: null });
+    await expect(beginAssignmentChain(rpc, {
+      chainId: 'chain-1', orderedAssignmentIds: ['a', 'b', 'c'], envelope: { assignments: [] },
+    })).resolves.toEqual({ status: 'ready', result: { ready: true } });
+    expect(rpc.calls[0].name).toBe('begin_assignment_chain_intent');
+    expect(rpc.calls[0].args).not.toHaveProperty('viewerId');
   });
 
   it('does not expose non-array or RPC-error content as learner snapshots', async () => {

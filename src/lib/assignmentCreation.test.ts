@@ -47,4 +47,9 @@ describe('fresh assignment MAR materialization envelope', () => {
     expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, studentId: 'student-b' }));
     expect(assignmentOperationKey(base)).not.toBe(assignmentOperationKey({ ...base, actorId: 'admin-b' }));
   });
+
+  it('treats reordered room membership as a different ordered batch', () => {
+    const base = { actorId: 'admin-a', schoolId: 'school-a', targetingMode: 'individual' as const, studentId: 'student-a', bulkStudentIds: [], roomIds: ['204', '304', '404'], windowStart: '09:00', windowEnd: '10:00', timezone: 'UTC', bulkTargetSchoolId: '', bulkTargetSpecialty: '' };
+    expect(assignmentOperationKey({ ...base, roomIds: ['304', '204', '404'] })).not.toBe(assignmentOperationKey(base));
+  });
 });

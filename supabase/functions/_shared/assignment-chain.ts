@@ -20,12 +20,31 @@ export type AssignmentChainReadResult =
   | { status: 'unavailable' }
   | { status: 'hidden'; code: string };
 
-const missingSchemaCodes = new Set(['PGRST202', '42P01', '42883']);
-
 const isMissingChainSchema = (error: { code?: string | null; message?: string | null } | null) => {
   if (!error) return false;
-  if (error.code && missingSchemaCodes.has(error.code)) return true;
-  return /assignment_chain|function .* does not exist|relation .* does not exist/i.test(error.message ?? '');
+  const message = error.message ?? '';
+  if (error.code === 'PGRST202') return /function .*does not exist|could not find the function/i.test(message);
+  if (error.code === '42P01') return /relation .*assignment_chain/i.test(message);
+  if (error.code === '42883') return /function .*assignment_chain.*does not exist/i.test(message);
+  return false;
+};
+
+export const beginAssignmentChain = async (
+  client: AssignmentChainRpcClient,
+  input: {
+    chainId: string;
+    orderedAssignmentIds: string[];
+    envelope: Record<string, unknown>;
+  },
+) => {
+  const response = await client.rpc('begin_assignment_chain_intent', {
+    p_chain_id: input.chainId,
+    p_ordered_assignment_ids: input.orderedAssignmentIds,
+    p_envelope: input.envelope,
+  });
+  if (isMissingChainSchema(response.error)) return { status: 'unavailable' as const };
+  if (response.error) return { status: 'error' as const, error: response.error };
+  return { status: 'ready' as const, result: response.data };
 };
 
 export const createAssignmentChain = async (
