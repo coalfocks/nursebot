@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
 import Navbar from '../components/Navbar';
-import { Loader2, ArrowLeft, Clock, Book, CheckCircle, FileText, AlertCircle, ExternalLink } from 'lucide-react';
+import { Loader2, ArrowLeft, Clock, Book, CheckCircle, ExternalLink } from 'lucide-react';
 import { ChatInterface } from '../components/ChatInterface';
 import { ConsultantPortal } from '../components/ConsultantPortal';
 import { FeedbackSidebar } from '../components/FeedbackSidebar';
@@ -199,6 +199,14 @@ export default function AssignmentView() {
     );
   }
 
+  const showFeedbackSidebar = assignment.status === 'completed' && (
+    assignment.feedback_status === 'pending' ||
+    assignment.feedback_status === 'processing' ||
+    assignment.feedback_status === 'failed' ||
+    assignment.communication_score != null ||
+    assignment.mdm_score != null
+  );
+
   return (
     <>
     <div className="min-h-screen bg-gray-100">
@@ -231,7 +239,7 @@ export default function AssignmentView() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-4">
+            <div className={`${showFeedbackSidebar ? 'lg:col-span-2' : 'lg:col-span-3'} space-y-4`}>
               <div className="bg-white shadow rounded-lg p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-gray-900">Nurse Chat</h2>
@@ -264,49 +272,11 @@ export default function AssignmentView() {
               </div>
             </div>
 
-            <div className="space-y-4">
-              {/* Show feedback sidebar when completed */}
-              <FeedbackSidebar assignment={assignment} />
-              
-              <div className="bg-white shadow rounded-lg p-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-gray-500" />
-                  <h2 className="text-lg font-medium text-gray-900">Room Resources</h2>
-                </div>
-                {assignment.status === 'in_progress' && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-md">
-                    <div className="flex items-center">
-                      <AlertCircle className="w-5 h-5 text-red-400 mr-2" />
-                      <span className="text-sm font-medium text-red-800">Urgent Response Needed</span>
-                    </div>
-                  </div>
-                )}
-                {assignment.window_start && (
-                  <div className="flex items-center gap-3">
-                    <Clock className="w-4 h-4 text-gray-500" />
-                    <div>
-                      <p className="text-xs text-gray-500">Window</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {new Date(assignment.window_start).toLocaleDateString()} - {new Date(assignment.window_end).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm text-gray-600 mb-2">
-                    Use the EHR to find your patient and place orders; the chat is for nurse interactions only.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => navigate('/emr')}
-                    className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-                  >
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    Go to EHR
-                  </button>
-                </div>
+            {showFeedbackSidebar && (
+              <div className="space-y-4">
+                <FeedbackSidebar assignment={assignment} />
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
