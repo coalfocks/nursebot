@@ -521,43 +521,51 @@ export default function AssignmentManager() {
       // immutable intent per learner before the existing MAR creator runs;
       // the finalized reader remains server-gated and optional until its
       // migration is applied.
-      const chainInputs = new Map(Object.entries(assignmentOperationRef.current.chainInputs));
       if (!assignmentOperationRef.current.chainInputsInitialized) {
-        assignmentOperationRef.current.chainInputsInitialized = true;
-      if (isConfiguredClinicalChain(selectedRoomsData, selectedRooms)) {
-        for (const studentId of studentsToAssign) {
-          const studentAssignments = assignments.filter((assignment) => assignment.student_id === studentId);
-          if (studentAssignments.length !== 3) continue;
-          const chainId = assignmentOperationRef.current.chainIds[studentId] ?? crypto.randomUUID();
-          assignmentOperationRef.current.chainIds[studentId] = chainId;
-          const ordered = selectedRooms.map((roomId) => studentAssignments.find((assignment) => assignment.room_id === Number(roomId))).filter((assignment): assignment is AssignmentCreateRow => Boolean(assignment));
-          if (ordered.length !== 3) continue;
-          const frozenEnvelope = freezeAssignmentChainEnvelope({
-            chainId,
-            ownerId: studentId,
-            windowStart: ordered[0].window_start ?? '',
-            windowEnd: ordered[0].window_end ?? '',
-            assignments: ordered.map((assignment, index) => {
-              const room = selectedRoomsData.find((candidate) => candidate.id === assignment.room_id);
-              return {
-                assignmentId: assignment.id,
-                stage: ['A', 'B', 'C'][index] as 'A' | 'B' | 'C',
-                roomId: assignment.room_id,
-                authoredSourceVersion: assignment.case_key_version,
-                authoredProgressNote: room?.progress_note ?? null,
-                authoredCapturedAt: room?.updated_at ?? assignment.window_start ?? new Date().toISOString(),
-              };
-            }),
-          });
-          chainInputs.set(studentId, {
-            chainId,
-            orderedAssignmentIds: ordered.map((assignment) => assignment.id),
-            envelope: frozenEnvelope as unknown as Record<string, unknown>,
-          });
+        // Build all candidate chain state off to the side. A malformed
+        // authored source must leave the operation uninitialized so a retry
+        // cannot silently fall back to ordinary assignments.
+        const nextChainIds = { ...assignmentOperationRef.current.chainIds };
+        const nextChainInputs = new Map(Object.entries(assignmentOperationRef.current.chainInputs));
+        if (isConfiguredClinicalChain(selectedRoomsData, selectedRooms)) {
+          for (const studentId of studentsToAssign) {
+            const studentAssignments = assignments.filter((assignment) => assignment.student_id === studentId);
+            if (studentAssignments.length !== 3) throw new Error('CHAIN_ENVELOPE_INVALID:assignmentMembership');
+            const chainId = nextChainIds[studentId] ?? crypto.randomUUID();
+            const ordered = selectedRooms.map((roomId) => studentAssignments.find((assignment) => assignment.room_id === Number(roomId))).filter((assignment): assignment is AssignmentCreateRow => Boolean(assignment));
+            if (ordered.length !== 3) throw new Error('CHAIN_ENVELOPE_INVALID:assignmentOrder');
+            const frozenEnvelope = freezeAssignmentChainEnvelope({
+              chainId,
+              ownerId: studentId,
+              windowStart: ordered[0].window_start ?? '',
+              windowEnd: ordered[0].window_end ?? '',
+              assignments: ordered.map((assignment, index) => {
+                const room = selectedRoomsData.find((candidate) => candidate.id === assignment.room_id);
+                return {
+                  assignmentId: assignment.id,
+                  stage: ['A', 'B', 'C'][index] as 'A' | 'B' | 'C',
+                  roomId: assignment.room_id,
+                  authoredSourceVersion: assignment.case_key_version,
+                  authoredProgressNote: room?.progress_note ?? null,
+                  authoredCapturedAt: room?.updated_at ?? assignment.window_start ?? new Date().toISOString(),
+                };
+              }),
+            });
+            nextChainIds[studentId] = chainId;
+            nextChainInputs.set(studentId, {
+              chainId,
+              orderedAssignmentIds: ordered.map((assignment) => assignment.id),
+              envelope: frozenEnvelope as unknown as Record<string, unknown>,
+            });
+          }
         }
+        // Publish only after every candidate envelope has validated and
+        // frozen successfully.
+        assignmentOperationRef.current.chainIds = nextChainIds;
+        assignmentOperationRef.current.chainInputs = Object.fromEntries(nextChainInputs);
+        assignmentOperationRef.current.chainInputsInitialized = true;
       }
-      assignmentOperationRef.current.chainInputs = Object.fromEntries(chainInputs);
-      }
+      const chainInputs = new Map(Object.entries(assignmentOperationRef.current.chainInputs));
 
       const chainClient = {
         rpc: async (name: string, args: Record<string, unknown>) => {

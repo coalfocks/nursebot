@@ -18,15 +18,20 @@ const student = {
   created_at: new Date().toISOString(),
 };
 
-const room = (id: number, number: string) => ({
+const room = (id: number, number: string, overrides: Record<string, unknown> = {}) => ({
   id,
   room_number: number,
   school_id: 'school-1',
   available_school_ids: [],
+  patient_id: 'patient-1',
+  continues_from: id === 204 ? null : id === 304 ? 204 : 304,
+  progress_note: id === 304 ? '   ' : `Authored note for ${number}`,
+  updated_at: '2099-01-01T08:00:00Z',
   specialty_id: null,
   difficulty_level: 'standard',
   case_goals: null,
   orders_config: { labs: [{ name: 'CBC', type: 'lab' }] },
+  ...overrides,
 });
 
 const query = (table: string) => {
@@ -53,7 +58,7 @@ const query = (table: string) => {
               : table === 'profiles'
                 ? [student]
                 : table === 'rooms'
-                  ? [room(204, '204'), room(304, '304')]
+                  ? [room(204, '204'), room(304, '304'), room(404, '404')]
                   : table === 'student_room_assignments'
                     ? (committedIds.length ? committedIds.map((id) => ({ id })) : assignmentRows)
                     : table === 'mar_assignment_materialization_operations'
@@ -144,6 +149,30 @@ describe('AssignmentManager frozen creation operation', () => {
     expect(attempts.slice(2).map((call) => call.args.p_assignment_id)).toEqual(firstAttempt.map((call) => call.args.p_assignment_id));
     expect(attempts.slice(2).map((call) => call.args.p_case_version)).toEqual(firstAttempt.map((call) => call.args.p_case_version));
     expect(attempts.slice(2).map((call) => call.args.p_effective_date)).toEqual(firstAttempt.map((call) => call.args.p_effective_date));
+  });
+
+  it('does not downgrade a failed chain preparation to ordinary assignments on retry', async () => {
+    render(<AssignmentManager />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Case Assignments' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Assign Cases' }));
+    fireEvent.click(screen.getByRole('button', { name: /Room 204/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Room 304/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Room 404/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Student One/ }));
+
+    const inputs = screen.getAllByDisplayValue('');
+    const dateInputs = inputs.filter((input) => input.getAttribute('type') === 'datetime-local');
+    fireEvent.change(dateInputs[0], { target: { value: '2099-01-01T09:00' } });
+    fireEvent.change(dateInputs[1], { target: { value: '2099-01-01T10:00' } });
+
+    const createButton = () => screen.getByRole('button', { name: 'Create 3 assignments' });
+    fireEvent.click(createButton());
+    await waitFor(() => expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('CHAIN_ENVELOPE_INVALID')));
+    fireEvent.click(createButton());
+    await waitFor(() => expect(window.alert).toHaveBeenCalledTimes(2));
+
+    expect(rpcCalls.filter((call) => call.name === 'begin_assignment_chain_intent')).toHaveLength(0);
+    expect(rpcCalls.filter((call) => call.name === 'create_assignment_with_mar_materialization')).toHaveLength(0);
   });
 
   it('opens read-only recent reconciliation without changing the retained assignment form', async () => {

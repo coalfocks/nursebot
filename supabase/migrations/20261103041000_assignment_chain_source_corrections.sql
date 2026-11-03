@@ -197,7 +197,8 @@ begin
   if actor_role <> 'super_admin' and exists (
     select 1 from public.student_room_assignments a join public.rooms r on r.id = a.room_id
     where a.id = any(p_ordered_assignment_ids)
-      and (a.school_id is distinct from actor_school or r.school_id is distinct from actor_school)
+      and (a.school_id is distinct from actor_school
+        or not public.mar_effective_school_allowed(r.school_id, r.available_school_ids, actor_school))
   ) then raise exception 'ASSIGNMENT_CHAIN_SCHOOL_SCOPE_MISMATCH'; end if;
 
   -- Lock assignments for the final identity check. Authored content comes
