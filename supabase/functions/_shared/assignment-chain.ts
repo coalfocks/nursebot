@@ -79,6 +79,19 @@ export const readAssignmentChainPriorStageContext = async (
   return { status: 'ready', snapshots: response.data };
 };
 
+export const readAssignmentChainPriorStageContextForAssignment = async (
+  client: AssignmentChainRpcClient,
+  input: { targetAssignmentId: string },
+): Promise<AssignmentChainReadResult> => {
+  const response = await client.rpc('get_assignment_chain_prior_stage_context_for_assignment', {
+    p_target_assignment_id: input.targetAssignmentId,
+  });
+  if (isMissingChainSchema(response.error)) return { status: 'unavailable' };
+  if (response.error) return { status: 'hidden', code: response.error.code ?? 'ASSIGNMENT_CHAIN_NOT_VISIBLE' };
+  if (!Array.isArray(response.data)) return { status: 'hidden', code: 'ASSIGNMENT_CHAIN_INVALID_RESPONSE' };
+  return { status: 'ready', snapshots: response.data };
+};
+
 export const getAssignmentChainReadiness = async (client: AssignmentChainRpcClient) => {
   const response = await client.rpc('get_assignment_chain_readiness', {});
   if (isMissingChainSchema(response.error)) return { status: 'unavailable' as const };

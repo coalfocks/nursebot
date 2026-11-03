@@ -4,6 +4,7 @@ import {
   createAssignmentChain,
   getAssignmentChainReadiness,
   readAssignmentChainPriorStageContext,
+  readAssignmentChainPriorStageContextForAssignment,
 } from './assignment-chain.ts';
 
 const client = (response: { data: unknown; error: { code?: string; message?: string } | null }) => ({
@@ -64,5 +65,15 @@ describe('assignment-chain server boundary', () => {
     const denied = client({ data: null, error: { code: 'ASSIGNMENT_CHAIN_NOT_VISIBLE' } });
     await expect(readAssignmentChainPriorStageContext(denied, { chainId: 'chain-1', targetAssignmentId: 'b' }))
       .resolves.toEqual({ status: 'hidden', code: 'ASSIGNMENT_CHAIN_NOT_VISIBLE' });
+  });
+
+  it('resolves learner context by assignment without accepting a client chain id', async () => {
+    const rpc = client({ data: [{ sourceStage: 'A', content: 'frozen' }], error: null });
+    await expect(readAssignmentChainPriorStageContextForAssignment(rpc, { targetAssignmentId: 'b' }))
+      .resolves.toEqual({ status: 'ready', snapshots: [{ sourceStage: 'A', content: 'frozen' }] });
+    expect(rpc.calls[0]).toEqual({
+      name: 'get_assignment_chain_prior_stage_context_for_assignment',
+      args: { p_target_assignment_id: 'b' },
+    });
   });
 });

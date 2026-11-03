@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MedicalOrder } from './types';
 
-const { from } = vi.hoisted(() => ({ from: vi.fn() }));
+const { from, rpc } = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn() }));
 
-vi.mock('../../../lib/supabase', () => ({ supabase: { from } }));
+vi.mock('../../../lib/supabase', () => ({ supabase: { from, rpc } }));
 
 import { emrApi } from './api';
 
@@ -85,7 +85,41 @@ const draftOrder: MedicalOrder = {
 };
 
 describe('emrApi versioned note/order mutations', () => {
-  beforeEach(() => from.mockReset());
+  beforeEach(() => {
+    from.mockReset();
+    rpc.mockReset();
+  });
+
+  it('appends only server-gated prior-stage context to the active assignment', async () => {
+    const notesResult = { data: [noteRow()], error: null };
+    const notesChain = {
+      select: vi.fn(() => notesChain),
+      eq: vi.fn(() => notesChain),
+      is: vi.fn(() => notesChain),
+      order: vi.fn(async () => notesResult),
+    };
+    from.mockImplementation((table: string) => table === 'rooms'
+      ? builder({ data: { continues_from: null }, error: null })
+      : notesChain);
+    rpc.mockResolvedValue({
+      data: [{
+        sourceAssignmentId: 'assignment-a',
+        sourceRoomId: 3,
+        sourceStage: 'A',
+        authoredCapturedAt: '2026-10-02T20:00:00.000Z',
+        sourceCompletedAt: '2026-10-02T21:30:00.000Z',
+        content: 'Frozen authored predecessor context.',
+      }],
+      error: null,
+    });
+
+    const notes = await emrApi.listClinicalNotes('patient-1', 'assignment-b', 3);
+
+    expect(notes.map((note) => note.title)).toEqual(['Prior stage A clinical context', 'Persisted note']);
+    expect(rpc).toHaveBeenCalledWith('get_assignment_chain_prior_stage_context_for_assignment', {
+      p_target_assignment_id: 'assignment-b',
+    });
+  });
 
   it('returns the complete persisted order instead of the optimistic draft', async () => {
     from.mockReturnValue(builder({ data: orderRow(), error: null }));

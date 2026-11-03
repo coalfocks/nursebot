@@ -32,6 +32,14 @@ declare
   envelope_hash text;
   prior public.assignment_chain_intents%rowtype;
   position integer;
+  captured_room_id integer;
+  room_patient uuid;
+  room_continues_from integer;
+  room_progress_note text;
+  previous_room_id integer;
+  first_patient uuid;
+  authored_version text;
+  authored_captured_at timestamptz;
 begin
   if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
   select p.role into actor_role from public.profiles p where p.id = actor;
@@ -45,12 +53,6 @@ begin
      or jsonb_array_length(p_envelope->'assignments') <> 3 then
     raise exception 'ASSIGNMENT_CHAIN_INVALID';
   end if;
-  for position in 1..3 loop
-    if p_envelope->'assignments'->(position - 1)->>'assignmentId' is distinct from p_ordered_assignment_ids[position]::text
-       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from case position when 1 then 'A' when 2 then 'B' else 'C' end then
-      raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
-    end if;
-  end loop;
   envelope_hash := encode(extensions.digest(convert_to(p_envelope::text, 'utf8'), 'sha256'), 'hex');
   perform pg_advisory_xact_lock(hashtext('assignment-chain:' || p_chain_id::text));
   select * into prior from public.assignment_chain_intents where chain_id = p_chain_id for update;
@@ -61,6 +63,38 @@ begin
     end if;
     return jsonb_build_object('chainId', p_chain_id, 'envelopeHash', envelope_hash, 'replayed', true);
   end if;
+  for position in 1..3 loop
+    if p_envelope->'assignments'->(position - 1)->>'assignmentId' is distinct from p_ordered_assignment_ids[position]::text
+       or p_envelope->'assignments'->(position - 1)->>'stage' is distinct from case position when 1 then 'A' when 2 then 'B' else 'C' end then
+      raise exception 'ASSIGNMENT_CHAIN_ENVELOPE_MISMATCH';
+    end if;
+    captured_room_id := nullif(p_envelope->'assignments'->(position - 1)->>'roomId', '')::integer;
+    authored_version := nullif(p_envelope->'assignments'->(position - 1)->>'authoredSourceVersion', '');
+    authored_captured_at := nullif(p_envelope->'assignments'->(position - 1)->>'authoredCapturedAt', '')::timestamptz;
+    if captured_room_id is null or authored_version is null or authored_captured_at is null then
+      raise exception 'ASSIGNMENT_CHAIN_AUTHORED_SOURCE_MISMATCH';
+    end if;
+    select r.patient_id, r.continues_from, r.progress_note
+      into room_patient, room_continues_from, room_progress_note
+      from public.rooms r where r.id = captured_room_id for share;
+    if room_patient is null then raise exception 'ASSIGNMENT_CHAIN_ROOM_NOT_FOUND'; end if;
+    if position = 1 then
+      first_patient := room_patient;
+      if room_continues_from is not null then raise exception 'ASSIGNMENT_CHAIN_LINEAGE_MISMATCH'; end if;
+    elsif room_patient is distinct from first_patient or room_continues_from is distinct from previous_room_id then
+      raise exception 'ASSIGNMENT_CHAIN_LINEAGE_MISMATCH';
+    end if;
+    if p_envelope->'assignments'->(position - 1)->>'authoredProgressNote' is distinct from room_progress_note then
+      raise exception 'ASSIGNMENT_CHAIN_AUTHORED_SOURCE_MISMATCH';
+    end if;
+    if not exists (
+      select 1 from public.mar_authored_case_versions v
+      where v.room_id = captured_room_id and v.case_version = authored_version
+    ) then
+      raise exception 'ASSIGNMENT_CHAIN_AUTHORED_SOURCE_MISMATCH';
+    end if;
+    previous_room_id := captured_room_id;
+  end loop;
   insert into public.assignment_chain_intents(chain_id, ordered_assignment_ids, envelope, envelope_hash, created_by)
   values (p_chain_id, p_ordered_assignment_ids, p_envelope, envelope_hash, actor);
   return jsonb_build_object('chainId', p_chain_id, 'envelopeHash', envelope_hash, 'replayed', false);
@@ -79,8 +113,7 @@ declare
   expected_window_start timestamptz; expected_window_end timestamptz;
   envelope_hash text; intent public.assignment_chain_intents%rowtype;
   prior public.assignment_chains%rowtype; snapshot_count integer;
-  position integer; room_id_for_position integer; room_version_for_position text;
-  room_content_for_position text;
+  position integer;
 begin
   if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
   select p.role, p.school_id into actor_role, actor_school from public.profiles p where p.id = actor;
@@ -134,7 +167,13 @@ begin
     and o.room_id = a.room_id
     and o.case_version = a.case_key_version
     and o.result->>'assignmentId' = a.id::text
-    and o.result->>'caseVersion' = a.case_key_version;
+    and o.result->>'caseVersion' = a.case_key_version
+    and exists (
+      select 1 from jsonb_array_elements(intent.envelope->'assignments') with ordinality expected(value, position)
+      where expected.position = array_position(p_ordered_assignment_ids, o.assignment_id)
+        and (expected.value->>'roomId')::integer = o.room_id
+        and expected.value->>'authoredSourceVersion' = o.case_version
+    );
   if materialization_count <> 3 then raise exception 'ASSIGNMENT_CHAIN_MATERIALIZATION_INCOMPLETE'; end if;
 
   select count(*) into assignment_count from unnest(p_ordered_assignment_ids) ids(id)
@@ -161,20 +200,9 @@ begin
       and (a.school_id is distinct from actor_school or r.school_id is distinct from actor_school)
   ) then raise exception 'ASSIGNMENT_CHAIN_SCHOOL_SCOPE_MISMATCH'; end if;
 
-  -- Lock the same source rows that are validated and captured below.
-  perform 1 from public.student_room_assignments a join public.rooms r on r.id = a.room_id
-    where a.id = any(p_ordered_assignment_ids) for update of a, r;
-  for position in 1..3 loop
-    select a.room_id, coalesce(a.case_key_version, a.scenario_baseline_version::text, 'room-' || a.room_id::text), r.progress_note
-      into room_id_for_position, room_version_for_position, room_content_for_position
-      from public.student_room_assignments a join public.rooms r on r.id = a.room_id
-      where a.id = p_ordered_assignment_ids[position];
-    if p_envelope->'assignments'->(position - 1)->>'roomId' is distinct from room_id_for_position::text
-       or p_envelope->'assignments'->(position - 1)->>'authoredSourceVersion' is distinct from room_version_for_position
-       or p_envelope->'assignments'->(position - 1)->>'authoredProgressNote' is distinct from room_content_for_position then
-      raise exception 'ASSIGNMENT_CHAIN_AUTHORED_SOURCE_MISMATCH';
-    end if;
-  end loop;
+  -- Lock assignments for the final identity check. Authored content comes
+  -- from the intent captured above, never from a mutable room reread.
+  perform 1 from public.student_room_assignments a where a.id = any(p_ordered_assignment_ids) for update;
 
   insert into public.assignment_chains(chain_id, owner_id, ordered_assignment_ids, window_start, window_end, envelope, envelope_hash, created_by)
   values (p_chain_id, owner_id, p_ordered_assignment_ids, expected_window_start, expected_window_end, intent.envelope, envelope_hash, actor);
@@ -184,17 +212,20 @@ begin
   select p_chain_id, target_spec.id, source_spec.id,
     case when target_spec.position = 2 then 'B' else 'C' end,
     case when source_spec.position = 1 then 'A' else 'B' end,
-    source_assignment.room_id,
-    coalesce(source_assignment.case_key_version, source_assignment.scenario_baseline_version::text, 'room-' || source_assignment.room_id::text),
-    source_room.progress_note,
-    encode(extensions.digest(convert_to(coalesce(source_room.progress_note, '') || ':' ||
-      coalesce(source_assignment.case_key_version, source_assignment.scenario_baseline_version::text, 'room-' || source_assignment.room_id::text) || ':' || source_assignment.room_id::text, 'utf8'), 'sha256'), 'hex'),
-    coalesce(source_room.updated_at, source_assignment.created_at, now()), actor
+    (source_authored.value->>'roomId')::integer,
+    source_authored.value->>'authoredSourceVersion',
+    source_authored.value->>'authoredProgressNote',
+    encode(extensions.digest(convert_to(coalesce(source_authored.value->>'authoredProgressNote', '') || ':' ||
+      coalesce(source_authored.value->>'authoredSourceVersion', '') || ':' || coalesce(source_authored.value->>'roomId', ''), 'utf8'), 'sha256'), 'hex'),
+    (source_authored.value->>'authoredCapturedAt')::timestamptz, actor
   from unnest(p_ordered_assignment_ids) with ordinality target_spec(id, position)
   join public.student_room_assignments target_assignment on target_assignment.id = target_spec.id
   join unnest(p_ordered_assignment_ids) with ordinality source_spec(id, position) on source_spec.position < target_spec.position
-  join public.student_room_assignments source_assignment on source_assignment.id = source_spec.id
-  join public.rooms source_room on source_room.id = source_assignment.room_id
+  join jsonb_array_elements(intent.envelope->'assignments') with ordinality source_authored(value, position)
+    on source_authored.position = source_spec.position
+  join public.student_room_assignments source_assignment
+    on source_assignment.id = source_spec.id
+    and source_assignment.room_id = (source_authored.value->>'roomId')::integer
   where target_spec.position > 1;
   select count(*) into snapshot_count from public.assignment_chain_snapshots where chain_id = p_chain_id;
   if snapshot_count <> 3 then raise exception 'ASSIGNMENT_CHAIN_SNAPSHOT_READBACK_MISMATCH'; end if;
@@ -228,7 +259,13 @@ begin
     where o.assignment_id = any(chain.ordered_assignment_ids) and o.request_id = o.assignment_id
       and o.created_at > i.created_at and o.student_id = a.student_id and o.room_id = a.room_id
       and o.case_version = a.case_key_version and o.result->>'assignmentId' = a.id::text
-      and o.result->>'caseVersion' = a.case_key_version;
+      and o.result->>'caseVersion' = a.case_key_version
+      and exists (
+        select 1 from jsonb_array_elements(i.envelope->'assignments') with ordinality expected(value, position)
+        where expected.position = array_position(chain.ordered_assignment_ids, o.assignment_id)
+          and (expected.value->>'roomId')::integer = o.room_id
+          and expected.value->>'authoredSourceVersion' = o.case_version
+      );
   if operation_count <> 3 then raise exception 'ASSIGNMENT_CHAIN_MATERIALIZATION_INCOMPLETE'; end if;
   select coalesce(array_position(chain.ordered_assignment_ids, p_target_assignment_id) - 1, 0) into prior_count;
   select count(*) into completed_prior_count from unnest(chain.ordered_assignment_ids[1:greatest(prior_count, 0)]) prior(assignment_id)
@@ -247,12 +284,35 @@ begin
 end;
 $$;
 
+-- Learners provide only their assignment ID; chain identity is resolved
+-- server-side so the full envelope never crosses the client boundary.
+create or replace function public.get_assignment_chain_prior_stage_context_for_assignment(
+  p_target_assignment_id uuid
+) returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  actor uuid := auth.uid(); chain_id uuid;
+begin
+  if actor is null then raise exception 'ASSIGNMENT_CHAIN_AUTH_REQUIRED'; end if;
+  select c.chain_id into chain_id
+  from public.assignment_chains c
+  join public.student_room_assignments a on a.id = p_target_assignment_id and a.student_id = actor
+  where c.owner_id = actor and p_target_assignment_id = any(c.ordered_assignment_ids)
+  order by c.created_at desc limit 1;
+  if chain_id is null then raise exception 'ASSIGNMENT_CHAIN_NOT_VISIBLE'; end if;
+  return public.get_assignment_chain_prior_stage_context(chain_id, p_target_assignment_id);
+end;
+$$;
+
+revoke all on function public.get_assignment_chain_prior_stage_context_for_assignment(uuid) from public, anon;
+grant execute on function public.get_assignment_chain_prior_stage_context_for_assignment(uuid) to authenticated;
+
 create or replace function public.get_assignment_chain_readiness()
 returns jsonb language sql security definer set search_path = public as $$
   select jsonb_build_object('ready', to_regclass('public.assignment_chain_intents') is not null
     and to_regclass('public.assignment_chains') is not null and to_regclass('public.assignment_chain_snapshots') is not null
     and to_regprocedure('public.begin_assignment_chain_intent(uuid,uuid[],jsonb)') is not null
     and to_regprocedure('public.create_assignment_chain_with_snapshots(uuid,uuid[],jsonb)') is not null
-    and to_regprocedure('public.get_assignment_chain_prior_stage_context(uuid,uuid)') is not null,
+    and to_regprocedure('public.get_assignment_chain_prior_stage_context(uuid,uuid)') is not null
+    and to_regprocedure('public.get_assignment_chain_prior_stage_context_for_assignment(uuid)') is not null,
     'version', case when to_regclass('public.assignment_chain_intents') is not null then 2 else 0 end);
 $$;

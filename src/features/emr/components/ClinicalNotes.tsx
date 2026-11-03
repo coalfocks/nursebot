@@ -50,11 +50,13 @@ export function ClinicalNotes({ patient, assignmentId, forceBaseline, isObgynRoo
     setNotes([]);
     setEditingNoteId(null);
     void (async () => {
-      const data = await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null);
+      const data = forceBaseline
+        ? await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null, false)
+        : await emrApi.listClinicalNotes(patient.id, assignmentId, patient.roomId ?? null);
       if (!requestIdentity.isCurrent(request)) return;
       setNotes(data);
     })();
-  }, [patient.id, patient.roomId, assignmentId, requestIdentity]);
+  }, [patient.id, patient.roomId, assignmentId, forceBaseline, requestIdentity]);
 
   const [showGenerator, setShowGenerator] = useState(false);
 

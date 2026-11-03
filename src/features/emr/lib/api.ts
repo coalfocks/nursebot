@@ -19,12 +19,20 @@ import type {
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 import { mapManualMarPacket, type ManualMarPacket, type ManualMarPacketResult, type ManualMarReadiness } from './manualMar';
+import { readAssignmentChainPriorStageContextForAssignment, type AssignmentChainRpcClient } from '../../../../supabase/functions/_shared/assignment-chain';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
 type MedicalOrderRow = Database['public']['Tables']['medical_orders']['Row'];
 
 const deriveScope = resolveOverrideScope;
+
+const assignmentChainClient: AssignmentChainRpcClient = {
+  rpc: async (name, args) => {
+    const { data, error } = await supabase.rpc(name, args);
+    return { data, error: error ? { code: error.code, message: error.message } : null };
+  },
+};
 
 const imagingOrderMatchesStudy = (orderName: string, studyName: string) => {
   const order = orderName.trim().toLowerCase();
@@ -466,7 +474,7 @@ export const emrApi = {
     });
   },
 
-  async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
+  async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null, includeAssignmentChain = true): Promise<ClinicalNote[]> {
     const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('clinical_notes')
@@ -480,7 +488,7 @@ export const emrApi = {
       return [];
     }
 
-    return (data ?? [])
+    const notes = (data ?? [])
       .map((row) => mapClinicalNote(row, patientId))
       .filter(
         (note) =>
@@ -500,6 +508,46 @@ export const emrApi = {
           assignmentId,
         ),
       );
+
+    // The server resolves the chain from the target assignment and returns
+    // only completed, gated predecessor snapshots. Missing/unapplied chain
+    // schema remains the existing baseline-note behavior.
+    if (!assignmentId || !includeAssignmentChain) return notes;
+    const priorContext = await readAssignmentChainPriorStageContextForAssignment(assignmentChainClient, { targetAssignmentId: assignmentId });
+    if (priorContext.status !== 'ready') return notes;
+    const priorNotes: ClinicalNote[] = priorContext.snapshots
+      .map((snapshot) => {
+        const value = snapshot as {
+          sourceAssignmentId?: unknown;
+          sourceRoomId?: unknown;
+          sourceStage?: unknown;
+          authoredCapturedAt?: unknown;
+          sourceCompletedAt?: unknown;
+          content?: unknown;
+        };
+        const content = typeof value.content === 'string' ? value.content.trim() : '';
+        const sourceStage = typeof value.sourceStage === 'string' ? value.sourceStage : 'prior';
+        if (!content || typeof value.sourceAssignmentId !== 'string') return null;
+        return {
+          id: `assignment-chain:${assignmentId}:${value.sourceAssignmentId}`,
+          patientId,
+          assignmentId,
+          roomId: typeof value.sourceRoomId === 'number' ? value.sourceRoomId : undefined,
+          overrideScope: 'assignment',
+          type: 'Progress',
+          title: `Prior stage ${sourceStage} clinical context`,
+          content,
+          author: `Prior stage ${sourceStage} (authored case)`,
+          timestamp: typeof value.sourceCompletedAt === 'string'
+            ? value.sourceCompletedAt
+            : typeof value.authoredCapturedAt === 'string' ? value.authoredCapturedAt : new Date(0).toISOString(),
+          signed: true,
+          recordVersion: 1,
+        } satisfies ClinicalNote;
+      })
+      .filter((note): note is ClinicalNote => Boolean(note));
+    return [...notes, ...priorNotes].sort((left, right) =>
+      new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
   },
 
   async addClinicalNote(note: ClinicalNote): Promise<ClinicalNote | null> {

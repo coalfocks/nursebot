@@ -16,10 +16,11 @@ import {
   isStudentVisibleForSearchRange,
   type StudentSearchRange,
 } from '../lib/studentVisibility';
-import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
+import { assignmentOperationKey, isConfiguredClinicalChain, materializationRpcArgs, reconcileAssignmentRows, type AssignmentCreateRow } from '../lib/assignmentCreation';
 import { beginAssignmentChain, createAssignmentChain } from '../../supabase/functions/_shared/assignment-chain';
 import { assignmentDiagnosticError, normalizeAssignmentDiagnostic, type AssignmentDiagnostic } from '../lib/assignmentDiagnostics';
 import { isRoomAvailableToSchool } from '../lib/roomHelpers';
+import { freezeAssignmentChainEnvelope } from '../lib/assignmentChainContext';
 
 type RpcResult = { data: unknown; error: { code?: string | null; message: string } | null };
 const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
@@ -127,7 +128,13 @@ export default function AssignmentManager() {
   const [reconciliationAssignments, setReconciliationAssignments] = useState<ReconciliationAssignment[]>([]);
   const [reconciliationPublications, setReconciliationPublications] = useState<ReconciliationPublication[]>([]);
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
-  const assignmentOperationRef = useRef<{ key: string; assignments: AssignmentCreateRow[]; chainIds: Record<string, string> } | null>(null);
+  const assignmentOperationRef = useRef<{
+    key: string;
+    assignments: AssignmentCreateRow[];
+    chainIds: Record<string, string>;
+    chainInputs: Record<string, { chainId: string; orderedAssignmentIds: string[]; envelope: Record<string, unknown> }>;
+    chainInputsInitialized: boolean;
+  } | null>(null);
   const assignableStudents = students.filter((student) => isStudentVisibleForSearchRange(student, studentSearchRange));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
 
@@ -506,7 +513,7 @@ export default function AssignmentManager() {
       // Keep IDs and scheduling frozen across partial commits, lost responses,
       // and a second click. Never regenerate a partially committed operation.
       if (!assignmentOperationRef.current) {
-        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments, chainIds: {} };
+        assignmentOperationRef.current = { key: operationKey, assignments: generatedAssignments, chainIds: {}, chainInputs: {}, chainInputsInitialized: false };
       }
       const assignments = assignmentOperationRef.current.assignments;
 
@@ -514,12 +521,10 @@ export default function AssignmentManager() {
       // immutable intent per learner before the existing MAR creator runs;
       // the finalized reader remains server-gated and optional until its
       // migration is applied.
-      const chainInputs = new Map<string, {
-        chainId: string;
-        orderedAssignmentIds: string[];
-        envelope: Record<string, unknown>;
-      }>();
-      if (selectedRooms.length === 3) {
+      const chainInputs = new Map(Object.entries(assignmentOperationRef.current.chainInputs));
+      if (!assignmentOperationRef.current.chainInputsInitialized) {
+        assignmentOperationRef.current.chainInputsInitialized = true;
+      if (isConfiguredClinicalChain(selectedRoomsData, selectedRooms)) {
         for (const studentId of studentsToAssign) {
           const studentAssignments = assignments.filter((assignment) => assignment.student_id === studentId);
           if (studentAssignments.length !== 3) continue;
@@ -527,24 +532,31 @@ export default function AssignmentManager() {
           assignmentOperationRef.current.chainIds[studentId] = chainId;
           const ordered = selectedRooms.map((roomId) => studentAssignments.find((assignment) => assignment.room_id === Number(roomId))).filter((assignment): assignment is AssignmentCreateRow => Boolean(assignment));
           if (ordered.length !== 3) continue;
+          const frozenEnvelope = freezeAssignmentChainEnvelope({
+            chainId,
+            ownerId: studentId,
+            windowStart: ordered[0].window_start ?? '',
+            windowEnd: ordered[0].window_end ?? '',
+            assignments: ordered.map((assignment, index) => {
+              const room = selectedRoomsData.find((candidate) => candidate.id === assignment.room_id);
+              return {
+                assignmentId: assignment.id,
+                stage: ['A', 'B', 'C'][index] as 'A' | 'B' | 'C',
+                roomId: assignment.room_id,
+                authoredSourceVersion: assignment.case_key_version,
+                authoredProgressNote: room?.progress_note ?? null,
+                authoredCapturedAt: room?.updated_at ?? assignment.window_start ?? new Date().toISOString(),
+              };
+            }),
+          });
           chainInputs.set(studentId, {
             chainId,
             orderedAssignmentIds: ordered.map((assignment) => assignment.id),
-            envelope: {
-              version: 2,
-              assignments: ordered.map((assignment, index) => {
-                const room = selectedRoomsData.find((candidate) => candidate.id === assignment.room_id);
-                return {
-                  assignmentId: assignment.id,
-                  stage: ['A', 'B', 'C'][index],
-                  roomId: String(assignment.room_id),
-                  authoredSourceVersion: assignment.case_key_version,
-                  authoredProgressNote: room?.progress_note ?? null,
-                };
-              }),
-            },
+            envelope: frozenEnvelope as unknown as Record<string, unknown>,
           });
         }
+      }
+      assignmentOperationRef.current.chainInputs = Object.fromEntries(chainInputs);
       }
 
       const chainClient = {
@@ -554,11 +566,6 @@ export default function AssignmentManager() {
         },
       };
       const activeChains = [] as Array<{ chainId: string; orderedAssignmentIds: string[]; envelope: Record<string, unknown> }>;
-      for (const input of chainInputs.values()) {
-        const begun = await beginAssignmentChain(chainClient, input);
-        if (begun.status === 'error') throw begun.error;
-        if (begun.status === 'ready') activeChains.push(input);
-      }
 
       const { data: readiness, error: readinessError } = await callGeneratedRpc('get_mar_normal_materialization_readiness', {});
       const readinessValue = readiness as { ready?: boolean; materializationVersion?: number; atomic?: boolean } | null;
@@ -569,6 +576,14 @@ export default function AssignmentManager() {
           'RPC get_mar_normal_materialization_readiness',
           'read',
         );
+      }
+      // Only open the chain intent after the existing atomic MAR path is
+      // known to be ready; this avoids orphaning an intent on a readiness
+      // failure while preserving the normal creator signature.
+      for (const input of chainInputs.values()) {
+        const begun = await beginAssignmentChain(chainClient, input);
+        if (begun.status === 'error') throw begun.error;
+        if (begun.status === 'ready') activeChains.push(input);
       }
 
       const assignmentIds = assignments.map((assignment) => assignment.id);

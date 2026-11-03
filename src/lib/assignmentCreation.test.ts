@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignmentOperationKey, materializationRpcArgs, reconcileAssignmentRows, testUserAssignmentInsert, testUserAssignmentRpcArgs } from './assignmentCreation';
+import { assignmentOperationKey, isConfiguredClinicalChain, materializationRpcArgs, reconcileAssignmentRows, testUserAssignmentInsert, testUserAssignmentRpcArgs } from './assignmentCreation';
 
 describe('fresh assignment MAR materialization envelope', () => {
   it('binds the immutable case version and stable request identity', () => {
@@ -51,5 +51,17 @@ describe('fresh assignment MAR materialization envelope', () => {
   it('treats reordered room membership as a different ordered batch', () => {
     const base = { actorId: 'admin-a', schoolId: 'school-a', targetingMode: 'individual' as const, studentId: 'student-a', bulkStudentIds: [], roomIds: ['204', '304', '404'], windowStart: '09:00', windowEnd: '10:00', timezone: 'UTC', bulkTargetSchoolId: '', bulkTargetSpecialty: '' };
     expect(assignmentOperationKey({ ...base, roomIds: ['304', '204', '404'] })).not.toBe(assignmentOperationKey(base));
+  });
+
+  it('requires authoritative room lineage and one patient before creating a chain', () => {
+    const rooms = [
+      { id: 1, continues_from: null, patient_id: 'patient-1' },
+      { id: 2, continues_from: 1, patient_id: 'patient-1' },
+      { id: 3, continues_from: 2, patient_id: 'patient-1' },
+      { id: 4, continues_from: null, patient_id: 'patient-2' },
+    ];
+    expect(isConfiguredClinicalChain(rooms, ['1', '2', '3'])).toBe(true);
+    expect(isConfiguredClinicalChain(rooms, ['1', '2', '4'])).toBe(false);
+    expect(isConfiguredClinicalChain(rooms, ['2', '1', '3'])).toBe(false);
   });
 });

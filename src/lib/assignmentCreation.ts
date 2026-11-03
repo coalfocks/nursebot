@@ -37,6 +37,29 @@ export type AssignmentOperationKeyInput = {
   bulkTargetSpecialty: string;
 };
 
+export type ClinicalChainRoom = {
+  id: number;
+  continues_from: number | null;
+  patient_id: string | null;
+};
+
+/** Three selected rooms are a chain only when the authored lineage says so. */
+export const isConfiguredClinicalChain = (
+  rooms: ClinicalChainRoom[],
+  orderedRoomIds: string[],
+): boolean => {
+  if (orderedRoomIds.length !== 3) return false;
+  const selected = orderedRoomIds.map((id) => rooms.find((room) => room.id === Number(id)));
+  if (selected.some((room) => !room)) return false;
+  const [first, second, third] = selected as [ClinicalChainRoom, ClinicalChainRoom, ClinicalChainRoom];
+  return Boolean(first.patient_id)
+    && first.patient_id === second.patient_id
+    && second.patient_id === third.patient_id
+    && first.continues_from === null
+    && second.continues_from === first.id
+    && third.continues_from === second.id;
+};
+
 export const assignmentOperationKey = (input: AssignmentOperationKeyInput): string => JSON.stringify({
   ...input,
   bulkStudentIds: [...input.bulkStudentIds].sort(),
