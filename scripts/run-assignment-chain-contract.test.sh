@@ -3,7 +3,14 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_dir="$(mktemp -d "${TMPDIR:-/tmp}/assignment-chain-wrapper-test.XXXXXX")"
-trap 'rm -rf "$test_dir"' EXIT
+mutation_target="$repo_root/supabase/tests/assignment-chain-rpc.integration.sql"
+mutation_backup="$test_dir/assignment-chain-rpc.integration.sql.original"
+cp -- "$mutation_target" "$mutation_backup"
+restore_source() {
+  cp -- "$mutation_backup" "$mutation_target"
+  rm -rf "$test_dir"
+}
+trap restore_source EXIT
 
 fake_bin="$test_dir/bin"
 mkdir -p "$fake_bin"
@@ -32,4 +39,19 @@ grep -q -- '-v ' "$success_log"
 ! grep -q -- ' -p ' "$success_log"
 ! grep -q 'POSTGRES_PASSWORD=contract' "$success_log"
 
-echo 'offline wrapper ownership collision/failure and owned-cleanup checks passed'
+mutation_log="$test_dir/mutation.log"
+mutation_rm="$test_dir/mutation-rm"
+mutation_exec_count="$test_dir/mutation-exec-count"
+rpc_hash="$(sha256sum "$mutation_target" | awk '{print $1}')"
+bootstrap_hash="$(sha256sum "$repo_root/supabase/tests/fixtures/assignment-chain-bootstrap.sql" | awk '{print $1}')"
+mutation_output="$test_dir/mutation.out"
+PATH="$fake_bin:$PATH" FAKE_DOCKER_MODE=success FAKE_DOCKER_LOG="$mutation_log" FAKE_DOCKER_RM_MARKER="$mutation_rm" \
+  FAKE_DOCKER_EXEC_COUNT_FILE="$mutation_exec_count" FAKE_DOCKER_MUTATE_FILE="$mutation_target" FAKE_DOCKER_MUTATE_EXEC=2 \
+  bash "$repo_root/scripts/run-assignment-chain-contract.sh" > "$mutation_output" 2>&1
+grep -q "staged_sha256=$rpc_hash path=supabase/tests/assignment-chain-rpc.integration.sql" "$mutation_output"
+grep -q "stdin_hash=$bootstrap_hash" "$mutation_log"
+grep -q "stdin_hash=$rpc_hash" "$mutation_log"
+cp -- "$mutation_backup" "$mutation_target"
+cmp -s "$mutation_backup" "$mutation_target"
+
+echo 'offline wrapper ownership, staged-input binding, collision/failure, and owned-cleanup checks passed'
