@@ -19,8 +19,32 @@ case "$1" in
       printf 'mutated-after-staging\n' > "$FAKE_DOCKER_MUTATE_FILE"
     fi
     if [[ " ${*:2} " == *" -i "* ]]; then
-      stdin_hash="$(sha256sum | awk '{print $1}')"
+      stdin_file="$(mktemp)"
+      cat > "$stdin_file"
+      stdin_payload="$(cat "$stdin_file")"
+      stdin_hash="$(sha256sum "$stdin_file" | awk '{print $1}')"
       printf 'stdin_hash=%s\n' "$stdin_hash" >> "$FAKE_DOCKER_LOG"
+      if [[ "${FAKE_DOCKER_MODE:-collision}" != "collision" ]]; then
+        if [[ "$stdin_payload" == *"00000000-0000-0000-0000-000000000501"* ]]; then
+          case "${FAKE_DOCKER_CONCURRENT_MODE:-success}" in
+            success) printf 'NOTICE:  contender=granted chain=501\n' ;;
+            missing) : ;;
+            malformed) printf 'NOTICE:  contender=maybe chain=501\n' ;;
+            both-granted|child-failure) printf 'NOTICE:  contender=granted chain=501\n' ;;
+          esac
+        elif [[ "$stdin_payload" == *"00000000-0000-0000-0000-000000000502"* ]]; then
+          if [[ "${FAKE_DOCKER_CONCURRENT_MODE:-success}" == "child-failure" ]]; then
+            exit 23
+          fi
+          case "${FAKE_DOCKER_CONCURRENT_MODE:-success}" in
+            success) printf 'NOTICE:  contender=denied chain=502\n' ;;
+            missing) : ;;
+            malformed) printf 'NOTICE:  contender=denied chain=502\n' ;;
+            both-granted) printf 'NOTICE:  contender=granted chain=502\n' ;;
+          esac
+        fi
+      fi
+      rm -f "$stdin_file"
     elif [[ "${*:2}" == *"show server_version"* ]]; then
       printf '16.15-test\n'
     fi

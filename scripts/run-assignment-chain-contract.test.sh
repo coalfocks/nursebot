@@ -39,6 +39,25 @@ grep -q -- '-v ' "$success_log"
 ! grep -q -- ' -p ' "$success_log"
 ! grep -q 'POSTGRES_PASSWORD=contract' "$success_log"
 
+run_expected_concurrent_failure() {
+  mode="$1"
+  failure_log="$test_dir/${mode}.log"
+  failure_rm="$test_dir/${mode}-rm"
+  if PATH="$fake_bin:$PATH" FAKE_DOCKER_MODE=success FAKE_DOCKER_CONCURRENT_MODE="$mode" \
+    FAKE_DOCKER_LOG="$failure_log" FAKE_DOCKER_RM_MARKER="$failure_rm" \
+    bash "$repo_root/scripts/run-assignment-chain-contract.sh" > "$test_dir/${mode}.out" 2>&1; then
+    echo "expected simulated concurrent contract failure for $mode" >&2
+    exit 1
+  fi
+  grep -q '^rm -f owned-container-id' "$failure_log"
+  ! grep -q '^rm -f assignment-chain-contract-pg-' "$failure_log"
+}
+
+run_expected_concurrent_failure missing
+run_expected_concurrent_failure malformed
+run_expected_concurrent_failure both-granted
+run_expected_concurrent_failure child-failure
+
 mutation_log="$test_dir/mutation.log"
 mutation_rm="$test_dir/mutation-rm"
 mutation_exec_count="$test_dir/mutation-exec-count"

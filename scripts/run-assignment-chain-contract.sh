@@ -78,8 +78,14 @@ docker exec -i "$container_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
 pid_b=$!
 wait "$pid_a"
 wait "$pid_b"
-if [[ "$(grep -h -c 'contender=granted' "$concurrent_a_log" "$concurrent_b_log" | awk '{sum += $1} END {print sum + 0}')" != 1 \
-   || "$(grep -h -c 'contender=denied' "$concurrent_a_log" "$concurrent_b_log" | awk '{sum += $1} END {print sum + 0}')" != 1 ]]; then
+all_outcomes="$(grep -h 'contender=' "$concurrent_a_log" "$concurrent_b_log" || true)"
+valid_outcomes="$(printf '%s\n' "$all_outcomes" | sed -nE 's/.*(contender=(granted|denied) chain=(501|502)).*/\1/p')"
+valid_count="$(printf '%s\n' "$valid_outcomes" | sed '/^$/d' | wc -l | tr -d ' ')"
+granted_count="$(printf '%s\n' "$valid_outcomes" | grep -c '^contender=granted chain=' || true)"
+denied_count="$(printf '%s\n' "$valid_outcomes" | grep -c '^contender=denied chain=' || true)"
+chain_count="$(printf '%s\n' "$valid_outcomes" | sed -nE 's/.*chain=([0-9]+)/\1/p' | sort -u | sed '/^$/d' | wc -l | tr -d ' ')"
+all_count="$(printf '%s\n' "$all_outcomes" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [[ "$all_count" != 2 || "$valid_count" != 2 || "$granted_count" != 1 || "$denied_count" != 1 || "$chain_count" != 2 ]]; then
   echo "concurrent chain contender contract did not produce exactly one grant and one denial" >&2
   exit 1
 fi
