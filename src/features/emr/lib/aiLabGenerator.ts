@@ -219,7 +219,9 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
     'bnp/nt-probnp': ['bnp/nt-probnp'],
   };
 
-  const matchedPanelKey = Object.keys(panelMatches).find((key) => normalized.includes(key));
+  const matchedPanelKey = Object.keys(panelMatches)
+    .sort((a, b) => b.length - a.length)
+    .find((key) => normalized.includes(key));
   if (matchedPanelKey) {
     const panel = panelMatches[matchedPanelKey];
     return panel
@@ -230,8 +232,16 @@ export const resolveLabTemplates = (orderName?: string): LabTemplate[] => {
   const directMatches = labTemplates.filter((template) => normalized.includes(template.testName.toLowerCase()));
   if (directMatches.length) return directMatches;
 
-  const defaultPanel = ['white blood cell count', 'hemoglobin', 'platelets', 'sodium', 'potassium', 'creatinine', 'glucose'];
-  return defaultPanel.map((name) => templateMap[name]).filter(Boolean) as LabTemplate[];
+  // Do not silently substitute a fabricated CBC/chemistry panel for an
+  // Instant Lab that has no simulator analyte mapping. Preserve the authored
+  // order as a one-result contract so every catalogued Instant Lab can reach
+  // the lab grid without inventing unrelated analytes.
+  return [{
+    testName: orderName?.trim() || 'Instant Lab Result',
+    unit: '',
+    referenceRange: 'See interpretation',
+    normal: [0, 0],
+  }];
 };
 
 const deriveLabStatus = (value: number, [low, high]: [number, number]) => {

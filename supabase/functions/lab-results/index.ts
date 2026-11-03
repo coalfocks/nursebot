@@ -227,6 +227,15 @@ const normalizeLabKey = (value: string) => {
     plt: 'platelets',
     bicarbonate: 'co2',
     'co2 bicarbonate': 'co2',
+    'blood urea nitrogen': 'bun',
+    'blood glucose': 'glucose',
+    na: 'sodium',
+    k: 'potassium',
+    cl: 'chloride',
+    ca: 'calcium',
+    creat: 'creatinine',
+    alp: 'alkaline phosphatase',
+    bilirubin: 'total bilirubin',
     cr: 'creatinine',
   };
   return aliases[normalized] ?? normalized;
