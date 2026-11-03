@@ -134,6 +134,7 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     scheduledTime: row.scheduled_time ?? undefined,
     instructions: row.instructions ?? undefined,
     deletedAt: row.deleted_at,
+    baselineSetId: (row as LabResultRow & { baseline_set_id?: string | null }).baseline_set_id,
     recordVersion: row.record_version,
     labGenerationStatus: (row as MedicalOrderRow & { lab_generation_status?: MedicalOrder['labGenerationStatus'] }).lab_generation_status,
     labGenerationError: (row as MedicalOrderRow & { lab_generation_error?: string | null }).lab_generation_error,
@@ -711,7 +712,7 @@ export const emrApi = {
       const patientId = labs[0].patientId;
       const { data: existingLabs, error: existingError } = await supabase
         .from('lab_results')
-        .select('id, test_name, collection_time, result_time')
+        .select('id, test_name, collection_time, result_time, baseline_set_id')
         .eq('patient_id', patientId)
         .eq('override_scope', 'baseline')
         .is('assignment_id', null)
@@ -723,46 +724,12 @@ export const emrApi = {
         return { ok: false, error: existingError.message };
       }
 
-      // Always use a single consolidated timestamp for all baseline labs
-      // If any existing baseline labs exist, use their timestamp; otherwise use the baseline epoch
-      const baselineTimestamp =
-        existingLabs && existingLabs.length > 0
-          ? existingLabs[0].collection_time ?? existingLabs[0].result_time ?? '2000-01-01T00:00:00.000Z'
-          : '2000-01-01T00:00:00.000Z';
-
-      // Normalize all existing baseline labs to the consolidated timestamp
-      const labsNeedingTimestampNormalization = (existingLabs ?? [])
-        .filter((lab) => {
-          const labTime = lab.collection_time ?? lab.result_time;
-          return labTime && labTime !== baselineTimestamp;
-        })
-        .map((lab) => ({
-          id: lab.id,
-          payload: {
-            collection_time: baselineTimestamp,
-            result_time: baselineTimestamp,
-          },
-        }));
-
-      if (labsNeedingTimestampNormalization.length > 0) {
-        const normalizeResults = await Promise.all(
-          labsNeedingTimestampNormalization.map((update) =>
-            supabase
-              .from('lab_results')
-              .update(update.payload)
-              .eq('id', update.id),
-          ),
-        );
-        const normalizationError = normalizeResults.find(({ error }) => error)?.error;
-        if (normalizationError) {
-          console.error('Error normalizing baseline lab timestamp', normalizationError);
-          return { ok: false, error: normalizationError.message };
-        }
-      }
-
-      const existingByTest = new Map(
-        (existingLabs ?? []).map((lab) => [lab.test_name, lab]),
+      const baselineSetId = labs[0].baselineSetId ?? null;
+      const existingForSet = (existingLabs ?? []).filter((lab) =>
+        (lab.baseline_set_id ?? null) === baselineSetId,
       );
+      const baselineTimestamp = labs[0].collectionTime ?? labs[0].resultTime ?? '2000-01-01T00:00:00.000Z';
+      const existingByTest = new Map(existingForSet.map((lab) => [lab.test_name, lab]));
 
       const updates = labs
         .map((lab) => {
@@ -780,9 +747,10 @@ export const emrApi = {
               unit: lab.unit,
               reference_range: lab.referenceRange,
               status: lab.status,
-              collection_time: baselineTimestamp,
-              result_time: baselineTimestamp,
+              collection_time: lab.collectionTime ?? baselineTimestamp,
+              result_time: lab.resultTime ?? lab.collectionTime ?? baselineTimestamp,
               ordered_by: lab.orderedBy,
+              baseline_set_id: baselineSetId,
             },
           };
         })
@@ -800,10 +768,11 @@ export const emrApi = {
           unit: lab.unit,
           reference_range: lab.referenceRange,
           status: lab.status,
-          collection_time: baselineTimestamp,
-          result_time: baselineTimestamp,
+          collection_time: lab.collectionTime ?? baselineTimestamp,
+          result_time: lab.resultTime ?? lab.collectionTime ?? baselineTimestamp,
           ordered_by: lab.orderedBy,
           source_order_id: null,
+          baseline_set_id: baselineSetId,
         }));
 
       if (updates.length) {

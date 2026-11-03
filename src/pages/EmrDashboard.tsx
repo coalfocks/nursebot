@@ -96,6 +96,8 @@ export default function EmrDashboard() {
     referenceRange: '',
     status: 'Normal',
   });
+  const [baselineLabSetId, setBaselineLabSetId] = useState('baseline-set-1');
+  const [baselineLabTimestamp, setBaselineLabTimestamp] = useState(() => new Date().toISOString().slice(0, 16));
   const [isSavingSandboxLab, setIsSavingSandboxLab] = useState(false);
   const [baselineEditForm, setBaselineEditForm] = useState({
     firstName: '',
@@ -976,6 +978,19 @@ export default function EmrDashboard() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           <input
                             className="rounded-md border border-border px-3 py-2 text-sm"
+                            placeholder="Baseline set ID (e.g. admission-day-1)"
+                            value={baselineLabSetId}
+                            onChange={(e) => setBaselineLabSetId(e.target.value)}
+                          />
+                          <input
+                            type="datetime-local"
+                            className="rounded-md border border-border px-3 py-2 text-sm"
+                            aria-label="Baseline result time"
+                            value={baselineLabTimestamp}
+                            onChange={(e) => setBaselineLabTimestamp(e.target.value)}
+                          />
+                          <input
+                            className="rounded-md border border-border px-3 py-2 text-sm"
                             placeholder="Lab name"
                             value={sandboxLabForm.testName}
                             onChange={(e) => setSandboxLabForm((prev) => ({ ...prev, testName: e.target.value }))}
@@ -1011,6 +1026,7 @@ export default function EmrDashboard() {
                             disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
                             onClick={async () => {
                               if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
+                              const authoredBaselineTime = new Date(baselineLabTimestamp).toISOString();
                               setIsSavingSandboxLab(true);
                               try {
                                 const labsWithAssignment = [
@@ -1025,9 +1041,10 @@ export default function EmrDashboard() {
                                     unit: sandboxLabForm.unit,
                                     referenceRange: sandboxLabForm.referenceRange,
                                     status: (sandboxLabForm.status as LabResult['status']) || 'Normal',
-                                    collectionTime: new Date().toISOString(),
-                                    resultTime: new Date().toISOString(),
+                                    collectionTime: authoredBaselineTime,
+                                    resultTime: authoredBaselineTime,
                                     orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
+                                    baselineSetId: baselineLabSetId.trim() || 'baseline-set-1',
                                   },
                                 ];
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
@@ -1054,6 +1071,7 @@ export default function EmrDashboard() {
                             disabled={isSavingSandboxLab || !sandboxLabForm.testName.trim()}
                             onClick={async () => {
                               if (!selectedPatient || !sandboxLabForm.testName.trim()) return;
+                              const authoredBaselineTime = new Date(baselineLabTimestamp).toISOString();
                               setIsSavingSandboxLab(true);
                               try {
                                 const [contextLabs, clinicalNotes, vitals, orders] = await Promise.all([
@@ -1127,9 +1145,10 @@ export default function EmrDashboard() {
                                     tests[index]?.referenceRange ??
                                     '',
                                   status: (lab as { status?: LabResult['status'] }).status ?? 'Normal',
-                                  collectionTime: (lab as { collectionTime?: string }).collectionTime ?? new Date().toISOString(),
-                                  resultTime: (lab as { resultTime?: string }).resultTime ?? new Date().toISOString(),
+                                  collectionTime: (lab as { collectionTime?: string }).collectionTime ?? authoredBaselineTime,
+                                  resultTime: (lab as { resultTime?: string }).resultTime ?? authoredBaselineTime,
                                   orderedBy: selectedPatient.attendingPhysician || 'Super Admin',
+                                  baselineSetId: baselineLabSetId.trim() || 'baseline-set-1',
                                 }));
                                 await emrApi.addLabResults(labsWithAssignment, selectedPatient.roomId ?? null);
                                 setLabsRefreshToken((t) => t + 1);

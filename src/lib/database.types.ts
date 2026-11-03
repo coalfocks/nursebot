@@ -1470,6 +1470,7 @@ export type Database = {
         Row: {
           abnormal_flag: boolean | null
           assignment_id: string | null
+          baseline_set_id: string | null
           collection_time: string | null
           created_at: string | null
           deleted_at: string | null
@@ -1497,6 +1498,7 @@ export type Database = {
         Insert: {
           abnormal_flag?: boolean | null
           assignment_id?: string | null
+          baseline_set_id?: string | null
           collection_time?: string | null
           created_at?: string | null
           deleted_at?: string | null
@@ -1524,6 +1526,7 @@ export type Database = {
         Update: {
           abnormal_flag?: boolean | null
           assignment_id?: string | null
+          baseline_set_id?: string | null
           collection_time?: string | null
           created_at?: string | null
           deleted_at?: string | null

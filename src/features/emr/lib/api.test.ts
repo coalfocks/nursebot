@@ -224,6 +224,45 @@ describe('emrApi versioned note/order mutations', () => {
     ]);
   });
 
+  it('writes a new authored baseline set at its own time without rewriting older sets', async () => {
+    const old = {
+      id: 'old-lab',
+      test_name: 'Sodium',
+      collection_time: '2026-10-01T12:00:00.000Z',
+      result_time: '2026-10-01T12:00:00.000Z',
+      baseline_set_id: 'admission-day-1',
+    };
+    const selectChain = readableBuilder({ data: [old], error: null });
+    const insert = vi.fn(async () => ({ error: null }));
+    from
+      .mockReturnValueOnce(selectChain)
+      .mockReturnValueOnce({ insert });
+
+    const result = await emrApi.addLabResults([{
+      id: 'new-lab',
+      patientId: 'patient-1',
+      overrideScope: 'baseline',
+      testName: 'Sodium',
+      value: 140,
+      unit: 'mmol/L',
+      referenceRange: '135-145',
+      status: 'Normal',
+      collectionTime: '2026-10-02T12:00:00.000Z',
+      resultTime: '2026-10-02T12:00:00.000Z',
+      orderedBy: 'Super Admin',
+      baselineSetId: 'admission-day-2',
+    }], null);
+
+    expect(result).toEqual({ ok: true });
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        test_name: 'Sodium',
+        collection_time: '2026-10-02T12:00:00.000Z',
+        baseline_set_id: 'admission-day-2',
+      }),
+    ]);
+  });
+
   it('authorizes a shared-stage assignment even when the room has another primary school', async () => {
     const assignmentQuery = builder({
       data: {

@@ -30,7 +30,11 @@ type LabTrendPoint = {
   status: LabResult['status'];
 };
 
-const formatPriorLabLabel = (index: number, total: number) => `${12 + (total - 1 - index) * 24}h prior`;
+const formatPriorLabLabel = (time: string, newestTime: string) => {
+  const deltaHours = Math.round((new Date(newestTime).getTime() - new Date(time).getTime()) / 3_600_000);
+  if (!Number.isFinite(deltaHours) || deltaHours <= 0) return 'Now';
+  return `${deltaHours}h prior`;
+};
 const formatStoredTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded';
 
 export function LabResults({ patient, assignmentId, refreshToken, isSandbox, sandboxLabs, onSandboxLabsChange }: LabResultsProps) {
@@ -428,7 +432,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (_value: string, index: number) => formatPriorLabLabel(index, sortedCollectionTimes.length);
+  const newestCollectionTime = sortedCollectionTimes[sortedCollectionTimes.length - 1];
+  const formatCollectionLabel = (value: string) =>
+    newestCollectionTime ? formatPriorLabLabel(value, newestCollectionTime) : 'Now';
 
   // Group labs by category for trending
   const labTrends = labResults.reduce<Record<string, LabTrendPoint[]>>((acc, lab) => {
@@ -452,7 +458,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       key,
       [...data]
         .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-        .map((entry, index) => ({ ...entry, time: formatPriorLabLabel(index, data.length) })),
+        .map((entry) => ({
+          ...entry,
+          time: data.length ? formatPriorLabLabel(entry.time, data[data.length - 1].time) : 'Now',
+        })),
     ]),
   );
 
@@ -623,9 +632,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     <TableHeader>
                       <TableRow>
                         <TableHead>Test</TableHead>
-                        {sortedCollectionTimes.map((time, idx) => (
+                        {sortedCollectionTimes.map((time) => (
                           <TableHead key={time} className="whitespace-nowrap">
-                            {formatCollectionLabel(time, idx)}
+                            {formatCollectionLabel(time)}
                           </TableHead>
                         ))}
                       </TableRow>

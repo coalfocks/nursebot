@@ -283,6 +283,7 @@ export default function RoomEditor({ room, onSave, onCancel }: RoomEditorProps) 
       room_id: null, // Always null for consolidated baseline labs
       assignment_id: null,
       override_scope: 'baseline' as const, // Always baseline for consolidation
+      baseline_set_id: 'initial-admission',
       school_id: schoolId ?? null,
       collection_time: baselineTimestamp,
       result_time: baselineTimestamp,

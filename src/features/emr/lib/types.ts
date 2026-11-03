@@ -93,6 +93,7 @@ export interface LabResult {
   createdAt?: string;
   deletedAt?: string | null;
   sourceOrderId?: string | null;
+  baselineSetId?: string | null;
 }
 
 export type LabWriteResult =
