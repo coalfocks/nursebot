@@ -14,7 +14,7 @@ import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
 import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
-import { datetimeLocalToUtc, formatLabColumnLabel, formatLabRelativeTime } from '../lib/labDisplayTime';
+import { buildLabDisplayColumns, datetimeLocalToUtc, formatLabColumnLabel, formatLabRelativeTime } from '../lib/labDisplayTime';
 import { firstRuntimeTime, formatPriorOffsetHours, formatStudentRelativeTime } from '../lib/studentDisplayTime';
 
 interface LabResultsProps {
@@ -310,18 +310,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     }
   };
 
-  const sortedCollectionTimes = useMemo(() => {
-    const uniqueTimes = Array.from(
-      new Set(
-        labResults
-          .map((lab) => lab.collectionTime ?? lab.resultTime)
-          .filter((time): time is string => Boolean(time)),
-      ),
-    );
-    return uniqueTimes.sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime(),
-    );
-  }, [labResults]);
+  const labDisplayColumns = useMemo(() => buildLabDisplayColumns(labResults), [labResults]);
 
   const studentCaseClock = useMemo(() => {
     const runtimeTimes = labResults
@@ -405,15 +394,15 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const labsByTest = useMemo(
     () =>
       labResults.reduce<Record<string, Record<string, LabResult>>>((acc, lab) => {
-        const time = lab.collectionTime ?? lab.resultTime;
-        if (!time) return acc;
+        const columnKey = labDisplayColumns.keyByLabId.get(lab.id);
+        if (!columnKey) return acc;
         if (!acc[lab.testName]) {
           acc[lab.testName] = {};
         }
-        acc[lab.testName][time] = lab;
+        acc[lab.testName][columnKey] = lab;
         return acc;
       }, {}),
-    [labResults],
+    [labDisplayColumns.keyByLabId, labResults],
   );
 
   // Group labs by category
@@ -453,8 +442,10 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     return sorted;
   }, [labsByTest]);
 
-  const formatCollectionLabel = (value: string) =>
-    formatLabColumnLabel(value, labResults, studentView, studentCaseClock);
+  const formatCollectionLabel = (columnKey: string) => {
+    const column = labDisplayColumns.columns.find((entry) => entry.key === columnKey);
+    return column ? formatLabColumnLabel(column.time, labResults, studentView, studentCaseClock) : 'Not recorded';
+  };
 
   const formatStudentLabTime = (lab: LabResult, value?: string | null) => {
     if ((lab.overrideScope ?? 'baseline') === 'baseline') return formatPriorOffsetHours(lab.baselineRelativeOffsetHours);
@@ -721,9 +712,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     <TableHeader>
                       <TableRow>
                         <TableHead>Test</TableHead>
-                        {sortedCollectionTimes.map((time) => (
-                          <TableHead key={time} className="whitespace-nowrap">
-                            {formatCollectionLabel(time)}
+                        {labDisplayColumns.columns.map((column) => (
+                          <TableHead key={column.key} className="whitespace-nowrap">
+                            {formatCollectionLabel(column.key)}
                           </TableHead>
                         ))}
                       </TableRow>
@@ -734,7 +725,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                           <TableRow>
                             <TableCell
                               className="bg-muted font-semibold text-muted-foreground"
-                              colSpan={sortedCollectionTimes.length + 1}
+                              colSpan={labDisplayColumns.columns.length + 1}
                             >
                               {category}
                             </TableCell>
@@ -742,11 +733,11 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                           {Object.entries(tests).map(([testName, resultsByTime]) => (
                             <TableRow key={`${category}-${testName}`}>
                               <TableCell className="font-medium whitespace-nowrap">{testName}</TableCell>
-                              {sortedCollectionTimes.map((time) => {
-                                const lab = resultsByTime?.[time];
+                              {labDisplayColumns.columns.map((column) => {
+                                const lab = resultsByTime?.[column.key];
                                 return (
                                   <TableCell
-                                    key={time}
+                                    key={column.key}
                                     className={lab ? getStatusColor(lab.status) : 'text-muted-foreground'}
                                   >
                                     {lab ? (

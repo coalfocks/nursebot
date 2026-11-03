@@ -1,6 +1,50 @@
 import type { LabResult } from './types';
 import { formatPriorOffsetHours, formatStudentRelativeTime } from './studentDisplayTime';
 
+export type LabDisplayColumn = {
+  key: string;
+  time: string;
+};
+
+const labColumnAnalyteKey = (testName: string) => testName.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * Baseline sets remain independent. Runtime results are grouped by analyte
+ * occurrence: every first occurrence shares runtime-0, every second occurrence
+ * shares runtime-1, etc. This lets a CBC and BMP ordered during one simulation
+ * appear in one column while a repeat of CBC advances only its repeated panel.
+ */
+export const buildLabDisplayColumns = (labs: LabResult[]): { columns: LabDisplayColumn[]; keyByLabId: Map<string, string> } => {
+  const keyByLabId = new Map<string, string>();
+  const columns = new Map<string, LabDisplayColumn>();
+  const runtimeOccurrence = new Map<string, number>();
+  const ordered = labs
+    .map((lab, index) => ({ lab, index, time: lab.collectionTime ?? lab.resultTime }))
+    .filter((entry): entry is { lab: LabResult; index: number; time: string } => Boolean(entry.time))
+    .sort((a, b) => {
+      const delta = new Date(a.time).getTime() - new Date(b.time).getTime();
+      return delta || a.index - b.index;
+    });
+
+  ordered.forEach(({ lab, time }) => {
+    const isBaseline = (lab.overrideScope ?? 'baseline') === 'baseline';
+    const key = isBaseline
+      ? `baseline:${lab.baselineSetId ?? time}`
+      : `runtime:${runtimeOccurrence.get(labColumnAnalyteKey(lab.testName)) ?? 0}`;
+    if (!isBaseline) {
+      const analyte = labColumnAnalyteKey(lab.testName);
+      runtimeOccurrence.set(analyte, (runtimeOccurrence.get(analyte) ?? 0) + 1);
+    }
+    keyByLabId.set(lab.id, key);
+    if (!columns.has(key)) columns.set(key, { key, time });
+  });
+
+  return {
+    columns: [...columns.values()].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()),
+    keyByLabId,
+  };
+};
+
 const hoursBetween = (newer: string, older: string) =>
   Math.round((new Date(newer).getTime() - new Date(older).getTime()) / 3_600_000);
 
