@@ -110,6 +110,16 @@ export const COHORT_METRIC_DEFINITIONS: MetricDefinition[] = [
   },
 ];
 
+const uniqueByAssignmentId = <T extends AnalyticsAssignment>(assignments: T[]): T[] => {
+  const seen = new Set<string>();
+  return assignments.filter((assignment, index) => {
+    const id = assignment.id ?? `row-${index}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
 const percentage = (numerator: number, denominator: number) =>
   denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(1)) : null;
 
@@ -157,16 +167,6 @@ export const computeCohortMetrics = (
     participationRate: percentage(participatingLearners, eligibleLearners),
     scoreDistributions: { communication, mdm },
   };
-};
-
-const uniqueByAssignmentId = <T extends AnalyticsAssignment>(assignments: T[]): T[] => {
-  const seen = new Set<string>();
-  return assignments.filter((assignment, index) => {
-    const id = assignment.id ?? `row-${index}`;
-    if (seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
 };
 
 export type GroupedAnalytics = {

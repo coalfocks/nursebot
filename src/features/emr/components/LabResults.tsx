@@ -12,10 +12,10 @@ import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
 import { instantLabs, pendingLabs } from '../lib/labCatalog';
-import { isResultProducingStatLab } from '../lib/labOrderEligibility';
+import { isResultProducingLab } from '../lib/labOrderEligibility';
 import { normalizeLabResultForPatient } from '../lib/labIntegrity';
 import { useRequestIdentity } from '../../../hooks/useRequestIdentity';
-import { clampToMinimumPrior, formatScenarioPrior, formatScopedEmrTimestamp, minimumPriorTimestamp } from '../lib/scenarioTime';
+import { clampToMinimumPrior, formatLearnerEmrTime, formatRecordedEmrTimestamp, minimumPriorTimestamp } from '../lib/scenarioTime';
 
 interface LabResultsProps {
   patient: Patient;
@@ -41,6 +41,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [isLoadingLabs, setIsLoadingLabs] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [labSaveError, setLabSaveError] = useState<string | null>(null);
+  const [failedGenerationOrders, setFailedGenerationOrders] = useState<Array<{ id: string; orderName: string; error?: string | null }>>([]);
   const { profile } = useAuthStore();
   const canEdit = isSuperAdmin(profile);
   const forceBaseline = isSuperAdmin(profile);
@@ -48,6 +49,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   const [aiLabRequest, setAiLabRequest] = useState('');
   const [showManualLabModal, setShowManualLabModal] = useState(false);
   const [editingLab, setEditingLab] = useState<LabResult | null>(null);
+  const [editingSetLabel, setEditingSetLabel] = useState<string | null>(null);
+  const [setLabelDraft, setSetLabelDraft] = useState('');
+  const [isSavingSetLabel, setIsSavingSetLabel] = useState(false);
   const [labEditForm, setLabEditForm] = useState({
     value: '',
     unit: '',
@@ -122,6 +126,23 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
   }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent, normalizeForPatient]);
 
   useEffect(() => {
+    if (!assignmentId) {
+      setFailedGenerationOrders([]);
+      return;
+    }
+    let cancelled = false;
+    void emrApi.listOrders(patient.id, assignmentId, patient.roomId ?? null).then((orders) => {
+      if (cancelled) return;
+      setFailedGenerationOrders(
+        orders
+          .filter((order) => order.category === 'Lab' && order.labGenerationStatus === 'failed')
+          .map((order) => ({ id: order.id, orderName: order.orderName, error: order.labGenerationError })),
+      );
+    });
+    return () => { cancelled = true; };
+  }, [assignmentId, patient.id, patient.roomId, refreshToken]);
+
+  useEffect(() => {
     const request = capture();
     setRoomMeta(null);
     setRoomMetaLoaded(!patient.roomId);
@@ -190,7 +211,7 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       if (!isCurrent(request)) return;
 
       const candidates = orders.filter(
-        (order) => isResultProducingStatLab(order),
+        (order) => isResultProducingLab(order),
       );
 
       for (const order of candidates) {
@@ -574,7 +595,53 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
   const formatCollectionLabel = (value: string) => {
     const lab = labResults.find((entry) => entry.collectionTime === value);
-    return formatScopedEmrTimestamp(value, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours);
+    const isBaseline = (lab?.overrideScope ?? 'baseline') === 'baseline';
+    if (isBaseline) {
+      if (lab?.relativeOffsetHours !== null && lab?.relativeOffsetHours !== undefined && Number.isFinite(lab.relativeOffsetHours)) {
+        return lab.relativeLabel?.trim() || (lab.relativeOffsetHours === 0 ? 'Now' : `${lab.relativeOffsetHours} hours prior`);
+      }
+      return lab?.relativeLabel?.trim() || 'Prior to Encounter';
+    }
+    return canEdit
+      ? formatRecordedEmrTimestamp(value, lab?.relativeOffsetHours)
+      : formatLearnerEmrTime(value, patient.admissionDate, lab?.relativeOffsetHours);
+  };
+
+  const formatLabTime = (value: string | null | undefined, lab?: LabResult) =>
+    canEdit
+      ? formatRecordedEmrTimestamp(value, lab?.relativeOffsetHours)
+      : formatLearnerEmrTime(value, patient.admissionDate, lab?.relativeOffsetHours);
+
+  const openSetLabelEditor = (collectionTime: string) => {
+    setEditingSetLabel(collectionTime);
+    setSetLabelDraft(formatCollectionLabel(collectionTime, 0));
+    setLabSaveError(null);
+  };
+
+  const saveSetLabel = async () => {
+    if (!editingSetLabel) return;
+    const label = setLabelDraft.trim();
+    if (!label) {
+      setLabSaveError('Enter a label for this lab set.');
+      return;
+    }
+    setIsSavingSetLabel(true);
+    setLabSaveError(null);
+    try {
+      const saved = await emrApi.updateBaselineLabSetLabel(patient.id, editingSetLabel, label);
+      if (!saved) {
+        setLabSaveError('Could not save this lab label. No lab values or timestamps were changed.');
+        return;
+      }
+      setLabResults((current) => current.map((lab) =>
+        lab.collectionTime === editingSetLabel && (lab.overrideScope ?? 'baseline') === 'baseline'
+          ? { ...lab, relativeLabel: label }
+          : lab,
+      ));
+      setEditingSetLabel(null);
+    } finally {
+      setIsSavingSetLabel(false);
+    }
   };
 
   // Group labs by category for trending
@@ -603,7 +670,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
           const lab = labResults.find((candidate) => candidate.collectionTime === entry.time);
           return {
             ...entry,
-            time: formatScopedEmrTimestamp(entry.time, lab?.overrideScope, patient.admissionDate, lab?.relativeOffsetHours),
+            time: canEdit
+              ? formatRecordedEmrTimestamp(entry.time, lab?.relativeOffsetHours)
+              : formatLearnerEmrTime(entry.time, patient.admissionDate, lab?.relativeOffsetHours),
           };
         }),
     ]),
@@ -687,6 +756,16 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {labSaveError}
         </p>
+      )}
+      {failedGenerationOrders.length > 0 && (
+        <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-800">
+          <p className="font-semibold">Result generation failed — retry</p>
+          {failedGenerationOrders.map((order) => (
+            <p key={order.id} className="mt-1">
+              {order.orderName}: {order.error || 'No validated result bundle was saved.'} Retry the existing order from Medical Orders; no new order is required.
+            </p>
+          ))}
+        </div>
       )}
       {canEdit && (
         <div className="space-y-3">
@@ -773,21 +852,35 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {labSaveError && !isLoadingLabs ? (
-                <p role="alert" className="text-sm text-red-700">{labSaveError}</p>
-              ) : isLoadingLabs ? (
+              {isLoadingLabs ? (
                 <p className="text-sm text-muted-foreground">Loading saved lab results…</p>
               ) : labResults.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
+                <div className="space-y-2">
+                  {labSaveError && <p role="alert" className="text-sm text-red-700">{labSaveError}</p>}
+                  <p className="text-sm text-muted-foreground">No labs yet. Order labs from the Orders tab.</p>
+                </div>
               ) : (
                 <div className="rounded-md border overflow-x-auto">
+                  {labSaveError && <p role="alert" className="border-b px-3 py-2 text-sm text-red-700">{labSaveError}</p>}
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Test</TableHead>
                         {sortedCollectionTimes.map((time, idx) => (
                           <TableHead key={time} className="whitespace-nowrap">
-                            {formatCollectionLabel(time, idx)}
+                            <div className="flex items-center gap-2">
+                              <span>{formatCollectionLabel(time, idx)}</span>
+                              {canEdit && (labResults.find((lab) => lab.collectionTime === time)?.overrideScope ?? 'baseline') === 'baseline' && (
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                                  onClick={() => openSetLabelEditor(time)}
+                                  aria-label={`Edit lab time ${formatCollectionLabel(time, idx)}`}
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
                           </TableHead>
                         ))}
                       </TableRow>
@@ -821,6 +914,14 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                                         </div>
                                         <div className="text-xs text-muted-foreground">{lab.referenceRange}</div>
                                         <div className="text-xs text-muted-foreground">{lab.status}</div>
+                                        <div className="text-xs text-muted-foreground">
+                                          Collected: {formatLabTime(lab.collectionTime, lab)}
+                                        </div>
+                                        {lab.resultTime && (
+                                          <div className="text-xs text-muted-foreground">
+                                            Resulted: {formatLabTime(lab.resultTime, lab)}
+                                          </div>
+                                        )}
                                         {canEdit && (
                                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                             <button
@@ -931,6 +1032,32 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
               <Button variant="outline" onClick={() => setEditingLab(null)}>Cancel</Button>
               <Button onClick={() => void saveLabEdit()} disabled={isSavingLabEdit || !labEditForm.value.trim()}>
                 {isSavingLabEdit ? 'Saving…' : 'Save correction'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingSetLabel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEditingSetLabel(null)}>
+          <div className="relative w-full max-w-md rounded-lg bg-background p-6 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <h3 className="mb-2 text-lg font-semibold">Edit lab header</h3>
+            <p className="mb-4 text-sm text-muted-foreground">Change only the learner-facing words for this saved lab set. Lab values, stored timestamps, and history stay unchanged.</p>
+            <label className="block text-sm font-medium">Header label
+              <input
+                autoFocus
+                type="text"
+                maxLength={80}
+                placeholder="Prior to Encounter"
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                value={setLabelDraft}
+                onChange={(event) => setSetLabelDraft(event.target.value)}
+              />
+            </label>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditingSetLabel(null)}>Cancel</Button>
+              <Button onClick={() => void saveSetLabel()} disabled={isSavingSetLabel || !setLabelDraft.trim()}>
+                {isSavingSetLabel ? 'Saving…' : 'Save label'}
               </Button>
             </div>
           </div>

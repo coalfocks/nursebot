@@ -7,6 +7,7 @@ import type {
   LabResult,
   VitalSigns,
   MedicalOrder,
+  MarAdministrationEvent,
   ImagingStudy,
   ImagingImage,
   RoomOrdersConfig,
@@ -18,10 +19,37 @@ import type {
 
 import { resolveOverrideScope, scopeMatchesContext, type RoomLineage } from './scope';
 import { normalizeLabResult } from './labIntegrity';
+import { mapManualMarPacket, type ManualMarPacket, type ManualMarPacketResult, type ManualMarReadiness } from './manualMar';
 type ClinicalNoteRow = Database['public']['Tables']['clinical_notes']['Row'];
 type ImagingStudyRow = Database['public']['Tables']['imaging_studies']['Row'];
 type LabResultRow = Database['public']['Tables']['lab_results']['Row'];
 type MedicalOrderRow = Database['public']['Tables']['medical_orders']['Row'];
+
+type MarAdministrationEventRow = {
+  id: string; patient_id: string; room_id: number; assignment_id: string | null; order_id: string | null;
+  case_version: string | null; occurrence_key: string; relative_offset_hours: number | null;
+  administered_at: string | null; medication_name: string; ordered_dose: string | null;
+  administered_dose: string | null; unit: string | null; route: string | null; frequency: string | null;
+  category: string; status: string; simulated_clinician: string | null; reason: string | null;
+  prn_indication: string | null; response: string | null; infusion_details: unknown; source: string;
+  actor_label: string | null; record_version: number;
+};
+
+const mapMarEvent = (row: MarAdministrationEventRow): MarAdministrationEvent => ({
+  id: row.id, patientId: row.patient_id, roomId: row.room_id, assignmentId: row.assignment_id,
+  orderId: row.order_id, caseVersion: row.case_version, occurrenceKey: row.occurrence_key,
+  relativeOffsetHours: row.relative_offset_hours, administeredAt: row.administered_at,
+  medicationName: row.medication_name, orderedDose: row.ordered_dose, administeredDose: row.administered_dose,
+  unit: row.unit, route: row.route, frequency: row.frequency,
+  category: row.category as MarAdministrationEvent['category'], status: row.status as MarAdministrationEvent['status'],
+  simulatedClinician: row.simulated_clinician, reason: row.reason, prnIndication: row.prn_indication,
+  response: row.response, infusionDetails: row.infusion_details && typeof row.infusion_details === 'object' ? row.infusion_details as Record<string, unknown> : null,
+  source: row.source as MarAdministrationEvent['source'], actorLabel: row.actor_label, recordVersion: row.record_version,
+});
+
+type ManualMarRpc = { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> };
+const manualMarRpc = (): ManualMarRpc => supabase as unknown as ManualMarRpc;
+const marSupabase = supabase as unknown as { from: (table: string) => any };
 
 const deriveScope = resolveOverrideScope;
 
@@ -103,6 +131,7 @@ const mapClinicalNote = (row: ClinicalNoteRow, fallbackPatientId: string): Clini
     signed: row.signed ?? false,
     recordVersion: row.record_version,
     timelineEntryId: row.timeline_entry_id,
+    relativeLabel: row.relative_label,
     relativeOffsetHours: row.relative_offset_hours,
   };
 };
@@ -128,6 +157,11 @@ const mapMedicalOrder = (row: MedicalOrderRow, fallbackPatientId = ''): MedicalO
     instructions: row.instructions ?? undefined,
     deletedAt: row.deleted_at,
     recordVersion: row.record_version,
+    labGenerationStatus: row.lab_generation_status as MedicalOrder['labGenerationStatus'],
+    labGenerationRequestId: row.lab_generation_request_id,
+    labGenerationError: row.lab_generation_error,
+    labGenerationAttempts: row.lab_generation_attempts,
+    labGenerationUpdatedAt: row.lab_generation_updated_at,
   };
 };
 
@@ -158,6 +192,7 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     deletedAt: row.deleted_at,
     timelineEntryId: row.timeline_entry_id,
     relativeOffsetHours: row.relative_offset_hours,
+    orderId: row.order_id,
   };
   return normalizeLabResult(mapped);
 };
@@ -366,19 +401,28 @@ export const emrApi = {
 
   async listClinicalNotes(patientId: string, assignmentId?: string, roomId?: number | null): Promise<ClinicalNote[]> {
     const targetRooms = await getRoomLineage(roomId);
-    const { data, error } = await supabase
-      .from('clinical_notes')
-      .select('*')
-      .eq('patient_id', patientId)
-      .is('deleted_at', null)
-      .order('timestamp', { ascending: false });
+    const [{ data, error }, assignmentResult] = await Promise.all([
+      supabase
+        .from('clinical_notes')
+        .select('*')
+        .eq('patient_id', patientId)
+        .is('deleted_at', null)
+        .order('timestamp', { ascending: false }),
+      assignmentId
+        ? supabase
+            .from('student_room_assignments')
+            .select('id, room_id, student_progress_note, completed_at, updated_at')
+            .eq('id', assignmentId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
 
     if (error) {
       console.error('Error fetching clinical notes', error);
       return [];
     }
 
-    return (data ?? [])
+    const notes = (data ?? [])
       .map((row) => mapClinicalNote(row, patientId))
       .filter(
         (note) =>
@@ -398,6 +442,27 @@ export const emrApi = {
           assignmentId,
         ),
       );
+
+    const progressNote = assignmentResult.data?.student_progress_note?.trim();
+    if (assignmentId && progressNote) {
+      const projectedId = `progress-note-${assignmentId}`;
+      const projected: ClinicalNote = {
+        id: projectedId,
+        patientId,
+        assignmentId,
+        roomId: assignmentResult.data.room_id ?? roomId ?? null,
+        overrideScope: 'assignment',
+        type: 'Progress',
+        title: 'Progress Note',
+        content: progressNote,
+        author: 'Student',
+        timestamp: assignmentResult.data.completed_at ?? assignmentResult.data.updated_at ?? undefined,
+        signed: true,
+      };
+      return [projected, ...notes.filter((note) => note.id !== projectedId)];
+    }
+
+    return notes;
   },
 
   async addClinicalNote(note: ClinicalNote): Promise<ClinicalNote | null> {
@@ -576,50 +641,23 @@ export const emrApi = {
         return { ok: false, error: existingError.message };
       }
 
-      // Always use a single consolidated timestamp for all baseline labs
-      // If any existing baseline labs exist, use their timestamp; otherwise use the baseline epoch
-      const baselineTimestamp =
-        existingLabs && existingLabs.length > 0
-          ? existingLabs[0].collection_time ?? existingLabs[0].result_time ?? '2000-01-01T00:00:00.000Z'
-          : '2000-01-01T00:00:00.000Z';
-
-      // Normalize all existing baseline labs to the consolidated timestamp
-      const labsNeedingTimestampNormalization = (existingLabs ?? [])
-        .filter((lab) => {
-          const labTime = lab.collection_time ?? lab.result_time;
-          return labTime && labTime !== baselineTimestamp;
-        })
-        .map((lab) => ({
-          id: lab.id,
-          payload: {
-            collection_time: baselineTimestamp,
-            result_time: baselineTimestamp,
-          },
-        }));
-
-      if (labsNeedingTimestampNormalization.length > 0) {
-        const normalizeResults = await Promise.all(
-          labsNeedingTimestampNormalization.map((update) =>
-            supabase
-              .from('lab_results')
-              .update(update.payload)
-              .eq('id', update.id),
-          ),
-        );
-        const normalizationError = normalizeResults.find(({ error }) => error)?.error;
-        if (normalizationError) {
-          console.error('Error normalizing baseline lab timestamp', normalizationError);
-          return { ok: false, error: normalizationError.message };
-        }
-      }
-
-      const existingByTest = new Map(
-        (existingLabs ?? []).map((lab) => [lab.test_name, lab]),
+      const defaultBaselineTimestamp = '2000-01-01T00:00:00.000Z';
+      const timestampFor = (lab: LabResult) => lab.collectionTime ?? lab.resultTime ?? defaultBaselineTimestamp;
+      const keyFor = (testName: string, timestamp: string) => `${testName}\u0000${timestamp}`;
+      // A baseline set is identified by its test and recorded timestamp. Never
+      // normalize older sets to the first row's timestamp: admin authoring can
+      // intentionally create multiple independent historical sets.
+      const existingByKey = new Map(
+        (existingLabs ?? []).map((lab) => [
+          keyFor(lab.test_name, lab.collection_time ?? lab.result_time ?? defaultBaselineTimestamp),
+          lab,
+        ]),
       );
 
       const updates = labs
         .map((lab) => {
-          const existing = existingByTest.get(lab.testName);
+          const timestamp = timestampFor(lab);
+          const existing = existingByKey.get(keyFor(lab.testName, timestamp));
           if (!existing) return null;
           return {
             id: existing.id,
@@ -633,8 +671,8 @@ export const emrApi = {
               unit: lab.unit,
               reference_range: lab.referenceRange,
               status: lab.status,
-              collection_time: baselineTimestamp,
-              result_time: baselineTimestamp,
+              collection_time: timestamp,
+              result_time: timestamp,
               ordered_by: lab.orderedBy,
             },
           };
@@ -642,8 +680,12 @@ export const emrApi = {
         .filter((entry): entry is { id: string; payload: Record<string, unknown> } => Boolean(entry));
 
       const inserts = labs
-        .filter((lab) => !existingByTest.has(lab.testName))
+        .filter((lab) => !existingByKey.has(keyFor(lab.testName, timestampFor(lab))))
         .map((lab) => ({
+          ...(() => {
+            const timestamp = timestampFor(lab);
+            return { collection_time: timestamp, result_time: timestamp };
+          })(),
           patient_id: lab.patientId,
           assignment_id: null,
           room_id: null,
@@ -653,8 +695,6 @@ export const emrApi = {
           unit: lab.unit,
           reference_range: lab.referenceRange,
           status: lab.status,
-          collection_time: baselineTimestamp,
-          result_time: baselineTimestamp,
           ordered_by: lab.orderedBy,
         }));
 
@@ -698,6 +738,7 @@ export const emrApi = {
       collection_time: lab.collectionTime,
       result_time: lab.resultTime,
       ordered_by: lab.orderedBy,
+      order_id: lab.orderId ?? null,
     }));
     const { error } = await supabase.from('lab_results').insert(payload);
     if (error) {
@@ -763,6 +804,27 @@ export const emrApi = {
       return { conflict: true, current: mapLabResult(current, current.patient_id ?? ''), expectedVersion };
     }
     return mapLabResult(data, data.patient_id ?? '');
+  },
+
+  async updateBaselineLabSetLabel(
+    patientId: string,
+    collectionTime: string,
+    label: string | null,
+  ): Promise<boolean> {
+    const { error } = await supabase
+      .from('lab_results')
+      .update({ relative_label: label })
+      .eq('patient_id', patientId)
+      .eq('collection_time', collectionTime)
+      .eq('override_scope', 'baseline')
+      .is('assignment_id', null)
+      .is('room_id', null)
+      .is('deleted_at', null);
+    if (error) {
+      console.error('Error updating baseline lab set offset', error);
+      return false;
+    }
+    return true;
   },
 
   async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {
@@ -911,7 +973,12 @@ export const emrApi = {
     }
   },
 
-  async listOrders(patientId: string, assignmentId?: string, roomId?: number | null): Promise<MedicalOrder[]> {
+  async listOrders(
+    patientId: string,
+    assignmentId?: string,
+    roomId?: number | null,
+    onError?: (message: string) => void,
+  ): Promise<MedicalOrder[]> {
     const targetRooms = await getRoomLineage(roomId);
     const { data, error } = await supabase
       .from('medical_orders')
@@ -922,6 +989,7 @@ export const emrApi = {
 
     if (error) {
       console.error('Error fetching orders', error);
+      onError?.('Unable to load saved medical orders. Refresh the chart and try again.');
       return [];
     }
 
@@ -938,6 +1006,67 @@ export const emrApi = {
           assignmentId,
         ),
       );
+  },
+
+  async listMarEvents(patientId: string, assignmentId?: string, roomId?: number | null, caseVersion?: string | null, onError?: (message: string) => void): Promise<MarAdministrationEvent[]> {
+    const targetRooms = await getRoomLineage(roomId);
+    let query = marSupabase.from('mar_administration_events').select('*').eq('patient_id', patientId).is('deleted_at', null);
+    query = assignmentId ? query.or(`assignment_id.eq.${assignmentId},assignment_id.is.null`) : query.is('assignment_id', null);
+    if (caseVersion) query = query.eq('case_version', caseVersion);
+    const { data, error } = await query.order('relative_offset_hours', { ascending: true }).order('administered_at', { ascending: true });
+    if (error) { console.error('Error fetching MAR history', error); onError?.('Unable to load MAR history. Refresh the chart and try again.'); return []; }
+    return (data ?? []).map((row: MarAdministrationEventRow) => mapMarEvent(row)).filter((event: MarAdministrationEvent) => roomId ? (targetRooms ?? [roomId]).includes(event.roomId) && event.assignmentId === (assignmentId ?? null) : event.assignmentId === (assignmentId ?? null));
+  },
+
+  async getMarBaselineVersion(assignmentId: string): Promise<{ caseVersion: string; contentHash: string } | null> {
+    const { data, error } = await marSupabase.from('mar_assignment_baseline_versions').select('case_version, content_hash').eq('assignment_id', assignmentId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    return error || !data ? null : { caseVersion: data.case_version, contentHash: data.content_hash };
+  },
+
+  async getMarReadiness(): Promise<boolean> {
+    const { data, error } = await manualMarRpc().rpc('get_mar_readiness');
+    return !error && Boolean((data as { ready?: boolean } | null)?.ready);
+  },
+
+  async getManualMarReadiness(): Promise<ManualMarReadiness> {
+    const { data, error } = await manualMarRpc().rpc('get_manual_mar_readiness');
+    if (error) return { available: false, ready: false, error: error.message };
+    const value = data as { available?: boolean; ready?: boolean; schemaVersion?: number } | null;
+    return { available: value?.available === true, ready: value?.ready === true, schemaVersion: value?.schemaVersion };
+  },
+
+  async getMarAssignmentReader(assignmentId: string): Promise<{ reader: 'manual' | 'automatic' | 'unavailable'; caseVersion: string | null; error?: string }> {
+    const { data, error } = await manualMarRpc().rpc('get_mar_assignment_reader', { p_assignment_id: assignmentId });
+    if (error) return { reader: 'unavailable', caseVersion: null, error: error.message };
+    const value = data as { reader?: unknown; caseVersion?: unknown } | null;
+    return { reader: value?.reader === 'manual' || value?.reader === 'automatic' ? value.reader : 'unavailable', caseVersion: typeof value?.caseVersion === 'string' ? value.caseVersion : null };
+  },
+
+  async readManualMarPacket(patientId: string, roomId: number, assignmentId: string | null, caseVersion: string): Promise<ManualMarPacketResult> {
+    const { data, error } = await manualMarRpc().rpc('get_manual_mar_packet', { p_patient_id: patientId, p_room_id: roomId, p_assignment_id: assignmentId, p_case_version: caseVersion });
+    if (error) return { status: 'unavailable', packet: null, error: error.message };
+    if (data == null) return { status: 'empty', packet: null };
+    try { const packet = mapManualMarPacket(data); return packet ? { status: 'ready', packet } : { status: 'error', packet: null, error: 'MANUAL_MAR_PACKET_INVALID' }; } catch (packetError) { return { status: 'error', packet: null, error: packetError instanceof Error ? packetError.message : 'MANUAL_MAR_PACKET_INVALID' }; }
+  },
+
+  async saveManualMarPacket(packet: Pick<ManualMarPacket, 'patientId' | 'roomId' | 'caseVersion' | 'revision' | 'events'>, requestId = crypto.randomUUID()): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
+    const { data, error } = await manualMarRpc().rpc('save_manual_mar_packet', { p_request_id: requestId, p_patient_id: packet.patientId, p_room_id: packet.roomId, p_case_version: packet.caseVersion, p_expected_revision: packet.revision, p_events: packet.events });
+    if (error) return { ok: false, error: error.message };
+    const revision = Number((data as { revision?: number } | null)?.revision);
+    return { ok: true, revision: Number.isFinite(revision) ? revision : packet.revision + 1 };
+  },
+
+  async saveMarHistory(patientId: string, roomId: number, assignmentId: string | null, caseVersion: string | null, expectedRevision: number, events: MarAdministrationEvent[], requestId = crypto.randomUUID()): Promise<{ ok: true; revision: number } | { ok: false; error: string }> {
+    const { data, error } = await manualMarRpc().rpc('save_mar_history_atomic', { p_request_id: requestId, p_patient_id: patientId, p_room_id: roomId, p_assignment_id: assignmentId, p_case_version: caseVersion, p_expected_revision: expectedRevision, p_events: events });
+    if (error) return { ok: false, error: error.message };
+    const revision = Number((data as { revision?: number } | null)?.revision);
+    return { ok: true, revision: Number.isFinite(revision) ? revision : expectedRevision + 1 };
+  },
+
+  async getMarHistoryRevision(patientId: string, roomId: number, assignmentId: string | null): Promise<number> {
+    const { data, error } = await manualMarRpc().rpc('get_mar_history_revision', { p_patient_id: patientId, p_room_id: roomId, p_assignment_id: assignmentId });
+    if (error) { console.error('Error fetching MAR revision', error); return 0; }
+    return Number(data ?? 0);
   },
 
   async addOrder(order: MedicalOrder, roomId?: number | null): Promise<MedicalOrder | null> {
@@ -958,12 +1087,51 @@ export const emrApi = {
       order_time: order.orderTime,
       scheduled_time: order.scheduledTime,
       instructions: order.instructions,
+      lab_generation_request_id: order.labGenerationRequestId ?? null,
+      lab_generation_status: order.labGenerationStatus ?? 'not_requested',
+      lab_generation_error: order.labGenerationError ?? null,
+      lab_generation_attempts: order.labGenerationAttempts ?? 0,
+      lab_generation_updated_at: order.labGenerationUpdatedAt ?? null,
     }).select('*').maybeSingle();
     if (error) {
       console.error('Error inserting order', error);
       return null;
     }
     return data ? mapMedicalOrder(data, order.patientId) : null;
+  },
+
+  async updateLabGenerationState(
+    orderId: string,
+    state: NonNullable<MedicalOrder['labGenerationStatus']>,
+    requestId: string,
+    errorMessage?: string | null,
+  ): Promise<MedicalOrder | null> {
+    let attempts: number | undefined;
+    if (state === 'generating') {
+      const { data: current } = await supabase
+        .from('medical_orders')
+        .select('lab_generation_attempts')
+        .eq('id', orderId)
+        .maybeSingle();
+      attempts = (current?.lab_generation_attempts ?? 0) + 1;
+    }
+    const { data, error } = await supabase
+      .from('medical_orders')
+      .update({
+        lab_generation_status: state,
+        lab_generation_request_id: requestId,
+        lab_generation_error: errorMessage ?? null,
+        ...(attempts === undefined ? {} : { lab_generation_attempts: attempts }),
+        lab_generation_updated_at: new Date().toISOString(),
+      })
+      .eq('id', orderId)
+      .select('*')
+      .maybeSingle();
+    if (error) {
+      console.error('Error updating lab generation state', error);
+      return null;
+    }
+    return data ? mapMedicalOrder(data) : null;
   },
 
   async updateOrder(

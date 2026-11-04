@@ -201,14 +201,42 @@ Keep values realistic for adult inpatients. Do not add commentary outside the JS
   return { system, user };
 };
 
-const parseJsonFromString = (content: string) => {
+const parseJsonFromString = (content: string): unknown => {
+  const cleaned = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
   try {
-    return JSON.parse(content);
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      const record = parsed as Record<string, unknown>;
+      for (const key of ['labs', 'results', 'data']) {
+        if (Array.isArray(record[key])) return record[key];
+      }
+    }
+    return parsed;
   } catch {
-    const match = content.match(/\{[\s\S]*\}/);
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        return JSON.parse(arrayMatch[0]);
+      } catch {
+        // Continue to the object recovery path below.
+      }
+    }
+    const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try {
-        return JSON.parse(match[0]);
+        const parsed = JSON.parse(match[0]);
+        if (parsed && typeof parsed === 'object') {
+          const record = parsed as Record<string, unknown>;
+          for (const key of ['labs', 'results', 'data']) {
+            if (Array.isArray(record[key])) return record[key];
+          }
+        }
+        return parsed;
       } catch {
         return null;
       }
@@ -268,6 +296,9 @@ Deno.serve(async (req) => {
       throw new Error('Unable to parse AI response');
     }
 
+    if (isBatch && !Array.isArray(parsed)) {
+      throw new Error('Lab engine returned a non-array panel response');
+    }
     const responseBody = isBatch ? { labs: parsed } : parsed;
 
     return new Response(JSON.stringify(responseBody), {

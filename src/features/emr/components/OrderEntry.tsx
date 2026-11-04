@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from './ui/Textarea';
 import { ScrollArea } from './ui/ScrollArea';
 import { Search, Plus, Clock, AlertCircle, CheckCircle, Pill, TestTube, Camera, ClipboardList } from 'lucide-react';
-import { allOrders, type OrderItem } from '../lib/ordersData';
+import { allOrders, getInitialFrequency, type OrderItem } from '../lib/ordersData';
 import type { Patient, MedicalOrder } from '../lib/types';
 import { useAuthStore } from '../../../stores/authStore';
 import { minimumPriorTimestamp } from '../lib/scenarioTime';
@@ -86,7 +86,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
     }
     
     setOrderDetails({
-      frequency: '',
+      frequency: getInitialFrequency(order),
       route: order.routes?.[0] || '',
       dose: extractedDose,
       unit: order.units?.[0] || extractedUnit,

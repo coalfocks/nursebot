@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Loader2, Plus, Search, MessageSquare, ClipboardList, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
@@ -15,6 +16,8 @@ import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
+import { downloadText, eventContent, eventLabel, manifestToCsv, type AssignmentEventManifest } from '../lib/assignmentEventManifest';
+import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
   student: {
@@ -40,10 +43,17 @@ type ChatMessage = Database['public']['Tables']['chat_messages']['Row'];
 type Specialty = Database['public']['Tables']['specialties']['Row'];
 type School = Database['public']['Tables']['schools']['Row'];
 
+type AssignmentCreateStatus = {
+  kind: 'error' | 'success' | 'info';
+  code: string;
+  message: string;
+  requestId?: string;
+};
+
 type EvidenceAuditEvent = {
   id: string;
   type: string;
-  timestamp: string;
+  timestamp: string | null;
   details: string;
 };
 
@@ -66,9 +76,11 @@ type EvidenceAudit = {
     source_event_ids: Database['public']['Tables']['feedback_assessment_runs']['Row']['source_event_ids'];
     result: Database['public']['Tables']['feedback_assessment_runs']['Row']['result'];
   } | null;
+  manifest: AssignmentEventManifest;
 };
 
 export default function AssignmentManager() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, profile, activeSchoolId } = useAuthStore();
   const hasAdmin = hasAdminAccess(profile);
   const scopedSchoolId = isSuperAdmin(profile) ? activeSchoolId : profile?.school_id ?? null;
@@ -97,6 +109,9 @@ export default function AssignmentManager() {
   const [bulkTargetSchoolId, setBulkTargetSchoolId] = useState<string>('');
   const [bulkTargetSpecialty, setBulkTargetSpecialty] = useState<string>('');
   const [selectedBulkStudents, setSelectedBulkStudents] = useState<string[]>([]);
+  const [createStatus, setCreateStatus] = useState<AssignmentCreateStatus | null>(null);
+  const [pendingAssignmentCreate, setPendingAssignmentCreate] = useState<PendingAssignmentCreate | null>(null);
+  const [createInFlight, setCreateInFlight] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<{
     id: string;
     window_start: string;
@@ -116,6 +131,51 @@ export default function AssignmentManager() {
   const [rerunningAssessments, setRerunningAssessments] = useState<Set<string>>(new Set());
   const assignableStudents = students.filter((student) => isAssignableStudentProfile(student));
   const assignableStudentCutoff = getAssignableStudentCutoffDate();
+  const requestedStudentId = searchParams.get('studentId');
+  const pendingAssignmentStorageKey = user
+    ? `assignment-create-pending:${user.id}:${scopedSchoolId ?? 'all-schools'}`
+    : null;
+
+  useEffect(() => {
+    if (!pendingAssignmentStorageKey || pendingAssignmentCreate) return;
+    try {
+      const raw = window.localStorage.getItem(pendingAssignmentStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PendingAssignmentCreate;
+      if (typeof parsed.requestId === 'string' && Array.isArray(parsed.assignments) && parsed.assignments.length > 0) {
+        setPendingAssignmentCreate(parsed);
+        setCreateStatus({
+          kind: 'info',
+          code: 'ASSIGNMENT_CREATE_RECOVERED',
+          message: 'An earlier assignment request was not confirmed. Retry it to read back the original request before creating anything new.',
+          requestId: parsed.requestId,
+        });
+      }
+    } catch (error) {
+      console.error('Unable to recover pending assignment creation:', error);
+      window.localStorage.removeItem(pendingAssignmentStorageKey);
+    }
+  }, [pendingAssignmentStorageKey, pendingAssignmentCreate]);
+
+  const persistPendingAssignmentCreate = (request: PendingAssignmentCreate) => {
+    setPendingAssignmentCreate(request);
+    if (!pendingAssignmentStorageKey) return;
+    try {
+      window.localStorage.setItem(pendingAssignmentStorageKey, JSON.stringify(request));
+    } catch (error) {
+      console.error('Unable to persist pending assignment creation:', error);
+    }
+  };
+
+  const clearPendingAssignmentCreate = () => {
+    setPendingAssignmentCreate(null);
+    if (!pendingAssignmentStorageKey) return;
+    try {
+      window.localStorage.removeItem(pendingAssignmentStorageKey);
+    } catch (error) {
+      console.error('Unable to clear pending assignment creation:', error);
+    }
+  };
 
   const fetchPersistedChatAssignmentIds = async (assignmentIds: string[]) => {
     const result = new Set<string>();
@@ -212,6 +272,28 @@ export default function AssignmentManager() {
     void loadData();
   }, [hasAdmin, scopedSchoolId]);
 
+  useEffect(() => {
+    if (loading || !requestedStudentId || showAssignModal || pendingAssignmentCreate) return;
+
+    const requestedStudent = assignableStudents.find((student) => student.id === requestedStudentId);
+    if (!requestedStudent) {
+      setCreateStatus({
+        kind: 'error',
+        code: 'STUDENT_NOT_ASSIGNABLE',
+        message: 'That student is not available in the current school scope or assignment window.',
+      });
+      setSearchParams({}, { replace: true });
+      return;
+    }
+
+    setTargetingMode('individual');
+    setSelectedStudent(requestedStudent.id);
+    setStudentSearch(requestedStudent.full_name);
+    setCreateStatus(null);
+    setShowAssignModal(true);
+    setSearchParams({}, { replace: true });
+  }, [assignableStudents, loading, pendingAssignmentCreate, requestedStudentId, setSearchParams, showAssignModal]);
+
   const fetchAssignments = async () => {
     const query = buildAssignmentListQuery(supabase, scopedSchoolId);
 
@@ -294,29 +376,107 @@ export default function AssignmentManager() {
     return extras.map((extra) => minGapMs + extra);
   };
 
+  const readBackCreatedAssignments = async (request: PendingAssignmentCreate) => {
+    const { data, error } = await supabase
+      .from('student_room_assignments')
+      .select('id')
+      .in('id', request.assignments.map((assignment) => assignment.id));
+    if (error) throw error;
+    const existingIds = new Set((data ?? []).map((assignment) => assignment.id));
+    return {
+      existingIds,
+      missing: getMissingAssignmentRows(request.assignments, existingIds),
+    };
+  };
+
+  const confirmAssignmentCreate = async (request: PendingAssignmentCreate) => {
+    const beforeInsert = await readBackCreatedAssignments(request);
+    if (beforeInsert.missing.length > 0) {
+      const { error } = await supabase
+        .from('student_room_assignments')
+        .insert(beforeInsert.missing);
+      if (error) throw error;
+    }
+
+    const afterInsert = await readBackCreatedAssignments(request);
+    if (afterInsert.missing.length > 0) {
+      const error = new Error('Assignment creation returned without confirming every requested assignment. The request is retained for a safe retry.');
+      (error as Error & { code?: string }).code = 'ASSIGNMENT_CREATE_UNCONFIRMED';
+      throw error;
+    }
+  };
+
+  const resetAssignmentDraft = () => {
+    setSelectedStudent('');
+    setStudentSearch('');
+    setSelectedRooms([]);
+    setWindowStart('');
+    setWindowEnd('');
+    setTargetingMode('individual');
+    setBulkTargetSchoolId('');
+    setBulkTargetSpecialty('');
+    setSelectedBulkStudents([]);
+  };
+
   const handleAssign = async () => {
+    let activeRequestId = pendingAssignmentCreate?.requestId;
+    const fail = (code: string, message: string) => {
+      setCreateStatus({ kind: 'error', code, message, requestId: activeRequestId });
+    };
+
+    if (createInFlight) return;
+
+    // An uncertain response owns its original rows. Read them back first;
+    // never rebuild a request from editable form state or create duplicates.
+    if (pendingAssignmentCreate) {
+      const request = pendingAssignmentCreate;
+      activeRequestId = request.requestId;
+      setCreateInFlight(true);
+      setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_RETRYING', message: `Checking the original request before retrying ${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}…`, requestId: request.requestId });
+      try {
+        await confirmAssignmentCreate(request);
+        setCreateStatus({ kind: 'success', code: 'ASSIGNMENT_CREATE_CONFIRMED', message: `Assignment creation confirmed (${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}). The student can now open the case when it becomes active.`, requestId: request.requestId });
+        clearPendingAssignmentCreate();
+        setShowAssignModal(false);
+        resetAssignmentDraft();
+        try {
+          await fetchAssignments();
+        } catch (refreshError) {
+          console.error('Assignment created but list refresh failed:', refreshError);
+          setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_CONFIRMED_REFRESH_FAILED', message: 'Assignment creation was confirmed, but the admin list could not be refreshed. Refresh the page to read it back; no second create was attempted.', requestId: request.requestId });
+        }
+      } catch (error) {
+        console.error('Error retrying assignment creation:', error);
+        const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'ASSIGNMENT_CREATE_RETRY_FAILED';
+        setCreateStatus({ kind: 'error', code, message: error instanceof Error ? error.message : 'The original creation request is still unconfirmed. Your draft is retained.', requestId: request.requestId });
+      } finally {
+        setCreateInFlight(false);
+      }
+      return;
+    }
+
     if (selectedRooms.length === 0 || !user || !windowStart || !windowEnd) {
-      alert('Please select at least one room and set the window start and end times');
+      fail('ASSIGNMENT_INPUT_REQUIRED', 'Select at least one room and provide the window start and end times.');
       return;
     }
 
     // Validate that all selected rooms have orders configured
     const selectedRoomsData = rooms.filter(r => selectedRooms.includes(r.id.toString()));
     if (selectedRoomsData.length !== selectedRooms.length) {
-      alert('Some selected rooms not found');
+      fail('ROOM_NOT_FOUND', 'One or more selected rooms is no longer available. Refresh and try again.');
       return;
     }
 
     const invalidRooms = selectedRoomsData.filter(room => !validateRoomOrdersConfig(room));
     if (invalidRooms.length > 0) {
-      alert(`The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Please configure orders for these rooms before creating assignments.`);
+      fail('ROOM_ORDERS_NOT_READY', `The following rooms do not have orders configured: ${invalidRooms.map(r => `Room ${r.room_number}`).join(', ')}. Configure them before creating assignments.`);
       return;
     }
 
     // Validate date constraints
     const dateValidation = validateAssignmentDates(windowStart, windowEnd);
     if (!dateValidation.valid) {
-      alert(dateValidation.error);
+      fail('ASSIGNMENT_WINDOW_INVALID', dateValidation.error ?? 'The assignment window is invalid.');
       return;
     }
 
@@ -325,14 +485,14 @@ export default function AssignmentManager() {
 
     if (targetingMode === 'individual') {
       if (!selectedStudent) {
-        alert('Please select a student');
+        fail('STUDENT_REQUIRED', 'Select a student before creating the assignment.');
         return;
       }
       studentsToAssign = [selectedStudent];
     } else {
       // Bulk mode
       if (selectedBulkStudents.length === 0) {
-        alert('Please select at least one student');
+        fail('STUDENTS_REQUIRED', 'Select at least one student before creating assignments.');
         return;
       }
       studentsToAssign = selectedBulkStudents;
@@ -345,7 +505,7 @@ export default function AssignmentManager() {
       const windowEndUTCDate = convertToUTC(windowEnd, selectedTimezone);
 
       if (!windowStartUTCDate || !windowEndUTCDate) {
-        alert('Please provide valid window start and end times.');
+        fail('ASSIGNMENT_WINDOW_INVALID', 'Please provide valid window start and end times.');
         return;
       }
 
@@ -357,7 +517,7 @@ export default function AssignmentManager() {
       // Check if window duration is sufficient for selected rooms with slot padding
       const totalSlotsNeeded = (selectedRooms.length * SLOT_PADDING_MINUTES) - SLOT_PADDING_MINUTES;
       if (windowDurationMinutes < totalSlotsNeeded) {
-        alert(`Warning: With ${selectedRooms.length} room(s), minimum time needed between assignments is ${totalSlotsNeeded} minutes due to ${SLOT_PADDING_MINUTES}-minute slot padding. Current window: ${windowDurationMinutes.toFixed(0)} minutes. Consider increasing the window duration or reducing the number of rooms.`);
+        fail('ASSIGNMENT_WINDOW_TOO_SHORT', `With ${selectedRooms.length} room(s), the window needs at least ${totalSlotsNeeded} minutes; current window is ${windowDurationMinutes.toFixed(0)} minutes.`);
         return;
       }
 
@@ -365,16 +525,9 @@ export default function AssignmentManager() {
       const windowEndUTC = windowEndUTCDate.toISOString();
 
       // Create N x M assignments (each student gets each room)
-      const assignments: Array<{
-        student_id: string;
-        room_id: number;
-        assigned_by: string;
-        status: 'assigned';
-        effective_date: string | null;
-        window_start: string | null;
-        window_end: string | null;
-        school_id: string;
-      }> = [];
+      const assignments: PendingAssignmentCreate['assignments'] = [];
+      const requestId = crypto.randomUUID();
+      activeRequestId = requestId;
 
       for (const studentId of studentsToAssign) {
         const studentProfile = students.find((s) => s.id === studentId);
@@ -415,6 +568,7 @@ export default function AssignmentManager() {
           const studentEffectiveDate = new Date(currentCaseMs);
 
           assignments.push({
+            id: crypto.randomUUID(),
             student_id: studentId,
             room_id: parseInt(roomId),
             assigned_by: user.id,
@@ -427,26 +581,28 @@ export default function AssignmentManager() {
         }
       }
 
-      const { error } = await supabase
-        .from('student_room_assignments')
-        .insert(assignments);
+      const request: PendingAssignmentCreate = { requestId, assignments };
+      persistPendingAssignmentCreate(request);
+      setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_PENDING', message: `Creating ${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}…`, requestId });
+      setCreateInFlight(true);
+      await confirmAssignmentCreate(request);
 
-      if (error) throw error;
-
+      setCreateStatus({ kind: 'success', code: 'ASSIGNMENT_CREATE_CONFIRMED', message: `Assignment creation confirmed (${request.assignments.length} assignment${request.assignments.length === 1 ? '' : 's'}). The student can now open the case when it becomes active.`, requestId });
+      clearPendingAssignmentCreate();
       setShowAssignModal(false);
-      setSelectedStudent('');
-      setStudentSearch('');
-      setSelectedRooms([]);
-      setWindowStart('');
-      setWindowEnd('');
-      setTargetingMode('individual');
-      setBulkTargetSchoolId('');
-      setBulkTargetSpecialty('');
-      setSelectedBulkStudents([]);
-      await fetchAssignments();
+      resetAssignmentDraft();
+      try {
+        await fetchAssignments();
+      } catch (refreshError) {
+        console.error('Assignment created but list refresh failed:', refreshError);
+        setCreateStatus({ kind: 'info', code: 'ASSIGNMENT_CREATE_CONFIRMED_REFRESH_FAILED', message: 'Assignment creation was confirmed, but the admin list could not be refreshed. Refresh the page to read it back; no second create was attempted.', requestId });
+      }
     } catch (error) {
       console.error('Error assigning case:', error);
-      alert(`Error assigning case: ${error instanceof Error ? error.message : 'Please try again.'}`);
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'ASSIGNMENT_CREATE_FAILED';
+      setCreateStatus({ kind: 'error', code, message: error instanceof Error ? error.message : 'Assignment creation failed; no confirmation was received. Your draft is retained.', requestId: activeRequestId });
+    } finally {
+      setCreateInFlight(false);
     }
   };
 
@@ -554,81 +710,28 @@ export default function AssignmentManager() {
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
-      const [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult] = await Promise.all([
-        supabase.from('student_room_assignments')
-          .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
-          .eq('id', assignment.id)
-          .single(),
-        supabase.from('chat_messages').select('id, role, content, created_at').eq('assignment_id', assignment.id).order('created_at', { ascending: true }),
-        supabase.from('medical_orders').select('id, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
-        supabase.from('lab_results').select('id, test_name, value, unit, text_value, status, interpretation, collection_time, result_time, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
-        supabase.from('vital_signs').select('id, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain').eq('assignment_id', assignment.id).is('deleted_at', null),
-        supabase.from('imaging_studies').select('id, study_type, order_name, status, report, order_time, report_generated_at, created_at').eq('assignment_id', assignment.id).is('deleted_at', null),
-        (supabase as any).from('learner_action_events').select('id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignment.id).order('occurred_at', { ascending: true }),
-        supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-      ]);
-      for (const result of [assignmentResult, messagesResult, ordersResult, labsResult, vitalsResult, imagingResult, learnerActionsResult, runResult]) {
-        if (result.error) throw result.error;
-      }
-
-      const messages = messagesResult.data ?? [];
-      const firstPageMessage = messages
-        .filter((message) => (message.role === 'assistant' || message.role === 'nurse') && message.content !== '<completed>' && message.created_at)
-        .sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime())[0];
-      const persistedStart = assignmentResult.data.scoring_start_at;
-      const scoringStart = persistedStart ?? (firstPageMessage?.created_at ? new Date(firstPageMessage.created_at).toISOString() : null);
-      const isPostPage = (timestamp: string | null) => Boolean(timestamp && scoringStart && new Date(timestamp).getTime() >= new Date(scoringStart).getTime());
-      const events: EvidenceAuditEvent[] = [];
-      const timestamp = (value: string | null) => value ? new Date(value).toISOString() : null;
-
-      messages.forEach((message) => {
-        const eventTimestamp = timestamp(message.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        events.push({
-          id: `message-${message.id}`,
-          type: message.role === 'student' || message.role === 'user' ? 'student_chat' : 'nurse_chat',
-          timestamp: eventTimestamp,
-          details: message.content,
-        });
-      });
-
-      (ordersResult.data ?? []).forEach((order) => {
-        const eventTimestamp = timestamp(order.order_time ?? order.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        events.push({ id: `order-${order.id}`, type: 'medical_order', timestamp: eventTimestamp, details: [order.order_name, order.dose, order.route, order.frequency, order.priority, order.status, order.instructions].filter(Boolean).join(' • ') });
-      });
-      const labsByTimestamp = new Map<string, string[]>();
-      (labsResult.data ?? []).forEach((lab) => {
-        const eventTimestamp = timestamp(lab.result_time ?? lab.collection_time ?? lab.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        const details = [lab.test_name, lab.value !== null ? `${lab.value}${lab.unit ? ` ${lab.unit}` : ''}` : lab.text_value, lab.status, lab.interpretation].filter(Boolean).join(' • ');
-        labsByTimestamp.set(eventTimestamp, [...(labsByTimestamp.get(eventTimestamp) ?? []), details]);
-      });
-      labsByTimestamp.forEach((details, eventTimestamp) => events.push({ id: `labs-assignment-${eventTimestamp.slice(0, 16)}`, type: 'lab_result', timestamp: eventTimestamp, details: details.join('\n') }));
-      (vitalsResult.data ?? []).forEach((vital) => {
-        const eventTimestamp = timestamp(vital.timestamp);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        events.push({ id: `vital-${vital.id}`, type: 'vital_signs', timestamp: eventTimestamp, details: [vital.temperature !== null ? `T ${vital.temperature}` : null, vital.blood_pressure_systolic !== null && vital.blood_pressure_diastolic !== null ? `BP ${vital.blood_pressure_systolic}/${vital.blood_pressure_diastolic}` : null, vital.heart_rate !== null ? `HR ${vital.heart_rate}` : null, vital.respiratory_rate !== null ? `RR ${vital.respiratory_rate}` : null, vital.oxygen_saturation !== null ? `SpO2 ${vital.oxygen_saturation}%` : null, vital.pain !== null ? `Pain ${vital.pain}/10` : null].filter(Boolean).join(' • ') });
-      });
-      (imagingResult.data ?? []).forEach((study) => {
-        const eventTimestamp = timestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        events.push({ id: `imaging-${study.id}`, type: 'imaging_study', timestamp: eventTimestamp, details: [study.order_name || study.study_type, study.status, study.report].filter(Boolean).join(' • ') });
-      });
-      (learnerActionsResult.data ?? []).forEach((action) => {
-        const eventTimestamp = timestamp(action.occurred_at ?? action.created_at);
-        if (!eventTimestamp || !isPostPage(eventTimestamp)) return;
-        events.push({ id: `learner-action-${action.id}`, type: `learner_${action.action_type} · ${action.channel}`, timestamp: eventTimestamp, details: action.content });
-      });
-      if (assignment.student_progress_note?.trim() && assignment.completed_at && isPostPage(assignment.completed_at)) {
-        events.push({ id: `progress-note-${assignment.id}`, type: 'progress_note', timestamp: new Date(assignment.completed_at).toISOString(), details: assignment.student_progress_note.trim() });
-      }
-      events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      const { data: manifest, error: manifestError } = await (supabase as any).rpc('get_assignment_event_manifest', { p_assignment_id: assignment.id });
+      if (manifestError) throw manifestError;
+      if (!manifest || !Array.isArray(manifest.events)) throw new Error('The assignment history manifest was not returned by the server.');
+      const firstPageEvent = manifest.events.find((event: AssignmentEventManifest['events'][number]) => event.event_type === 'nurse_message' || event.event_type === 'nurse_chat');
+      const events: EvidenceAuditEvent[] = manifest.events.map((event: AssignmentEventManifest['events'][number]) => ({
+        id: event.event_id,
+        type: eventLabel(event),
+        timestamp: event.occurred_at,
+        details: eventContent(event),
+      }));
+      const assignmentResult = await supabase.from('student_room_assignments')
+        .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
+        .eq('id', assignment.id).single();
+      if (assignmentResult.error) throw assignmentResult.error;
+      const runResult = await supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (runResult.error) throw runResult.error;
       setEvidenceAudit({
         assignment: assignmentResult.data,
-        firstPage: firstPageMessage?.created_at ? { id: String(firstPageMessage.id), timestamp: new Date(firstPageMessage.created_at).toISOString(), details: firstPageMessage.content } : null,
+        firstPage: firstPageEvent?.occurred_at ? { id: firstPageEvent.event_id, timestamp: firstPageEvent.occurred_at, details: eventContent(firstPageEvent) } : null,
         events,
         latestRun: runResult.data,
+        manifest,
       });
     } catch (error) {
       console.error('Error fetching assignment evidence audit:', error);
@@ -860,7 +963,10 @@ export default function AssignmentManager() {
           <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
             <SchoolScopeSelector className="sm:w-56" label="School scope" />
             <button
-              onClick={() => setShowAssignModal(true)}
+              onClick={() => {
+                if (!pendingAssignmentCreate) setCreateStatus(null);
+                setShowAssignModal(true);
+              }}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -868,6 +974,24 @@ export default function AssignmentManager() {
             </button>
           </div>
         </div>
+
+        {createStatus && !showAssignModal && (
+          <div
+            role={createStatus.kind === 'error' ? 'alert' : 'status'}
+            className={`mb-6 rounded-md border px-3 py-2 text-sm ${
+              createStatus.kind === 'error'
+                ? 'border-red-200 bg-red-50 text-red-800'
+                : createStatus.kind === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-800'
+                  : 'border-blue-200 bg-blue-50 text-blue-800'
+            }`}
+          >
+            <div className="font-medium">{createStatus.message}</div>
+            <div className="mt-1 text-xs opacity-80">
+              Code: {createStatus.code}{createStatus.requestId ? ` · Request ${createStatus.requestId}` : ''}
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white shadow rounded-lg mb-6">
@@ -1127,6 +1251,12 @@ export default function AssignmentManager() {
                               <ClipboardList className="w-4 h-4 mr-1" />
                               View Evidence/Audit
                             </button>
+                            <button
+                              onClick={() => void handleViewEvidence(assignment)}
+                              className="inline-flex items-center px-3 py-2 border border-slate-300 shadow-sm text-sm leading-4 font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-500"
+                            >
+                              View timeline / Export
+                            </button>
                             {assignment.status === 'completed' && (
                               <button
                                 onClick={() => handleRerunAssessment(assignment.id)}
@@ -1161,6 +1291,37 @@ export default function AssignmentManager() {
             <div className="inline-block align-bottom bg-white rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full sm:p-6">
               <div>
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Assign Case</h3>
+                {createStatus && (
+                  <div
+                    role={createStatus.kind === 'error' ? 'alert' : 'status'}
+                    className={`mb-4 rounded-md border px-3 py-2 text-sm ${
+                      createStatus.kind === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-800'
+                        : createStatus.kind === 'success'
+                          ? 'border-green-200 bg-green-50 text-green-800'
+                          : 'border-blue-200 bg-blue-50 text-blue-800'
+                    }`}
+                  >
+                    <div className="font-medium">{createStatus.message}</div>
+                    <div className="mt-1 text-xs opacity-80">Code: {createStatus.code}{createStatus.requestId ? ` · Request ${createStatus.requestId}` : ''}</div>
+                    {createStatus.kind === 'error' && pendingAssignmentCreate && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span>The original request is retained. Retry checks what was delivered before inserting anything.</span>
+                        <button
+                          type="button"
+                          className="font-medium underline"
+                          onClick={() => {
+                            clearPendingAssignmentCreate();
+                            setCreateStatus(null);
+                            resetAssignmentDraft();
+                          }}
+                        >
+                          Discard and start a new assignment
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-4">
                   {/* Targeting Mode Selection */}
                   <div>
@@ -1487,9 +1648,10 @@ export default function AssignmentManager() {
                 <button
                   type="button"
                   onClick={handleAssign}
+                  disabled={createInFlight}
                   className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:col-start-2"
                 >
-                  {(() => {
+                  {createInFlight ? 'Creating…' : (() => {
                     const studentCount = targetingMode === 'individual' ? 1 : selectedBulkStudents.length;
                     const totalAssignments = studentCount * selectedRooms.length;
                     return targetingMode === 'individual'
@@ -1727,8 +1889,17 @@ function EvidenceAuditModal({
                   {!audit.latestRun ? <p className="mt-2 text-sm text-amber-700">No assessment run was recorded.</p> : <div className="mt-2 text-sm"><p><span className="font-medium">Run:</span> {audit.latestRun.id} · {new Date(audit.latestRun.created_at).toLocaleString()}</p><p><span className="font-medium">Attempt:</span> {audit.latestRun.attempt_id} · <span className="font-medium">Boundary:</span> {audit.latestRun.scoring_start_at ?? 'Not recorded'} · <span className="font-medium">Incomplete:</span> {audit.latestRun.technical_incomplete ? 'Yes' : 'No'}</p><p><span className="font-medium">Rubric / case key / assessment:</span> {audit.latestRun.rubric_version} / {audit.latestRun.case_key_version} / {audit.latestRun.assessment_version}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs">{json({ source_event_ids: audit.latestRun.source_event_ids, result: audit.latestRun.result })}</pre></div>}
                 </section>
                 <section className="rounded-md border border-gray-200 p-4">
-                  <h3 className="font-medium text-gray-900">Post-page clinical evidence ({audit.events.length})</h3>
-                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No assignment-scoped clinical evidence was recorded at or after the scoring boundary.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => <div key={`${event.id}-${event.timestamp}`} className="rounded border border-gray-100 bg-gray-50 p-2 text-sm"><div className="font-medium text-gray-900">{event.type} · {event.id}</div><div className="text-xs text-gray-500">{new Date(event.timestamp).toLocaleString()}</div><div className="mt-1 whitespace-pre-wrap text-gray-700">{event.details || 'No details recorded'}</div></div>)}</div>}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-medium text-gray-900">Complete persisted timeline ({audit.manifest.events.length})</h3>
+                    <div className="flex flex-wrap gap-2 print:hidden">
+                      <button type="button" onClick={() => downloadText(`assignment-${audit.manifest.assignment_id}-timeline.json`, JSON.stringify(audit.manifest, null, 2), 'application/json')} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Export JSON</button>
+                      <button type="button" onClick={() => downloadText(`assignment-${audit.manifest.assignment_id}-timeline.csv`, manifestToCsv(audit.manifest), 'text/csv;charset=utf-8')} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Export CSV</button>
+                      <button type="button" onClick={() => window.print()} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Print timeline</button>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">Server-authorized assignment history. Assignment creation is included; the first nurse page remains the separate scoring boundary. Raw IDs and provenance are retained.</p>
+                  {audit.manifest.gaps.length > 0 && <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p className="font-medium">Recorded gaps / limits</p><ul className="mt-1 list-disc pl-5">{audit.manifest.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
+                  {audit.manifest.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No persisted events were recorded for this assignment.</p> : <div className="mt-2 space-y-2">{audit.manifest.events.map((event) => <div key={event.event_id} className={`rounded border p-2 text-sm ${event.ordering_ambiguous ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}><div className="font-medium text-gray-900">{eventLabel(event)} · {event.event_id}</div><div className="text-xs text-gray-500">{event.occurred_at ? new Date(event.occurred_at).toLocaleString() : 'Timestamp not recorded'} · {event.timezone ?? 'Timezone not recorded'}{event.elapsed_seconds == null ? '' : ` · elapsed ${Math.round(event.elapsed_seconds)}s`}{event.sequence == null ? '' : ` · sequence ${event.sequence}`}</div><div className="mt-1 whitespace-pre-wrap text-gray-700">{eventContent(event) || 'No details recorded'}</div><div className="mt-1 text-[11px] text-gray-500">Links: {JSON.stringify(event.links ?? {})} · Provenance: {JSON.stringify(event.provenance ?? {})}</div></div>)}</div>}
                 </section>
               </>
             )}

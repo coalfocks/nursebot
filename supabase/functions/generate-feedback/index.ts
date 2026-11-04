@@ -2,8 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
 import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
-import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, deriveScoringStart, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { buildAssignmentTimelineEntries, renderTimelineEntriesForEvaluation, type TimelineImagingRow, type TimelineLabRow, type TimelineLearnerActionRow, type TimelineOrderRow, type TimelineVitalRow } from '../_shared/assignment-timeline.ts';
+import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
+import { renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
@@ -17,10 +17,46 @@ const sanitizeFeedbackTree = (value: unknown): unknown => {
   return value;
 };
 
-const lineage = async (client: ReturnType<typeof createClient>, roomId: number) => {
-  const result: number[] = []; const seen = new Set<number>(); let current: number | null = roomId;
-  while (current && !seen.has(current)) { seen.add(current); result.push(current); const { data, error } = await client.from('rooms').select('continues_from').eq('id', current).maybeSingle(); if (error) throw error; current = data?.continues_from ?? null; }
-  return result;
+const manifestEventToEvaluationEntry = (event: Record<string, unknown>): EvaluationTimelineEntry | null => {
+  const eventType = String(event.event_type ?? '');
+  const kind: EvaluationTimelineEntry['kind'] = eventType === 'order_placed'
+    ? 'order'
+    : eventType === 'lab_result'
+      ? 'labs'
+      : eventType === 'vital_observed'
+        ? 'vital'
+        : eventType === 'imaging_result'
+          ? 'imaging'
+          : eventType === 'progress_note'
+            ? 'progress-note'
+            : eventType === 'bedside_action'
+              ? 'learner-action'
+              : eventType === 'assignment_completed'
+                ? 'completion'
+                : eventType === 'consultant_message' || eventType === 'consultant_response'
+                  ? 'consultant-message'
+                  : 'message';
+  const content = event.content && typeof event.content === 'object' ? event.content as Record<string, unknown> : {};
+  const text = typeof content.text === 'string' ? content.text : Object.entries(content)
+    .filter(([, value]) => value != null && value !== '')
+    .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .join(' | ');
+  const actor = event.actor && typeof event.actor === 'object' ? event.actor as Record<string, unknown> : {};
+  const channel = typeof event.channel === 'string' ? event.channel : null;
+  const service = event.service && typeof event.service === 'object' ? event.service as Record<string, unknown> : {};
+  const meta = [
+    actor.role ? `Actor: ${actor.role}` : null,
+    channel ? `Channel: ${channel}` : null,
+    service.label ? `Service: ${service.label}` : null,
+    service.audience ? `Audience: ${service.audience}` : null,
+    service.urgency ? `Urgency: ${service.urgency}` : null,
+    eventType === 'hint_shown' ? 'System hint shown; not a learner action' : null,
+    event.ordering_ambiguous ? 'Same-time ordering ambiguous; no clinical sequence asserted' : null,
+  ].filter((value): value is string => Boolean(value));
+  const timestamp = typeof event.occurred_at === 'string' ? event.occurred_at : null;
+  const id = typeof event.event_id === 'string' ? event.event_id : null;
+  if (!id || !timestamp) return null;
+  return { id, kind, timestamp, title: eventType, body: text || undefined, meta };
 };
 
 Deno.serve(async (req) => {
@@ -35,20 +71,14 @@ Deno.serve(async (req) => {
       if (assignmentError) throw assignmentError;
       if (!isFeedbackEligibleStatus(assignment.status)) throw new Error('Cannot generate feedback for incomplete assignment');
       const room = (assignment.room ?? {}) as Record<string, unknown>;
-      const { data: messages, error: messageError } = await client.from('chat_messages').select('id, assignment_id, role, content, created_at').eq('assignment_id', assignmentId).order('created_at', { ascending: true });
-      if (messageError) throw messageError;
-      const start = deriveScoringStart(messages ?? []);
-      const roomId = Number(assignment.room_id);
-      const patientId = typeof room.patient_id === 'string' ? room.patient_id : null;
-      const [ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes] = await Promise.all([
-        patientId ? client.from('medical_orders').select('id, assignment_id, room_id, override_scope, category, order_name, dose, route, frequency, priority, status, instructions, order_time, created_at, deleted_at').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
-        patientId ? client.from('lab_results').select('id, assignment_id, room_id, override_scope, test_name, value, unit, status, collection_time, result_time, created_at, deleted_at, timeline_entry_id').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
-        patientId ? client.from('vital_signs').select('id, assignment_id, room_id, override_scope, timestamp, temperature, blood_pressure_systolic, blood_pressure_diastolic, heart_rate, respiratory_rate, oxygen_saturation, pain, deleted_at, timeline_entry_id').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
-        patientId ? client.from('imaging_studies').select('id, assignment_id, room_id, override_scope, order_name, study_type, status, report, order_time, report_generated_at, created_at, deleted_at').eq('patient_id', patientId).is('deleted_at', null) : Promise.resolve({ data: [], error: null }),
-        client.from('learner_action_events').select('id, assignment_id, room_id, action_type, channel, content, occurred_at, created_at').eq('assignment_id', assignmentId).order('occurred_at', { ascending: true }),
-      ]);
-      for (const result of [ordersRes, labsRes, vitalsRes, imagingRes, learnerActionsRes]) if (result.error) throw result.error;
-      const entries = buildAssignmentTimelineEntries({ assignment: { id: assignment.id, completed_at: assignment.completed_at, student_progress_note: assignment.student_progress_note }, assignmentId, targetRoomIds: await lineage(client, roomId), messages: messages ?? [], orders: (ordersRes.data ?? []) as TimelineOrderRow[], labs: (labsRes.data ?? []) as TimelineLabRow[], vitals: (vitalsRes.data ?? []) as TimelineVitalRow[], imaging: (imagingRes.data ?? []) as TimelineImagingRow[], learnerActions: (learnerActionsRes.data ?? []) as TimelineLearnerActionRow[] });
+      const { data: canonicalManifest, error: manifestError } = await client.rpc('get_assignment_event_manifest', { p_assignment_id: assignmentId });
+      if (manifestError) throw manifestError;
+      const manifest = canonicalManifest && typeof canonicalManifest === 'object' ? canonicalManifest as Record<string, unknown> : {};
+      const events = Array.isArray(manifest.events) ? manifest.events.filter((event): event is Record<string, unknown> => Boolean(event && typeof event === 'object')) : [];
+      const entries = events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry));
+      const scoringBoundary = manifest.scoring_boundary && typeof manifest.scoring_boundary === 'object' ? manifest.scoring_boundary as Record<string, unknown> : {};
+      const scoringStartAt = typeof scoringBoundary.scoring_start_at === 'string' ? scoringBoundary.scoring_start_at : null;
+      const start = scoringStartAt ? { scoring_start_at: scoringStartAt } : null;
       const scoredEntries = start ? entries.filter((entry) => new Date(entry.timestamp).getTime() >= new Date(start.scoring_start_at).getTime()) : [];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
       const key = resolveCaseEvaluationKey(room);
@@ -112,7 +142,7 @@ Deno.serve(async (req) => {
         observed_event_ids: sourceEventIds,
         // Preserve a deterministic, human-readable record of every actual
         // post-page order/result even when the model's narrative omits it.
-        items: appendUncitedDeterministicActions(actionReview, deterministicEntries).slice(0, 20),
+        items: appendUncitedDeterministicActions(Array.isArray(actionReview) ? actionReview : [], deterministicEntries).slice(0, 20),
       };
       const growthEvidence = scoredEntries
         .filter((entry) => ['learner-action', 'order', 'progress-note'].includes(entry.kind))

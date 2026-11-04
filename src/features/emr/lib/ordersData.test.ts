@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allOrders, labOrders, medicationOrders } from './ordersData';
+import { allOrders, getInitialFrequency, labOrders, medicationOrders, normalizeOrderItem } from './ordersData';
 
 describe('medication catalog', () => {
   it('includes the required searchable products and aliases', () => {
@@ -29,5 +29,20 @@ describe('medication catalog', () => {
     expect(cbcOrders).toHaveLength(1);
     expect(cbcOrders[0]?.aliases).toEqual(expect.arrayContaining(['CBC with Differential', 'CBC']));
     expect(cbcOrders[0]?.frequencies).toContain('Once');
+  });
+
+  it('offers canonical Once for every category while preserving explicit schedules', () => {
+    expect(normalizeOrderItem({ id: 'other', name: 'Consult', category: 'Consult', priorities: ['Routine'] }).frequencies)
+      .toEqual(['Once']);
+    expect(normalizeOrderItem({
+      id: 'prn', name: 'Medication', category: 'Medication', priorities: ['Routine'], frequencies: ['q6h PRN'],
+    }).frequencies).toEqual(['Once', 'q6h PRN']);
+    expect(normalizeOrderItem({
+      id: 'weekly', name: 'Weekly', category: 'Lab', priorities: ['Routine'], frequencies: ['Weekly'],
+    }).frequencies).toEqual(['Once', 'Weekly']);
+    expect(getInitialFrequency({ id: 'missing', name: 'Other', category: 'General', priorities: ['Routine'] })).toBe('Once');
+    expect(getInitialFrequency({
+      id: 'explicit', name: 'PRN', category: 'Medication', priorities: ['Routine'], frequencies: ['q6h PRN'],
+    })).toBe('q6h PRN');
   });
 });

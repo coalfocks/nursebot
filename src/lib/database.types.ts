@@ -1585,6 +1585,7 @@ export type Database = {
           created_at: string | null
           deleted_at: string | null
           id: string
+          order_id: string | null
           interpretation: string | null
           lifecycle_status: string
           narrative: string | null
@@ -1592,6 +1593,7 @@ export type Database = {
           override_scope: string
           patient_id: string | null
           record_version: number
+          relative_label: string | null
           relative_offset_hours: number | null
           reference_range: string | null
           result_time: string | null
@@ -1614,6 +1616,7 @@ export type Database = {
           created_at?: string | null
           deleted_at?: string | null
           id?: string
+          order_id?: string | null
           interpretation?: string | null
           lifecycle_status?: string
           narrative?: string | null
@@ -1621,6 +1624,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_label?: string | null
           relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
@@ -1643,6 +1647,7 @@ export type Database = {
           created_at?: string | null
           deleted_at?: string | null
           id?: string
+          order_id?: string | null
           interpretation?: string | null
           lifecycle_status?: string
           narrative?: string | null
@@ -1650,6 +1655,7 @@ export type Database = {
           override_scope?: string
           patient_id?: string | null
           record_version?: number
+          relative_label?: string | null
           relative_offset_hours?: number | null
           reference_range?: string | null
           result_time?: string | null
@@ -1706,6 +1712,11 @@ export type Database = {
           frequency: string | null
           id: string
           instructions: string | null
+          lab_generation_attempts: number
+          lab_generation_error: string | null
+          lab_generation_request_id: string | null
+          lab_generation_status: string
+          lab_generation_updated_at: string | null
           order_name: string
           order_time: string | null
           ordered_by: string | null
@@ -1729,6 +1740,11 @@ export type Database = {
           frequency?: string | null
           id?: string
           instructions?: string | null
+          lab_generation_attempts?: number
+          lab_generation_error?: string | null
+          lab_generation_request_id?: string | null
+          lab_generation_status?: string
+          lab_generation_updated_at?: string | null
           order_name: string
           order_time?: string | null
           ordered_by?: string | null
@@ -1752,6 +1768,11 @@ export type Database = {
           frequency?: string | null
           id?: string
           instructions?: string | null
+          lab_generation_attempts?: number
+          lab_generation_error?: string | null
+          lab_generation_request_id?: string | null
+          lab_generation_status?: string
+          lab_generation_updated_at?: string | null
           order_name?: string
           order_time?: string | null
           ordered_by?: string | null
