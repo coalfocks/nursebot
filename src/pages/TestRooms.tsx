@@ -7,6 +7,11 @@ import { useAuthStore } from '../stores/authStore';
 import { isTestUser } from '../lib/roles';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
+import { testUserAssignmentInsert, type AssignmentCreateRow } from '../lib/assignmentCreation';
+
+type RpcResult = { data: unknown; error: { message: string } | null };
+const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<RpcResult> }).rpc(name, args);
 
 type Room = Database['public']['Tables']['rooms']['Row'] & {
   specialties?: Database['public']['Tables']['specialties']['Row'][];
@@ -15,7 +20,7 @@ type Room = Database['public']['Tables']['rooms']['Row'] & {
 type AssignmentSummary = Pick<
   Database['public']['Tables']['student_room_assignments']['Row'],
   'id' | 'room_id' | 'status' | 'created_at'
->;
+> & { case_key_version?: string | null; is_sandbox?: boolean };
 
 const describeSupabaseError = (error: { message?: string; details?: string; hint?: string } | null | undefined) => {
   if (!error) return 'Unknown server error.';
@@ -101,7 +106,7 @@ export default function TestRooms() {
       try {
         const { data, error: assignmentsError } = await supabase
           .from('student_room_assignments')
-          .select('id, room_id, status, created_at')
+          .select('id, room_id, status, created_at, case_key_version, is_sandbox')
           .eq('student_id', user.id)
           .eq('is_sandbox', true)
           .order('created_at', { ascending: false });
@@ -133,26 +138,51 @@ export default function TestRooms() {
     };
   }, [user, canAccess, navigate, profile?.school_id, profile?.learner_program]);
 
-  const ensureTestAssignment = async (roomId: number) => {
+  const ensureTestAssignment = async (roomId: number, forceNew = false) => {
     if (!user) return null;
     if (!profile?.school_id) {
       setSessionError('Your test account has no school scope, so a sandbox session cannot be started.');
       return null;
     }
     const existing = assignmentsByRoom.get(roomId);
-    if (existing) return existing;
+    if (!forceNew && existing?.case_key_version) return existing;
+
+    const { data: published, error: publishedError } = await callGeneratedRpc(
+      'get_mar_published_case_version',
+      { p_room_id: roomId },
+    );
+    const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+      ? (published as { caseVersion: string }).caseVersion.trim()
+      : '';
+    if (publishedError || !caseVersion) {
+      setSessionError(`Room ${roomId} has no published immutable MAR version. Publish the authored packet before starting a fresh test session.`);
+      return null;
+    }
+
+    const { data: readiness, error: readinessError } = await callGeneratedRpc('get_manual_mar_readiness', {});
+    const readinessValue = readiness as { ready?: boolean; available?: boolean } | null;
+    if (readinessError || !readinessValue?.ready || readinessValue.available === false) {
+      setSessionError('Test-room MAR snapshots are not installed. Apply the reviewed manual MAR packet and assignment-snapshot prerequisites before starting a fresh session.');
+      return null;
+    }
+
+    const assignment: AssignmentCreateRow = {
+      id: crypto.randomUUID(),
+      student_id: user.id,
+      room_id: roomId,
+      assigned_by: user.id,
+      status: 'assigned',
+      effective_date: new Date().toISOString(),
+      window_start: new Date().toISOString(),
+      window_end: null,
+      school_id: profile.school_id,
+      case_key_version: caseVersion,
+    };
 
     const { data, error: insertError } = await supabase
       .from('student_room_assignments')
-      .insert({
-        student_id: user.id,
-        room_id: roomId,
-        assigned_by: user.id,
-        status: 'assigned',
-        is_sandbox: true,
-        school_id: profile.school_id,
-      })
-      .select('id, room_id, status, created_at')
+      .insert(testUserAssignmentInsert(assignment))
+      .select('id, room_id, status, created_at, case_key_version, is_sandbox')
       .maybeSingle();
 
     if (insertError || !data) {
@@ -165,6 +195,17 @@ export default function TestRooms() {
     nextMap.set(roomId, data as AssignmentSummary);
     setAssignmentsByRoom(nextMap);
     return data as AssignmentSummary;
+  };
+
+  const handleStartFreshRoom = async (roomId: number) => {
+    setOpeningRoomId(roomId);
+    setSessionError(null);
+    try {
+      const assignment = await ensureTestAssignment(roomId, true);
+      if (assignment) navigate(`/assignment/${assignment.id}`);
+    } finally {
+      setOpeningRoomId(null);
+    }
   };
 
   const handleOpenRoom = async (roomId: number) => {
@@ -351,6 +392,15 @@ export default function TestRooms() {
                         <RefreshCw className="mr-2 h-4 w-4" />
                       )}
                       Reset session
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStartFreshRoom(room.id)}
+                      className="inline-flex items-center rounded-md border border-blue-200 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isOpening}
+                      title="Creates a new immutable attempt and leaves this session's history unchanged"
+                    >
+                      Start fresh (preserve history)
                     </button>
                     {!assignment && (
                       <span className="inline-flex items-center text-xs text-gray-400">
