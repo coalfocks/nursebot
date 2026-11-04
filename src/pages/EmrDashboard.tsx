@@ -632,7 +632,7 @@ export default function EmrDashboard() {
               </h1>
               <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
                 <span>MRN: {selectedPatient.mrn}</span>
-                <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>
+                {showAdminLayout && <span>DOB: {new Date(selectedPatient.dateOfBirth).toLocaleDateString()}</span>}
                 <span className="font-semibold text-foreground">Age: {patientAge ?? '—'}</span>
                 <span className="font-semibold text-foreground">BMI: {patientBMI ?? '—'}</span>
                 <span>{selectedPatient.gender}</span>

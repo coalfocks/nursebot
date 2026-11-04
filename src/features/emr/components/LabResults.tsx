@@ -57,6 +57,9 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
     resultTime: '',
   });
   const [isSavingLabEdit, setIsSavingLabEdit] = useState(false);
+  const [baselineOffsetDrafts, setBaselineOffsetDrafts] = useState<Record<string, string>>({});
+  const [savingBaselineSet, setSavingBaselineSet] = useState<string | null>(null);
+  const [newBaselineSetOffset, setNewBaselineSetOffset] = useState('12');
   const [manualLabForm, setManualLabForm] = useState({
     testName: '',
     value: '',
@@ -120,6 +123,20 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       }
     })();
   }, [patient.id, patient.roomId, assignmentId, refreshToken, isSandbox, sandboxLabs, capture, isCurrent, normalizeForPatient]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    setBaselineOffsetDrafts((current) => {
+      const next = { ...current };
+      labResults
+        .filter((lab) => (lab.overrideScope ?? 'baseline') === 'baseline')
+        .forEach((lab) => {
+          const key = lab.baselineSetId ?? `legacy:${lab.collectionTime ?? lab.resultTime}`;
+          if (!(key in next)) next[key] = lab.baselineRelativeOffsetHours == null ? '' : String(lab.baselineRelativeOffsetHours);
+        });
+      return next;
+    });
+  }, [canEdit, labResults]);
 
   useEffect(() => {
     const request = capture();
@@ -365,6 +382,12 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
 
       const roomIdForScope = forceBaseline ? null : patient.roomId ?? null;
       const assignmentForScope = forceBaseline ? null : assignmentId ?? null;
+      const authoredOffset = Number(newBaselineSetOffset);
+      if (forceBaseline && (!Number.isFinite(authoredOffset) || authoredOffset < 0 || authoredOffset > 720)) {
+        setLabSaveError('Lab set time must be between 0 and 720 hours prior.');
+        return;
+      }
+      const authoredSetId = forceBaseline ? crypto.randomUUID() : null;
 
       const generatedLabs =
         aiLabs?.length === requestedTests.length
@@ -386,6 +409,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
         assignmentId: assignmentForScope,
         roomId: roomIdForScope,
         overrideScope: forceBaseline ? 'baseline' : undefined,
+        baselineSetId: authoredSetId,
+        baselineRelativeOffsetHours: forceBaseline ? authoredOffset : null,
         testName: (lab as { testName?: string }).testName ?? requestedTests[index]?.testName ?? 'Lab',
         value: (lab as { value?: string | number }).value ?? '',
         unit: (lab as { unit?: string }).unit ?? requestedTests[index]?.unit ?? '',
@@ -448,6 +473,45 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
       (a, b) => new Date(a).getTime() - new Date(b).getTime(),
     );
   }, [labResults]);
+
+  const baselineSets = useMemo(() => {
+    const sets = new Map<string, LabResult[]>();
+    labResults.filter((lab) => (lab.overrideScope ?? 'baseline') === 'baseline').forEach((lab) => {
+      const key = lab.baselineSetId ?? `legacy:${lab.collectionTime ?? lab.resultTime}`;
+      if (!sets.has(key)) sets.set(key, []);
+      sets.get(key)!.push(lab);
+    });
+    return [...sets.entries()].map(([setKey, labs]) => ({
+      setKey,
+      setId: labs[0]?.baselineSetId ?? null,
+      legacyTime: labs[0]?.collectionTime ?? labs[0]?.resultTime ?? null,
+      labs,
+    }));
+  }, [labResults]);
+
+  const saveBaselineOffset = async (setKey: string, setId: string | null, legacyTime: string | null) => {
+    const raw = baselineOffsetDrafts[setKey]?.trim() ?? '';
+    const offset = raw === '' ? null : Number(raw);
+    if (offset !== null && (!Number.isFinite(offset) || offset < 0 || offset > 720)) {
+      setLabSaveError('Lab set time must be blank or between 0 and 720 hours prior.');
+      return;
+    }
+    setSavingBaselineSet(setKey);
+    setLabSaveError(null);
+    const assignedSetId = setId ?? (legacyTime ? await emrApi.assignLegacyBaselineSet(patient.id, legacyTime, offset) : null);
+    const saved = setId
+      ? await emrApi.updateBaselineSetRelativeOffset(patient.id, setId, offset)
+      : Boolean(assignedSetId);
+    if (!saved || (!setId && !assignedSetId)) {
+      setLabSaveError('Could not save this lab set time. No values or stored timestamps were changed.');
+    } else {
+      setLabResults((current) => current.map((lab) => {
+        const matches = setId ? lab.baselineSetId === setId : lab.baselineSetId == null && (lab.collectionTime ?? lab.resultTime) === legacyTime;
+        return matches ? { ...lab, baselineSetId: assignedSetId ?? lab.baselineSetId, baselineRelativeOffsetHours: offset } : lab;
+      }));
+    }
+    setSavingBaselineSet(null);
+  };
 
   // Categorize labs by type
   const getLabCategory = (testName: string): string => {
@@ -734,6 +798,13 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 onChange={(e) => setAiLabRequest(e.target.value)}
               />
             </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">New lab set time</label>
+              <div className="flex items-center gap-2">
+                <input aria-label="New lab set time" type="number" min="0" max="720" step="1" className="w-28 rounded-md border border-border px-3 py-2 text-sm" value={newBaselineSetOffset} onChange={(event) => setNewBaselineSetOffset(event.target.value)} />
+                <span className="text-sm text-muted-foreground">hours prior</span>
+              </div>
+            </div>
             <div className="flex justify-end md:justify-start">
               <Button
                 onClick={handleGenerateLabResults}
@@ -741,11 +812,29 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                 className="flex items-center gap-2 whitespace-nowrap"
               >
                 <Sparkles className="h-4 w-4" />
-                {isGenerating ? 'Generating...' : 'Generate AI Labs'}
+                {isGenerating ? 'Generating...' : forceBaseline ? 'Add lab set' : 'Generate AI Labs'}
               </Button>
             </div>
           </div>
         </div>
+      )}
+
+      {canEdit && baselineSets.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Lab set time</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">Edit each authored set independently. This changes timing metadata only; values, provenance, stored timestamps, and student history remain unchanged.</p>
+            {baselineSets.map(({ setKey, setId, legacyTime, labs }, index) => (
+              <div key={setKey} className="flex flex-wrap items-center gap-2">
+                <span className="min-w-48 text-sm font-medium">Lab set {index + 1}{setId ? ` · ${setId}` : ' · existing set'}</span>
+                <input aria-label={`Lab set time ${setKey}`} type="number" min="0" max="720" step="1" className="w-28 rounded-md border border-border px-3 py-2 text-sm" placeholder="Unknown" value={baselineOffsetDrafts[setKey] ?? ''} onChange={(event) => setBaselineOffsetDrafts((current) => ({ ...current, [setKey]: event.target.value }))} />
+                <span className="text-sm text-muted-foreground">hours prior</span>
+                <Button size="sm" variant="outline" disabled={savingBaselineSet === setKey} onClick={() => void saveBaselineOffset(setKey, setId, legacyTime)}>{savingBaselineSet === setKey ? 'Saving…' : 'Save lab set time'}</Button>
+                {!setId && <span className="text-xs text-muted-foreground">{labs.length} existing result(s) will receive an ID.</span>}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
       {!canEdit && (
         <div className="flex items-center justify-between">
@@ -1026,6 +1115,8 @@ export function LabResults({ patient, assignmentId, refreshToken, isSandbox, san
                     assignmentId: assignmentForScope,
                     roomId: roomIdForScope,
                     overrideScope: forceBaseline ? 'baseline' : undefined,
+                    baselineSetId: forceBaseline ? crypto.randomUUID() : null,
+                    baselineRelativeOffsetHours: forceBaseline ? Number(newBaselineSetOffset) : null,
                     testName: manualLabForm.testName.trim(),
                     value: manualLabForm.value.trim(),
                     unit: manualLabForm.unit.trim(),

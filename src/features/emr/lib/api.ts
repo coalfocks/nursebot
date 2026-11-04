@@ -225,6 +225,8 @@ const mapLabResult = (row: LabResultRow, fallbackPatientId: string): LabResult =
     deletedAt: row.deleted_at,
     timelineEntryId: row.timeline_entry_id,
     relativeOffsetHours: row.relative_offset_hours,
+    baselineSetId: (row as LabResultRow & { baseline_set_id?: string | null }).baseline_set_id,
+    baselineRelativeOffsetHours: (row as LabResultRow & { baseline_relative_offset_hours?: number | null }).baseline_relative_offset_hours,
   };
   return normalizeLabResult(mapped);
 };
@@ -683,7 +685,7 @@ export const emrApi = {
       const patientId = labs[0].patientId;
       const { data: existingLabs, error: existingError } = await supabase
         .from('lab_results')
-        .select('id, test_name, collection_time, result_time')
+        .select('id, test_name, collection_time, result_time, baseline_set_id, baseline_relative_offset_hours')
         .eq('patient_id', patientId)
         .eq('override_scope', 'baseline')
         .is('assignment_id', null)
@@ -695,45 +697,12 @@ export const emrApi = {
         return { ok: false, error: existingError.message };
       }
 
-      // Always use a single consolidated timestamp for all baseline labs
-      // If any existing baseline labs exist, use their timestamp; otherwise use the baseline epoch
-      const baselineTimestamp =
-        existingLabs && existingLabs.length > 0
-          ? existingLabs[0].collection_time ?? existingLabs[0].result_time ?? '2000-01-01T00:00:00.000Z'
-          : '2000-01-01T00:00:00.000Z';
-
-      // Normalize all existing baseline labs to the consolidated timestamp
-      const labsNeedingTimestampNormalization = (existingLabs ?? [])
-        .filter((lab) => {
-          const labTime = lab.collection_time ?? lab.result_time;
-          return labTime && labTime !== baselineTimestamp;
-        })
-        .map((lab) => ({
-          id: lab.id,
-          payload: {
-            collection_time: baselineTimestamp,
-            result_time: baselineTimestamp,
-          },
-        }));
-
-      if (labsNeedingTimestampNormalization.length > 0) {
-        const normalizeResults = await Promise.all(
-          labsNeedingTimestampNormalization.map((update) =>
-            supabase
-              .from('lab_results')
-              .update(update.payload)
-              .eq('id', update.id),
-          ),
-        );
-        const normalizationError = normalizeResults.find(({ error }) => error)?.error;
-        if (normalizationError) {
-          console.error('Error normalizing baseline lab timestamp', normalizationError);
-          return { ok: false, error: normalizationError.message };
-        }
-      }
-
+      const setId = labs[0].baselineSetId ?? crypto.randomUUID();
+      const setOffset = labs[0].baselineRelativeOffsetHours ?? null;
       const existingByTest = new Map(
-        (existingLabs ?? []).map((lab) => [lab.test_name, lab]),
+        ((existingLabs ?? []) as Array<{ id: string; test_name: string; collection_time: string | null; result_time: string | null; baseline_set_id: string | null; baseline_relative_offset_hours: number | null }>)
+          .filter((lab) => lab.baseline_set_id === setId)
+          .map((lab) => [lab.test_name, lab]),
       );
 
       const updates = labs
@@ -752,8 +721,10 @@ export const emrApi = {
               unit: lab.unit,
               reference_range: lab.referenceRange,
               status: lab.status,
-              collection_time: baselineTimestamp,
-              result_time: baselineTimestamp,
+              collection_time: lab.collectionTime,
+              result_time: lab.resultTime ?? lab.collectionTime,
+              baseline_set_id: setId,
+              baseline_relative_offset_hours: setOffset,
               ordered_by: lab.orderedBy,
             },
           };
@@ -772,9 +743,11 @@ export const emrApi = {
           unit: lab.unit,
           reference_range: lab.referenceRange,
           status: lab.status,
-          collection_time: baselineTimestamp,
-          result_time: baselineTimestamp,
+          collection_time: lab.collectionTime,
+          result_time: lab.resultTime ?? lab.collectionTime,
           ordered_by: lab.orderedBy,
+          baseline_set_id: setId,
+          baseline_relative_offset_hours: setOffset,
         }));
 
       if (updates.length) {
@@ -882,6 +855,36 @@ export const emrApi = {
       return { conflict: true, current: mapLabResult(current, current.patient_id ?? ''), expectedVersion };
     }
     return mapLabResult(data, data.patient_id ?? '');
+  },
+
+  async assignLegacyBaselineSet(patientId: string, collectionTime: string, offsetHours: number | null): Promise<string | null> {
+    const baselineSetId = crypto.randomUUID();
+    const { data, error } = await (supabase as any)
+      .from('lab_results')
+      .update({ baseline_set_id: baselineSetId, baseline_relative_offset_hours: offsetHours })
+      .eq('patient_id', patientId)
+      .eq('collection_time', collectionTime)
+      .eq('override_scope', 'baseline')
+      .is('assignment_id', null)
+      .is('room_id', null)
+      .is('baseline_set_id', null)
+      .is('deleted_at', null)
+      .select('id');
+    if (error || !data?.length) return null;
+    return baselineSetId;
+  },
+
+  async updateBaselineSetRelativeOffset(patientId: string, baselineSetId: string, offsetHours: number | null): Promise<boolean> {
+    const { error } = await (supabase as any)
+      .from('lab_results')
+      .update({ baseline_relative_offset_hours: offsetHours })
+      .eq('patient_id', patientId)
+      .eq('baseline_set_id', baselineSetId)
+      .eq('override_scope', 'baseline')
+      .is('assignment_id', null)
+      .is('room_id', null)
+      .is('deleted_at', null);
+    return !error;
   },
 
   async listVitals(patientId: string, assignmentId?: string, roomId?: number | null): Promise<VitalSigns[]> {

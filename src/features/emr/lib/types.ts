@@ -96,6 +96,8 @@ export interface LabResult {
   deletedAt?: string | null;
   timelineEntryId?: string | null;
   relativeOffsetHours?: number | null;
+  baselineSetId?: string | null;
+  baselineRelativeOffsetHours?: number | null;
 }
 
 export type LabWriteResult =
