@@ -98,6 +98,18 @@ describe('emrApi versioned note/order mutations', () => {
     expect(saved?.id).not.toBe(draftOrder.id);
   });
 
+  it('retries order entry without optional lab-generation fields on an older schema', async () => {
+    from
+      .mockReturnValueOnce(builder({ data: null, error: { message: "Could not find the 'lab_generation_attempts' column of 'medical_orders' in the schema cache" } }))
+      .mockReturnValueOnce(builder({ data: orderRow(), error: null }));
+
+    const saved = await emrApi.addOrder({ ...draftOrder, category: 'Lab' });
+
+    expect(saved).toMatchObject({ id: 'server-order-id' });
+    expect(from).toHaveBeenCalledTimes(2);
+    expect(from.mock.results[1].value.insert).toHaveBeenCalledWith(expect.not.objectContaining({ lab_generation_attempts: expect.anything() }));
+  });
+
   it('returns the complete persisted note instead of the optimistic draft', async () => {
     from.mockReturnValue(builder({ data: noteRow(), error: null }));
 

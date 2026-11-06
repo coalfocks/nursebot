@@ -1101,7 +1101,7 @@ export const emrApi = {
 
   async addOrder(order: MedicalOrder, roomId?: number | null, onError?: (message: string) => void): Promise<MedicalOrder | null> {
     const overrideScope = deriveScope(order.overrideScope, order.assignmentId, order.roomId ?? roomId ?? null);
-    const payload = Object.fromEntries(Object.entries({
+    const corePayload = Object.fromEntries(Object.entries({
       patient_id: order.patientId,
       assignment_id: order.assignmentId ?? null,
       room_id: order.roomId ?? roomId ?? null,
@@ -1117,13 +1117,25 @@ export const emrApi = {
       order_time: order.orderTime,
       scheduled_time: order.scheduledTime,
       instructions: order.instructions,
+    }).filter(([, value]) => value !== undefined));
+    const payload = Object.fromEntries(Object.entries({
+      ...corePayload,
       lab_generation_request_id: order.labGenerationRequestId ?? null,
       lab_generation_status: order.labGenerationStatus ?? 'not_requested',
       lab_generation_error: order.labGenerationError ?? null,
       lab_generation_attempts: order.labGenerationAttempts ?? 0,
       lab_generation_updated_at: order.labGenerationUpdatedAt ?? null,
     }).filter(([, value]) => value !== undefined));
-    const { data, error } = await supabase.from('medical_orders').insert(payload).select('*').maybeSingle();
+    let { data, error } = await supabase.from('medical_orders').insert(payload).select('*').maybeSingle();
+    const missingLabGenerationSchema = error
+      && /lab_generation_(status|request_id|error|attempts|updated_at)/i.test(error.message)
+      && /column|schema cache/i.test(error.message);
+    if (missingLabGenerationSchema) {
+      // Older deployments may not have applied the additive lab-generation
+      // migration yet. Preserve normal EMR order entry while that schema is
+      // catching up; generation state is optional for the initial insert.
+      ({ data, error } = await supabase.from('medical_orders').insert(corePayload).select('*').maybeSingle());
+    }
     if (error) {
       console.error('Error inserting order', { code: error.code, message: error.message, details: error.details, hint: error.hint });
       onError?.([error.message, error.details, error.hint].filter(Boolean).join(' — '));
