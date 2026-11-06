@@ -103,4 +103,3 @@ export const mapManualMarPacket = (value: unknown): ManualMarPacket | null => {
     updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : null,
   };
 };
-

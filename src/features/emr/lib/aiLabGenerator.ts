@@ -1,5 +1,4 @@
 import type { ClinicalNote, LabResult, Patient, VitalSigns } from './types';
-import { classifyLabResult, formatNumericReferenceRange, getDefaultReferenceRange } from './labIntegrity';
 
 export type LabGenerationContext = {
   patient?: Patient;
@@ -11,145 +10,11 @@ export type LabGenerationContext = {
   vitals?: VitalSigns[];
 };
 
-export type LabTemplate = {
+type LabTemplate = {
   testName: string;
   unit: string;
   referenceRange: string;
   normal: [number, number];
-};
-
-const canonicalAnalyteKey = (name: string) => name
-  .toLowerCase()
-  .replace(/[\u2018\u2019']/g, '')
-  .replace(/\(serum\)|\(plasma\)|\s+/g, ' ')
-  .replace(/[^a-z0-9%]+/g, ' ')
-  .trim();
-
-const analyteAliases: Record<string, string> = {
-  wbc: 'white blood cell count',
-  'white blood cells': 'white blood cell count',
-  'white blood cell': 'white blood cell count',
-  hgb: 'hemoglobin',
-  hct: 'hematocrit',
-  'platelet count': 'platelets',
-  neutrophils: 'neutrophils %',
-  'neutrophil percentage': 'neutrophils %',
-  lymphocytes: 'lymphocytes %',
-  'lymphocyte percentage': 'lymphocytes %',
-  na: 'sodium',
-  k: 'potassium',
-  cl: 'chloride',
-  co2: 'co2 bicarbonate',
-  bicarbonate: 'co2 bicarbonate',
-  'co2 bicarbonate': 'co2 bicarbonate',
-  'blood urea nitrogen': 'bun',
-  bun: 'bun',
-  creat: 'creatinine',
-  'blood glucose': 'glucose',
-  ca: 'calcium',
-  alp: 'alkaline phosphatase',
-  bilirubin: 'total bilirubin',
-};
-
-const normalizedAnalyteKey = (name: string) => {
-  const key = canonicalAnalyteKey(name);
-  return analyteAliases[key] ?? key;
-};
-
-const validReferenceRange = (range: unknown) => {
-  if (typeof range !== 'string' || !range.trim()) return false;
-  if (range.trim().toLowerCase() === 'see interpretation') return true;
-  return /^-?\d+(?:\.\d+)?\s*(?:-|to)\s*\+?-?\d+(?:\.\d+)?(?:\s*%|\s*[a-zA-Z/%]+)?$/.test(range.trim());
-};
-
-export type GeneratedLabPayload = {
-  testName?: string;
-  value?: string | number;
-  unit?: string;
-  referenceRange?: string;
-  status?: LabResult['status'];
-  collectionTime?: string;
-  resultTime?: string;
-};
-
-type AuthoredLabEntry = { labName?: string; value?: string | number };
-
-export const matchingAuthoredLabSetting = (
-  config: { labs?: Array<{ name: string; type: 'instant' | 'pending'; statByDefault?: boolean; valueOverride?: string; instruction?: string }> } | null | undefined,
-  orderName: string,
-) => {
-  const normalized = orderName.trim().toLowerCase();
-  return config?.labs?.find((lab) => {
-    const name = lab.name.trim().toLowerCase();
-    return name === normalized || normalized.includes(name) || name.includes(normalized);
-  }) ?? null;
-};
-
-const parseAuthoredEmrContext = (value: unknown): Record<string, unknown> | null => {
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
-    } catch {
-      return null;
-    }
-  }
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-};
-
-/** Pull only explicit authored admission values; never invent a missing analyte. */
-export const authoredLabEntries = (emrContext: unknown): AuthoredLabEntry[] => {
-  const context = parseAuthoredEmrContext(emrContext);
-  const admission = context?.admission;
-  const labs = admission && typeof admission === 'object' && !Array.isArray(admission)
-    ? (admission as { labs?: unknown }).labs
-    : null;
-  return Array.isArray(labs)
-    ? labs.filter((entry): entry is AuthoredLabEntry => Boolean(entry && typeof entry === 'object' && typeof (entry as AuthoredLabEntry).labName === 'string' && (entry as AuthoredLabEntry).value !== undefined))
-    : [];
-};
-
-/** Overlay explicit case-authored values while retaining the complete template contract. */
-export const applyAuthoredLabValues = (
-  results: GeneratedLabPayload[],
-  requestedTests: LabTemplate[],
-  emrContext: unknown,
-  authoredValues: Array<{ labName?: string; value?: string | number }> = [],
-): GeneratedLabPayload[] => {
-  const authoredByKey = new Map([
-    ...authoredLabEntries(emrContext),
-    ...authoredValues,
-  ].map((entry) => [normalizedAnalyteKey(entry.labName ?? ''), entry.value]));
-  const resultByKey = new Map(results.filter((result) => result.testName).map((result) => [normalizedAnalyteKey(result.testName ?? ''), result]));
-  return requestedTests.map((template) => {
-    const existing = resultByKey.get(normalizedAnalyteKey(template.testName));
-    const authoredValue = authoredByKey.get(normalizedAnalyteKey(template.testName));
-    if (authoredValue === undefined) return existing ?? { testName: template.testName };
-    return { ...(existing ?? {}), testName: template.testName, value: authoredValue };
-  });
-};
-
-/** Keep model output inside the explicitly ordered panel contract. */
-export const validateGeneratedLabResults = (
-  results: GeneratedLabPayload[],
-  requestedTests: LabTemplate[],
-): GeneratedLabPayload[] => {
-  const requestedByKey = new Map(requestedTests.map((test) => [normalizedAnalyteKey(test.testName), test]));
-  const seen = new Set<string>();
-  return results.flatMap((result) => {
-    if (!result.testName) return [];
-    const template = requestedByKey.get(normalizedAnalyteKey(result.testName));
-    if (!template || seen.has(template.testName) || !validReferenceRange(result.referenceRange)) return [];
-    if (typeof result.value !== 'number' && (typeof result.value !== 'string' || !result.value.trim())) return [];
-    seen.add(template.testName);
-    return [{
-      ...result,
-      testName: template.testName,
-      unit: template.unit,
-      referenceRange: template.referenceRange,
-      status: classifyLabResult(template.testName, result.value, template.referenceRange).status,
-    }];
-  });
 };
 
 const labTemplates: LabTemplate[] = [
@@ -244,22 +109,9 @@ const labTemplates: LabTemplate[] = [
 
 const randomInRange = (min: number, max: number) => Number((Math.random() * (max - min) + min).toFixed(1));
 
-export const resolveLabTemplates = (
-  orderName?: string,
-  sex?: Patient['gender'],
-  dateOfBirth?: string | null,
-  asOf: unknown = new Date(),
-): LabTemplate[] => {
+export const resolveLabTemplates = (orderName?: string, gender?: Patient['gender']): LabTemplate[] => {
   const normalized = (orderName ?? '').toLowerCase().replace(/[–—]/g, '-');
-  const templatesForPatient = labTemplates.map((template) => {
-    const demographicRange = sex === 'Male' || sex === 'Female'
-      ? getDefaultReferenceRange(template.testName, sex, dateOfBirth, asOf)
-      : null;
-    return demographicRange
-      ? { ...template, referenceRange: formatNumericReferenceRange(demographicRange), normal: [demographicRange.low, demographicRange.high] as [number, number] }
-      : template;
-  });
-  const templateMap = Object.fromEntries(templatesForPatient.map((t) => [t.testName.toLowerCase(), t]));
+  const templateMap = Object.fromEntries(labTemplates.map((t) => [t.testName.toLowerCase(), t]));
 
   const panelMatches: Record<string, string[]> = {
     'cbc with differential': [
@@ -270,12 +122,18 @@ export const resolveLabTemplates = (
       'hematocrit',
       'platelets',
     ],
-    // The simulator's CBC order is the CBC-with-differential workflow. Keep
-    // the differential analytes present even when the UI stores the shorthand
-    // order name as "CBC".
+    'complete blood count with differential': [
+      'white blood cell count',
+      'neutrophils %',
+      'lymphocytes %',
+      'hemoglobin',
+      'hematocrit',
+      'platelets',
+    ],
     cbc: ['white blood cell count', 'neutrophils %', 'lymphocytes %', 'hemoglobin', 'hematocrit', 'platelets'],
     'complete blood count': ['white blood cell count', 'neutrophils %', 'lymphocytes %', 'hemoglobin', 'hematocrit', 'platelets'],
     'basic metabolic panel': ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
+    'basic metabolic panel (bmp)': ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     bmp: ['sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium'],
     'comprehensive metabolic panel': [
       'sodium',
@@ -306,6 +164,10 @@ export const resolveLabTemplates = (
       'alkaline phosphatase',
       'total bilirubin',
       'albumin',
+    ],
+    'comprehensive metabolic panel (cmp)': [
+      'sodium', 'potassium', 'chloride', 'co2 (bicarbonate)', 'bun', 'creatinine', 'glucose', 'calcium',
+      'ast', 'alt', 'alkaline phosphatase', 'total bilirubin', 'albumin',
     ],
     'liver function panel': ['ast', 'alt', 'alkaline phosphatase', 'total bilirubin', 'albumin'],
     magnesium: ['magnesium'],
@@ -357,9 +219,6 @@ export const resolveLabTemplates = (
     'bnp/nt-probnp': ['bnp/nt-probnp'],
   };
 
-  // Prefer the most specific alias. Without this ordering, a label such as
-  // "Complete Blood Count with Differential" can match the shorter generic
-  // "complete blood count" alias first and silently lose differential analytes.
   const matchedPanelKey = Object.keys(panelMatches)
     .sort((a, b) => b.length - a.length)
     .find((key) => normalized.includes(key));
@@ -367,19 +226,41 @@ export const resolveLabTemplates = (
     const panel = panelMatches[matchedPanelKey];
     return panel
       .map((name) => templateMap[name])
-      .filter(Boolean) as LabTemplate[];
+      .filter(Boolean)
+      .map((template) => {
+        if (template.testName === 'Hemoglobin' && gender === 'Male') {
+          return { ...template, referenceRange: '13.5-17.5', normal: [13.5, 17.5] as [number, number] };
+        }
+        if (template.testName === 'Hematocrit' && gender === 'Male') {
+          return { ...template, referenceRange: '41-53', normal: [41, 53] as [number, number] };
+        }
+        return template;
+      }) as LabTemplate[];
   }
 
-  const directMatches = templatesForPatient.filter((template) => normalized.includes(template.testName.toLowerCase()));
+  const directMatches = labTemplates.filter((template) => normalized.includes(template.testName.toLowerCase()));
   if (directMatches.length) return directMatches;
 
-  const fallbackTemplate: LabTemplate = {
+  // Do not silently substitute a fabricated CBC/chemistry panel for an
+  // Instant Lab that has no simulator analyte mapping. Preserve the authored
+  // order as a one-result contract so every catalogued Instant Lab can reach
+  // the lab grid without inventing unrelated analytes.
+  return [{
     testName: orderName?.trim() || 'Instant Lab Result',
     unit: '',
     referenceRange: 'See interpretation',
     normal: [0, 0],
-  };
-  return [fallbackTemplate];
+  }];
+};
+
+const deriveLabStatus = (value: number, [low, high]: [number, number]) => {
+  if (value < low * 0.9 || value > high * 1.1) {
+    return 'Critical';
+  }
+  if (value < low || value > high) {
+    return 'Abnormal';
+  }
+  return 'Normal';
 };
 
 type ClinicalSignals = {
@@ -516,20 +397,8 @@ export async function generateLabResults(
   caseDescription: string,
   context?: LabGenerationContext,
 ): Promise<LabResult[]> {
-  // Assignment-scoped generation must come from the trusted Edge Function
-  // bundle. The old local path jittered admission/normal values and could
-  // manufacture a plausible-looking but clinically false result set after a
-  // validation failure. Baseline authoring keeps its existing path, while a
-  // learner attempt receives a recoverable error instead.
-  if (context?.assignmentId) {
-    throw new Error('No validated assignment-scoped lab result bundle was returned');
-  }
   const signals = deriveClinicalSignals(caseDescription, context);
-  const templates = resolveLabTemplates(
-    context?.orderName ?? caseDescription,
-    context?.patient?.gender,
-    context?.patient?.dateOfBirth,
-  );
+  const templates = resolveLabTemplates(context?.orderName ?? caseDescription);
 
   const results = templates.map((template, index) => {
     const [low, high] = template.normal;
@@ -538,7 +407,7 @@ export async function generateLabResults(
     const variance = signals.emphasis === 'Critical' ? 0.3 : signals.emphasis === 'Abnormal' ? 0.18 : 0.08;
     const drifted = base * (1 + randomInRange(-variance, variance));
     const biasedValue = applyClinicalBias(template, drifted, signals);
-    const status = classifyLabResult(template.testName, biasedValue, template.referenceRange).status;
+    const status = emphasizeStatus(deriveLabStatus(biasedValue, template.normal), signals.emphasis);
 
     return {
       id: `generated-lab-${Date.now()}-${index}`,
@@ -558,6 +427,13 @@ export async function generateLabResults(
 
   return Promise.resolve(results);
 }
+
+const emphasizeStatus = (status: LabResult['status'], emphasis: string): LabResult['status'] => {
+  if (emphasis === 'Abnormal' && status === 'Normal') {
+    return 'Abnormal';
+  }
+  return status;
+};
 
 export async function generateVitalSigns(patientId: string, caseDescription: string): Promise<VitalSigns[]> {
   const baseTemp = caseDescription.toLowerCase().includes('fever') ? 100 : 98.4;

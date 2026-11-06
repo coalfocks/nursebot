@@ -179,7 +179,7 @@ Return JSON array of objects:
     "resultTime": "<ISO8601>"
   }
 ]
-Match each requested test once. If user intent or requested values are present, use them directly unless they are unsafe/implausible—do not ignore userRequest. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context or user intent.`;
+    Match each requested test exactly once, using the exact requested testName strings and returning exactly ${payload.tests.length} objects. Do not abbreviate names (for example, return "White Blood Cell Count", not "WBC"). If user intent or requested values are present, use them directly unless they are unsafe/implausible—do not ignore userRequest. If uncertain, bias toward normal adult inpatient ranges; make abnormalities only when suggested by context or user intent.`;
 
     return { system, user };
   }
@@ -201,48 +201,75 @@ Keep values realistic for adult inpatients. Do not add commentary outside the JS
   return { system, user };
 };
 
-const parseJsonFromString = (content: string): unknown => {
-  const cleaned = content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+const parseJsonFromString = (content: string) => {
   try {
-    const parsed = JSON.parse(cleaned);
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed && typeof parsed === 'object') {
-      const record = parsed as Record<string, unknown>;
-      for (const key of ['labs', 'results', 'data']) {
-        if (Array.isArray(record[key])) return record[key];
-      }
-    }
-    return parsed;
+    return JSON.parse(content);
   } catch {
-    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-    if (arrayMatch) {
-      try {
-        return JSON.parse(arrayMatch[0]);
-      } catch {
-        // Continue to the object recovery path below.
-      }
-    }
-    const match = cleaned.match(/\{[\s\S]*\}/);
+    const match = content.match(/[\[{][\s\S]*[\]}]/);
     if (match) {
       try {
-        const parsed = JSON.parse(match[0]);
-        if (parsed && typeof parsed === 'object') {
-          const record = parsed as Record<string, unknown>;
-          for (const key of ['labs', 'results', 'data']) {
-            if (Array.isArray(record[key])) return record[key];
-          }
-        }
-        return parsed;
+        return JSON.parse(match[0]);
       } catch {
         return null;
       }
     }
   }
   return null;
+};
+
+const normalizeLabKey = (value: string) => {
+  const normalized = value.toLowerCase().replace(/[–—]/g, '-').replace(/\([^)]*\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const aliases: Record<string, string> = {
+    wbc: 'white blood cell count',
+    'white blood cells': 'white blood cell count',
+    hgb: 'hemoglobin',
+    hct: 'hematocrit',
+    plt: 'platelets',
+    bicarbonate: 'co2',
+    'co2 bicarbonate': 'co2',
+    'blood urea nitrogen': 'bun',
+    'blood glucose': 'glucose',
+    na: 'sodium',
+    k: 'potassium',
+    cl: 'chloride',
+    ca: 'calcium',
+    creat: 'creatinine',
+    alp: 'alkaline phosphatase',
+    bilirubin: 'total bilirubin',
+    cr: 'creatinine',
+  };
+  return aliases[normalized] ?? normalized;
+};
+
+const normalizeBatchLabs = (tests: LabTest[], value: unknown) => {
+  const labs = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as { labs?: unknown }).labs)
+      ? (value as { labs: unknown[] }).labs
+      : value && typeof value === 'object' && Array.isArray((value as { results?: unknown }).results)
+        ? (value as { results: unknown[] }).results
+        : null;
+  if (!labs || labs.length !== tests.length) {
+    throw new Error(`LAB_RESULT_INCOMPLETE: expected ${tests.length} results, received ${labs?.length ?? 0}`);
+  }
+  const requested = new Map(tests.map((test) => [normalizeLabKey(test.testName), test]));
+  const seen = new Set<string>();
+  return labs.map((entry, index) => {
+    if (!entry || typeof entry !== 'object') throw new Error(`LAB_RESULT_INVALID: result ${index + 1}`);
+    const result = entry as Record<string, unknown>;
+    const rawName = typeof result.testName === 'string' ? result.testName : '';
+    const key = normalizeLabKey(rawName);
+    const test = requested.get(key);
+    if (!test || seen.has(key)) throw new Error(`LAB_RESULT_MEMBER_INVALID: ${rawName || index + 1}`);
+    if (result.value === null || result.value === undefined || result.value === '') throw new Error(`LAB_RESULT_VALUE_MISSING: ${test.testName}`);
+    seen.add(key);
+    return {
+      ...result,
+      testName: test.testName,
+      unit: typeof result.unit === 'string' && result.unit ? result.unit : test.unit ?? '',
+      referenceRange: typeof result.referenceRange === 'string' && result.referenceRange ? result.referenceRange : test.referenceRange ?? '',
+    };
+  });
 };
 
 Deno.serve(async (req) => {
@@ -253,14 +280,14 @@ Deno.serve(async (req) => {
   try {
     const payload: LabRequestPayload = await req.json();
     const isBatch = 'tests' in payload;
-    if (!payload.labName && !isBatch) {
+    if (!isBatch && !('labName' in payload && payload.labName)) {
       return new Response(JSON.stringify({ error: 'labName or tests/orderName is required' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    if (!isBatch && payload.labType === 'pending') {
+    if ('labName' in payload && payload.labType === 'pending') {
       return new Response(
         JSON.stringify({
           value: null,
@@ -296,17 +323,22 @@ Deno.serve(async (req) => {
       throw new Error('Unable to parse AI response');
     }
 
-    if (isBatch && !Array.isArray(parsed)) {
-      throw new Error('Lab engine returned a non-array panel response');
+    if (isBatch) {
+      const labs = normalizeBatchLabs(payload.tests, parsed);
+      return new Response(JSON.stringify({ labs }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
-    const responseBody = isBatch ? { labs: parsed } : parsed;
+
+    const responseBody = parsed;
 
     return new Response(JSON.stringify(responseBody), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
     console.error('lab-results error', error);
-    return new Response(JSON.stringify({ error: error?.message ?? 'Unknown error' }), {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

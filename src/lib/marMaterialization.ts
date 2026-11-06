@@ -37,4 +37,3 @@ export const materializationRequestForAssignment = (
   windowStart: assignment.window_start,
   windowEnd: assignment.window_end,
 });
-

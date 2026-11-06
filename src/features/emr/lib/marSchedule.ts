@@ -216,4 +216,3 @@ export const expandMarSchedule = (input: MarScheduleInput): MarDraftOccurrence[]
   }
   return occurrences;
 };
-

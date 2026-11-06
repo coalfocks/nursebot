@@ -47,4 +47,3 @@ describe('manual MAR packet contract', () => {
     expect(manualMarTimelineCellOffsetPercent(12)).toBe(0);
   });
 });
-

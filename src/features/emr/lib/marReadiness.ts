@@ -22,4 +22,3 @@ export const learnerMarLoadState = (
   }
   return { kind: 'ready', caseVersion: caseVersion.trim() };
 };
-

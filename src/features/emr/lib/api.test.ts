@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MedicalOrder } from './types';
 
-const { from } = vi.hoisted(() => ({ from: vi.fn() }));
+const { from, rpc } = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn() }));
 
-vi.mock('../../../lib/supabase', () => ({ supabase: { from } }));
+vi.mock('../../../lib/supabase', () => ({ supabase: { from, rpc } }));
 
 import { emrApi } from './api';
 
@@ -51,10 +51,8 @@ const builder = (result: { data: unknown; error: unknown }) => {
     insert: vi.fn(() => chain),
     update: vi.fn(() => chain),
     eq: vi.fn(() => chain),
-    is: vi.fn(() => chain),
     select: vi.fn(() => chain),
     maybeSingle: vi.fn(async () => result),
-    then: (resolve: (value: typeof result) => unknown) => Promise.resolve(result).then(resolve),
   };
   return chain;
 };
@@ -87,7 +85,41 @@ const draftOrder: MedicalOrder = {
 };
 
 describe('emrApi versioned note/order mutations', () => {
-  beforeEach(() => from.mockReset());
+  beforeEach(() => {
+    from.mockReset();
+    rpc.mockReset();
+  });
+
+  it('appends only server-gated prior-stage context to the active assignment', async () => {
+    const notesResult = { data: [noteRow()], error: null };
+    const notesChain = {
+      select: vi.fn(() => notesChain),
+      eq: vi.fn(() => notesChain),
+      is: vi.fn(() => notesChain),
+      order: vi.fn(async () => notesResult),
+    };
+    from.mockImplementation((table: string) => table === 'rooms'
+      ? builder({ data: { continues_from: null }, error: null })
+      : notesChain);
+    rpc.mockResolvedValue({
+      data: [{
+        sourceAssignmentId: 'assignment-a',
+        sourceRoomId: 3,
+        sourceStage: 'A',
+        authoredCapturedAt: '2026-10-02T20:00:00.000Z',
+        sourceCompletedAt: '2026-10-02T21:30:00.000Z',
+        content: 'Frozen authored predecessor context.',
+      }],
+      error: null,
+    });
+
+    const notes = await emrApi.listClinicalNotes('patient-1', 'assignment-b', 3);
+
+    expect(notes.map((note) => note.title)).toEqual(['Prior stage A clinical context', 'Persisted note']);
+    expect(rpc).toHaveBeenCalledWith('get_assignment_chain_prior_stage_context_for_assignment', {
+      p_target_assignment_id: 'assignment-b',
+    });
+  });
 
   it('returns the complete persisted order instead of the optimistic draft', async () => {
     from.mockReturnValue(builder({ data: orderRow(), error: null }));
@@ -96,18 +128,6 @@ describe('emrApi versioned note/order mutations', () => {
 
     expect(saved).toMatchObject({ id: 'server-order-id', recordVersion: 2 });
     expect(saved?.id).not.toBe(draftOrder.id);
-  });
-
-  it('retries order entry without optional lab-generation fields on an older schema', async () => {
-    from
-      .mockReturnValueOnce(builder({ data: null, error: { message: "Could not find the 'lab_generation_attempts' column of 'medical_orders' in the schema cache" } }))
-      .mockReturnValueOnce(builder({ data: orderRow(), error: null }));
-
-    const saved = await emrApi.addOrder({ ...draftOrder, category: 'Lab' });
-
-    expect(saved).toMatchObject({ id: 'server-order-id' });
-    expect(from).toHaveBeenCalledTimes(2);
-    expect(from.mock.results[1].value.insert).toHaveBeenCalledWith(expect.not.objectContaining({ lab_generation_attempts: expect.anything() }));
   });
 
   it('returns the complete persisted note instead of the optimistic draft', async () => {
@@ -158,7 +178,6 @@ describe('emrApi versioned note/order mutations', () => {
       collection_time: '2000-01-01T00:00:00.000Z',
       result_time: '2000-01-01T00:00:00.000Z',
       ordered_by: 'Admission',
-      relative_label: 'On admission',
       created_at: null,
       deleted_at: null,
       ...overrides,
@@ -176,9 +195,6 @@ describe('emrApi versioned note/order mutations', () => {
 
     expect(labs).toHaveLength(3);
     expect(new Set(labs.map((entry) => entry.id))).toEqual(new Set(['active-lab', 'room-lab', 'baseline-lab']));
-    expect(labs.find((entry) => entry.id === 'room-lab')?.status).toBe('Abnormal');
-    expect(labs.find((entry) => entry.id === 'active-lab')?.status).toBe('Abnormal');
-    expect(labs.find((entry) => entry.id === 'baseline-lab')?.relativeLabel).toBe('On admission');
   });
 
   it('persists coded lab values without coercing them to zero or null-only results', async () => {
@@ -204,97 +220,112 @@ describe('emrApi versioned note/order mutations', () => {
     ], 3);
 
     expect(insert).toHaveBeenCalledWith([
-      expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded', status: 'Unknown', abnormal_flag: null }),
+      expect.objectContaining({ value: null, text_value: 'O positive', value_type: 'coded' }),
     ]);
   });
 
-  it('recomputes numeric status at the save boundary instead of trusting a supplied label', async () => {
-    const insert = vi.fn(async () => ({ error: null }));
-    from.mockReturnValue({ insert });
-
-    await emrApi.addLabResults([{
-      id: 'numeric-lab',
-      patientId: 'patient-1',
-      assignmentId: 'assignment-1',
-      roomId: 3,
-      overrideScope: 'assignment',
-      testName: 'Creatinine',
-      value: 1,
-      valueType: 'numeric',
-      unit: 'mg/dL',
-      referenceRange: '0.7-1.3',
-      status: 'Critical',
-      collectionTime: '2026-10-02T21:00:00.000Z',
-      orderedBy: 'Model',
-    }], 3);
-
-    expect(insert).toHaveBeenCalledWith([
-      expect.objectContaining({ value: 1, status: 'Normal', abnormal_flag: false }),
-    ]);
-  });
-
-  it('preserves an explicit baseline relative label on insert', async () => {
-    const selectResult = builder({ data: [], error: null });
-    const insert = vi.fn(async () => ({ error: null }));
-    from.mockReturnValueOnce(selectResult).mockReturnValueOnce({ insert });
-
-    await emrApi.addLabResults([{
-      id: 'baseline-lab',
-      patientId: 'patient-1',
-      testName: 'AST',
-      value: 42,
-      valueType: 'numeric',
-      unit: 'U/L',
-      referenceRange: '10-40',
-      status: 'Abnormal',
-      collectionTime: '2026-10-02T21:00:00.000Z',
-      orderedBy: 'Admission',
-      relativeLabel: 'On admission',
-    }]);
-
-    expect(insert).toHaveBeenCalledWith([
-      expect.objectContaining({ relative_label: 'On admission', collection_time: '2026-10-02T21:00:00.000Z' }),
-    ]);
-  });
-
-  it('preserves an explicit baseline relative label on update without changing its timestamp', async () => {
-    const existing = {
-      id: 'baseline-lab-id',
-      test_name: 'AST',
-      collection_time: '2026-10-02T21:00:00.000Z',
-      result_time: '2026-10-02T21:00:00.000Z',
+  it('writes a new authored baseline set at its own time without rewriting older sets', async () => {
+    const old = {
+      id: 'old-lab',
+      test_name: 'Sodium',
+      collection_time: '2026-10-01T12:00:00.000Z',
+      result_time: '2026-10-01T12:00:00.000Z',
+      baseline_set_id: 'admission-day-1',
     };
-    const selectResult = builder({ data: [existing], error: null });
-    const update = vi.fn(() => builder({ data: [{ id: 'baseline-lab' }], error: null }));
-    from.mockReturnValueOnce(selectResult).mockReturnValueOnce({ update });
+    const selectChain = readableBuilder({ data: [old], error: null });
+    const insert = vi.fn(async () => ({ error: null }));
+    from
+      .mockReturnValueOnce(selectChain)
+      .mockReturnValueOnce({ insert });
 
-    await emrApi.addLabResults([{
-      id: 'baseline-lab',
+    const result = await emrApi.addLabResults([{
+      id: 'new-lab',
       patientId: 'patient-1',
-      testName: 'AST',
-      value: 44,
-      valueType: 'numeric',
-      unit: 'U/L',
-      referenceRange: '10-40',
-      status: 'Abnormal',
-      collectionTime: '2026-10-02T21:00:00.000Z',
-      orderedBy: 'Admission',
-      relativeLabel: 'Post-treatment',
-    }]);
+      overrideScope: 'baseline',
+      testName: 'Sodium',
+      value: 140,
+      unit: 'mmol/L',
+      referenceRange: '135-145',
+      status: 'Normal',
+      collectionTime: '2026-10-02T12:00:00.000Z',
+      resultTime: '2026-10-02T12:00:00.000Z',
+      orderedBy: 'Super Admin',
+      baselineSetId: 'admission-day-2',
+    }], null);
 
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      relative_label: 'Post-treatment',
-      collection_time: '2026-10-02T21:00:00.000Z',
-      result_time: '2026-10-02T21:00:00.000Z',
-    }));
+    expect(result).toEqual({ ok: true });
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        test_name: 'Sodium',
+        collection_time: '2026-10-02T12:00:00.000Z',
+        baseline_set_id: 'admission-day-2',
+      }),
+    ]);
   });
 
-  it('keeps baseline label updates label-only', async () => {
-    const update = vi.fn(() => builder({ data: [{ id: 'baseline-lab' }], error: null }));
-    from.mockReturnValue({ update });
+  it('authorizes a shared-stage assignment even when the room has another primary school', async () => {
+    const assignmentQuery = builder({
+      data: {
+        id: 'assignment-1',
+        room_id: 20,
+        student_id: 'student-1',
+        school_id: 'school-b',
+        status: 'in_progress',
+        case_key_version: 'room-20-mar-v1',
+      },
+      error: null,
+    });
+    const roomQuery = builder({
+      data: { id: 20, patient_id: 'patient-20', school_id: 'school-a' },
+      error: null,
+    });
+    from.mockReturnValueOnce(assignmentQuery).mockReturnValueOnce(roomQuery);
 
-    await expect(emrApi.updateBaselineLabSetLabel('patient-1', '2026-10-02T21:00:00.000Z', 'Post-treatment')).resolves.toBe(true);
+    const scope = await emrApi.getMarAssignmentContext(
+      'assignment-1',
+      'school-admin-1',
+      'school_admin',
+      'school-b',
+      20,
+    );
 
-    expect(update).toHaveBeenCalledWith({ relative_label: 'Post-treatment' });
+    expect(scope).toMatchObject({
+      assignmentId: 'assignment-1',
+      roomId: 20,
+      patientId: 'patient-20',
+      schoolId: 'school-b',
+      caseVersion: 'room-20-mar-v1',
+    });
+    expect(assignmentQuery.eq).toHaveBeenCalledWith('school_id', 'school-b');
+  });
+
+  it('does not reinterpret a legacy scenario version as an MAR snapshot key', async () => {
+    from
+      .mockReturnValueOnce(builder({
+        data: {
+          id: 'assignment-old',
+          room_id: 20,
+          student_id: 'student-1',
+          school_id: 'school-b',
+          status: 'completed',
+          case_key_version: null,
+          scenario_baseline_version: 6,
+        },
+        error: null,
+      }))
+      .mockReturnValueOnce(builder({
+        data: { id: 20, patient_id: 'patient-20', school_id: 'school-a' },
+        error: null,
+      }));
+
+    const scope = await emrApi.getMarAssignmentContext(
+      'assignment-old',
+      'student-1',
+      'student',
+      'school-b',
+      20,
+    );
+
+    expect(scope?.caseVersion).toBeNull();
   });
 });

@@ -9,10 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from './ui/Textarea';
 import { ScrollArea } from './ui/ScrollArea';
 import { Search, Plus, Clock, AlertCircle, CheckCircle, Pill, TestTube, Camera, ClipboardList } from 'lucide-react';
-import { allOrders, getInitialFrequency, type OrderItem } from '../lib/ordersData';
+import { allOrders, type OrderItem } from '../lib/ordersData';
 import type { Patient, MedicalOrder } from '../lib/types';
-import { useAuthStore } from '../../../stores/authStore';
-import { minimumPriorTimestamp } from '../lib/scenarioTime';
 
 type OrderCategory = 'all' | 'Lab' | 'Medication' | 'Imaging' | 'Other';
 type OrderPriority = 'Routine' | 'STAT' | 'Timed';
@@ -25,7 +23,6 @@ interface OrderEntryProps {
 }
 
 export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline }: OrderEntryProps) {
-  const { profile } = useAuthStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory>('all');
   const [selectedOrder, setSelectedOrder] = useState<OrderItem | null>(null);
@@ -86,7 +83,7 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
     }
     
     setOrderDetails({
-      frequency: getInitialFrequency(order),
+      frequency: order.frequencies?.includes('Once') ? 'Once' : '',
       route: order.routes?.[0] || '',
       dose: extractedDose,
       unit: order.units?.[0] || extractedUnit,
@@ -127,15 +124,13 @@ export function OrderEntry({ patient, onOrderPlaced, assignmentId, forceBaseline
       overrideScope: forceBaseline ? 'baseline' : assignmentId ? 'assignment' : patient.roomId ? 'room' : 'baseline',
       category: selectedOrder.category,
       orderName: isOtherOrder ? `${selectedOrder.name} - ${orderFor}` : selectedOrder.name,
-      frequency: orderDetails.frequency,
+      frequency: orderDetails.frequency || 'Once',
       route: orderDetails.route,
       dose: orderDetails.dose ? (orderDetails.unit ? `${orderDetails.dose} ${orderDetails.unit}` : orderDetails.dose) : undefined,
       priority: orderDetails.priority as OrderPriority,
       status: 'Active',
-      orderedBy: profile?.full_name ? `${profile.full_name} (${profile.role ?? 'student'})` : 'Learner (student)',
-      // Learner orders are attempt events. Baseline/admin authoring keeps the
-      // prior-encounter sentinel; student orders start at the active encounter.
-      orderTime: forceBaseline ? minimumPriorTimestamp(patient.admissionDate) : new Date().toISOString(),
+      orderedBy: patient.attendingPhysician,
+      orderTime: new Date().toISOString(),
       scheduledTime: orderDetails.scheduledTime || undefined,
       instructions,
     };

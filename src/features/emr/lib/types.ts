@@ -67,9 +67,6 @@ export interface ClinicalNote {
   signed: boolean;
   recordVersion?: number;
   assignmentId?: string | null;
-  timelineEntryId?: string | null;
-  relativeLabel?: string | null;
-  relativeOffsetHours?: number | null;
 }
 
 export interface LabResult {
@@ -89,16 +86,16 @@ export interface LabResult {
   lifecycleStatus?: 'not_ordered' | 'ordered' | 'collected' | 'pending' | 'resulted' | 'corrected' | 'canceled' | 'rejected';
   unit: string;
   referenceRange: string;
-  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending' | 'Unknown';
+  status: 'Normal' | 'Abnormal' | 'Critical' | 'Pending';
   collectionTime: string;
   resultTime?: string;
   orderedBy: string;
   createdAt?: string;
   deletedAt?: string | null;
-  timelineEntryId?: string | null;
-  relativeLabel?: string | null;
-  relativeOffsetHours?: number | null;
-  orderId?: string | null;
+  sourceOrderId?: string | null;
+  baselineSetId?: string | null;
+  /** Shared authored learner-facing offset for this baseline set; null means legacy offset unknown. */
+  baselineRelativeOffsetHours?: number | null;
 }
 
 export type LabWriteResult =
@@ -122,8 +119,6 @@ export interface VitalSigns {
   weight?: number;
   height?: number;
   deletedAt?: string | null;
-  timelineEntryId?: string | null;
-  relativeOffsetHours?: number | null;
 }
 
 export interface MedicalOrder {
@@ -145,11 +140,9 @@ export interface MedicalOrder {
   instructions?: string;
   deletedAt?: string | null;
   recordVersion?: number;
-  labGenerationStatus?: 'not_requested' | 'generating' | 'succeeded' | 'failed';
-  labGenerationRequestId?: string | null;
+  labGenerationStatus?: 'not_started' | 'generating' | 'completed' | 'failed';
   labGenerationError?: string | null;
-  labGenerationAttempts?: number;
-  labGenerationUpdatedAt?: string | null;
+  labGenerationAttemptedAt?: string | null;
 }
 
 export type MarCategory = 'scheduled' | 'prn' | 'one_time' | 'infusion';
@@ -178,9 +171,9 @@ export interface MarAdministrationEvent {
   prnIndication?: string | null;
   response?: string | null;
   infusionDetails?: Record<string, unknown> | null;
-  source: 'automatic' | 'manual' | 'snapshot';
+  source: 'authored_scenario' | 'simulation' | 'learner';
   actorLabel?: string | null;
-  recordVersion?: number;
+  recordVersion: number;
 }
 
 export type MutationConflict<T> = {
@@ -211,18 +204,9 @@ export interface ImagingStudy {
   orderedBy?: string | null;
   orderTime?: string;
   report?: string | null;
-  bodySite?: string | null;
-  laterality?: string | null;
-  indication?: string | null;
-  findings?: string | null;
-  impression?: string | null;
-  encounterTime?: string | null;
-  recordVersion?: number;
   reportGeneratedAt?: string | null;
   images?: ImagingImage[];
   deletedAt?: string | null;
-  timelineEntryId?: string | null;
-  relativeOffsetHours?: number | null;
 }
 
 export interface ImagingResult {

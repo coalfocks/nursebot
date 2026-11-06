@@ -15,4 +15,3 @@ export const marScopeKey = (scope: MarScopeIdentity) => [
 ].join(':');
 
 export const sameMarScope = (a: MarScopeIdentity, b: MarScopeIdentity) => marScopeKey(a) === marScopeKey(b);
-

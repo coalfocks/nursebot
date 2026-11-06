@@ -98,4 +98,3 @@ export function projectMedicationRows(
     };
   }).sort((a, b) => a.representative.medicationName.localeCompare(b.representative.medicationName));
 }
-

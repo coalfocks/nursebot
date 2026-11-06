@@ -14,4 +14,3 @@ describe('learnerMarLoadState', () => {
     expect(learnerMarLoadState(' room-20-mar-v1 ', true)).toEqual({ kind: 'ready', caseVersion: 'room-20-mar-v1' });
   });
 });
-

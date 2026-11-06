@@ -1,6 +1,6 @@
 import { supabase } from '../../../lib/supabase';
+import { readSupabaseErrorDiagnostic } from '../../../lib/supabaseErrorDiagnostic';
 import { labTypeByName } from './labCatalog';
-import { minimumPriorTimestamp } from './scenarioTime';
 import type { LabResult, LabOrderSetting, RoomOrdersConfig } from './types';
 
 type LabPriority = 'Routine' | 'STAT' | 'Timed';
@@ -36,7 +36,7 @@ const buildFallbackLabResult = ({
   valueOverride?: string | null;
   assignmentId?: string | null;
 }): LabResult => {
-  const now = minimumPriorTimestamp();
+  const now = new Date().toISOString();
   const numericValue = extractNumericValue(valueOverride) ?? Number((Math.random() * 3 + 10).toFixed(1));
   const status =
     typeof valueOverride === 'string' && /critical|high|low|abnormal|elevated|decreased|up|down/i.test(valueOverride)
@@ -117,7 +117,7 @@ export const generateLabResultForOrder = async ({
       assignmentId: assignmentId ?? null,
     });
     if (aiLab) {
-      const now = minimumPriorTimestamp();
+      const now = new Date().toISOString();
       const rawValue = aiLab.value ?? '';
       const numericValue = typeof rawValue === 'number' ? rawValue : extractNumericValue(String(rawValue));
       return {
@@ -136,7 +136,7 @@ export const generateLabResultForOrder = async ({
       };
     }
   } catch (error) {
-    console.error('AI lab generation failed, falling back to nominal values', error);
+    console.error('AI lab generation failed, falling back to nominal values', await readSupabaseErrorDiagnostic(error));
   }
 
   return buildFallbackLabResult({ patientId, labName, orderedBy, priority, valueOverride, assignmentId });
