@@ -55,7 +55,9 @@ function TabsContent({
   return (
     <TabsPrimitive.Content
       data-slot="tabs-content"
-      className={cn('flex-1 outline-none', className)}
+      // forceMount keeps async panels alive, so hide inactive content
+      // explicitly instead of relying on Radix's unmounted-content behavior.
+      className={cn('flex-1 outline-none data-[state=inactive]:hidden', className)}
       {...props}
     />
   );
