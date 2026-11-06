@@ -29,6 +29,11 @@ import { supabase } from '../lib/supabase';
 import { fetchSpecialtiesForRoom, hasObgynSpecialty } from '../lib/roomHelpers';
 import { useRequestIdentity } from '../hooks/useRequestIdentity';
 import { datetimeLocalToUtc } from '../features/emr/lib/labDisplayTime';
+import { testUserAssignmentRpcArgs, type AssignmentCreateRow } from '../lib/assignmentCreation';
+
+type GeneratedRpcResult = { data: unknown; error: { code?: string; message?: string } | null };
+const callGeneratedRpc = (name: string, args: Record<string, unknown>) =>
+  (supabase as unknown as { rpc: (rpcName: string, rpcArgs: Record<string, unknown>) => Promise<GeneratedRpcResult> }).rpc(name, args);
 
 export default function EmrDashboard() {
   const { profile, user } = useAuthStore();
@@ -365,7 +370,7 @@ export default function EmrDashboard() {
       setTestAssignmentError(null);
       const { data, error } = await supabase
         .from('student_room_assignments')
-        .select('id')
+        .select('id, case_key_version')
         .eq('student_id', user.id)
         .eq('room_id', selectedPatient.roomId)
         .in('status', ['assigned', 'in_progress', 'bedside', 'completed']);
@@ -377,19 +382,36 @@ export default function EmrDashboard() {
         setTestAssignmentError('Unable to load the test session.');
         return;
       }
-      let assignmentRecord = data?.[0] ?? null;
+      let assignmentRecord = data?.find((assignment) => Boolean(assignment.case_key_version)) ?? null;
       if (!assignmentRecord && isTestUserProfile) {
-        const { data: insertedAssignment, error: insertError } = await supabase
-          .from('student_room_assignments')
-          .insert({
-            student_id: user.id,
-            room_id: selectedPatient.roomId,
-            assigned_by: user.id,
-            status: 'assigned',
-            school_id: profile?.school_id ?? undefined,
-          })
-          .select('id')
-          .maybeSingle();
+        const { data: published, error: publishedError } = await callGeneratedRpc('get_mar_eligible_case_version', {
+          p_room_id: selectedPatient.roomId,
+        });
+        const caseVersion = typeof (published as { caseVersion?: unknown } | null)?.caseVersion === 'string'
+          ? (published as { caseVersion: string }).caseVersion.trim()
+          : '';
+        if (publishedError || !caseVersion || !profile?.school_id) {
+          console.error('Failed to resolve immutable MAR case version', publishedError);
+          setIsEnsuringAssignment(false);
+          setTestAssignmentError('This test room is not ready for an immutable MAR session.');
+          return;
+        }
+        const assignment: AssignmentCreateRow = {
+          id: crypto.randomUUID(),
+          student_id: user.id,
+          room_id: selectedPatient.roomId,
+          assigned_by: user.id,
+          status: 'assigned',
+          effective_date: new Date().toISOString(),
+          window_start: new Date().toISOString(),
+          window_end: null,
+          school_id: profile.school_id,
+          case_key_version: caseVersion,
+        };
+        const { error: insertError } = await callGeneratedRpc(
+          'create_test_user_assignment_with_manual_snapshot',
+          testUserAssignmentRpcArgs(assignment),
+        );
         if (!isCurrentPatientRequest(request)) return;
         if (insertError) {
           console.error('Failed to create test assignment', insertError);
@@ -398,7 +420,7 @@ export default function EmrDashboard() {
           setTestAssignmentError('Unable to start a test session for this room.');
           return;
         }
-        assignmentRecord = insertedAssignment ?? null;
+        assignmentRecord = { id: assignment.id, case_key_version: assignment.case_key_version };
       }
       if (!isCurrentPatientRequest(request)) return;
       setDerivedAssignmentId(assignmentRecord?.id ?? undefined);

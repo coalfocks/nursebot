@@ -8,7 +8,7 @@ import { OrderEntry } from './OrderEntry';
 import { Plus, Clock, CheckCircle, XCircle, AlertCircle, User, Pencil, Trash } from 'lucide-react';
 import type { Patient, MedicalOrder, ImagingStudy } from '../lib/types';
 import { emrApi } from '../lib/api';
-import { resolveLabTemplates } from '../lib/aiLabGenerator';
+import { generateLabResults, resolveLabTemplates } from '../lib/aiLabGenerator';
 import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { isSuperAdmin } from '../../../lib/roles';
@@ -329,8 +329,18 @@ export function OrdersManagement({
           emrApi.listClinicalNotes(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
           emrApi.listVitals(patient.id, effectiveAssignmentId ?? undefined, contextualRoomId),
         ]);
-        const aiResponse = await supabase.functions.invoke('lab-results', {
-          body: {
+        let generatedLabs: Array<{
+          testName: string;
+          value: string | number;
+          unit?: string;
+          referenceRange?: string;
+          status?: string;
+          collectionTime?: string;
+          resultTime?: string;
+        }> | null = null;
+        try {
+          const aiResponse = await supabase.functions.invoke('lab-results', {
+            body: {
             orderName: adjustedOrder.orderName,
             priority: adjustedOrder.priority,
             tests: requestedTests,
@@ -382,30 +392,46 @@ export function OrdersManagement({
                 instructions: order.instructions,
               })),
             },
-          },
-        });
-
-        if (aiResponse.error) {
-          throw aiResponse.error;
+            },
+          });
+          if (!aiResponse.error) {
+            generatedLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
+              ? ((aiResponse.data as { labs: unknown }).labs as typeof generatedLabs)
+              : null;
+          }
+          if (aiResponse.error) console.warn('AI lab generation unavailable; using deterministic fallback', await readSupabaseErrorDiagnostic(aiResponse.error));
+        } catch (error) {
+          console.warn('AI lab generation unavailable; using deterministic fallback', await readSupabaseErrorDiagnostic(error));
         }
 
-        const aiLabs = Array.isArray((aiResponse.data as { labs?: unknown })?.labs)
-          ? ((aiResponse.data as { labs: unknown }).labs as Array<{
-              testName: string;
-              value: string | number;
-              unit?: string;
-              referenceRange?: string;
-              status?: string;
-              collectionTime?: string;
-              resultTime?: string;
-            }>)
-          : null;
-
-        if (!aiLabs) throw new Error('LAB_RESULT_SHAPE_INVALID: lab-results returned no validated result array.');
-        const generatedLabs = validateCompleteLabPanel(requestedTests, aiLabs);
+        let validatedLabs: import('../lib/types').LabResult[];
+        try {
+          validatedLabs = generatedLabs
+            ? validateCompleteLabPanel(requestedTests, generatedLabs)
+            : await generateLabResults(patient.id, adjustedOrder.orderName, {
+                patient,
+                assignmentId: effectiveAssignmentId,
+                roomId: effectiveRoomId,
+                orderName: adjustedOrder.orderName,
+                previousLabs,
+                clinicalNotes,
+                vitals,
+              });
+        } catch (error) {
+          console.warn('AI lab response failed validation; using deterministic fallback', await readSupabaseErrorDiagnostic(error));
+          validatedLabs = await generateLabResults(patient.id, adjustedOrder.orderName, {
+            patient,
+            assignmentId: effectiveAssignmentId,
+            roomId: effectiveRoomId,
+            orderName: adjustedOrder.orderName,
+            previousLabs,
+            clinicalNotes,
+            vitals,
+          });
+        }
 
         const runTimestamp = new Date().toISOString();
-        const labsWithScope: import('../lib/types').LabResult[] = generatedLabs.map((lab, index) => ({
+        const labsWithScope: import('../lib/types').LabResult[] = validatedLabs.map((lab, index) => ({
           id: (lab as { id?: string }).id ?? `lab-${Date.now()}-${index}`,
           patientId: patient.id,
           assignmentId: effectiveAssignmentId,
