@@ -1144,7 +1144,10 @@ export default function EmrDashboard() {
               />
             </TabsContent>
 
-            <TabsContent value="labs">
+            {/* Keep clinical panels mounted when switching tabs. Lab generation and
+                MAR readiness/save flows have async work that must not be torn down
+                merely because the other EMR panel is selected. */}
+            <TabsContent value="labs" forceMount>
               <LabResults
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
@@ -1176,7 +1179,7 @@ export default function EmrDashboard() {
               />
             </TabsContent>
 
-            <TabsContent value="mar">
+            <TabsContent value="mar" forceMount>
               <MedicationAdministrationRecord
                 patient={selectedPatient}
                 assignmentId={effectiveAssignmentId}
