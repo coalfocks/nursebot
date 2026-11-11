@@ -99,7 +99,7 @@ export const COHORT_METRIC_DEFINITIONS: MetricDefinition[] = [
     metricId: 'assessment_coverage',
     name: 'Completed cases with feedback',
     unit: 'percent',
-    numerator: 'completed opportunities with a valid assessment',
+    numerator: 'completed opportunities with saved feedback',
     denominator: 'completed opportunities',
     scoreSource: 'feedback status',
   },
