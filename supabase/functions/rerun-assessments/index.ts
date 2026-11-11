@@ -9,6 +9,7 @@ interface RerunRequest {
   assignment_ids?: string[]; // If provided, only rerun these specific assignments
   room_ids?: string[];       // If provided, only rerun assignments for these rooms
   rerun_all?: boolean;       // If true, rerun all completed assignments
+  comments_only?: boolean;   // If true, regenerate only the saved debrief comments
 }
 
 interface RerunResponse {
@@ -17,6 +18,8 @@ interface RerunResponse {
   assignments_queued: number;
   assignment_ids: string[];
   errors?: string[];
+  run_ids?: string[];
+  prompt_versions?: string[];
 }
 
 Deno.serve(async (req) => {
@@ -43,7 +46,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { assignment_ids, room_ids, rerun_all } = requestBody;
+    const { assignment_ids, room_ids, rerun_all, comments_only } = requestBody;
 
     // Validate input - at least one option must be provided
     if (!assignment_ids && !room_ids && !rerun_all) {
@@ -118,18 +121,22 @@ Deno.serve(async (req) => {
 
     const assignmentIds = assignments.map(a => a.id);
     const errors: string[] = [];
+    const runIds: string[] = [];
+    const promptVersions: string[] = [];
     let successCount = 0;
 
     // Reset feedback status to pending for all assignments
     console.log('Resetting feedback status to pending for all assignments');
-    const { error: resetError } = await supabaseClient
-      .from('student_room_assignments')
-      .update({
-        feedback_status: 'pending',
-        feedback_error: null,
-        // Preserve the prior result; generate-feedback records a new assessment run.
-      })
-      .in('id', assignmentIds);
+    const { error: resetError } = comments_only
+      ? { error: null }
+      : await supabaseClient
+        .from('student_room_assignments')
+        .update({
+          feedback_status: 'pending',
+          feedback_error: null,
+          // Preserve the prior result; generate-feedback records a new assessment run.
+        })
+        .in('id', assignmentIds);
 
     if (resetError) {
       console.error('Error resetting feedback status:', resetError);
@@ -150,8 +157,8 @@ Deno.serve(async (req) => {
         console.log(`Triggering feedback generation for assignment ${assignment.id}`);
         
         // Call the generate-feedback function for each assignment
-        const { error: generateError } = await supabaseClient.functions.invoke('generate-feedback', {
-          body: { assignmentId: assignment.id }
+        const { data, error: generateError } = await supabaseClient.functions.invoke('generate-feedback', {
+          body: { assignmentId: assignment.id, commentsOnly: comments_only === true }
         });
 
         if (generateError) {
@@ -159,14 +166,18 @@ Deno.serve(async (req) => {
           errors.push(`Assignment ${assignment.id}: ${generateError.message || 'Unknown error'}`);
           
           // Update the assignment status to failed
-          await supabaseClient
-            .from('student_room_assignments')
-            .update({
-              feedback_status: 'failed',
-              feedback_error: generateError.message || 'Unknown error'
-            })
-            .eq('id', assignment.id);
+          if (!comments_only) {
+            await supabaseClient
+              .from('student_room_assignments')
+              .update({
+                feedback_status: 'failed',
+                feedback_error: generateError.message || 'Unknown error'
+              })
+              .eq('id', assignment.id);
+          }
         } else {
+          if (data?.runId) runIds.push(data.runId);
+          if (data?.promptVersion) promptVersions.push(data.promptVersion);
           console.log(`Successfully queued feedback generation for assignment ${assignment.id}`);
           successCount++;
         }
@@ -176,6 +187,7 @@ Deno.serve(async (req) => {
         
         // Update the assignment status to failed
         try {
+          if (comments_only) continue;
           await supabaseClient
             .from('student_room_assignments')
             .update({
@@ -190,10 +202,12 @@ Deno.serve(async (req) => {
     }
 
     const response: RerunResponse = {
-      success: true,
-      message: `Successfully queued ${successCount} of ${assignments.length} assignments for feedback regeneration`,
+      success: errors.length === 0 && successCount === assignments.length,
+      message: `${comments_only ? 'Successfully regenerated comments for' : 'Successfully reran'} ${successCount} of ${assignments.length} assignments`,
       assignments_queued: successCount,
       assignment_ids: assignmentIds,
+      run_ids: runIds,
+      prompt_versions: promptVersions,
       ...(errors.length > 0 && { errors })
     };
 
@@ -209,11 +223,8 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Error in rerun-assessments function:', error);
-    console.error('Error details:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack
-    });
+    const errorDetails = error instanceof Error ? error : new Error(String(error));
+    console.error('Error details:', { name: errorDetails.name, message: errorDetails.message, stack: errorDetails.stack });
 
     return new Response(
       JSON.stringify({ 

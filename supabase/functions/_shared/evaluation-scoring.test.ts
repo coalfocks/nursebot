@@ -90,6 +90,24 @@ describe('feedback v2 canonical contract', () => {
     expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
 
+  it('recognizes manifest-form learner messages during all-zero recovery', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
+      { kind: 'order', title: 'Order: telemetry' },
+    ], null);
+    expect(result?.communication_score).toBe(2);
+    expect(result?.mdm_score).toBe(2);
+  });
+
+  it('can recover communication evidence without changing an already recovered clinical score', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
+      { kind: 'order', title: 'Order: telemetry' },
+    ], null);
+    expect(result?.communication_score).toBeGreaterThan(0);
+    expect(result?.mdm_score).toBeGreaterThan(0);
+  });
+
   it('does not treat vitals or a generic progress note as Communication evidence', () => {
     const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
       { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
