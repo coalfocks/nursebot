@@ -125,31 +125,10 @@ Deno.serve(async (req) => {
     const promptVersions: string[] = [];
     let successCount = 0;
 
-    // Reset feedback status to pending for all assignments
-    console.log('Resetting feedback status to pending for all assignments');
-    const { error: resetError } = comments_only
-      ? { error: null }
-      : await supabaseClient
-        .from('student_room_assignments')
-        .update({
-          feedback_status: 'pending',
-          feedback_error: null,
-          // Preserve the prior result; generate-feedback records a new assessment run.
-        })
-        .in('id', assignmentIds);
-
-    if (resetError) {
-      console.error('Error resetting feedback status:', resetError);
-      return new Response(
-        JSON.stringify({ error: 'Failed to reset feedback status for assignments' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
-      );
-    }
-
-    console.log('Successfully reset feedback status, now triggering individual feedback generation');
+    // This function directly owns these runs. Publishing them as pending also
+    // lets browser pending-feedback workers launch duplicate full evaluations,
+    // which can finish during a later comments-only run and overwrite scores.
+    // Keep the prior saved status/result until generate-feedback saves its run.
 
     // Trigger feedback generation for each assignment
     for (const assignment of assignments) {
