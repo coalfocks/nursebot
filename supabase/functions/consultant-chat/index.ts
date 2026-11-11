@@ -1,3 +1,4 @@
+import { CONSULTANT_DIRECTORY_BY_ID } from '../_shared/consultant-directory.ts';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import { corsHeaders } from '../_shared/cors.ts';
@@ -18,70 +19,7 @@ type ConsultantRequest = {
   clientRequestId?: string;
 };
 type Payload = { assignmentId?: string; request?: ConsultantRequest };
-const SPECIALTIES = new Set([
-  'Attending', 'Medicine', 'Surgery', 'Pediatrics', 'OB/GYN', 'Cardiology',
-  'ICU', 'Neurology', 'Nephrology', 'Infectious Disease', 'Orthopedics', 'ENT',
-  'Anesthesiology', 'Endocrinology', 'Hematology', 'Toxicology',
-  'Pediatric Hepatology', 'Pediatric Cardiology', 'Pediatric Surgery',
-  'Pediatric Emergency Medicine', 'Oncology', 'Pulmonology', 'Gastroenterology',
-]);
-const DIRECTORY: Record<string, { label: string; audience: 'adult' | 'pediatric'; aliases: string[] }> = {
-  'adult-attending': { label: 'Attending / Hospital Medicine', audience: 'adult', aliases: ['attending', 'hospitalist', 'medicine'] },
-  'adult-critical-care': { label: 'Adult Critical Care / ICU', audience: 'adult', aliases: ['icu'] },
-  'adult-cardiology': { label: 'Cardiology', audience: 'adult', aliases: ['heart'] },
-  'adult-interventional-cardiology': { label: 'Interventional Cardiology', audience: 'adult', aliases: ['cath'] },
-  'adult-pulmonology': { label: 'Pulmonology', audience: 'adult', aliases: ['lung'] },
-  'adult-gastroenterology': { label: 'Gastroenterology', audience: 'adult', aliases: ['gi'] },
-  'adult-nephrology': { label: 'Nephrology', audience: 'adult', aliases: ['kidney'] },
-  'adult-infectious-disease': { label: 'Infectious Disease', audience: 'adult', aliases: ['id'] },
-  'adult-endocrinology': { label: 'Endocrinology', audience: 'adult', aliases: ['diabetes'] },
-  'adult-neurology': { label: 'Neurology', audience: 'adult', aliases: ['neuro'] },
-  'adult-hematology-oncology': { label: 'Hematology / Oncology', audience: 'adult', aliases: ['heme', 'oncology'] },
-  'adult-rheumatology': { label: 'Rheumatology', audience: 'adult', aliases: ['rheum'] },
-  'adult-general-surgery': { label: 'General Surgery', audience: 'adult', aliases: ['surgery'] },
-  'adult-colorectal-surgery': { label: 'Colorectal Surgery', audience: 'adult', aliases: ['colorectal'] },
-  'adult-neurosurgery': { label: 'Neurosurgery', audience: 'adult', aliases: [] },
-  'adult-orthopedic-surgery': { label: 'Orthopedic Surgery', audience: 'adult', aliases: ['orthopedics'] },
-  'adult-vascular-surgery': { label: 'Vascular Surgery', audience: 'adult', aliases: ['vascular'] },
-  'adult-cardiothoracic-surgery': { label: 'Cardiothoracic Surgery', audience: 'adult', aliases: ['ct surgery'] },
-  'adult-trauma-surgery': { label: 'Trauma Surgery', audience: 'adult', aliases: ['trauma'] },
-  'adult-urology': { label: 'Urology', audience: 'adult', aliases: ['uro'] },
-  'adult-otolaryngology': { label: 'Otolaryngology (ENT)', audience: 'adult', aliases: ['ent'] },
-  'adult-ophthalmology': { label: 'Ophthalmology', audience: 'adult', aliases: ['eye'] },
-  'adult-psychiatry': { label: 'Psychiatry', audience: 'adult', aliases: [] },
-  'adult-anesthesia-pain': { label: 'Anesthesiology / Pain', audience: 'adult', aliases: ['anesthesia', 'pain'] },
-  'adult-ob-gyn': { label: 'OB/GYN', audience: 'adult', aliases: ['obgyn'] },
-  'adult-mfm': { label: 'Maternal-Fetal Medicine', audience: 'adult', aliases: ['mfm'] },
-  'adult-palliative-care': { label: 'Palliative Care', audience: 'adult', aliases: ['palliative'] },
-  'adult-radiology': { label: 'Radiology', audience: 'adult', aliases: ['imaging'] },
-  'adult-interventional-radiology': { label: 'Interventional Radiology', audience: 'adult', aliases: ['ir'] },
-  'adult-transfusion-medicine': { label: 'Transfusion Medicine', audience: 'adult', aliases: ['blood bank'] },
-  'pediatric-hospital-medicine': { label: 'Pediatric Hospital Medicine', audience: 'pediatric', aliases: ['pediatrics', 'peds'] },
-  'pediatric-critical-care': { label: 'Pediatric Critical Care / PICU', audience: 'pediatric', aliases: ['picu'] },
-  'pediatric-neonatology': { label: 'Neonatology / NICU', audience: 'pediatric', aliases: ['nicu'] },
-  'pediatric-cardiology': { label: 'Pediatric Cardiology', audience: 'pediatric', aliases: ['peds cardiology'] },
-  'pediatric-pulmonology': { label: 'Pediatric Pulmonology', audience: 'pediatric', aliases: [] },
-  'pediatric-gastroenterology': { label: 'Pediatric Gastroenterology / GI', audience: 'pediatric', aliases: ['peds gi'] },
-  'pediatric-nephrology': { label: 'Pediatric Nephrology', audience: 'pediatric', aliases: [] },
-  'pediatric-infectious-disease': { label: 'Pediatric Infectious Disease', audience: 'pediatric', aliases: ['peds id'] },
-  'pediatric-endocrinology': { label: 'Pediatric Endocrinology', audience: 'pediatric', aliases: [] },
-  'pediatric-neurology': { label: 'Pediatric Neurology', audience: 'pediatric', aliases: [] },
-  'pediatric-hematology-oncology': { label: 'Pediatric Hematology / Oncology', audience: 'pediatric', aliases: ['pediatric oncology'] },
-  'pediatric-rheumatology': { label: 'Pediatric Rheumatology', audience: 'pediatric', aliases: [] },
-  'pediatric-general-surgery': { label: 'Pediatric General Surgery', audience: 'pediatric', aliases: ['peds surgery'] },
-  'pediatric-colorectal-surgery': { label: 'Pediatric Colorectal Surgery', audience: 'pediatric', aliases: [] },
-  'pediatric-neurosurgery': { label: 'Pediatric Neurosurgery', audience: 'pediatric', aliases: [] },
-  'pediatric-orthopedic-surgery': { label: 'Pediatric Orthopedic Surgery', audience: 'pediatric', aliases: ['peds ortho'] },
-  'pediatric-urology': { label: 'Pediatric Urology', audience: 'pediatric', aliases: [] },
-  'pediatric-otolaryngology': { label: 'Pediatric ENT', audience: 'pediatric', aliases: ['peds ent'] },
-  'pediatric-ophthalmology': { label: 'Pediatric Ophthalmology', audience: 'pediatric', aliases: [] },
-  'pediatric-psychiatry': { label: 'Child and Adolescent Psychiatry', audience: 'pediatric', aliases: ['child psych'] },
-  'pediatric-anesthesia-pain': { label: 'Pediatric Anesthesiology / Pain', audience: 'pediatric', aliases: ['peds anesthesia'] },
-  'pediatric-palliative-care': { label: 'Pediatric Palliative Care', audience: 'pediatric', aliases: [] },
-  'pediatric-radiology': { label: 'Pediatric Radiology', audience: 'pediatric', aliases: [] },
-  'pediatric-interventional-radiology': { label: 'Pediatric Interventional Radiology', audience: 'pediatric', aliases: ['peds ir'] },
-  'pediatric-transfusion-medicine': { label: 'Pediatric Transfusion Medicine', audience: 'pediatric', aliases: [] },
-};
+const DIRECTORY = CONSULTANT_DIRECTORY_BY_ID;
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if (!url || !serviceKey) throw new Error('Missing Supabase service credentials');
@@ -102,8 +40,7 @@ Deno.serve(async (req) => {
     const payload = await req.json() as Payload;
     const request = payload.request ?? {};
     const serviceId = request.serviceId?.trim() ?? '';
-    const service = DIRECTORY[serviceId];
-    const serviceLabel = request.serviceLabel?.trim() ?? '';
+    const service = DIRECTORY.get(serviceId);
     const audience = request.audience;
     const message = request.message?.trim() ?? '';
     const specialty = service?.label ?? request.specialty?.trim() ?? '';
@@ -111,7 +48,7 @@ Deno.serve(async (req) => {
     const clinicalQuestion = message || request.clinicalQuestion?.trim() || '';
     const reason = request.reason?.trim() || 'Selected consultant conversation';
     const urgency = request.urgency ?? 'routine';
-    if (!payload.assignmentId || !service || serviceLabel !== service.label || audience !== service.audience || !message && (!summary || !clinicalQuestion) || !request.clientRequestId || !['routine', 'urgent', 'emergent'].includes(urgency)) {
+    if (!payload.assignmentId || !service || audience !== service.audience || !message && (!summary || !clinicalQuestion) || !request.clientRequestId || !['routine', 'urgent', 'emergent'].includes(urgency)) {
       return json({ error: 'A valid consultant service, matching audience, message, and request id are required' }, 400);
     }
     if ([summary, clinicalQuestion, reason].some((value) => value.length > 1200)) return json({ error: 'Consult fields must be 1,200 characters or fewer' }, 400);
