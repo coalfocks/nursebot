@@ -47,7 +47,9 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   const ordersRaw = mdm.orders_monitoring_quality ?? mdm.orders_monitoring ?? mdm.labs_orders_quality ?? mdm.orders_quality;
   const reasoningRaw = mdm.clinical_reasoning_documentation ?? mdm.reasoning_documentation ?? mdm.note_thought_process ?? mdm.reasoning;
   const safetyDeductionRaw = mdm.safety_deduction ?? mdm.safety ?? {};
-  const componentScore = (component: Record<string, any> | undefined) => component?.score ?? component?.value ?? component?.points ?? 0;
+  // Legacy scoring responses may serialize components as bare numbers.
+  const componentScore = (component: any) => typeof component === 'number' || typeof component === 'string'
+    ? component : component?.score ?? component?.value ?? component?.points ?? 0;
   const focused = clamp(componentScore(focusedRaw), 0, 2);
   const closedLoop = clamp(componentScore(closedLoopRaw), 0, 3);
   const efficiency = clamp(componentScore(efficiencyRaw), -2, 0);
