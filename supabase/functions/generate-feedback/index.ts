@@ -8,6 +8,7 @@ import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
 import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type CommentaryResult } from '../_shared/feedback-comments.ts';
+import { runIndependentFeedbackOperations } from '../_shared/feedback-operations.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -183,8 +184,7 @@ Deno.serve(async (req) => {
         console.info('Evaluation response schema', JSON.stringify({ keys: Object.keys(parsed), communication: shape(parsed.communication_breakdown), reasoning: shape(parsed.clinical_reasoning_breakdown ?? parsed.mdm_breakdown) }));
         return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
       };
-      let { evaluation, actionReview } = await requestEvaluation();
-      const commentary = await requestCommentary();
+      const [{ evaluation, actionReview }, commentary] = await runIndependentFeedbackOperations(requestEvaluation, requestCommentary);
       if (!commentary || commentary.status !== 'generated') {
         throw new Error(commentary?.status === 'insufficient_evidence' ? `Commentary generation incomplete: ${commentary.explanation}` : 'Commentary generation failed validation');
       }
