@@ -1,4 +1,17 @@
-import { runIndependentFeedbackOperations } from './feedback-operations.ts';
+import {
+  COMMENTARY_MAX_COMPLETION_TOKENS,
+  EVALUATION_MAX_COMPLETION_TOKENS,
+  runIndependentFeedbackOperations,
+} from './feedback-operations.ts';
+
+Deno.test('uses bounded completion budgets for evaluation and short comments', () => {
+  if (EVALUATION_MAX_COMPLETION_TOKENS !== 1800) {
+    throw new Error(`Unexpected evaluation completion budget: ${EVALUATION_MAX_COMPLETION_TOKENS}`);
+  }
+  if (COMMENTARY_MAX_COMPLETION_TOKENS !== 900) {
+    throw new Error(`Unexpected commentary completion budget: ${COMMENTARY_MAX_COMPLETION_TOKENS}`);
+  }
+});
 
 Deno.test('starts evaluation and commentary before either operation completes', async () => {
   const started: string[] = [];
