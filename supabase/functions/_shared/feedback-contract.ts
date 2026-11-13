@@ -1,6 +1,6 @@
-export const FEEDBACK_RUBRIC_VERSION = 'feedback-v3-2026-10-15';
+export const FEEDBACK_RUBRIC_VERSION = 'feedback-v4-2026-11-13';
 export const CASE_KEY_VERSION = 'case-key-v2';
-export const ASSESSMENT_VERSION = 'assessment-v2-2026-10-15';
+export const ASSESSMENT_VERSION = 'assessment-v3-2026-11-13';
 
 export type SafetyLevel = 'none' | 'concern' | 'critical';
 

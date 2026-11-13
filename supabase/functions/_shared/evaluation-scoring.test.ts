@@ -1,194 +1,105 @@
 import { describe, expect, it } from 'vitest';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText } from './evaluation-scoring';
+import { EVALUATION_SYSTEM_PROMPT } from './evaluation-prompts';
+import { filterTimelineToScoringWindow, renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from './assignment-timeline';
+import { canonicalizeEvaluation, isLearnerAuthoredEvidence } from './evaluation-scoring';
 
-describe('feedback v2 canonical contract', () => {
-  it('preserves the two anchored composites and never subtracts safety', () => {
-    const result = canonicalizeEvaluation({
-      learning_objectives: 'text',
-      communication_breakdown: {
-        focused_information_gathering: { score: 2, feedback: 'focused' },
-        closed_loop_team_communication: { score: 3, feedback: 'closed loop' },
-      },
-      mdm_breakdown: {
-        orders_monitoring_quality: { score: 3, feedback: 'orders' },
-        clinical_reasoning_documentation: { score: 2, feedback: 'reasoning' },
-      },
-      safety_result: { level: 'critical', action: 'unsafe order', rationale: 'contraindicated', evidence_event_ids: ['order-1'] },
-      recommendations: [], strengths: [], improvements: [],
-    });
-    expect(result.communication_score).toBe(5);
-    expect(result.mdm_score).toBe(5);
-    expect(result.safety_result.level).toBe('critical');
-    expect(result.safety_result.evidence_event_ids).toEqual(['order-1']);
-  });
-
-  it('clamps only anchored components and reports missing evidence instead of inventing zeros', () => {
-    const result = canonicalizeEvaluation({
-      communication_breakdown: {
-        focused_information_gathering: { score: 9, feedback: '' },
-        closed_loop_team_communication: { score: -2, feedback: '' },
-      },
-      mdm_breakdown: {
-        orders_monitoring_quality: { score: 8, feedback: '' },
-        clinical_reasoning_documentation: { score: -3, feedback: '' },
-      },
-      safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
-    });
-    expect(result.communication_score).toBe(2);
-    expect(result.mdm_score).toBe(3);
-    expect(result.communication_breakdown.closed_loop_team_communication.feedback).toContain('Insufficient evidence');
-    expect(result.mdm_breakdown.clinical_reasoning_documentation.feedback).toContain('Insufficient evidence');
-  });
-
-  it('requires a non-empty source manifest before treating an attempt as evidence-bearing', () => {
-    expect(hasMeaningfulEvidence(['message-1', 'order-1'])).toBe(true);
-    expect(hasMeaningfulEvidence([])).toBe(false);
-  });
-
-  it('normalizes legacy evaluator breakdown keys into the canonical contract', () => {
-    const result = canonicalizeEvaluation({
-      communication_breakdown: {
-        information_sharing: { score: 2, feedback: 'focused legacy evidence' },
-        responsive_communication: { score: 2, feedback: 'closed-loop legacy evidence' },
-      },
-      mdm_breakdown: {
-        labs_orders_quality: { score: 3, feedback: 'orders legacy evidence' },
-        note_thought_process: { score: 2, feedback: 'reasoning legacy evidence' },
-      },
-      safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
-    });
-    expect(result.communication_score).toBe(4);
-    expect(result.mdm_score).toBe(5);
-    expect(result.communication_breakdown.focused_information_gathering.feedback).toBe('focused legacy evidence');
-    expect(result.mdm_breakdown.clinical_reasoning_documentation.feedback).toBe('reasoning legacy evidence');
-  });
-
-  it('accepts numeric-string and value-shaped evaluator component scores', () => {
-    const result = canonicalizeEvaluation({
-      communication: {
-        information_gathering: { value: '2', feedback: 'bedside history' },
-        closed_loop_communication: { points: '3', feedback: 'escalation and reassessment' },
-      },
-      medical_decision_making: {
-        orders_monitoring: { score: '3', feedback: 'urgent monitoring' },
-        reasoning_documentation: { value: 2, feedback: 'documented rationale' },
-      },
-    });
-    expect(result.communication_score).toBe(5);
-    expect(result.mdm_score).toBe(5);
-  });
-
-  it('recovers a conservative anchored score from learner actions when the evaluator returns all zero', () => {
-    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
-      { kind: 'message', title: 'Nurse message', body: 'unstable' },
-      { kind: 'message', title: 'Student message', body: 'I am at bedside and escalating.' },
-      { kind: 'vital', title: 'Vital reassessment' },
-      { kind: 'order', title: 'Order: monitoring' },
-    ], 'Focused reassessment and escalation documented.')
-    expect(result?.communication_score).toBe(2);
-    expect(result?.mdm_score).toBe(2);
-    expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
-  });
-
-  it('recognizes manifest-form learner messages during all-zero recovery', () => {
-    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
-      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
-      { kind: 'order', title: 'Order: telemetry' },
-    ], null);
-    expect(result?.communication_score).toBe(2);
-    expect(result?.mdm_score).toBe(2);
-  });
-
-  it('can recover communication evidence without changing an already recovered clinical score', () => {
-    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
-      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
-      { kind: 'order', title: 'Order: telemetry' },
-    ], null);
-    expect(result?.communication_score).toBeGreaterThan(0);
-    expect(result?.mdm_score).toBeGreaterThan(0);
-  });
-
-  it('does not treat vitals or a generic progress note as Communication evidence', () => {
-    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
-      { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
-      { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
-      { kind: 'order', title: 'Order: telemetry', body: 'STAT' },
-      { kind: 'progress-note', title: 'Student progress note', body: 'Reassessed unstable patient and escalated.' },
-    ], 'Reassessed unstable patient and escalated.');
-
-    expect(result).not.toBeNull();
-    expect(result?.communication_score).toBe(0);
-    expect(result?.mdm_score).toBeGreaterThan(0);
-    expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(0);
-    expect(result?.communication_breakdown.focused_information_gathering.feedback).toContain('vitals');
-  });
-
-  it('credits a structured learner bedside finding and team escalation without nurse chat', () => {
-    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
-      { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
-      { kind: 'vital', title: 'Vitals updated', body: 'HR 128' },
-      { kind: 'learner-action', title: 'Learner bedside finding', body: 'At bedside: cool extremities and delayed capillary refill.', meta: ['Channel: bedside', 'Author: Student'] },
-      { kind: 'learner-action', title: 'Learner team escalation', body: 'Escalated concern to senior clinician and requested immediate review.', meta: ['Channel: team', 'Author: Student'] },
-      { kind: 'order', title: 'Order: telemetry', body: 'STAT' },
-    ], 'Bedside findings and escalation documented.');
-
-    expect(result?.communication_score).toBe(2);
-    expect(result?.communication_breakdown.closed_loop_team_communication.score).toBe(1);
-  });
-
-  it('does not claim that a computer simulation included a physical exam', () => {
-    expect(sanitizeSimulationText('Documented specific bedside signs after a physical exam.'))
-      .toBe('Recorded learner-reported simulated bedside findings after a simulated bedside interaction.');
-    const result = canonicalizeEvaluation({
-      strengths: ['The learner examined the patient and escalated.'],
-      communication_breakdown: { focused_information_gathering: { score: 1, feedback: 'physical exam observed' } },
-    });
-    expect(result.strengths[0]).toContain('assessed the patient in the simulation');
-    expect(result.communication_breakdown.focused_information_gathering.feedback).toContain('simulated bedside interaction');
-  });
-
-  it('applies the confirmed three-part deductions only when supplied by case-specific evidence', () => {
-    const result = canonicalizeEvaluation({
-      communication_breakdown: {
-        focused_information_gathering: { score: 2, feedback: 'focused' },
-        closed_loop_team_communication: { score: 3, feedback: 'closed loop' },
-        efficiency_deduction: { score: -1, feedback: 'Observed case-specific unnecessary delay.' },
-      },
-      clinical_reasoning_breakdown: {
-        orders_monitoring_quality: { score: 3, feedback: 'orders' },
-        clinical_reasoning_documentation: { score: 2, feedback: 'reasoning' },
-        safety_deduction: { score: -2, feedback: 'One actual unsafe order.' },
-      },
-      safety_result: { level: 'critical', action: 'unsafe order', rationale: 'specific action', evidence_event_ids: ['order-1'] },
-    });
-    expect(result.communication_score).toBe(4);
-    expect(result.clinical_reasoning_score).toBe(3);
-    expect(result.mdm_score).toBe(3);
-    expect(result.communication_breakdown.efficiency_deduction.score).toBe(-1);
-    expect(result.clinical_reasoning_breakdown.safety_deduction.score).toBe(-2);
-  });
-
-  it('does not impose an efficiency deduction for bedside-first care or missing nurse chat', () => {
-    const result = canonicalizeEvaluation({
-      communication_breakdown: {
-        focused_information_gathering: { score: 1, feedback: 'bedside finding' },
-        closed_loop_team_communication: { score: 1, feedback: 'team escalation' },
-      },
-      clinical_reasoning_breakdown: {
-        orders_monitoring_quality: { score: 1, feedback: 'monitoring' },
-        clinical_reasoning_documentation: { score: 1, feedback: 'note' },
-      },
-    });
-    expect(result.communication_score).toBe(2);
-    expect(result.communication_breakdown.efficiency_deduction.score).toBe(0);
-  });
+const complete = (overrides: Record<string, unknown> = {}) => ({
+  communication_breakdown: {
+    focused_information_gathering: { score: 2, feedback: 'Focused learner assessment.', evidence_event_ids: ['student-1'] },
+    closed_loop_team_communication: { score: 3, feedback: 'Clear request and response loop.', evidence_event_ids: ['consult-request'] },
+    efficiency_deduction: { score: 0, feedback: 'No observed interference.', evidence_event_ids: [] },
+  },
+  clinical_reasoning_breakdown: {
+    orders_monitoring_quality: { score: 3, feedback: 'Appropriate monitoring.', evidence_event_ids: ['order-1'] },
+    clinical_reasoning_documentation: { score: 2, feedback: 'Reasoning linked to findings.', evidence_event_ids: ['note-1'] },
+    safety_deduction: { score: 0, feedback: 'Safety reviewed; no unsafe learner action observed.', evidence_event_ids: [] },
+  },
+  safety_result: { level: 'none', action: null, rationale: 'No unsafe learner action observed.', evidence_event_ids: [] },
+  ...overrides,
 });
 
- describe('legacy numeric model response', () => {
-  it('preserves all six numeric components instead of replacing valid scores with fallback scores', () => {
-    const result = canonicalizeEvaluation({ communication_breakdown: { focused_information_gathering: 2, closed_loop_team_communication: 3, efficiency_deduction: -1 }, clinical_reasoning_breakdown: { orders_monitoring_quality: 3, clinical_reasoning_documentation: 2, safety_deduction: -2 } } as any);
-    expect(result.communication_score).toBe(4);
-    expect(result.clinical_reasoning_score).toBe(3);
-    expect(result.mdm_breakdown.safety_deduction.score).toBe(-2);
+describe('evidence-based evaluation contract', () => {
+  it('calibrates a stable no-consult case to full scores when all anchors are met', () => {
+    const result = canonicalizeEvaluation(complete() as any);
+    expect(result.communication_score).toBe(5);
+    expect(result.mdm_score).toBe(5);
+  });
+
+  it('preserves a genuine observed zero instead of replacing it with heuristic credit', () => {
+    const input = complete({
+      communication_breakdown: {
+        focused_information_gathering: { score: 0, feedback: 'No focused learner information gathering was observed.', evidence_event_ids: ['student-1'] },
+        closed_loop_team_communication: { score: 0, feedback: 'No responsive loop was observed.', evidence_event_ids: ['student-1'] },
+        efficiency_deduction: { score: 0, feedback: 'No observed interference.', evidence_event_ids: [] },
+      },
+    });
+    expect(canonicalizeEvaluation(input as any).communication_score).toBe(0);
+  });
+
+  it('marks missing components unassessable with a reason and nulls dependent totals', () => {
+    const input = complete({ clinical_reasoning_breakdown: { orders_monitoring_quality: { score: 1, feedback: 'One order observed.' } } });
+    const result = canonicalizeEvaluation(input as any);
+    expect(result.communication_score).toBe(5);
+    expect(result.mdm_score).toBeNull();
+    expect(result.mdm_breakdown.clinical_reasoning_documentation.score).toBeNull();
+    expect(result.mdm_breakdown.clinical_reasoning_documentation.not_scored_reason).toMatch(/missing/i);
+    expect(result.mdm_breakdown.safety_deduction.score).toBeNull();
+    expect(result.safety_result.level).toBe('not_assessed');
+  });
+
+  it('does not coerce invalid deductions to -2 or another boundary', () => {
+    const input = complete({
+      communication_breakdown: { ...complete().communication_breakdown, efficiency_deduction: { score: -3, feedback: 'Invalid deduction.' } },
+      clinical_reasoning_breakdown: { ...complete().clinical_reasoning_breakdown, safety_deduction: { score: 1, feedback: 'Invalid deduction.' } },
+    });
+    const result = canonicalizeEvaluation(input as any);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBeNull();
+    expect(result.communication_score).toBeNull();
+    expect(result.mdm_breakdown.safety_deduction.score).toBeNull();
+    expect(result.mdm_score).toBeNull();
+  });
+
+  it('requires a safety review result before treating safety as none or applying a deduction', () => {
+    const { safety_result: _ignored, ...input } = complete();
+    const result = canonicalizeEvaluation(input as any);
+    expect(result.safety_result.level).toBe('not_assessed');
+    expect(result.mdm_breakdown.safety_deduction.score).toBeNull();
+    expect(result.mdm_score).toBeNull();
+  });
+
+  it('uses structured actor fields and includes consultant requests but excludes consultant replies as learner evidence', () => {
+    const request = { id: 'consult-request', actor_role: 'student', channel: 'consultant_chat', meta: ['Author: Consultant'] };
+    const reply = { id: 'consult-reply', actor_role: 'consultant', channel: 'consultant_chat', meta: ['Author: Student'] };
+    expect(isLearnerAuthoredEvidence(request)).toBe(true);
+    expect(isLearnerAuthoredEvidence(reply)).toBe(false);
+    expect(EVALUATION_SYSTEM_PROMPT).toContain("student's consultant request is learner evidence");
+    expect(EVALUATION_SYSTEM_PROMPT).toContain('never infer authorship or channel by parsing a meta string');
+  });
+
+  it('allows bedside-first care without a communication penalty for missing nurse chat', () => {
+    const result = canonicalizeEvaluation(complete({
+      communication_breakdown: {
+        focused_information_gathering: { score: 2, feedback: 'Learner documented bedside findings.', evidence_event_ids: ['bedside-1'] },
+        closed_loop_team_communication: { score: 3, feedback: 'Learner escalated through the team channel.', evidence_event_ids: ['team-1'] },
+        efficiency_deduction: { score: 0, feedback: 'No case-specific interference observed.', evidence_event_ids: [] },
+      },
+    }) as any);
+    expect(result.communication_score).toBe(5);
+    expect(result.communication_breakdown.efficiency_deduction.score).toBe(0);
+  });
+
+  it('preserves timestamp order and surfaces tied or missing-time uncertainty', () => {
+    const entries: EvaluationTimelineEntry[] = [
+      { id: 'before', kind: 'message', timestamp: '2026-11-13T12:00:00Z', sequence: 1, actor_role: 'student', title: 'Student message' },
+      { id: 'page', kind: 'message', timestamp: '2026-11-13T12:00:00Z', sequence: 2, actor_role: 'nurse', title: 'Nurse page' },
+      { id: 'after', kind: 'consultant-message', timestamp: '2026-11-13T12:00:00Z', sequence: 3, actor_role: 'student', title: 'Consult request' },
+      { id: 'tie-unknown', kind: 'order', timestamp: '2026-11-13T12:00:00Z', sequence: null, actor_role: 'student', title: 'Order' },
+      { id: 'missing-time', kind: 'message', timestamp: null, actor_role: 'student', title: 'Student message', body: 'Exact excerpt retained.' },
+    ];
+    const result = filterTimelineToScoringWindow(entries, '2026-11-13T12:00:00Z', 'page', 2);
+    expect(result.scored.map((entry) => entry.id)).toEqual(['page', 'after']);
+    expect(result.uncertain.map((entry) => entry.id)).toEqual(['tie-unknown']);
+    expect(renderTimelineEntriesForEvaluation([entries[4]])).toContain('TIMESTAMP MISSING');
+    expect(entries[4].body).toBe('Exact excerpt retained.');
   });
 });

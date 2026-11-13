@@ -36,6 +36,6 @@ describe('assignment event manifest exports', () => {
   it('labels same-time events as ambiguous without inventing a sequence', () => {
     expect(eventLabel(manifest.events[0])).toContain('same-time order ambiguous');
     expect(eventLabel(manifest.events[0])).toContain('Cardiology');
-    expect(eventContent(manifest.events[0])).toBe('text: Please review the patient.');
+    expect(eventContent(manifest.events[0])).toBe('Please review the patient.');
   });
 });

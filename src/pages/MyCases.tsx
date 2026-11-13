@@ -144,7 +144,7 @@ export default function MyCases() {
       anchor.href = url;
       anchor.download = 'aggregate-feedback.html';
       anchor.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to export aggregate feedback.';
       console.error('Error exporting aggregate feedback:', error);

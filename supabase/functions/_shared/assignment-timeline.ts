@@ -104,10 +104,14 @@ export type TimelineAssignmentSummary = {
 export type EvaluationTimelineEntry = {
   id: string;
   kind: 'message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
-  timestamp: string;
+  timestamp: string | null;
   title: string;
   body?: string;
   meta?: string[];
+  actor_role?: string | null;
+  channel?: string | null;
+  sequence?: number | null;
+  ordering_ambiguous?: boolean;
 };
 
 const BASELINE_SENTINEL_PREFIX = '2000-01-01';
@@ -160,7 +164,8 @@ const getLabTimelineTimestamp = (lab: TimelineLabRow) => {
 const getImagingTimelineTimestamp = (study: TimelineImagingRow) =>
   normalizeTimelineTimestamp(study.report_generated_at ?? study.order_time ?? study.created_at);
 
-const getTimelineSortValue = (timestamp: string) => {
+const getTimelineSortValue = (timestamp: string | null) => {
+  if (!timestamp) return Number.MAX_SAFE_INTEGER;
   const parsed = new Date(timestamp);
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 };
@@ -427,9 +432,10 @@ export const renderTimelineEntriesForEvaluation = (entries: EvaluationTimelineEn
 
   return entries
     .map((entry) => {
-      const parts = [`[${entry.timestamp}] ${entry.title}`];
+      const parts = [`[${entry.timestamp ?? 'TIMESTAMP MISSING'}] ${entry.title}`, `Structured actor_role: ${entry.actor_role ?? 'unknown'}`, `Structured channel: ${entry.channel ?? 'unknown'}`];
+      if (entry.ordering_ambiguous) parts.push('Ordering uncertain: tied event ordering is not asserted.');
       if (entry.meta?.length) {
-        parts.push(`Meta: ${entry.meta.join(' | ')}`);
+        parts.push(`Context metadata (not a source for authorship/channel): ${entry.meta.join(' | ')}`);
       }
       if (entry.body?.trim()) {
         parts.push(`Details:\n${entry.body.trim()}`);
@@ -437,4 +443,28 @@ export const renderTimelineEntriesForEvaluation = (entries: EvaluationTimelineEn
       return parts.join('\n');
     })
     .join('\n\n');
+};
+
+export const filterTimelineToScoringWindow = (
+  entries: EvaluationTimelineEntry[],
+  scoringStartAt: string,
+  boundaryEventId: string | null,
+  boundarySequence: number | null,
+) => {
+  const start = new Date(scoringStartAt).getTime();
+  const scored: EvaluationTimelineEntry[] = [];
+  const uncertain: EvaluationTimelineEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.timestamp) continue;
+    const timestamp = new Date(entry.timestamp).getTime();
+    if (timestamp > start) scored.push(entry);
+    else if (timestamp < start) continue;
+    else if (entry.id === boundaryEventId) scored.push(entry);
+    else if (entry.sequence != null && boundarySequence != null && !entry.ordering_ambiguous) {
+      if (entry.sequence >= boundarySequence) scored.push(entry);
+    } else {
+      uncertain.push({ ...entry, ordering_ambiguous: true });
+    }
+  }
+  return { scored, uncertain };
 };
