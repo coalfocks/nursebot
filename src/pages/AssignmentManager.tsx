@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Loader2, Plus, Search, MessageSquare, Download, Eye, ClipboardList, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Plus, Search, MessageSquare, Download, Eye, RefreshCw, X, ArrowUp, ArrowDown } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import type { Database } from '../lib/database.types';
 import { useAuthStore } from '../stores/authStore';
@@ -52,34 +52,7 @@ type AssignmentCreateStatus = {
   requestId?: string;
 };
 
-type EvidenceAuditEvent = {
-  id: string;
-  type: string;
-  timestamp: string | null;
-  details: string;
-};
-
-type EvidenceAudit = {
-  assignment: Pick<Database['public']['Tables']['student_room_assignments']['Row'],
-    'feedback_debrief' | 'communication_breakdown' | 'mdm_breakdown' | 'safety_result' |
-    'scoring_start_at' | 'rubric_version' | 'case_key_version' | 'assessment_version' |
-    'source_event_ids' | 'technical_incomplete' | 'feedback_status' | 'feedback_error'>;
-  firstPage: { id: string; timestamp: string; details: string } | null;
-  events: EvidenceAuditEvent[];
-  latestRun: {
-    id: string;
-    created_at: string;
-    attempt_id: string;
-    rubric_version: string;
-    case_key_version: string;
-    assessment_version: string;
-    technical_incomplete: boolean;
-    scoring_start_at: string | null;
-    source_event_ids: Database['public']['Tables']['feedback_assessment_runs']['Row']['source_event_ids'];
-    result: Database['public']['Tables']['feedback_assessment_runs']['Row']['result'];
-  } | null;
-  manifest: AssignmentEventManifest;
-};
+type EvidenceAudit = AssignmentEventManifest;
 
 export default function AssignmentManager() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -716,26 +689,7 @@ export default function AssignmentManager() {
       const { data: manifest, error: manifestError } = await (supabase as any).rpc('get_assignment_event_manifest', { p_assignment_id: assignment.id });
       if (manifestError) throw manifestError;
       if (!manifest || !Array.isArray(manifest.events)) throw new Error('The assignment history manifest was not returned by the server.');
-      const firstPageEvent = manifest.events.find((event: AssignmentEventManifest['events'][number]) => event.event_type === 'nurse_message' || event.event_type === 'nurse_chat');
-      const events: EvidenceAuditEvent[] = manifest.events.map((event: AssignmentEventManifest['events'][number]) => ({
-        id: event.event_id,
-        type: eventLabel(event),
-        timestamp: event.occurred_at,
-        details: eventContent(event),
-      }));
-      const assignmentResult = await supabase.from('student_room_assignments')
-        .select('feedback_debrief, communication_breakdown, mdm_breakdown, safety_result, scoring_start_at, rubric_version, case_key_version, assessment_version, source_event_ids, technical_incomplete, feedback_status, feedback_error')
-        .eq('id', assignment.id).single();
-      if (assignmentResult.error) throw assignmentResult.error;
-      const runResult = await supabase.from('feedback_assessment_runs').select('id, created_at, attempt_id, rubric_version, case_key_version, assessment_version, technical_incomplete, scoring_start_at, source_event_ids, result').eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (runResult.error) throw runResult.error;
-      setEvidenceAudit({
-        assignment: assignmentResult.data,
-        firstPage: firstPageEvent?.occurred_at ? { id: firstPageEvent.event_id, timestamp: firstPageEvent.occurred_at, details: eventContent(firstPageEvent) } : null,
-        events,
-        latestRun: runResult.data,
-        manifest,
-      });
+      setEvidenceAudit(manifest);
     } catch (error) {
       console.error('Error fetching assignment evidence audit:', error);
       setEvidenceError(error instanceof Error ? error.message : 'Unable to read assignment evidence audit.');
@@ -769,7 +723,7 @@ export default function AssignmentManager() {
 
       if (data?.success) {
         // Show success message
-        alert(`Assessment rerun initiated successfully! ${data.message}`);
+        alert(`Assessment rerun completed successfully. ${data.message}`);
         
         // Refresh assignments to show updated status
         await fetchAssignments();
@@ -808,7 +762,7 @@ export default function AssignmentManager() {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const filteredStudents = assignableStudents.filter((student) => {
@@ -1269,13 +1223,6 @@ export default function AssignmentManager() {
                             >
                               <MessageSquare className="w-4 h-4 mr-1" />
                               View Chat
-                            </button>
-                            <button
-                              onClick={() => void handleViewEvidence(assignment)}
-                              className="inline-flex items-center px-3 py-2 border border-indigo-300 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                            >
-                              <ClipboardList className="w-4 h-4 mr-1" />
-                              View Evidence/Audit
                             </button>
                             <button
                               onClick={() => void handleViewEvidence(assignment)}
@@ -1915,7 +1862,6 @@ function EvidenceAuditModal({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [closeButtonRef, onClose]);
 
-  const json = (value: unknown) => value == null ? 'None recorded' : JSON.stringify(value, null, 2);
   const close = <button ref={closeButtonRef} type="button" onClick={onClose} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Close</button>;
 
   return (
@@ -1923,46 +1869,22 @@ function EvidenceAuditModal({
       <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={onClose} aria-hidden="true" />
       <div className="flex min-h-screen items-end justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         <div role="dialog" aria-modal="true" aria-labelledby="evidence-audit-title" className="relative inline-block w-full max-w-5xl transform overflow-hidden rounded-lg bg-white px-4 pt-5 pb-4 text-left align-bottom shadow-xl sm:my-8 sm:p-6 sm:align-middle">
-          <h2 id="evidence-audit-title" className="text-lg font-semibold text-gray-900">Evidence Audit — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2>
-          <p className="mt-1 text-sm text-gray-500">Read-only provenance for this assignment. Press Escape to close.</p>
+          <h2 id="evidence-audit-title" className="text-lg font-semibold text-gray-900">Assignment timeline — {assignment.student.full_name}, Room {assignment.room?.room_number}</h2>
+          <p className="mt-1 text-sm text-gray-500">Chronological record of captured case activity. Press Escape to close.</p>
           <div className="mt-4 max-h-[70vh] space-y-5 overflow-y-auto pr-1">
             {loading && <p className="rounded-md bg-gray-50 p-4 text-sm text-gray-600">Loading read-only evidence…</p>}
             {!loading && error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Evidence audit could not be read: {error}</p>}
             {!loading && !error && audit && (
               <>
                 <section className="rounded-md border border-gray-200 p-4">
-                  <h3 className="font-medium text-gray-900">Scoring boundary</h3>
-                  <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-                    <div><dt className="font-medium text-gray-500">First-page event</dt><dd className="break-words text-gray-900">{audit.firstPage ? `${audit.firstPage.id} · ${new Date(audit.firstPage.timestamp).toLocaleString()} · ${audit.firstPage.details}` : 'No first nurse page recorded'}</dd></div>
-                    <div><dt className="font-medium text-gray-500">Scoring starts at</dt><dd className="text-gray-900">{audit.assignment.scoring_start_at ? new Date(audit.assignment.scoring_start_at).toLocaleString() : 'Not recorded'}</dd></div>
-                  </dl>
-                </section>
-                <section className="rounded-md border border-gray-200 p-4">
-                  <h3 className="font-medium text-gray-900">Feedback provenance</h3>
-                  <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-                    <div><dt className="font-medium text-gray-500">Status / error</dt><dd className="text-gray-900">{audit.assignment.feedback_status ?? 'Not recorded'}{audit.assignment.feedback_error ? ` — ${audit.assignment.feedback_error}` : ''}</dd></div>
-                    <div><dt className="font-medium text-gray-500">Technical incomplete</dt><dd className="text-gray-900">{audit.assignment.technical_incomplete ? 'Yes' : 'No'}</dd></div>
-                    <div><dt className="font-medium text-gray-500">Rubric / case key / assessment</dt><dd className="break-words text-gray-900">{audit.assignment.rubric_version ?? '—'} / {audit.assignment.case_key_version ?? '—'} / {audit.assignment.assessment_version ?? '—'}</dd></div>
-                    <div><dt className="font-medium text-gray-500">Source event IDs</dt><dd className="break-words text-gray-900">{json(audit.assignment.source_event_ids)}</dd></div>
-                  </dl>
-                  <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><h4 className="font-semibold text-gray-600">Feedback debrief</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json(audit.assignment.feedback_debrief)}</pre></div><div><h4 className="font-semibold text-gray-600">Communication / MDM / safety</h4><pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2">{json({ communication: audit.assignment.communication_breakdown, mdm: audit.assignment.mdm_breakdown, safety: audit.assignment.safety_result })}</pre></div></div>
-                </section>
-                <section className="rounded-md border border-gray-200 p-4">
-                  <h3 className="font-medium text-gray-900">Latest feedback assessment run</h3>
-                  {!audit.latestRun ? <p className="mt-2 text-sm text-amber-700">No assessment run was recorded.</p> : <div className="mt-2 text-sm"><p><span className="font-medium">Run:</span> {audit.latestRun.id} · {new Date(audit.latestRun.created_at).toLocaleString()}</p><p><span className="font-medium">Attempt:</span> {audit.latestRun.attempt_id} · <span className="font-medium">Boundary:</span> {audit.latestRun.scoring_start_at ?? 'Not recorded'} · <span className="font-medium">Incomplete:</span> {audit.latestRun.technical_incomplete ? 'Yes' : 'No'}</p><p><span className="font-medium">Rubric / case key / assessment:</span> {audit.latestRun.rubric_version} / {audit.latestRun.case_key_version} / {audit.latestRun.assessment_version}</p><pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs">{json({ source_event_ids: audit.latestRun.source_event_ids, result: audit.latestRun.result })}</pre></div>}
-                </section>
-                <section className="rounded-md border border-gray-200 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-medium text-gray-900">Complete persisted timeline ({audit.manifest.events.length})</h3>
+                    <h3 className="font-medium text-gray-900">Case activity</h3>
                     <div className="flex flex-wrap gap-2 print:hidden">
-                      <button type="button" onClick={() => downloadText(`assignment-${audit.manifest.assignment_id}-timeline.json`, JSON.stringify(audit.manifest, null, 2), 'application/json')} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Export JSON</button>
-                      <button type="button" onClick={() => downloadText(`assignment-${audit.manifest.assignment_id}-timeline.csv`, manifestToCsv(audit.manifest), 'text/csv;charset=utf-8')} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Export CSV</button>
-                      <button type="button" onClick={() => window.print()} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Print timeline</button>
+                      <button type="button" onClick={() => downloadText(`assignment-timeline-${audit.assignment_id}.csv`, manifestToCsv(audit), 'text/csv;charset=utf-8')} className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50">Export timeline</button>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">Server-authorized assignment history. Assignment creation is included; the first nurse page remains the separate scoring boundary. Raw IDs and provenance are retained.</p>
-                  {audit.manifest.gaps.length > 0 && <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p className="font-medium">Recorded gaps / limits</p><ul className="mt-1 list-disc pl-5">{audit.manifest.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
-                  {audit.manifest.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No persisted events were recorded for this assignment.</p> : <div className="mt-2 space-y-2">{audit.manifest.events.map((event) => <div key={event.event_id} className={`rounded border p-2 text-sm ${event.ordering_ambiguous ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}><div className="font-medium text-gray-900">{eventLabel(event)} · {event.event_id}</div><div className="text-xs text-gray-500">{event.occurred_at ? new Date(event.occurred_at).toLocaleString() : 'Timestamp not recorded'} · {event.timezone ?? 'Timezone not recorded'}{event.elapsed_seconds == null ? '' : ` · elapsed ${Math.round(event.elapsed_seconds)}s`}{event.sequence == null ? '' : ` · sequence ${event.sequence}`}</div><div className="mt-1 whitespace-pre-wrap text-gray-700">{eventContent(event) || 'No details recorded'}</div><div className="mt-1 text-[11px] text-gray-500">Links: {JSON.stringify(event.links ?? {})} · Provenance: {JSON.stringify(event.provenance ?? {})}</div></div>)}</div>}
+                  {audit.gaps.length > 0 && <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p className="font-medium">Capture notes</p><ul className="mt-1 list-disc pl-5">{audit.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
+                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No case activity was captured.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => <div key={event.event_id} className={`rounded border p-3 text-sm ${event.ordering_ambiguous ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}><div className="font-medium text-gray-900">{eventLabel(event)}</div><div className="text-xs text-gray-500">{event.occurred_at ? new Date(event.occurred_at).toLocaleString() : 'Time not recorded'}{event.timezone ? ` · ${event.timezone}` : ''}{event.ordering_ambiguous ? ' · Events share an uncertain order' : ''}</div><div className="mt-1 text-xs text-gray-500">{[event.actor?.role ? `By ${event.actor.role}` : null, event.channel ? `via ${event.channel}` : null].filter(Boolean).join(' · ')}</div><div className="mt-2 whitespace-pre-wrap text-gray-700">{eventContent(event) || 'No details recorded'}</div></div>)}</div>}
                 </section>
               </>
             )}

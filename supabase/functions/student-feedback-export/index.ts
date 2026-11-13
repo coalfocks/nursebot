@@ -77,13 +77,15 @@ const parseNumber = (value: unknown): number | null => {
 
 const getNestedScore = (
   source: unknown,
-  sectionKey: string,
+  ...sectionKeys: string[]
 ): number | null => {
   const root = parseObject(source);
   if (!root) return null;
-  const section = parseObject(root[sectionKey]);
-  if (!section) return null;
-  return parseNumber(section.score);
+  for (const sectionKey of sectionKeys) {
+    const section = parseObject(root[sectionKey]);
+    if (section && 'score' in section) return parseNumber(section.score);
+  }
+  return null;
 };
 
 const roundToAnchor = (value: number, anchors: number[]) => {
@@ -125,15 +127,15 @@ const getRubricFeedback = (key: FeedbackSectionKey, score: number | null) => {
 const metricDefinitions: MetricDefinition[] = [
   {
     key: 'informationSharing',
-    label: 'Avg Information Sharing',
+    label: 'Avg Focused Information Gathering',
     anchors: [0, 1, 2],
-    extract: (assignment) => getNestedScore(assignment.communication_breakdown, 'information_sharing'),
+    extract: (assignment) => getNestedScore(assignment.communication_breakdown, 'focused_information_gathering', 'information_sharing'),
   },
   {
     key: 'responsiveCommunication',
-    label: 'Avg Responsive Communication',
+    label: 'Avg Closed-Loop Team Communication',
     anchors: [0, 1, 2, 3],
-    extract: (assignment) => getNestedScore(assignment.communication_breakdown, 'responsive_communication'),
+    extract: (assignment) => getNestedScore(assignment.communication_breakdown, 'closed_loop_team_communication', 'responsive_communication'),
   },
   {
     key: 'efficiencyDeduction',
@@ -143,15 +145,15 @@ const metricDefinitions: MetricDefinition[] = [
   },
   {
     key: 'labsOrdersQuality',
-    label: 'Avg Labs/Orders Quality',
+    label: 'Avg Orders/Monitoring Quality',
     anchors: [0, 1, 2, 3],
-    extract: (assignment) => getNestedScore(assignment.mdm_breakdown, 'labs_orders_quality'),
+    extract: (assignment) => getNestedScore(assignment.mdm_breakdown, 'orders_monitoring_quality', 'labs_orders_quality'),
   },
   {
     key: 'noteThoughtProcess',
-    label: 'Avg Note Thought Process',
+    label: 'Avg Clinical Reasoning/Documentation',
     anchors: [0, 1, 2],
-    extract: (assignment) => getNestedScore(assignment.mdm_breakdown, 'note_thought_process'),
+    extract: (assignment) => getNestedScore(assignment.mdm_breakdown, 'clinical_reasoning_documentation', 'note_thought_process'),
   },
   {
     key: 'safetyDeduction',
@@ -328,11 +330,11 @@ const buildHtml = (
           <tbody>
             ${assignments
               .map((assignment) => {
-                const info = getNestedScore(assignment.communication_breakdown, 'information_sharing');
-                const responsive = getNestedScore(assignment.communication_breakdown, 'responsive_communication');
+                const info = getNestedScore(assignment.communication_breakdown, 'focused_information_gathering', 'information_sharing');
+                const responsive = getNestedScore(assignment.communication_breakdown, 'closed_loop_team_communication', 'responsive_communication');
                 const efficiency = getNestedScore(assignment.communication_breakdown, 'efficiency_deduction');
-                const labs = getNestedScore(assignment.mdm_breakdown, 'labs_orders_quality');
-                const thought = getNestedScore(assignment.mdm_breakdown, 'note_thought_process');
+                const labs = getNestedScore(assignment.mdm_breakdown, 'orders_monitoring_quality', 'labs_orders_quality');
+                const thought = getNestedScore(assignment.mdm_breakdown, 'clinical_reasoning_documentation', 'note_thought_process');
                 const safety = getNestedScore(assignment.mdm_breakdown, 'safety_deduction');
 
                 return `<tr>

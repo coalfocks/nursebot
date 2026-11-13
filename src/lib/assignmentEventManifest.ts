@@ -30,14 +30,36 @@ const scalar = (value: unknown) => {
   return JSON.stringify(value);
 };
 
-export const eventContent = (event: AssignmentTimelineEvent) =>
-  Object.entries(event.content ?? {}).filter(([, value]) => value != null && value !== '').map(([key, value]) => `${key}: ${scalar(value)}`).join(' | ');
+const readableKey = (key: string) => key.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+export const eventContent = (event: AssignmentTimelineEvent) => {
+  const content = event.content ?? {};
+  const directText = content.text ?? content.message ?? content.content ?? content.note;
+  if (typeof directText === 'string' && directText.trim()) {
+    const rest = Object.entries(content).filter(([key, value]) => !['text', 'message', 'content', 'note'].includes(key) && value != null && value !== '')
+      .map(([key, value]) => `${readableKey(key)}: ${scalar(value)}`);
+    return [directText.trim(), ...rest].join('\n');
+  }
+  return Object.entries(content)
+    .filter(([, value]) => value != null && value !== '')
+    .map(([key, value]) => `${readableKey(key)}: ${scalar(value)}`)
+    .join('\n');
+};
 
 export const eventLabel = (event: AssignmentTimelineEvent) => {
-  const service = event.service?.label ? ` · ${event.service.label}` : '';
-  const urgency = event.service?.urgency ? ` · ${event.service.urgency}` : '';
-  const ambiguous = event.ordering_ambiguous ? ' · same-time order ambiguous' : '';
-  return `${event.event_type}${service}${urgency}${ambiguous}`;
+  const labels: Record<string, string> = {
+    student_message: 'Student message', nurse_message: 'Nurse message', nurse_chat: 'Nurse message',
+    patient_message: 'Patient message', consultant_request: 'Consult request', consultant_message: 'Consult request',
+    consultant_response: 'Consultant response', hint_shown: 'Hint viewed', order_placed: 'Order placed',
+    lab_result: 'Lab result', imaging_result: 'Imaging result', medication_ordered: 'Medication ordered',
+    progress_note: 'Progress note', assignment_completed: 'Case completed', bedside_action: 'Bedside action',
+    vital_observed: 'Vitals recorded', assignment_created: 'Assignment started',
+  };
+  const kind = labels[event.event_type] ?? readableKey(event.event_type);
+  const detail = event.service?.label ? ` · ${event.service.label}` : '';
+  const urgency = event.service?.urgency ? ` (${event.service.urgency})` : '';
+  const ambiguity = event.ordering_ambiguous ? ' · same-time order ambiguous' : '';
+  return `${kind}${detail}${urgency}${ambiguity}`;
 };
 
 export const manifestToCsv = (manifest: AssignmentEventManifest) => {
@@ -70,5 +92,5 @@ export const downloadText = (filename: string, content: string, mimeType: string
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 };

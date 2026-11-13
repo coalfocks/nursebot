@@ -14,9 +14,9 @@ export type FeedbackSheetModel = {
   goals: string[];
   summary: string | null;
   communicationScore: number | null;
-  communication: Array<{ label: string; score: string; feedback: string }>;
+  communication: Array<{ label: string; score: string; feedback: string; notScoredReason: string | null }>;
   clinicalReasoningScore: number | null;
-  clinicalReasoning: Array<{ label: string; score: string; feedback: string }>;
+  clinicalReasoning: Array<{ label: string; score: string; feedback: string; notScoredReason: string | null }>;
   safety: { level: string; detail: string } | null;
   actions: Array<{ label: string; detail: string }>;
   strengths: string[];
@@ -61,11 +61,12 @@ const firstList = (...values: unknown[]): string[] => {
   return [];
 };
 
-const score = (value: unknown): string => typeof value === 'number' ? String(value) : 'Not recorded';
+const score = (value: unknown): string => typeof value === 'number' ? String(value) : 'Not scored';
 
 const breakdownItem = (source: AnyRecord, ...keys: string[]) => {
   const item = record(keys.map((key) => source[key]).find((value) => value !== undefined));
-  return { score: score(item.score), feedback: text(item.feedback) || 'Not recorded.' };
+  const reason = text(item.not_scored_reason, item.notScoredReason) || null;
+  return { score: score(item.score), feedback: text(item.feedback) || reason || (item.score === null ? 'Not assessed.' : 'Not recorded.'), notScoredReason: reason };
 };
 
 export function mapFeedbackSheet(assignment: FeedbackSheetAssignment): FeedbackSheetModel {
@@ -106,13 +107,13 @@ export function mapFeedbackSheet(assignment: FeedbackSheetAssignment): FeedbackS
     communicationScore: typeof assignment.communication_score === 'number' ? assignment.communication_score : null,
     communication: communication.map((item, index) => ({
       ...item,
-      score: item.score === 'Not recorded' && index < 2 ? breakdownItem(legacyCommunication, index === 0 ? 'information_sharing' : 'responsive_communication').score : item.score,
-      feedback: item.feedback === 'Not recorded.' && index < 2 ? text(legacyCommunication.comments) || item.feedback : item.feedback,
+      score: item.score === 'Not scored' && index < 2 ? breakdownItem(legacyCommunication, index === 0 ? 'information_sharing' : 'responsive_communication').score : item.score,
+      feedback: item.feedback === 'Not assessed.' && index < 2 ? text(legacyCommunication.comments) || item.feedback : item.feedback,
     })),
     clinicalReasoningScore: typeof (assignment.clinical_reasoning_score ?? assignment.mdm_score) === 'number' ? (assignment.clinical_reasoning_score ?? assignment.mdm_score) as number : null,
     clinicalReasoning: clinicalReasoning.map((item) => ({
       ...item,
-      feedback: item.feedback === 'Not recorded.' ? text(legacyClinical.comments) || item.feedback : item.feedback,
+      feedback: item.feedback === 'Not assessed.' ? text(legacyClinical.comments) || item.feedback : item.feedback,
     })),
     safety: text(safetyResult.level, safetyResult.result) ? {
       level: text(safetyResult.level, safetyResult.result),
@@ -137,7 +138,7 @@ export function FeedbackSheet({ model, className = '' }: { model: FeedbackSheetM
   return <article className={`feedback-sheet space-y-4 bg-white text-gray-900 ${className}`}>
     <header className="border-b border-gray-300 pb-3"><p className="text-xs font-bold uppercase tracking-wide text-blue-700">Formative feedback · attempt-specific debrief</p><h1 className="mt-1 text-2xl font-bold">Review feedback</h1><p className="mt-1 text-sm text-gray-600">{model.studentName} · Room {model.roomNumber}</p><p className="text-xs text-gray-500">Recorded {model.generatedAt ? new Date(model.generatedAt).toLocaleString() : 'date not recorded'}{model.version ? ` · Version ${model.version}` : ''}</p></header>
     {listSection('Case goals', model.goals)}
-    <div className="grid gap-4 md:grid-cols-2">{[['Communication', model.communicationScore, model.communication], ['Clinical reasoning', model.clinicalReasoningScore, model.clinicalReasoning]].map(([title, total, rows]) => <section key={title as string} className="rounded-lg border p-4"><div className="flex items-baseline justify-between"><h2 className="font-semibold">{title as string}</h2><strong className="text-xl text-blue-700">{typeof total === 'number' ? `${total}/5` : 'Not recorded'}</strong></div><div className="mt-3 space-y-3">{(rows as FeedbackSheetModel['communication']).map((item) => <div key={item.label}><p className="text-sm font-medium">{item.label}: {item.score}</p><p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{item.feedback}</p></div>)}</div></section>)}</div>
+    <div className="grid gap-4 md:grid-cols-2">{[['Communication', model.communicationScore, model.communication], ['Clinical reasoning', model.clinicalReasoningScore, model.clinicalReasoning]].map(([title, total, rows]) => <section key={title as string} className="rounded-lg border p-4"><div className="flex items-baseline justify-between"><h2 className="font-semibold">{title as string}</h2><strong className="text-xl text-blue-700">{typeof total === 'number' ? `${total}/5` : 'Not scored'}</strong></div><div className="mt-3 space-y-3">{(rows as FeedbackSheetModel['communication']).map((item) => <div key={item.label}><p className="text-sm font-medium">{item.label}: {item.score}</p><p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{item.notScoredReason || item.feedback}</p></div>)}</div></section>)}</div>
     {model.safety && <section className="rounded-lg border p-4"><h2 className="font-semibold">Separate safety result</h2><p className="mt-2 text-sm font-medium">{model.safety.level}</p><p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{model.safety.detail}</p></section>}
     <details className="rounded-lg border bg-white p-4"><summary className="cursor-pointer font-semibold">Observed actions and orders</summary>{model.actions.length ? <div className="mt-3 space-y-3 text-sm">{model.actions.map((item, index) => <div key={`${item.label}-${index}`} className="border-l-2 border-blue-200 pl-3"><p className="font-medium">{item.label}</p><p className="mt-1 whitespace-pre-wrap text-gray-600">{item.detail}</p></div>)}</div> : <p className="mt-3 text-sm text-gray-500">Not recorded.</p>}</details>
     {listSection('Specific strengths', model.strengths)}
@@ -150,7 +151,7 @@ const htmlList = (values: string[]) => values.length ? `<ul>${values.map((item) 
 const htmlSection = (title: string, content: string, className = '') => `<section class="section ${className}"><h2>${escapeHtml(title)}</h2>${content}</section>`;
 
 export function renderFeedbackSheetHtml(model: FeedbackSheetModel): string {
-  const scoreSection = (title: string, total: number | null, rows: FeedbackSheetModel['communication']) => htmlSection(title, `<strong class="total">${total === null ? 'Not recorded' : `${total}/5`}</strong>${rows.map((item) => `<div class="row"><b>${escapeHtml(item.label)}: ${escapeHtml(item.score)}</b><p>${escapeHtml(item.feedback)}</p></div>`).join('')}`, 'score');
+  const scoreSection = (title: string, total: number | null, rows: FeedbackSheetModel['communication']) => htmlSection(title, `<strong class="total">${total === null ? 'Not scored' : `${total}/5`}</strong>${rows.map((item) => `<div class="row"><b>${escapeHtml(item.label)}: ${escapeHtml(item.score)}</b><p>${escapeHtml(item.notScoredReason || item.feedback)}</p></div>`).join('')}`, 'score');
   return `<article class="sheet"><header><p class="kicker">Formative feedback · attempt-specific debrief</p><h1>Review your feedback</h1><p>${escapeHtml(model.studentName)} · Room ${escapeHtml(model.roomNumber)}</p><small>Recorded ${escapeHtml(model.generatedAt ? new Date(model.generatedAt).toLocaleString() : 'date not recorded')}${model.version ? ` · Version ${escapeHtml(model.version)}` : ''}</small></header>${htmlSection('Case goals', htmlList(model.goals))}<div class="grid">${scoreSection('Communication', model.communicationScore, model.communication)}${scoreSection('Clinical Reasoning', model.clinicalReasoningScore, model.clinicalReasoning)}</div>${model.safety ? htmlSection('Separate safety result', `<b>${escapeHtml(model.safety.level)}</b><p class="pre">${escapeHtml(model.safety.detail)}</p>`, 'safety') : ''}${htmlSection('Observed actions and orders', model.actions.length ? model.actions.map((item) => `<div class="row"><b>${escapeHtml(item.label)}</b><p class="pre">${escapeHtml(item.detail)}</p></div>`).join('') : '<p class="missing">Not recorded.</p>')}${htmlSection('Specific strengths', htmlList(model.strengths))}${htmlSection('Actionable improvements', htmlList(model.improvements), 'improvements')}</article>`;
 }
 

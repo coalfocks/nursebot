@@ -1,9 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { buildEvidenceBackedFallback, canonicalizeEvaluation, hasMeaningfulEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
-import { renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
+import { filterTimelineToScoringWindow, renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
@@ -34,7 +34,7 @@ const manifestEventToEvaluationEntry = (event: Record<string, unknown>): Evaluat
               ? 'learner-action'
               : eventType === 'assignment_completed'
                 ? 'completion'
-                : eventType === 'consultant_message' || eventType === 'consultant_response'
+                : eventType === 'consultant_request' || eventType === 'consultant_message' || eventType === 'consultant_response'
                   ? 'consultant-message'
                   : 'message';
   const title = eventType === 'student_message'
@@ -71,8 +71,8 @@ const manifestEventToEvaluationEntry = (event: Record<string, unknown>): Evaluat
   ].filter((value): value is string => Boolean(value));
   const timestamp = typeof event.occurred_at === 'string' ? event.occurred_at : null;
   const id = typeof event.event_id === 'string' ? event.event_id : null;
-  if (!id || !timestamp) return null;
-  return { id, kind, timestamp, title, body: text || undefined, meta };
+  if (!id) return null;
+  return { id, kind, timestamp, title, body: text || undefined, meta, actor_role: typeof actor.role === 'string' ? actor.role.toLowerCase() : null, channel, sequence: typeof event.sequence === 'number' ? event.sequence : null, ordering_ambiguous: event.ordering_ambiguous === true };
 };
 
 Deno.serve(async (req) => {
@@ -105,7 +105,12 @@ Deno.serve(async (req) => {
         ? scoringBoundary.scoring_start_at
         : typeof firstPageEvent?.occurred_at === 'string' ? firstPageEvent.occurred_at : null;
       const start = scoringStartAt ? { scoring_start_at: scoringStartAt } : null;
-      const scoredEntries = start ? entries.filter((entry) => new Date(entry.timestamp).getTime() >= new Date(start.scoring_start_at).getTime()) : [];
+      const boundarySequence = typeof scoringBoundary.sequence === 'number' ? scoringBoundary.sequence : typeof firstPageEvent?.sequence === 'number' ? firstPageEvent.sequence : null;
+      const boundaryId = typeof firstPageEvent?.event_id === 'string' ? firstPageEvent.event_id : firstPageEventId;
+      const windowEntries = start ? filterTimelineToScoringWindow(entries, start.scoring_start_at, boundaryId, boundarySequence) : { scored: [], uncertain: [] };
+      const scoredEntries = windowEntries.scored;
+      const missingTimestampEvents = entries.filter((entry) => entry.timestamp == null);
+      const uncertainTimestampEvents = [...missingTimestampEvents, ...windowEntries.uncertain];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
       const key = resolveCaseEvaluationKey(room);
       const provenance = { assignment_id: assignment.id, attempt_id: assignment.id, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, scoring_start_at: start?.scoring_start_at ?? null, source_event_ids: sourceEventIds };
@@ -167,9 +172,9 @@ Deno.serve(async (req) => {
         if (updateError) throw updateError;
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
-      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths, improvements, recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
+      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score; each rubric component as {score: integer|null, feedback, evidence_event_ids, not_scored_reason}; safety_result {level: none|concern|critical|not_assessed, action, rationale, evidence_event_ids}; learning_objectives, strengths, improvements, recommendations, and action_review. Communication components are focused_information_gathering (0-2), closed_loop_team_communication (0-3), efficiency_deduction (-2..0). MDM components are orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), safety_deduction (0/-1/-2). A null score requires a concrete missing-source/component reason; a total is null if any dependent component is null. Every cited ID must be copied exactly from the scorable manifest. Use concise exact excerpts when the output supports them. Never infer author or channel from metadata strings. Mark capture gaps unassessable. Preserve observed zero. Include student consultant requests as learner evidence and treat consultant replies as context. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
       const requestEvaluation = async (validationNote = '') => {
-        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY (do not change the rubric): Each of the six breakdown components must be an object with score (number), feedback (the original component explanation), and evidence_event_ids (array). Do not serialize components as bare numbers. Include an explanation for efficiency and safety deductions even when zero.` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
+        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY: Every one of the six components is {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable.` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
         // Log schema only, never attempt text, to distinguish model output from mapping failures.
         const shape = (value: unknown): unknown => value && typeof value === 'object'
@@ -179,33 +184,6 @@ Deno.serve(async (req) => {
         return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
       };
       let { evaluation, actionReview } = await requestEvaluation();
-      if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
-        ({ evaluation, actionReview } = await requestEvaluation('\n\nVALIDATION RETRY: This attempt contains a non-empty post-page evidence manifest. Re-evaluate the observed events and do not return both composite scores as zero unless every post-page event is genuinely non-clinical. Preserve the anchored component ranges and cite manifest IDs.'));
-      }
-      if (evaluation.communication_score === 0 && evaluation.clinical_reasoning_score === 0) {
-        const recovered = buildEvidenceBackedFallback(evaluation, scoredEntries, assignment.student_progress_note);
-        if (!recovered) throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry with no learner-authored post-page action to recover');
-        evaluation = recovered;
-      }
-      // A model can recover one composite while still dropping the other when
-      // manifest labels are unfamiliar. Recover only the zero component from
-      // explicit learner evidence; preserve the model's other score, rationale,
-      // deductions, and safety result.
-      if (evaluation.communication_score === 0 || evaluation.clinical_reasoning_score === 0) {
-        const componentRecovery = buildEvidenceBackedFallback({ ...evaluation, communication_score: 0, clinical_reasoning_score: 0, mdm_score: 0 }, scoredEntries, assignment.student_progress_note);
-        if (componentRecovery) {
-          if (evaluation.communication_score === 0 && componentRecovery.communication_score > 0) {
-            evaluation.communication_score = componentRecovery.communication_score;
-            evaluation.communication_breakdown = componentRecovery.communication_breakdown;
-          }
-          if (evaluation.clinical_reasoning_score === 0 && componentRecovery.clinical_reasoning_score > 0) {
-            evaluation.clinical_reasoning_score = componentRecovery.clinical_reasoning_score;
-            evaluation.mdm_score = componentRecovery.mdm_score;
-            evaluation.mdm_breakdown = componentRecovery.mdm_breakdown;
-            evaluation.clinical_reasoning_breakdown = componentRecovery.clinical_reasoning_breakdown;
-          }
-        }
-      }
       const commentary = await requestCommentary();
       if (!commentary || commentary.status !== 'generated') {
         throw new Error(commentary?.status === 'insufficient_evidence' ? `Commentary generation incomplete: ${commentary.explanation}` : 'Commentary generation failed validation');
@@ -213,13 +191,13 @@ Deno.serve(async (req) => {
       const generatedComments = commentary.comments;
       const commentStatus = commentary.status;
       const commentPromptVersion = commentary.prompt_version;
-      const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
+      const idsForKinds = (kinds: string[], learnerOnly = false) => scoredEntries
         .filter((entry) => kinds.includes(entry.kind))
-        .filter((entry) => !learnerMessagesOnly || entry.kind !== 'message' || entry.meta?.includes('Author: Student'))
+        .filter((entry) => !learnerOnly || isLearnerAuthoredEvidence(entry))
         .map((entry) => entry.id);
-      const learnerCommunicationIds = idsForKinds(['message', 'learner-action'], true);
-      const learnerClosedLoopIds = idsForKinds(['learner-action'], true).filter((id) => scoredEntries.find((entry) => entry.id === id)?.meta?.some((value) => /team|escalat/i.test(value)));
-      const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'order', 'labs', 'vital', 'imaging'], true);
+      const learnerCommunicationIds = idsForKinds(['message', 'consultant-message', 'learner-action'], true);
+      const learnerClosedLoopIds = idsForKinds(['consultant-message', 'learner-action'], true);
+      const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'consultant-message', 'order', 'labs', 'vital', 'imaging'], true);
       const evidence = {
         communication: {
           focused: normalizeEvidenceEventIds(evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids, learnerCommunicationIds),
@@ -230,10 +208,10 @@ Deno.serve(async (req) => {
           reasoning: normalizeEvidenceEventIds(evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids, learnerReasoningIds),
         },
       };
-      if (!evidence.communication.focused.length) evidence.communication.focused = learnerCommunicationIds;
-      if (!evidence.communication.closedLoop.length) evidence.communication.closedLoop = learnerClosedLoopIds;
-      if (!evidence.mdm.orders.length) evidence.mdm.orders = idsForKinds(['order', 'labs', 'vital', 'imaging']);
-      if (!evidence.mdm.reasoning.length) evidence.mdm.reasoning = learnerReasoningIds;
+      if (!evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids.length && evaluation.communication_breakdown.focused_information_gathering.score != null) evidence.communication.focused = learnerCommunicationIds;
+      if (!evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids.length && evaluation.communication_breakdown.closed_loop_team_communication.score != null) evidence.communication.closedLoop = learnerClosedLoopIds;
+      if (!evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids.length && evaluation.mdm_breakdown.orders_monitoring_quality.score != null) evidence.mdm.orders = idsForKinds(['order', 'labs', 'vital', 'imaging']);
+      if (!evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids.length && evaluation.mdm_breakdown.clinical_reasoning_documentation.score != null) evidence.mdm.reasoning = learnerReasoningIds;
       evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids = evidence.communication.focused;
       evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids = evidence.communication.closedLoop;
       evaluation.communication_breakdown.efficiency_deduction.evidence_event_ids = normalizeEvidenceEventIds(evaluation.communication_breakdown.efficiency_deduction.evidence_event_ids, sourceEventIds);
