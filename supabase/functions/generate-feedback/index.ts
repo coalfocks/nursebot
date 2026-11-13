@@ -8,7 +8,11 @@ import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
 import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type CommentaryResult } from '../_shared/feedback-comments.ts';
-import { runIndependentFeedbackOperations } from '../_shared/feedback-operations.ts';
+import {
+  COMMENTARY_MAX_COMPLETION_TOKENS,
+  EVALUATION_MAX_COMPLETION_TOKENS,
+  runIndependentFeedbackOperations,
+} from '../_shared/feedback-operations.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -133,7 +137,7 @@ Deno.serve(async (req) => {
             model: getOpenAIModel('generate_feedback'),
             messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
             response_format: { type: 'json_object' },
-            max_completion_tokens: 3000,
+            max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
           });
           const rawContent = completion.choices[0].message.content ?? '{}';
           const parsed = JSON.parse(rawContent);
@@ -148,7 +152,7 @@ Deno.serve(async (req) => {
               { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}\n\nCANDIDATE JSON TO REPAIR:\n${rawContent}\n\nREPAIR REQUIREMENTS: strengths and improvements must each contain exactly two objects; every object must contain text and evidence_event_ids; use only the valid IDs above; each text must be one sentence of no more than 25 words.` },
             ],
             response_format: { type: 'json_object' },
-            max_completion_tokens: 3000,
+            max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
           });
           const repairedContent = repair.choices[0].message.content ?? '{}';
           return validateFeedbackComments(JSON.parse(repairedContent), allowedEventIds);
@@ -175,7 +179,7 @@ Deno.serve(async (req) => {
       }
       const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score; each rubric component as {score: integer|null, feedback, evidence_event_ids, not_scored_reason}; safety_result {level: none|concern|critical|not_assessed, action, rationale, evidence_event_ids}; learning_objectives, strengths, improvements, recommendations, and action_review. Communication components are focused_information_gathering (0-2), closed_loop_team_communication (0-3), efficiency_deduction (-2..0). MDM components are orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), safety_deduction (0/-1/-2). A null score requires a concrete missing-source/component reason; a total is null if any dependent component is null. Every cited ID must be copied exactly from the scorable manifest. Use concise exact excerpts when the output supports them. Never infer author or channel from metadata strings. Mark capture gaps unassessable. Preserve observed zero. Include student consultant requests as learner evidence and treat consultant replies as context. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
       const requestEvaluation = async (validationNote = '') => {
-        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY: Every one of the six components is {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable.` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
+        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY: Every one of the six components is {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable.` }], response_format: { type: 'json_object' }, max_completion_tokens: EVALUATION_MAX_COMPLETION_TOKENS });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
         // Log schema only, never attempt text, to distinguish model output from mapping failures.
         const shape = (value: unknown): unknown => value && typeof value === 'object'
