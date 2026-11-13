@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYTICS_QUERY_CONTRACT, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, type AnalyticsRow } from './analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
 
 describe('formatCompletionDuration', () => {
   it('formats minutes and larger durations responsively', () => {
@@ -117,10 +117,10 @@ describe('grouped analytics and evidence-backed themes', () => {
 
   it('requires evidence IDs, removes generic narratives, and counts themes by scope', () => {
     const themes = extractEvidenceBackedThemes([
-      analyticsRow({ id: 'a', feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['message-a'] }], growth_areas: [{ title: 'Reassess after the order', evidence: [{ event_id: 'order-a' }] }] } }),
-      analyticsRow({ id: 'b', feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['message-b'] }, { text: 'Observed a learner-authored interaction.', evidence_event_ids: ['message-b'] }], growth_areas: [{ title: 'Reassess after the order', evidence_event_ids: ['order-b'] }] } }),
+      analyticsRow({ id: 'a', studentId: 'learner-a', feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['message-a'] }], growth_areas: [{ title: 'Reassess after the order', evidence: [{ event_id: 'order-a' }] }] } }),
+      analyticsRow({ id: 'b', studentId: 'learner-b', feedbackDebrief: { strengths: [{ text: 'Focused escalation', evidence_event_ids: ['message-b'] }, { text: 'Observed a learner-authored interaction.', evidence_event_ids: ['message-b'] }], growth_areas: [{ title: 'Reassess after the order', evidence_event_ids: ['order-b'] }] } }),
       analyticsRow({ id: 'c', feedbackDebrief: { strengths: [{ text: 'Uncited claim' }], growth_areas: [{ title: 'Uncited growth' }] } }),
-    ]);
+    ], 1);
     expect(themes.strengths).toEqual([{ text: 'Focused escalation', count: 2 }]);
     expect(themes.growth).toEqual([{ text: 'Reassess after the order', count: 2 }]);
   });
@@ -129,7 +129,7 @@ describe('grouped analytics and evidence-backed themes', () => {
 describe('computeDashboardMetrics', () => {
   it('keeps missing scores out of denominators and creates observable trend/case rows', () => {
     const rows = [
-      { ...assignment(), id: '1', schoolId: 's', studentName: 'A', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: '2026-10-01T10:00:00Z', completedAt: '2026-10-01T11:00:00Z', feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
+      { ...assignment(), id: '1', schoolId: 's', studentName: 'A', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: '2026-10-01T10:00:00Z', scoringStartAt: '2026-10-01T10:10:00Z', completedAt: '2026-10-01T11:00:00Z', feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
       { ...assignment({ status: 'in_progress', communicationScore: null, mdmScore: null }), id: '2', schoolId: 's', studentName: 'B', studentRole: 'student', roomId: 2, roomNumber: '102', specialty: 'Surgery', createdAt: '2026-10-02T10:00:00Z', completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
     ] as AnalyticsRow[];
     const metrics = computeDashboardMetrics(rows, 2);
@@ -138,5 +138,44 @@ describe('computeDashboardMetrics', () => {
     expect(metrics.trend).toHaveLength(2);
     expect(metrics.domainPerformance[0].scored).toBe(1);
     expect(metrics.caseHeatmap).toHaveLength(2);
+  });
+});
+
+
+describe('educator analytics regression coverage', () => {
+  it('measures per-case first-page elapsed time, not assignment wait, and excludes missing or invalid pairs', () => {
+    const metrics = computeDashboardMetrics([
+      analyticsRow({ id: 'valid', createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'missing', createdAt: '2026-10-01T00:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'reversed', scoringStartAt: '2026-10-03T11:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'invalid', scoringStartAt: 'not-a-date', completedAt: '2026-10-03T10:20:00Z' }),
+    ], 1);
+    expect(metrics.caseHeatmap[0]).toMatchObject({ medianCompletionMinutes: 20, completionTimeSampleSize: 1, completed: 4 });
+  });
+
+  it('keeps identical room numbers from different cases separate and deduplicates all samples', () => {
+    const row = analyticsRow({ communicationBreakdown: { focused_information_gathering: { score: 2 }, efficiency_deduction: { score: 0 } }, mdmBreakdown: { safety_deduction: { score: 0 } } });
+    const metrics = computeDashboardMetrics([row, row, analyticsRow({ id: 'other-case', roomId: 2, communicationScore: 2 }), analyticsRow({ id: 'pending', feedbackStatus: 'pending', communicationScore: 5 })], 1);
+    expect(metrics.caseHeatmap).toHaveLength(2);
+    expect(metrics.domainPerformance[0]).toMatchObject({ average: 3, scored: 2, eligible: 3 });
+    expect(metrics.subscorePerformance.find((item) => item.label === 'Efficiency deduction')).toMatchObject({ average: 0, scored: 1 });
+    expect(metrics.subscorePerformance.find((item) => item.label === 'Orders / monitoring quality')).toMatchObject({ average: null, scored: 0 });
+  });
+
+  it('applies cohort threshold to distinct learners, never repeated attempts or duplicate comments', () => {
+    const theme = { text: 'Close the loop', evidence_event_ids: ['event'] };
+    const row = (id: string, studentId: string) => analyticsRow({ id, studentId, feedbackDebrief: { strengths: [theme, theme], growth_areas: [theme], improvements: [theme] } });
+    const two = [row('a','one'), row('b','one'), row('c','two')];
+    expect(extractEvidenceBackedThemes(two).strengths).toEqual([]);
+    expect(extractEvidenceBackedThemes([...two, row('d','three')]).strengths).toEqual([{ text: 'Close the loop', count: 3 }]);
+    expect(extractEvidenceBackedThemes([...two, row('d','three')], 5).growth).toEqual([]);
+    expect(extractEvidenceBackedThemes([row('a','one')], 1).growth).toEqual([{ text: 'Close the loop', count: 1 }]);
+    expect(extractEvidenceBackedThemes([analyticsRow({ ...row('a','one'), feedbackStatus: 'failed' })], 1).strengths).toEqual([]);
+  });
+
+  it('uses explicit safety level, including legacy debrief safety, without inferring harm from text', () => {
+    expect(safetyFlagFor(analyticsRow({ safetyResult: { level: 'critical', rationale: 'Contraindicated order', action: 'Unsafe order' } }))).toMatchObject({ level: 'critical', rationale: 'Contraindicated order' });
+    expect(safetyFlagFor(analyticsRow({ feedbackDebrief: { safety_result: { level: 'concern' } } }))).toMatchObject({ level: 'concern' });
+    expect(safetyFlagFor(analyticsRow({ safetyResult: { level: 'none', rationale: 'No harmful action' } }))).toBeNull();
   });
 });

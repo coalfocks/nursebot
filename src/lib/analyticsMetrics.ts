@@ -19,6 +19,8 @@ export type AnalyticsRow = AnalyticsAssignment & {
   roomNumber: string;
   specialty: string;
   createdAt: string | null;
+  scoringStartAt?: string | null;
+  safetyResult?: Record<string, unknown> | null;
   completedAt: string | null;
   feedbackGeneratedAt: string | null;
   caseDifficulty: string | null;
@@ -33,7 +35,8 @@ export type DashboardMetrics = CohortMetrics & {
   completionTimeSampleSize: number;
   trend: Array<{ label: string; attempts: number; completed: number; assessed: number }>;
   domainPerformance: Array<{ domain: string; average: number | null; scored: number; eligible: number }>;
-  caseHeatmap: Array<{ caseLabel: string; attempts: number; completed: number; average: number | null }>;
+  caseHeatmap: CasePerformance[];
+  subscorePerformance: SubscorePerformance[];
 };
 
 export type MetricDefinition = {
@@ -62,7 +65,7 @@ export type CohortMetrics = {
   };
 };
 
-export const ANALYTICS_METRIC_VERSION = '2026-10-16.1';
+export const ANALYTICS_METRIC_VERSION = '2026-11-11.1';
 
 export const ANALYTICS_QUERY_CONTRACT = {
   source: 'student_room_assignments',
@@ -94,9 +97,9 @@ export const COHORT_METRIC_DEFINITIONS: MetricDefinition[] = [
   },
   {
     metricId: 'assessment_coverage',
-    name: 'Assessment coverage',
+    name: 'Completed cases with feedback',
     unit: 'percent',
-    numerator: 'completed opportunities with a valid assessment',
+    numerator: 'completed opportunities with saved feedback',
     denominator: 'completed opportunities',
     scoreSource: 'feedback status',
   },
@@ -216,8 +219,9 @@ const narrativeText = (item: Narrative, growth: boolean): string | null => {
   return text;
 };
 
-export const extractEvidenceBackedThemes = (rows: AnalyticsRow[]): { strengths: AnalyticsTheme[]; growth: AnalyticsTheme[] } => {
-  const collect = (target: Map<string, AnalyticsTheme>, values: unknown, growth: boolean) => {
+export const extractEvidenceBackedThemes = (rows: AnalyticsRow[], minimumLearners = 3): { strengths: AnalyticsTheme[]; growth: AnalyticsTheme[] } => {
+  const supporters = new Map<AnalyticsTheme, Set<string>>();
+  const collect = (target: Map<string, AnalyticsTheme>, values: unknown, growth: boolean, learnerId: string) => {
     if (!Array.isArray(values)) return;
     values.forEach((raw) => {
       if (!raw || typeof raw !== 'object') return;
@@ -226,19 +230,22 @@ export const extractEvidenceBackedThemes = (rows: AnalyticsRow[]): { strengths: 
       if (!text || narrativeEvidenceIds(item).length === 0) return;
       const key = text.toLocaleLowerCase();
       const existing = target.get(key);
-      if (existing) existing.count += 1;
-      else target.set(key, { text, count: 1 });
+      const theme = existing ?? { text, count: 0 };
+      if (!existing) target.set(key, theme);
+      const learners = supporters.get(theme) ?? new Set<string>();
+      learners.add(learnerId); supporters.set(theme, learners); theme.count = learners.size;
     });
   };
   const strengths = new Map<string, AnalyticsTheme>();
   const growth = new Map<string, AnalyticsTheme>();
-  uniqueByAssignmentId(rows).forEach((row) => {
+  uniqueByAssignmentId(rows).filter(isAssessed).forEach((row) => {
+    if (!row.studentId) return;
     const debrief = row.feedbackDebrief ?? {};
-    collect(strengths, debrief.strengths, false);
-    collect(growth, debrief.growth_areas, true);
-    collect(growth, debrief.improvements, true);
+    collect(strengths, debrief.strengths, false, row.studentId);
+    collect(growth, debrief.growth_areas, true, row.studentId);
+    collect(growth, debrief.improvements, true, row.studentId);
   });
-  return { strengths: [...strengths.values()].sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)), growth: [...growth.values()].sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)) };
+  return { strengths: [...strengths.values()].filter((item) => item.count >= minimumLearners).sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)), growth: [...growth.values()].filter((item) => item.count >= minimumLearners).sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)) };
 };
 
 const average = (values: number[]) =>
@@ -251,52 +258,87 @@ const median = (values: number[]) => {
   return sorted.length % 2 ? sorted[middle] : Number(((sorted[middle - 1] + sorted[middle]) / 2).toFixed(1));
 };
 
-export const computeDashboardMetrics = (rows: AnalyticsRow[], eligibleLearners: number): DashboardMetrics => {
-  const base = computeCohortMetrics(rows, eligibleLearners);
-  const completionMinutes = rows
-    .filter((row) => row.status === 'completed' && row.createdAt && row.completedAt)
-    .map((row) => (new Date(row.completedAt as string).getTime() - new Date(row.createdAt as string).getTime()) / 60000)
-    .filter((value) => Number.isFinite(value) && value >= 0);
+export type CasePerformance = {
+  roomId: number; caseLabel: string; schoolName: string; specialty: string;
+  attempts: number; completed: number; assessed: number;
+  communicationAverage: number | null; reasoningAverage: number | null;
+  communicationSamples: number; reasoningSamples: number;
+  medianCompletionMinutes: number | null; completionTimeSampleSize: number;
+};
 
+export const isAssessed = (row: AnalyticsAssignment) => row.status === 'completed' && row.feedbackStatus === 'completed';
+
+export const completionMinutesFor = (row: AnalyticsRow): number | null => {
+  if (row.status !== 'completed' || !row.scoringStartAt || !row.completedAt) return null;
+  const minutes = (Date.parse(row.completedAt) - Date.parse(row.scoringStartAt)) / 60000;
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes : null;
+};
+
+export const SUBSCORE_DEFINITIONS = [
+  { domain: 'Communication', key: 'focused_information_gathering', label: 'Focused information gathering', min: 0, max: 2 },
+  { domain: 'Communication', key: 'closed_loop_team_communication', label: 'Closed-loop team communication', min: 0, max: 3 },
+  { domain: 'Communication', key: 'efficiency_deduction', label: 'Efficiency deduction', min: -2, max: 0 },
+  { domain: 'Clinical Reasoning', key: 'orders_monitoring_quality', label: 'Orders / monitoring quality', min: 0, max: 3 },
+  { domain: 'Clinical Reasoning', key: 'clinical_reasoning_documentation', label: 'Reasoning / documentation', min: 0, max: 2 },
+  { domain: 'Clinical Reasoning', key: 'safety_deduction', label: 'Safety deduction', min: -2, max: 0 },
+] as const;
+export type SubscorePerformance = { domain: string; label: string; min: number; max: number; average: number | null; scored: number };
+const finiteScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+export const safetyFlagFor = (row: AnalyticsRow): { level: 'critical' | 'concern'; rationale: string; action: string } | null => {
+  const safety = row.safetyResult ?? row.feedbackDebrief?.safety_result;
+  if (!safety || typeof safety !== 'object') return null;
+  const record = safety as Record<string, unknown>;
+  if (record.level !== 'critical' && record.level !== 'concern') return null;
+  return { level: record.level, rationale: typeof record.rationale === 'string' ? record.rationale : 'No rationale recorded.', action: typeof record.action === 'string' ? record.action : '' };
+};
+
+export const computeDashboardMetrics = (inputRows: AnalyticsRow[], eligibleLearners: number): DashboardMetrics => {
+  const rows = uniqueByAssignmentId(inputRows).filter((row) => row.status !== 'cancelled');
+  const base = computeCohortMetrics(rows, eligibleLearners);
+  const assessed = rows.filter(isAssessed);
+  const completionMinutes = rows.map(completionMinutesFor).filter(finiteScore);
   const trendMap = new Map<string, { attempts: number; completed: number; assessed: number }>();
   rows.forEach((row) => {
     const date = (row.completedAt ?? row.createdAt)?.slice(0, 10) ?? 'Unknown date';
     const current = trendMap.get(date) ?? { attempts: 0, completed: 0, assessed: 0 };
     current.attempts += 1;
     if (row.status === 'completed') current.completed += 1;
-    if (row.status === 'completed' && row.feedbackStatus === 'completed') current.assessed += 1;
+    if (isAssessed(row)) current.assessed += 1;
     trendMap.set(date, current);
   });
-
   const domainDefinitions = [
-    { domain: 'Communication', values: rows.map((row) => row.communicationScore) },
-    { domain: 'Medical decision-making', values: rows.map((row) => row.mdmScore) },
+    { domain: 'Communication', values: assessed.map((row) => row.communicationScore) },
+    { domain: 'Clinical Reasoning', values: assessed.map((row) => row.mdmScore) },
   ];
-
-  const caseMap = new Map<string, { attempts: number; completed: number; scores: number[] }>();
-  rows.forEach((row) => {
-    const label = row.roomNumber || `Room ${row.roomId}`;
-    const current = caseMap.get(label) ?? { attempts: 0, completed: 0, scores: [] };
-    current.attempts += 1;
-    if (row.status === 'completed') current.completed += 1;
-    if (typeof row.overallScore === 'number') current.scores.push(row.overallScore);
-    caseMap.set(label, current);
-  });
-
+  const caseMap = new Map<number, AnalyticsRow[]>();
+  rows.forEach((row) => caseMap.set(row.roomId, [...(caseMap.get(row.roomId) ?? []), row]));
   return {
     ...base,
     medianCompletionMinutes: median(completionMinutes),
     completionTimeSampleSize: completionMinutes.length,
     trend: [...trendMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, value]) => ({ label, ...value })),
     domainPerformance: domainDefinitions.map(({ domain, values }) => {
-      const scored = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-      return { domain, average: average(scored), scored: scored.length, eligible: rows.length };
+      const scored = values.filter(finiteScore);
+      return { domain, average: average(scored), scored: scored.length, eligible: base.completedAssignments };
     }),
-    caseHeatmap: [...caseMap.entries()].map(([caseLabel, value]) => ({
-      caseLabel,
-      attempts: value.attempts,
-      completed: value.completed,
-      average: average(value.scores),
-    })).sort((a, b) => a.caseLabel.localeCompare(b.caseLabel)),
+    subscorePerformance: SUBSCORE_DEFINITIONS.map((definition) => {
+      const values = assessed.map((row) => {
+        const breakdown = definition.domain === 'Communication' ? row.communicationBreakdown : row.mdmBreakdown;
+        const component = breakdown?.[definition.key];
+        return component && typeof component === 'object' ? (component as Record<string, unknown>).score : component;
+      }).filter(finiteScore).filter((value) => value >= definition.min && value <= definition.max);
+      return { ...definition, average: average(values), scored: values.length };
+    }),
+    caseHeatmap: [...caseMap.entries()].map(([roomId, attempts]) => {
+      const scored = attempts.filter(isAssessed);
+      const communication = scored.map((row) => row.communicationScore).filter(finiteScore);
+      const reasoning = scored.map((row) => row.mdmScore).filter(finiteScore);
+      const times = attempts.map(completionMinutesFor).filter(finiteScore);
+      return { roomId, caseLabel: attempts[0].roomNumber, schoolName: attempts[0].schoolName ?? 'Unknown school', specialty: attempts[0].specialty,
+        attempts: attempts.length, completed: attempts.filter((row) => row.status === 'completed').length, assessed: scored.length,
+        communicationAverage: average(communication), reasoningAverage: average(reasoning), communicationSamples: communication.length, reasoningSamples: reasoning.length,
+        medianCompletionMinutes: median(times), completionTimeSampleSize: times.length };
+    }).sort((a, b) => a.caseLabel.localeCompare(b.caseLabel) || a.roomId - b.roomId),
   };
 };
