@@ -1,9 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 import { corsHeaders } from "../_shared/cors.ts";
+import { normalizeSchoolInput } from "../_shared/school-input.ts";
 
 type ManagedRole = "student" | "school_admin";
-type Action = "list" | "invite" | "scope_update" | "disable" | "enable";
+type Action = "list" | "create_school" | "invite" | "scope_update" | "disable" | "enable";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -89,6 +90,32 @@ Deno.serve(async (req) => {
         schools: schoolsResult.data ?? [],
         audit: auditResult.data ?? [],
       });
+    }
+
+    if (action === "create_school") {
+      const normalized = normalizeSchoolInput(body.name);
+      if (!normalized.ok) return json({ error: normalized.error, code: normalized.code }, 400);
+      const { name, slug } = normalized.value;
+      const { data: existingSchools, error: duplicateLookupError } = await adminClient
+        .from("schools").select("id, name, slug");
+      if (duplicateLookupError) throw duplicateLookupError;
+      if ((existingSchools ?? []).some((school) => school.slug === slug || school.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        return json({ error: "A school with this name or URL slug already exists", code: "DUPLICATE_SCHOOL" }, 409);
+      }
+
+      const { data: school, error: createError } = await adminClient
+        .from("schools").insert({ name, slug }).select("id, name, slug").single();
+      if (createError) {
+        if (createError.code === "23505") return json({ error: "A school with this name or URL slug already exists", code: "DUPLICATE_SCHOOL" }, 409);
+        throw createError;
+      }
+      try {
+        await audit(auth.actor.id, null, school.name, "create_school", school.id, null, null, { id: school.id, name: school.name, slug: school.slug });
+      } catch (auditError) {
+        await adminClient.from("schools").delete().eq("id", school.id);
+        throw auditError;
+      }
+      return json({ school, message: "School created" }, 201);
     }
 
     if (action === "invite") {
