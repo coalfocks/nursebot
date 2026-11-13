@@ -43,7 +43,7 @@ export default function StudentWalkthroughVideos() {
     if (!courseResult.data) { setCourse(null); setLoading(false); return; }
     const [itemResult, videoResult, enrollmentResult] = await Promise.all([
       supabase.from('walkthrough_course_items').select('*').eq('course_id', courseResult.data.id).eq('course_version', courseResult.data.version).order('position'),
-      supabase.from('walkthrough_videos').select('*').in('audience', visibleAudiences).eq('status', 'published'),
+      supabase.from('walkthrough_videos').select('*').eq('status', 'published'),
       supabase.from('walkthrough_enrollments').select('id').eq('user_id', user.id).eq('course_id', courseResult.data.id).eq('course_version', courseResult.data.version).maybeSingle(),
     ]);
     if (itemResult.error || videoResult.error || enrollmentResult.error) { setError(itemResult.error?.message || videoResult.error?.message || enrollmentResult.error?.message || 'Learning content could not be loaded.'); setLoading(false); return; }

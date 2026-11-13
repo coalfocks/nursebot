@@ -44,6 +44,11 @@
 ## Chatbot
 - `components/ChatInterface.tsx` subscribes to `chat_messages` by assignment. Generates initial prompt from room role/style/context (`lib/openai.ts`) and calls `chat` Edge Function for completions. Links to patient by roomId when available.
 
+## Walkthrough Courses
+- `walkthrough_courses` and ordered `walkthrough_course_items` are the normalized audience assignment: a single video can belong to the Test Room Accounts, Administrators, and Students courses at once. The legacy video `audience` column is retained for compatibility and backfill only.
+- Superadmins organize the three canonical courses from the Course organization section on the admin Walkthrough Videos page. Published course membership controls video and private media visibility through RLS; Test Room accounts remain isolated from student content. Transcript password safety is validated before a video or course can publish.
+- Student course items for videos marked optional remain optional and do not become required onboarding gates. Existing mandatory courses and learner completion records remain intact.
+
 ## Room Configuration
 - `RoomEditor.tsx` (admin) manages room metadata: role/style, nurse context, EMR context (`emr_context`), expected diagnosis/treatment, goals, difficulty, objectives, progress note, completion hints, orders config, PDFs. Seeds initial labs/vitals when linking/creating patient (legacy).
 - `CaseBuilder.tsx` (admin) captures v2 case blueprints, generates preview packages, regenerates individual package sections, and publishes generated packages into live rooms. Published rooms retain a nullable `case_blueprint_id`; a partial school/blueprint unique index makes repeat or concurrent publication reuse the same room. `rooms.emr_context` stores only an explicit learner-facing patient/EMR/event/orders allowlist under `source = case-builder-v2`; nurse and patient conversation prompts stay in their dedicated columns, and hidden evaluation content is excluded. Room-scoped generated notes are created for the linked EMR patient when structured identity data satisfies the patient schema.

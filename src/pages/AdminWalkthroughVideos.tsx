@@ -9,12 +9,13 @@ import { supabase } from '../lib/supabase';
 import { isSuperAdmin } from '../lib/roles';
 import { useAuthStore } from '../stores/authStore';
 import type { Database } from '../lib/database.types';
-import { displayWalkthroughTitle, getWalkthroughPublicationError, type WalkthroughAudience } from '../lib/walkthrough';
+import { addWalkthroughVideo, displayWalkthroughTitle, getWalkthroughPublicationError, moveWalkthroughVideo, organizerAudiences, type OrganizerAudience, type WalkthroughAudience } from '../lib/walkthrough';
 
 type Video = Database['public']['Tables']['walkthrough_videos']['Row'];
 type Course = Database['public']['Tables']['walkthrough_courses']['Row'];
 type Item = Database['public']['Tables']['walkthrough_course_items']['Row'];
 type Progress = Database['public']['Tables']['walkthrough_progress']['Row'];
+type OrganizerCourse = { course: Course; videoIds: string[] };
 
 const topics = ['First login and navigation', 'Inviting and managing students', 'Assigning cases', 'Learner activity and analytics', 'EMR and bedside workflow', 'Finding support'];
 const emptyForm = { title: '', description: '', learning_objective: '', topic: topics[0], audience: 'admin' as WalkthroughAudience, onboarding_eligible: true, transcript: '', file: null as File | null };
@@ -36,18 +37,37 @@ export default function AdminWalkthroughVideos() {
   const [editing, setEditing] = useState<Video | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [uploading, setUploading] = useState(false);
+  const [organizerCourses, setOrganizerCourses] = useState<Partial<Record<OrganizerAudience, OrganizerCourse>>>({});
+  const [activeCourseAudience, setActiveCourseAudience] = useState<OrganizerAudience>('test_room');
+  const [savingCourseOrder, setSavingCourseOrder] = useState(false);
 
   const load = async () => {
     setLoading(true);
-    const [videoResult, progressResult, enrollmentResult] = await Promise.all([
-      supabase.from('walkthrough_videos').select('*').in('audience', ['admin', 'student', 'test_room', 'both']).order('topic').order('title'),
+    const [videoResult, progressResult, enrollmentResult, courseResult, itemResult] = await Promise.all([
+      supabase.from('walkthrough_videos').select('*').order('topic').order('title'),
       user ? supabase.from('walkthrough_progress').select('*').eq('user_id', user.id) : Promise.resolve({ data: [] as Progress[] }),
       supabase.from('walkthrough_enrollments').select('user_id, course_id, course_version, completed_at, updated_at').order('updated_at', { ascending: false }).limit(200),
+      superAdmin ? supabase.from('walkthrough_courses').select('*').in('organizer_key', organizerAudiences) : Promise.resolve({ data: [] as Course[] }),
+      superAdmin ? supabase.from('walkthrough_course_items').select('*') : Promise.resolve({ data: [] as Item[] }),
     ]);
     if (videoResult.error) setError(videoResult.error.message);
     setVideos(videoResult.data ?? []);
     setProgress(progressResult.data ?? []);
     setEnrollments(enrollmentResult.data ?? []);
+    const nextCourses: Partial<Record<OrganizerAudience, OrganizerCourse>> = {};
+    for (const course of courseResult.data ?? []) {
+      const key = course.organizer_key;
+      if (key === 'admin' || key === 'student' || key === 'test_room') {
+        nextCourses[key] = {
+          course,
+          videoIds: (itemResult.data ?? [])
+            .filter((item) => item.course_id === course.id && item.course_version === course.version)
+            .sort((a, b) => a.position - b.position)
+            .map((item) => item.video_id),
+        };
+      }
+    }
+    setOrganizerCourses(nextCourses);
     setLoading(false);
   };
 
@@ -91,10 +111,79 @@ export default function AdminWalkthroughVideos() {
     if (result.error) setError(result.error.message); else setVideos((previous) => previous.map((entry) => entry.id === video.id && entry.version === video.version ? result.data : entry));
   };
 
+  const updateOrganizerOrder = (videoIds: string[]) => {
+    setOrganizerCourses((previous) => {
+      const current = previous[activeCourseAudience];
+      return current ? { ...previous, [activeCourseAudience]: { ...current, videoIds } } : previous;
+    });
+  };
+
+  const saveOrganizerOrder = async (publish: boolean) => {
+    const current = organizerCourses[activeCourseAudience];
+    if (!current) return;
+    setSavingCourseOrder(true); setError('');
+    if (publish && current.videoIds.length === 0) {
+      setError('Add at least one published video before publishing this course.');
+      setSavingCourseOrder(false);
+      return;
+    }
+    const chosen = current.videoIds.map((id) => videos.find((video) => video.id === id));
+    if (chosen.some((video) => !video || video.status !== 'published')) {
+      setError('Course lists can contain published videos only. Remove any unavailable draft videos before saving.');
+      setSavingCourseOrder(false);
+      return;
+    }
+    if (chosen.some((video) => video && getWalkthroughPublicationError(video.transcript))) {
+      setError('This course contains a video with unsafe shared-password advice. Review the video transcript before publishing.');
+      setSavingCourseOrder(false);
+      return;
+    }
+    const result = await supabase.rpc('organize_walkthrough_course', {
+      p_course_id: current.course.id,
+      p_video_ids: current.videoIds,
+      p_publish: publish,
+    });
+    if (result.error) setError(result.error.message);
+    else setOrganizerCourses((previous) => ({
+      ...previous,
+      [activeCourseAudience]: {
+        ...current,
+        course: { ...current.course, status: publish ? 'published' : 'draft' },
+      },
+    }));
+    setSavingCourseOrder(false);
+  };
+
   const startEdit = (video: Video) => { setEditing(video); setForm({ title: video.title, description: video.description, learning_objective: video.learning_objective, topic: video.topic, audience: video.audience, onboarding_eligible: video.onboarding_eligible, transcript: video.transcript, file: null }); };
+
+  const activeOrganizerCourse = organizerCourses[activeCourseAudience];
+  const activeCourseLabel = activeCourseAudience === 'test_room' ? 'Test Room Accounts' : activeCourseAudience === 'admin' ? 'Administrators' : 'Students';
 
   return <AdminLayout><div className="mx-auto max-w-7xl space-y-6 p-6">
     <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-bold text-slate-900">Administrator walkthrough videos</h1><p className="mt-1 text-sm text-slate-600">Admin-facing content is managed separately from the student learning library.</p></div>{superAdmin && <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => navigate('/admin/walkthrough-courses/new')}>Create course</Button><Button onClick={() => { setEditing(null); setForm(emptyForm); setShowUpload(true); }}><Upload className="mr-2 h-4 w-4" />Upload video</Button></div>}</div>
+    {superAdmin && <section className="space-y-4 rounded-lg border border-blue-200 bg-blue-50/50 p-5" aria-labelledby="course-organization-heading">
+      <div><h2 id="course-organization-heading" className="text-lg font-semibold text-slate-900">Course organization</h2><p className="mt-1 text-sm text-slate-600">Assign any published video to one or more role courses, order each list, then publish it. A video stays a single shared asset.</p></div>
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Walkthrough audience courses">
+        {organizerAudiences.map((audience) => {
+          const label = audience === 'test_room' ? 'Test Room Accounts' : audience === 'admin' ? 'Administrators' : 'Students';
+          return <button key={audience} type="button" role="tab" aria-selected={activeCourseAudience === audience} onClick={() => setActiveCourseAudience(audience)} className={`rounded-md border px-4 py-2 text-sm font-medium ${activeCourseAudience === audience ? 'border-blue-700 bg-blue-700 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>{label}</button>;
+        })}
+      </div>
+      {activeOrganizerCourse ? <div role="tabpanel" className="rounded-lg border bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-slate-900">{activeCourseLabel}</h3><p className="text-xs text-slate-500">Course status: {activeOrganizerCourse.course.status}</p></div>
+          <select aria-label={`Add published video to ${activeCourseLabel}`} className="min-w-64 rounded-md border px-3 py-2 text-sm" value="" onChange={(event) => updateOrganizerOrder(addWalkthroughVideo(activeOrganizerCourse.videoIds, event.target.value))}>
+            <option value="">Add a published video…</option>{videos.filter((video) => video.status === 'published' && !activeOrganizerCourse.videoIds.includes(video.id)).map((video) => <option key={`${video.id}-${video.version}`} value={video.id}>{video.title}</option>)}
+          </select>
+        </div>
+        {activeOrganizerCourse.videoIds.length === 0 ? <p className="mt-4 rounded-md border border-dashed p-6 text-center text-sm text-slate-500">No videos are assigned to this course yet.</p> : <ol className="mt-4 space-y-2" aria-label={`${activeCourseLabel} ordered videos`}>
+          {activeOrganizerCourse.videoIds.map((id, index) => {
+            const video = videos.find((entry) => entry.id === id);
+            return <li key={id} className="flex flex-wrap items-center gap-3 rounded-md border p-3"><span className="w-6 text-sm text-slate-500">{index + 1}</span><span className="min-w-40 flex-1 text-sm font-medium text-slate-900">{video?.title ?? 'Unavailable video'}{video && <span className="block text-xs font-normal text-slate-500">{video.topic}</span>}</span><Button size="sm" variant="outline" disabled={index === 0 || savingCourseOrder} aria-label={`Move ${video?.title ?? 'video'} up`} onClick={() => updateOrganizerOrder(moveWalkthroughVideo(activeOrganizerCourse.videoIds, index, -1))}>Up</Button><Button size="sm" variant="outline" disabled={index === activeOrganizerCourse.videoIds.length - 1 || savingCourseOrder} aria-label={`Move ${video?.title ?? 'video'} down`} onClick={() => updateOrganizerOrder(moveWalkthroughVideo(activeOrganizerCourse.videoIds, index, 1))}>Down</Button><Button size="sm" variant="outline" disabled={savingCourseOrder} onClick={() => updateOrganizerOrder(activeOrganizerCourse.videoIds.filter((entry) => entry !== id))}>Remove</Button></li>;
+          })}
+        </ol>}
+        <div className="mt-4 flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={savingCourseOrder} onClick={() => void saveOrganizerOrder(false)}>{savingCourseOrder ? 'Saving…' : 'Save as draft'}</Button><Button disabled={savingCourseOrder} onClick={() => void saveOrganizerOrder(true)}>{savingCourseOrder ? 'Saving…' : 'Save and publish order'}</Button></div>
+      </div> : <p className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">The {activeCourseLabel} organizer course is not available. Reload the page after applying the walkthrough course organizer migration.</p>}
+    </section>}
     {error && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
     <div className="flex flex-wrap items-center gap-3"><Search className="h-4 w-4 text-slate-400" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search administrator videos" /></div>
     {loading ? <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-blue-600" /></div> : visibleVideos.length === 0 ? <div className="rounded-lg border border-dashed p-10 text-center text-sm text-slate-500">No administrator videos are available yet.</div> : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visibleVideos.map((video) => { const done = progress.some((entry) => entry.video_id === video.id && entry.video_version === video.version && entry.completed_at); return <div key={`${video.id}-${video.version}`} className="overflow-hidden rounded-lg border bg-white shadow-sm"><button type="button" onClick={() => void openVideo(video)} className="w-full text-left"><div className="flex h-32 items-center justify-center bg-slate-100 text-slate-400"><Film className="h-10 w-10" /></div><div className="space-y-2 p-4"><div className="text-xs font-semibold uppercase tracking-wide text-blue-700">{video.topic}</div><h2 className="font-semibold text-slate-900">{displayWalkthroughTitle(video.title)}</h2><p className="line-clamp-2 text-sm text-slate-600">{video.description || 'Administrator walkthrough'}</p><div className="flex items-center gap-2 text-xs text-slate-500">{done ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" />Completed</> : 'Not started'}{superAdmin && <span className="ml-auto rounded bg-slate-100 px-2 py-1">{video.status} · {audienceLabel[video.audience]}</span>}</div></div></button>{superAdmin && <div className="flex gap-2 border-t p-3"><Button size="sm" variant="outline" onClick={() => startEdit(video)}>Edit</Button><Button size="sm" variant="outline" onClick={() => void togglePublish(video)}>{video.status === 'published' ? 'Return to draft' : 'Publish after review'}</Button></div>}</div>; })}</div>}
@@ -159,7 +248,7 @@ export function AdminOnboarding() {
   const [progress, setProgress] = useState<Progress[]>([]);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { void (async () => { const c = await supabase.from('walkthrough_courses').select('*').eq('status', 'published').eq('is_mandatory', true).in('audience', ['admin', 'both']).order('updated_at', { ascending: false }).limit(1).maybeSingle(); setCourse(c.data); if (!c.data) return; const [i, v, p] = await Promise.all([supabase.from('walkthrough_course_items').select('*').eq('course_id', c.data.id).eq('course_version', c.data.version).order('position'), supabase.from('walkthrough_videos').select('*').in('audience', ['admin', 'both']).eq('status', 'published'), user ? supabase.from('walkthrough_progress').select('*').eq('user_id', user.id) : Promise.resolve({ data: [] as Progress[] })]); setItems(i.data ?? []); setVideos(v.data ?? []); setProgress(p.data ?? []); })(); }, [user]);
+  useEffect(() => { void (async () => { const c = await supabase.from('walkthrough_courses').select('*').eq('status', 'published').eq('is_mandatory', true).in('audience', ['admin', 'both']).order('updated_at', { ascending: false }).limit(1).maybeSingle(); setCourse(c.data); if (!c.data) return; const [i, v, p] = await Promise.all([supabase.from('walkthrough_course_items').select('*').eq('course_id', c.data.id).eq('course_version', c.data.version).order('position'), supabase.from('walkthrough_videos').select('*').eq('status', 'published'), user ? supabase.from('walkthrough_progress').select('*').eq('user_id', user.id) : Promise.resolve({ data: [] as Progress[] })]); setItems(i.data ?? []); setVideos(v.data ?? []); setProgress(p.data ?? []); })(); }, [user]);
   const required = items.filter((item) => item.required); const video = videos.find((entry) => entry.id === required[current]?.video_id && entry.version === required[current]?.video_version); const done = video ? progress.some((entry) => entry.video_id === video.id && entry.video_version === video.version && entry.completed_at) : false;
   useEffect(() => { void (async () => { setSignedUrl(null); if (!video?.video_path) return; const result = await supabase.storage.from('walkthrough_videos').createSignedUrl(video.video_path, 3600); setSignedUrl(result.data?.signedUrl ?? null); })(); }, [video?.id, video?.version, video?.video_path]);
   const complete = async (seconds: number) => { if (!user || !course || !video) return; setSaving(true); const enrollment = await supabase.from('walkthrough_enrollments').upsert({ user_id: user.id, course_id: course.id, course_version: course.version, last_video_id: video.id, last_position_seconds: seconds }, { onConflict: 'user_id,course_id,course_version' }).select().single(); if (enrollment.data) { await supabase.from('walkthrough_progress').upsert({ enrollment_id: enrollment.data.id, user_id: user.id, video_id: video.id, video_version: video.version, position_seconds: seconds, watched_intervals: [{ start: 0, end: seconds }], completed_at: new Date().toISOString() }, { onConflict: 'enrollment_id,video_id,video_version' }); setProgress((old) => [...old.filter((entry) => !(entry.video_id === video.id && entry.video_version === video.version)), { id: crypto.randomUUID(), enrollment_id: enrollment.data.id, user_id: user.id, video_id: video.id, video_version: video.version, position_seconds: seconds, watched_intervals: [{ start: 0, end: seconds }], completed_at: new Date().toISOString(), last_activity_at: new Date().toISOString() }]); } setSaving(false); };
