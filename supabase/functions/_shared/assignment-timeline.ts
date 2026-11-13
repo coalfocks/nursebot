@@ -283,13 +283,18 @@ export const buildAssignmentTimelineEntries = ({
         : (order.order_time ?? order.created_at),
     );
     if (!timestamp) continue;
-    const details = [order.dose, order.route, order.frequency].filter(Boolean).join(' • ');
+    const details = [
+      order.dose,
+      order.route,
+      order.frequency,
+      order.instructions ? `Instructions: ${order.instructions}` : null,
+    ].filter(Boolean).join(' • ');
     entries.push({
       id: `order-${order.id}`,
       kind: 'order',
       timestamp,
       title: `Order: ${order.order_name}`,
-      body: details || order.instructions || undefined,
+      body: details || undefined,
       meta: [order.category, order.priority ?? 'Routine', order.status ?? 'Active'],
     });
   }

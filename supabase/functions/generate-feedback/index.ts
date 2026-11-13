@@ -7,6 +7,7 @@ import { renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
+import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type CommentaryResult } from '../_shared/feedback-comments.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
@@ -36,6 +37,17 @@ const manifestEventToEvaluationEntry = (event: Record<string, unknown>): Evaluat
                 : eventType === 'consultant_message' || eventType === 'consultant_response'
                   ? 'consultant-message'
                   : 'message';
+  const title = eventType === 'student_message'
+    ? 'Student message'
+    : eventType === 'nurse_message'
+      ? 'Nurse message'
+      : eventType === 'patient_message'
+        ? 'Patient message'
+        : eventType === 'consultant_request'
+          ? 'Consult request'
+          : eventType === 'consultant_response'
+            ? 'Consultant response'
+            : eventType;
   const content = event.content && typeof event.content === 'object' ? event.content as Record<string, unknown> : {};
   const text = typeof content.text === 'string' ? content.text : Object.entries(content)
     .filter(([, value]) => value != null && value !== '')
@@ -44,8 +56,12 @@ const manifestEventToEvaluationEntry = (event: Record<string, unknown>): Evaluat
   const actor = event.actor && typeof event.actor === 'object' ? event.actor as Record<string, unknown> : {};
   const channel = typeof event.channel === 'string' ? event.channel : null;
   const service = event.service && typeof event.service === 'object' ? event.service as Record<string, unknown> : {};
+  const actorRole = String(actor.role ?? '').toLowerCase();
   const meta = [
     actor.role ? `Actor: ${actor.role}` : null,
+    actorRole === 'student' || actorRole === 'user' ? 'Author: Student' : null,
+    actorRole === 'assistant' || actorRole === 'nurse' ? 'Author: Nurse' : null,
+    actorRole === 'consultant' ? 'Author: Consultant' : null,
     channel ? `Channel: ${channel}` : null,
     service.label ? `Service: ${service.label}` : null,
     service.audience ? `Audience: ${service.audience}` : null,
@@ -56,14 +72,17 @@ const manifestEventToEvaluationEntry = (event: Record<string, unknown>): Evaluat
   const timestamp = typeof event.occurred_at === 'string' ? event.occurred_at : null;
   const id = typeof event.event_id === 'string' ? event.event_id : null;
   if (!id || !timestamp) return null;
-  return { id, kind, timestamp, title: eventType, body: text || undefined, meta };
+  return { id, kind, timestamp, title, body: text || undefined, meta };
 };
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let assignmentId: string | undefined;
+  let commentsOnly = false;
   try {
-    ({ assignmentId } = await req.json());
+    const request = await req.json() as { assignmentId?: string; commentsOnly?: boolean };
+    assignmentId = request.assignmentId;
+    commentsOnly = request.commentsOnly === true;
     if (!assignmentId) throw new Error('Assignment ID is required');
     const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
     const work = (async () => {
@@ -77,7 +96,14 @@ Deno.serve(async (req) => {
       const events = Array.isArray(manifest.events) ? manifest.events.filter((event): event is Record<string, unknown> => Boolean(event && typeof event === 'object')) : [];
       const entries = events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry));
       const scoringBoundary = manifest.scoring_boundary && typeof manifest.scoring_boundary === 'object' ? manifest.scoring_boundary as Record<string, unknown> : {};
-      const scoringStartAt = typeof scoringBoundary.scoring_start_at === 'string' ? scoringBoundary.scoring_start_at : null;
+      const firstPageEventId = typeof scoringBoundary.first_page_event_id === 'string' ? scoringBoundary.first_page_event_id : null;
+      const firstPageEvent = firstPageEventId ? events.find((event) => event.event_id === firstPageEventId) : events.find((event) => event.event_type === 'nurse_message' || event.event_type === 'nurse_chat');
+      // Older completed attempts may have a blank assignment anchor even though
+      // the manifest contains the verified first nurse page. Use that persisted
+      // event as the boundary and save the repaired anchor with the result.
+      const scoringStartAt = typeof scoringBoundary.scoring_start_at === 'string'
+        ? scoringBoundary.scoring_start_at
+        : typeof firstPageEvent?.occurred_at === 'string' ? firstPageEvent.occurred_at : null;
       const start = scoringStartAt ? { scoring_start_at: scoringStartAt } : null;
       const scoredEntries = start ? entries.filter((entry) => new Date(entry.timestamp).getTime() >= new Date(start.scoring_start_at).getTime()) : [];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
@@ -85,18 +111,71 @@ Deno.serve(async (req) => {
       const provenance = { assignment_id: assignment.id, attempt_id: assignment.id, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, scoring_start_at: start?.scoring_start_at ?? null, source_event_ids: sourceEventIds };
       if (!start) {
         const result = { technical_incomplete: true, summary: 'This attempt is technically incomplete because no first nurse page was recorded. No learner score was assigned.', formative_notice: formativeNotice };
-        const incompleteRun = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, result });
+        const incompleteRun = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, result }).select('id').single();
         if (incompleteRun.error) throw new Error(incompleteRun.error.message);
         await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, scoring_start_at: null, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: [], technical_incomplete: true, safety_result: null, feedback_debrief: result, nurse_feedback: result, communication_score: null, mdm_score: null, grade: null, feedback_generated_at: new Date().toISOString() }).eq('id', assignmentId);
-        return;
+        return { runId: incompleteRun.data.id, promptVersion: null };
       }
       if (!hasMeaningfulEvidence(sourceEventIds)) throw new Error('Evidence-bearing attempt produced an empty post-page source event manifest');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
-      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths, improvements, recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
+      const allowedEventIds = new Set(sourceEventIds);
       const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
+      let commentaryDiagnostic = 'unknown';
+      const requestCommentary = async (validationNote = ''): Promise<CommentaryResult | null> => {
+        try {
+          const completion = await openai.chat.completions.create({
+            model: getOpenAIModel('generate_feedback'),
+            messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
+            response_format: { type: 'json_object' },
+            max_completion_tokens: 3000,
+          });
+          const rawContent = completion.choices[0].message.content ?? '{}';
+          const parsed = JSON.parse(rawContent);
+          const validated = validateFeedbackComments(parsed, allowedEventIds);
+          if (validated) return validated;
+          commentaryDiagnostic = 'model response failed contract validation';
+          console.error('Commentary response failed validation', { response_preview: rawContent.slice(0, 1200), valid_event_count: allowedEventIds.size });
+          const repair = await openai.chat.completions.create({
+            model: getOpenAIModel('generate_feedback'),
+            messages: [
+              { role: 'system', content: 'Repair the candidate into the exact requested JSON contract. Return JSON only. Do not invent evidence IDs or actions.' },
+              { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}\n\nCANDIDATE JSON TO REPAIR:\n${rawContent}\n\nREPAIR REQUIREMENTS: strengths and improvements must each contain exactly two objects; every object must contain text and evidence_event_ids; use only the valid IDs above; each text must be one sentence of no more than 25 words.` },
+            ],
+            response_format: { type: 'json_object' },
+            max_completion_tokens: 3000,
+          });
+          const repairedContent = repair.choices[0].message.content ?? '{}';
+          return validateFeedbackComments(JSON.parse(repairedContent), allowedEventIds);
+        } catch (error) {
+          commentaryDiagnostic = error instanceof Error ? error.message : String(error);
+          console.error('Commentary request failed', error instanceof Error ? error.message : String(error));
+          return null;
+        }
+      };
+      if (request.commentsOnly) {
+        const initialCommentary = await requestCommentary();
+        const commentary = initialCommentary?.status === 'generated'
+          ? initialCommentary
+          : await requestCommentary('\n\nVALIDATION RETRY: Return exactly two strengths and two improvements. Each must be an object with a concise text sentence of no more than 25 words and at least one exact evidence_event_ids value copied from the valid IDs above. Return JSON only.');
+        if (!commentary) throw new Error(`Commentary generation failed validation (${commentaryDiagnostic}); prior feedback was preserved`);
+        if (commentary.status !== 'generated') throw new Error(`Commentary generation incomplete: ${commentary.explanation}`);
+        const priorDebrief = assignment.feedback_debrief && typeof assignment.feedback_debrief === 'object' && !Array.isArray(assignment.feedback_debrief) ? assignment.feedback_debrief as Record<string, unknown> : {};
+        const debrief = { ...priorDebrief, strengths: commentary.comments.strengths, improvements: commentary.comments.improvements, comment_generation_status: commentary.status, comment_prompt_version: commentary.prompt_version, comment_evidence_event_ids: [...new Set([...commentary.comments.strengths, ...commentary.comments.improvements].flatMap((comment) => comment.evidence_event_ids))] };
+        const run = await client.from('feedback_assessment_runs').insert({ assignment_id: assignment.id, attempt_id: assignment.id, rubric_version: assignment.rubric_version, case_key_version: assignment.case_key_version, assessment_version: assignment.assessment_version, scoring_start_at: assignment.scoring_start_at, source_event_ids: assignment.source_event_ids ?? sourceEventIds, technical_incomplete: Boolean(assignment.technical_incomplete), result: { mode: 'comments_only', debrief, comment_prompt_version: commentary.prompt_version } }).select('id').single();
+        if (run.error) throw run.error;
+        const { error: updateError } = await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, feedback_generated_at: new Date().toISOString(), feedback_debrief: debrief }).eq('id', assignmentId);
+        if (updateError) throw updateError;
+        return { runId: run.data.id, promptVersion: commentary.prompt_version };
+      }
+      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only events at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded from scores.\n\nPOST-PAGE EVIDENCE MANIFEST (the only valid evidence IDs):\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} events):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score, communication_breakdown.focused_information_gathering (0-2), communication_breakdown.closed_loop_team_communication (0-3), communication_breakdown.efficiency_deduction (-2 to 0), clinical_reasoning_breakdown.orders_monitoring_quality (0-3), clinical_reasoning_breakdown.clinical_reasoning_documentation (0-2), clinical_reasoning_breakdown.safety_deduction (0,-1,-2), safety_result {level, action, rationale, evidence_event_ids}, learning_objectives, strengths, improvements, recommendations, and an action_review array. Every evidence_event_ids value must be copied exactly from the manifest. If a component is not observed, say so and score only that component accordingly; do not zero unrelated components. When an unstable case documents a linked learner-authored bedside finding or team escalation, that observable evidence earns communication credit even if there is no nurse message. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
       const requestEvaluation = async (validationNote = '') => {
-        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
+        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY (do not change the rubric): Each of the six breakdown components must be an object with score (number), feedback (the original component explanation), and evidence_event_ids (array). Do not serialize components as bare numbers. Include an explanation for efficiency and safety deductions even when zero.` }], response_format: { type: 'json_object' }, max_completion_tokens: 3000 });
         const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
+        // Log schema only, never attempt text, to distinguish model output from mapping failures.
+        const shape = (value: unknown): unknown => value && typeof value === 'object'
+          ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item && typeof item === 'object' ? Object.keys(item) : typeof item]))
+          : typeof value;
+        console.info('Evaluation response schema', JSON.stringify({ keys: Object.keys(parsed), communication: shape(parsed.communication_breakdown), reasoning: shape(parsed.clinical_reasoning_breakdown ?? parsed.mdm_breakdown) }));
         return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
       };
       let { evaluation, actionReview } = await requestEvaluation();
@@ -108,6 +187,32 @@ Deno.serve(async (req) => {
         if (!recovered) throw new Error('Evidence-bearing attempt returned all-zero Communication and MDM scores after validation retry with no learner-authored post-page action to recover');
         evaluation = recovered;
       }
+      // A model can recover one composite while still dropping the other when
+      // manifest labels are unfamiliar. Recover only the zero component from
+      // explicit learner evidence; preserve the model's other score, rationale,
+      // deductions, and safety result.
+      if (evaluation.communication_score === 0 || evaluation.clinical_reasoning_score === 0) {
+        const componentRecovery = buildEvidenceBackedFallback({ ...evaluation, communication_score: 0, clinical_reasoning_score: 0, mdm_score: 0 }, scoredEntries, assignment.student_progress_note);
+        if (componentRecovery) {
+          if (evaluation.communication_score === 0 && componentRecovery.communication_score > 0) {
+            evaluation.communication_score = componentRecovery.communication_score;
+            evaluation.communication_breakdown = componentRecovery.communication_breakdown;
+          }
+          if (evaluation.clinical_reasoning_score === 0 && componentRecovery.clinical_reasoning_score > 0) {
+            evaluation.clinical_reasoning_score = componentRecovery.clinical_reasoning_score;
+            evaluation.mdm_score = componentRecovery.mdm_score;
+            evaluation.mdm_breakdown = componentRecovery.mdm_breakdown;
+            evaluation.clinical_reasoning_breakdown = componentRecovery.clinical_reasoning_breakdown;
+          }
+        }
+      }
+      const commentary = await requestCommentary();
+      if (!commentary || commentary.status !== 'generated') {
+        throw new Error(commentary?.status === 'insufficient_evidence' ? `Commentary generation incomplete: ${commentary.explanation}` : 'Commentary generation failed validation');
+      }
+      const generatedComments = commentary.comments;
+      const commentStatus = commentary.status;
+      const commentPromptVersion = commentary.prompt_version;
       const idsForKinds = (kinds: string[], learnerMessagesOnly = false) => scoredEntries
         .filter((entry) => kinds.includes(entry.kind))
         .filter((entry) => !learnerMessagesOnly || entry.kind !== 'message' || entry.meta?.includes('Author: Student'))
@@ -156,19 +261,20 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: evaluation.strengths.slice(0, 2), improvements: evaluation.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at };
+      const debrief = { case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: null };
       const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
-      const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, result: { evaluation, debrief } }).select('id').single();
+      const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus } }).select('id').single();
       if (run.error) throw run.error;
       // mdm_* are retained database compatibility names; the canonical API/UI label is Clinical Reasoning.
       const { error: updateError } = await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, communication_score: evaluation.communication_score, mdm_score: evaluation.clinical_reasoning_score, communication_breakdown: evaluation.communication_breakdown, mdm_breakdown: evaluation.clinical_reasoning_breakdown, learning_objectives: evaluation.learning_objectives, grade: null, nurse_feedback: legacy, feedback_generated_at: new Date().toISOString(), scoring_start_at: start.scoring_start_at, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: sourceEventIds, technical_incomplete: false, safety_result: evaluation.safety_result, feedback_debrief: debrief }).eq('id', assignmentId);
       if (updateError) throw updateError;
+      return { runId: run.data.id, promptVersion: commentPromptVersion };
     })();
-    await Promise.race([work, timeout(90000)]);
-    return new Response(JSON.stringify({ success: true, assignmentId }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    const result = await Promise.race([work, timeout(90000)]) as { runId?: string | null; promptVersion?: string | null };
+    return new Response(JSON.stringify({ success: true, assignmentId, ...result }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error && typeof error === 'object' && 'message' in error ? String(error.message) : JSON.stringify(error));
-    if (assignmentId) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
+    if (assignmentId && !commentsOnly) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
     return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

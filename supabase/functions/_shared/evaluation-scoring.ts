@@ -47,7 +47,9 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   const ordersRaw = mdm.orders_monitoring_quality ?? mdm.orders_monitoring ?? mdm.labs_orders_quality ?? mdm.orders_quality;
   const reasoningRaw = mdm.clinical_reasoning_documentation ?? mdm.reasoning_documentation ?? mdm.note_thought_process ?? mdm.reasoning;
   const safetyDeductionRaw = mdm.safety_deduction ?? mdm.safety ?? {};
-  const componentScore = (component: Record<string, any> | undefined) => component?.score ?? component?.value ?? component?.points ?? 0;
+  // Legacy scoring responses may serialize components as bare numbers.
+  const componentScore = (component: any) => typeof component === 'number' || typeof component === 'string'
+    ? component : component?.score ?? component?.value ?? component?.points ?? 0;
   const focused = clamp(componentScore(focusedRaw), 0, 2);
   const closedLoop = clamp(componentScore(closedLoopRaw), 0, 3);
   const efficiency = clamp(componentScore(efficiencyRaw), -2, 0);
@@ -88,7 +90,11 @@ const learnerCommunicationKinds = new Set(['learner-action']);
 
 export const buildEvidenceBackedFallback = (evaluation: EvaluationScoringResponse, entries: EvidenceShape[], progressNote: string | null | undefined): EvaluationScoringResponse | null => {
   if (evaluation.communication_score !== 0 || evaluation.clinical_reasoning_score !== 0) return evaluation;
-  const learnerMessages = entries.filter((entry) => entry.kind === 'message' && entry.title === 'Student message');
+  const learnerMessages = entries.filter((entry) => entry.kind === 'message' && (
+    entry.title === 'Student message' ||
+    entry.title === 'student_message' ||
+    entry.meta?.some((value) => /^author:\s*student$/i.test(value))
+  ));
   const clinicalActions = entries.filter((entry) => learnerActionKinds.has(entry.kind));
   const orders = entries.filter((entry) => entry.kind === 'order' || entry.kind === 'labs' || entry.kind === 'imaging');
   const hasNote = Boolean(progressNote?.trim());

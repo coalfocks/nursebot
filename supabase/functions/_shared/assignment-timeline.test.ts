@@ -248,4 +248,14 @@ describe('assignment timeline for evaluation', () => {
     expect(entries.find((entry) => entry.kind === 'order')?.timestamp).toBe('2026-10-15T22:33:43.000Z');
     expect(entries.find((entry) => entry.kind === 'labs')?.timestamp).toBe('2026-10-15T22:33:51.000Z');
   });
+
+  it('keeps order instructions alongside dose, route, and frequency in the rendered evidence', () => {
+    const rendered = renderTimelineEntriesForEvaluation(buildAssignmentTimelineEntries({
+      assignment: { id: 'attempt-1', completed_at: null, student_progress_note: null },
+      assignmentId: 'attempt-1', targetRoomIds: [24], messages: [], learnerActions: [],
+      orders: [{ id: 'order-1', assignment_id: 'attempt-1', room_id: 24, override_scope: 'assignment', category: 'Medication', order_name: 'Heparin', dose: '5000 units', route: 'SQ', frequency: 'q8h', priority: 'Routine', status: 'Active', instructions: 'Hold for platelets below 50.', order_time: '2026-10-15T22:33:43.000Z', created_at: '2026-10-15T22:33:43.000Z' }],
+      labs: [], vitals: [], imaging: [],
+    }));
+    expect(rendered).toContain('5000 units • SQ • q8h • Instructions: Hold for platelets below 50.');
+  });
 });

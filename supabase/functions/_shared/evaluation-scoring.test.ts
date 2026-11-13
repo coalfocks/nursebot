@@ -90,6 +90,24 @@ describe('feedback v2 canonical contract', () => {
     expect(buildEvidenceBackedFallback(canonicalizeEvaluation({}), [{ kind: 'message', title: 'Nurse message' }], null)).toBeNull();
   });
 
+  it('recognizes manifest-form learner messages during all-zero recovery', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
+      { kind: 'order', title: 'Order: telemetry' },
+    ], null);
+    expect(result?.communication_score).toBe(2);
+    expect(result?.mdm_score).toBe(2);
+  });
+
+  it('can recover communication evidence without changing an already recovered clinical score', () => {
+    const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
+      { kind: 'message', title: 'student_message', meta: ['Actor: student'] },
+      { kind: 'order', title: 'Order: telemetry' },
+    ], null);
+    expect(result?.communication_score).toBeGreaterThan(0);
+    expect(result?.mdm_score).toBeGreaterThan(0);
+  });
+
   it('does not treat vitals or a generic progress note as Communication evidence', () => {
     const result = buildEvidenceBackedFallback(canonicalizeEvaluation({}), [
       { kind: 'message', title: 'Nurse message', body: 'Nurse page only; not learner evidence.' },
@@ -163,5 +181,14 @@ describe('feedback v2 canonical contract', () => {
     });
     expect(result.communication_score).toBe(2);
     expect(result.communication_breakdown.efficiency_deduction.score).toBe(0);
+  });
+});
+
+ describe('legacy numeric model response', () => {
+  it('preserves all six numeric components instead of replacing valid scores with fallback scores', () => {
+    const result = canonicalizeEvaluation({ communication_breakdown: { focused_information_gathering: 2, closed_loop_team_communication: 3, efficiency_deduction: -1 }, clinical_reasoning_breakdown: { orders_monitoring_quality: 3, clinical_reasoning_documentation: 2, safety_deduction: -2 } } as any);
+    expect(result.communication_score).toBe(4);
+    expect(result.clinical_reasoning_score).toBe(3);
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(-2);
   });
 });
