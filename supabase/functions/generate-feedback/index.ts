@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { EVALUATION_SYSTEM_PROMPT, CANONICAL_RUBRIC } from '../_shared/evaluation-prompts.ts';
-import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, sanitizeSimulationText, type EvaluationScoringResponse } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { filterTimelineToScoringWindow, renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -9,8 +9,10 @@ import { getOpenAIModel } from '../_shared/openai-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
 import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type CommentaryResult } from '../_shared/feedback-comments.ts';
 import {
+  COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
+  MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   COMMENTARY_MAX_COMPLETION_TOKENS,
-  EVALUATION_MAX_COMPLETION_TOKENS,
+  mergeEvaluationSections,
   runIndependentFeedbackOperations,
 } from '../_shared/feedback-operations.ts';
 
@@ -177,18 +179,31 @@ Deno.serve(async (req) => {
         if (updateError) throw updateError;
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
-      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}\n\nReturn JSON with communication_score, mdm_score (legacy mirror), clinical_reasoning_score; each rubric component as {score: integer|null, feedback, evidence_event_ids, not_scored_reason}; safety_result {level: none|concern|critical|not_assessed, action, rationale, evidence_event_ids}; learning_objectives, strengths, improvements, recommendations, and action_review. Communication components are focused_information_gathering (0-2), closed_loop_team_communication (0-3), efficiency_deduction (-2..0). MDM components are orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), safety_deduction (0/-1/-2). A null score requires a concrete missing-source/component reason; a total is null if any dependent component is null. Every cited ID must be copied exactly from the scorable manifest. Use concise exact excerpts when the output supports them. Never infer author or channel from metadata strings. Mark capture gaps unassessable. Preserve observed zero. Include student consultant requests as learner evidence and treat consultant replies as context. Do not return Professionalism, an Overall score, a global multiplier, or a deduction based only on message count/timing.`;
-      const requestEvaluation = async (validationNote = '') => {
-        const completion = await openai.chat.completions.create({ model: getOpenAIModel('generate_feedback'), messages: [{ role: 'system', content: EVALUATION_SYSTEM_PROMPT }, { role: 'user', content: `${prompt}${validationNote}\n\nOUTPUT FORMAT ONLY: Every one of the six components is {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable.` }], response_format: { type: 'json_object' }, max_completion_tokens: EVALUATION_MAX_COMPLETION_TOKENS });
-        const parsed = JSON.parse(completion.choices[0].message.content ?? '{}') as Partial<EvaluationScoringResponse> & { action_review?: unknown };
-        // Log schema only, never attempt text, to distinguish model output from mapping failures.
-        const shape = (value: unknown): unknown => value && typeof value === 'object'
-          ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, item && typeof item === 'object' ? Object.keys(item) : typeof item]))
-          : typeof value;
-        console.info('Evaluation response schema', JSON.stringify({ keys: Object.keys(parsed), communication: shape(parsed.communication_breakdown), reasoning: shape(parsed.clinical_reasoning_breakdown ?? parsed.mdm_breakdown) }));
-        return { evaluation: canonicalizeEvaluation(parsed), actionReview: sanitizeFeedbackTree(parsed.action_review ?? []) };
+      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
+      const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
+        const completion = await openai.chat.completions.create({
+          model: getOpenAIModel('generate_feedback'),
+          messages: [
+            { role: 'system', content: EVALUATION_SYSTEM_PROMPT },
+            { role: 'user', content: `${prompt}\n\nOUTPUT FORMAT ONLY: Return one JSON object. Every requested rubric component must be {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable. Do not include rubric components assigned to the other section.\n\n${sectionInstructions}` },
+          ],
+          response_format: { type: 'json_object' },
+          max_completion_tokens: maxCompletionTokens,
+        });
+        return JSON.parse(completion.choices[0].message.content ?? '{}') as Record<string, unknown>;
       };
-      const [{ evaluation, actionReview }, commentary] = await runIndependentFeedbackOperations(requestEvaluation, requestCommentary);
+      const requestCommunicationEvaluation = () => requestEvaluationSection(
+        'COMMUNICATION SECTION: Return communication_breakdown containing focused_information_gathering (0-2), closed_loop_team_communication (0-3), and efficiency_deduction (-2..0). Apply the Communication anchors from the rubric. Return no scores or fields for Medical Decision-Making.',
+        COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
+      );
+      const requestMdmEvaluation = () => requestEvaluationSection(
+        'MEDICAL DECISION-MAKING SECTION: Return clinical_reasoning_breakdown containing orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), and safety_deduction (0/-1/-2), plus safety_result {level: none|concern|critical|not_assessed, action: string|null, rationale: string|null, evidence_event_ids: string[]}. Also return learning_objectives, strengths, improvements, recommendations, and action_review. Apply the Medical Decision-Making anchors from the rubric. Do not return communication scores or components.',
+        MDM_EVALUATION_MAX_COMPLETION_TOKENS,
+      );
+      const [communicationRaw, mdmRaw, commentary] = await runIndependentFeedbackOperations(requestCommunicationEvaluation, requestMdmEvaluation, requestCommentary);
+      const mergedEvaluation = mergeEvaluationSections(communicationRaw, mdmRaw);
+      const evaluation = canonicalizeEvaluation(mergedEvaluation);
+      const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
       if (!commentary || commentary.status !== 'generated') {
         throw new Error(commentary?.status === 'insufficient_evidence' ? `Commentary generation incomplete: ${commentary.explanation}` : 'Commentary generation failed validation');
       }
