@@ -1124,6 +1124,222 @@ export type Database = {
   }
   public: {
     Tables: {
+      walkthrough_videos: {
+        Row: {
+          id: string
+          version: number
+          title: string
+          description: string
+          learning_objective: string
+          topic: string
+          thumbnail_path: string | null
+          video_path: string | null
+          duration_seconds: number | null
+          captions_path: string | null
+          transcript: string
+          audience: string
+          onboarding_eligible: boolean
+          status: string
+          processing_status: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          version?: number
+          title: string
+          description?: string
+          learning_objective?: string
+          topic: string
+          thumbnail_path?: string | null
+          video_path?: string | null
+          duration_seconds?: number | null
+          captions_path?: string | null
+          transcript?: string
+          audience?: string
+          onboarding_eligible?: boolean
+          status?: string
+          processing_status?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          version?: number
+          title?: string
+          description?: string
+          learning_objective?: string
+          topic?: string
+          thumbnail_path?: string | null
+          video_path?: string | null
+          duration_seconds?: number | null
+          captions_path?: string | null
+          transcript?: string
+          audience?: string
+          onboarding_eligible?: boolean
+          status?: string
+          processing_status?: string
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      walkthrough_courses: {
+        Row: {
+          id: string
+          version: number
+          title: string
+          description: string
+          audience: string
+          organizer_key: "admin" | "student" | "test_room" | null
+          status: string
+          is_mandatory: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          version?: number
+          title: string
+          description?: string
+          audience?: string
+          organizer_key?: string | null
+          status?: string
+          is_mandatory?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          version?: number
+          title?: string
+          description?: string
+          audience?: string
+          organizer_key?: string | null
+          status?: string
+          is_mandatory?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      walkthrough_course_items: {
+        Row: {
+          id: string
+          course_id: string
+          course_version: number
+          video_id: string
+          video_version: number
+          position: number
+          required: boolean
+        }
+        Insert: {
+          id?: string
+          course_id: string
+          course_version: number
+          video_id: string
+          video_version: number
+          position: number
+          required?: boolean
+        }
+        Update: {
+          id?: string
+          course_id?: string
+          course_version?: number
+          video_id?: string
+          video_version?: number
+          position?: number
+          required?: boolean
+        }
+        Relationships: []
+      }
+      walkthrough_enrollments: {
+        Row: {
+          id: string
+          user_id: string
+          course_id: string
+          course_version: number
+          completed_at: string | null
+          last_video_id: string | null
+          last_position_seconds: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          course_id: string
+          course_version: number
+          completed_at?: string | null
+          last_video_id?: string | null
+          last_position_seconds?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          course_id?: string
+          course_version?: number
+          completed_at?: string | null
+          last_video_id?: string | null
+          last_position_seconds?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      walkthrough_progress: {
+        Row: {
+          id: string
+          enrollment_id: string
+          user_id: string
+          video_id: string
+          video_version: number
+          position_seconds: number
+          watched_intervals: Json
+          completion_method: string
+          completed_at: string | null
+          last_activity_at: string
+        }
+        Insert: {
+          id?: string
+          enrollment_id: string
+          user_id: string
+          video_id: string
+          video_version: number
+          position_seconds?: number
+          watched_intervals?: Json
+          completion_method?: string
+          completed_at?: string | null
+          last_activity_at?: string
+        }
+        Update: {
+          id?: string
+          enrollment_id?: string
+          user_id?: string
+          video_id?: string
+          video_version?: number
+          position_seconds?: number
+          watched_intervals?: Json
+          completion_method?: string
+          completed_at?: string | null
+          last_activity_at?: string
+        }
+        Relationships: []
+      }
+      walkthrough_overrides: {
+        Row: { id: string; user_id: string; enrollment_id: string | null; reason: string; created_by: string; created_at: string }
+        Insert: { id?: string; user_id: string; enrollment_id?: string | null; reason: string; created_by: string; created_at?: string }
+        Update: { id?: string; user_id?: string; enrollment_id?: string | null; reason?: string; created_by?: string; created_at?: string }
+        Relationships: []
+      }
       case_blueprints: {
         Row: {
           admission_exam: string | null
@@ -2300,6 +2516,10 @@ export type Database = {
     }
     Functions: {
       auto_complete_assignments: { Args: never; Returns: undefined }
+      organize_walkthrough_course: {
+        Args: { p_course_id: string; p_video_ids: string[]; p_publish?: boolean }
+        Returns: undefined
+      }
     }
     Enums: {
       feedback_status: "pending" | "processing" | "completed" | "failed"

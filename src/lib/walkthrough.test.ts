@@ -1,7 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { canAudienceAccess, displayWalkthroughTitle, getWalkthroughPublicationError, visibleWalkthroughAudiences } from './walkthrough';
+import { addWalkthroughVideo, canAudienceAccess, displayWalkthroughTitle, getWalkthroughPublicationError, legacyAudienceCourses, moveWalkthroughVideo, visibleWalkthroughAudiences } from './walkthrough';
 
 describe('walkthrough audience and publication safety', () => {
+  it('supports one video in multiple role courses without duplicating its ID', () => {
+    expect(legacyAudienceCourses('both')).toEqual(['admin', 'student']);
+    expect(legacyAudienceCourses('test_room')).toEqual(['test_room']);
+    expect(legacyAudienceCourses('admin')).toEqual(['admin']);
+    expect(legacyAudienceCourses('student')).toEqual(['student']);
+    const adminCourse = addWalkthroughVideo(['video-a'], 'shared-video');
+    const studentCourse = addWalkthroughVideo(['video-b'], 'shared-video');
+    const testRoomCourse = addWalkthroughVideo([], 'shared-video');
+    expect(adminCourse).toContain('shared-video');
+    expect(studentCourse).toContain('shared-video');
+    expect(testRoomCourse).toContain('shared-video');
+    expect(addWalkthroughVideo(adminCourse, 'shared-video')).toEqual(adminCourse);
+  });
+
+  it('moves ordered course video IDs while preserving edges and unrelated entries', () => {
+    expect(moveWalkthroughVideo(['a', 'b', 'c'], 1, -1)).toEqual(['b', 'a', 'c']);
+    expect(moveWalkthroughVideo(['a', 'b', 'c'], 1, 1)).toEqual(['a', 'c', 'b']);
+    expect(moveWalkthroughVideo(['a', 'b', 'c'], 0, -1)).toEqual(['a', 'b', 'c']);
+    expect(moveWalkthroughVideo(['a', 'b', 'c'], 2, 1)).toEqual(['a', 'b', 'c']);
+  });
+
   it('allows only the intended role audience', () => {
     expect(canAudienceAccess('admin', 'school_admin')).toBe(true);
     expect(canAudienceAccess('admin', 'student')).toBe(false);
