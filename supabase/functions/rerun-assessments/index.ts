@@ -142,7 +142,15 @@ Deno.serve(async (req) => {
 
         if (generateError) {
           console.error(`Error generating feedback for assignment ${assignment.id}:`, generateError);
-          errors.push(`Assignment ${assignment.id}: ${generateError.message || 'Unknown error'}`);
+          // Prefer the specific error generate-feedback returned in its JSON body
+          // over the generic "non-2xx" wrapper text.
+          let specificMessage = '';
+          try {
+            const body = await (generateError as { context?: Response }).context?.json() as { error?: string } | undefined;
+            specificMessage = body?.error ?? '';
+          } catch (_) { /* body unavailable; fall back to generic message */ }
+          const failureMessage = specificMessage || generateError.message || 'Unknown error';
+          errors.push(`Assignment ${assignment.id}: ${failureMessage}`);
           
           // Update the assignment status to failed
           if (!comments_only) {
@@ -150,7 +158,7 @@ Deno.serve(async (req) => {
               .from('student_room_assignments')
               .update({
                 feedback_status: 'failed',
-                feedback_error: generateError.message || 'Unknown error'
+                feedback_error: failureMessage
               })
               .eq('id', assignment.id);
           }

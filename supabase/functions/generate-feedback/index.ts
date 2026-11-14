@@ -13,6 +13,7 @@ import {
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   COMMENTARY_MAX_COMPLETION_TOKENS,
   mergeEvaluationSections,
+  parseSectionCompletion,
   runIndependentFeedbackOperations,
 } from '../_shared/feedback-operations.ts';
 
@@ -190,7 +191,7 @@ Deno.serve(async (req) => {
           response_format: { type: 'json_object' },
           max_completion_tokens: maxCompletionTokens,
         });
-        return JSON.parse(completion.choices[0].message.content ?? '{}') as Record<string, unknown>;
+        return parseSectionCompletion(completion);
       };
       const requestCommunicationEvaluation = () => requestEvaluationSection(
         'COMMUNICATION SECTION: Return communication_breakdown containing focused_information_gathering (0-2), closed_loop_team_communication (0-3), and efficiency_deduction (-2..0). Apply the Communication anchors from the rubric. Return no scores or fields for Medical Decision-Making.',
