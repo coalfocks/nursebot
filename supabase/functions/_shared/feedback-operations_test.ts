@@ -3,6 +3,7 @@ import {
   COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   mergeEvaluationSections,
+  buildSourceCoverageSummary,
   parseSectionCompletion,
   runIndependentFeedbackOperations,
 } from './feedback-operations.ts';
@@ -108,4 +109,11 @@ Deno.test('section parser fails loudly on empty or truncated completions', () =>
       if (!pattern.test(String(error instanceof Error ? error.message : error))) throw error;
     }
   }
+});
+
+Deno.test('source coverage marks a queried empty source as complete rather than missing', () => {
+  const summary = buildSourceCoverageSummary([{ kind: 'message' }, { kind: 'message' }, { kind: 'progress-note' }]);
+  if (!/nurse and learner chat: queried successfully, 2 records/.test(summary)) throw new Error(summary);
+  if (!/medical orders: queried successfully, 0 records \(complete; none in scoring window\)/.test(summary)) throw new Error(summary);
+  if (/missing/i.test(summary)) throw new Error('empty sources must not be described as missing');
 });
