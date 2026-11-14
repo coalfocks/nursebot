@@ -50,3 +50,27 @@ export const parseSectionCompletion = (completion: CompletionLike): Record<strin
   }
   return JSON.parse(content) as Record<string, unknown>;
 };
+
+type CoverageEntry = { kind: string };
+
+const COVERAGE_SOURCES: Array<{ label: string; kinds: string[] }> = [
+  { label: 'nurse and learner chat', kinds: ['message'] },
+  { label: 'consultant requests and messages', kinds: ['consultant-message'] },
+  { label: 'medical orders', kinds: ['order'] },
+  { label: 'lab results', kinds: ['labs'] },
+  { label: 'vital signs', kinds: ['vital'] },
+  { label: 'imaging studies', kinds: ['imaging'] },
+  { label: 'learner actions', kinds: ['learner-action'] },
+  { label: 'progress note', kinds: ['progress-note'] },
+];
+
+/**
+ * States, per source, that the event manifest was queried and how many records
+ * it returned. A queried source with zero records is complete (no such events
+ * occurred), so the grader must not treat it as missing capture.
+ */
+export const buildSourceCoverageSummary = (entries: CoverageEntry[]): string =>
+  COVERAGE_SOURCES.map(({ label, kinds }) => {
+    const count = entries.filter((entry) => kinds.includes(entry.kind)).length;
+    return `- ${label}: queried successfully, ${count} record${count === 1 ? '' : 's'}${count === 0 ? ' (complete; none in scoring window)' : ''}`;
+  }).join('\n');
