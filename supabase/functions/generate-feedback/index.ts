@@ -13,6 +13,7 @@ import {
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   COMMENTARY_MAX_COMPLETION_TOKENS,
   mergeEvaluationSections,
+  buildSourceCoverageSummary,
   parseSectionCompletion,
   runIndependentFeedbackOperations,
 } from '../_shared/feedback-operations.ts';
@@ -180,7 +181,7 @@ Deno.serve(async (req) => {
         if (updateError) throw updateError;
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
-      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
+      const prompt = `${CANONICAL_RUBRIC}\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSOURCE COVERAGE (event manifest retrieved successfully; counts are scoring-window records; a source listed with 0 records was checked and is complete, not missing capture):\n${buildSourceCoverageSummary(scoredEntries)}\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
       const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
         const completion = await openai.chat.completions.create({
           model: getOpenAIModel('generate_feedback'),
