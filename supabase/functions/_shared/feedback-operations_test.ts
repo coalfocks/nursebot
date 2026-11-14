@@ -3,15 +3,16 @@ import {
   COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   mergeEvaluationSections,
+  parseSectionCompletion,
   runIndependentFeedbackOperations,
 } from './feedback-operations.ts';
 import { canonicalizeEvaluation } from './evaluation-scoring.ts';
 
 Deno.test('uses named completion budgets for the smaller evaluation sections and commentary', () => {
-  if (COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS !== 1200) {
+  if (COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS !== 4000) {
     throw new Error(`Unexpected communication completion budget: ${COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS}`);
   }
-  if (MDM_EVALUATION_MAX_COMPLETION_TOKENS !== 2200) {
+  if (MDM_EVALUATION_MAX_COMPLETION_TOKENS !== 6000) {
     throw new Error(`Unexpected MDM completion budget: ${MDM_EVALUATION_MAX_COMPLETION_TOKENS}`);
   }
   if (COMMENTARY_MAX_COMPLETION_TOKENS !== 3000) {
@@ -93,5 +94,18 @@ Deno.test('missing sections merge to empty objects that canonicalization marks u
     || canonical.safety_result.level !== 'not_assessed'
     || canonical.recommendations[0] !== 'Review the case goals.') {
     throw new Error(`Missing sections were not safely canonicalized: ${JSON.stringify(canonical)}`);
+  }
+});
+
+Deno.test('section parser fails loudly on empty or truncated completions', () => {
+  const completion = (content: string | null, finish_reason: string) => ({ choices: [{ finish_reason, message: { content } }] });
+  if (parseSectionCompletion(completion('{"a":1}', 'stop')).a !== 1) throw new Error('valid JSON should parse');
+  for (const [content, reason, pattern] of [['', 'length', /no content/], [null, 'stop', /no content/], ['{"a":', 'length', /truncated/]] as const) {
+    try {
+      parseSectionCompletion(completion(content, reason));
+      throw new Error(`expected failure for ${reason}`);
+    } catch (error) {
+      if (!pattern.test(String(error instanceof Error ? error.message : error))) throw error;
+    }
   }
 });
