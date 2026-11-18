@@ -427,7 +427,7 @@ Deno.serve(async (req) => {
       throw assignmentsError;
     }
 
-    const assignments = (assignmentRows ?? []) as AssignmentRow[];
+    const assignments = (assignmentRows ?? []) as unknown as AssignmentRow[];
     const aggregates = buildAggregateMetrics(assignments);
     const studentName = profile.full_name?.trim() || user.email || 'Student';
 
