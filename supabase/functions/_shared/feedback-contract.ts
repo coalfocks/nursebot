@@ -1,6 +1,6 @@
-export const FEEDBACK_RUBRIC_VERSION = 'feedback-v5-2026-11-14';
+export const FEEDBACK_RUBRIC_VERSION = 'feedback-v6-althea-2026-11-13';
 export const CASE_KEY_VERSION = 'case-key-v2';
-export const ASSESSMENT_VERSION = 'assessment-v4-2026-11-14';
+export const ASSESSMENT_VERSION = 'assessment-v5-althea-2026-11-13';
 
 export type SafetyLevel = 'none' | 'concern' | 'critical';
 

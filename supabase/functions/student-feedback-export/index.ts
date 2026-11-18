@@ -1,6 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.50.0';
 import { corsHeaders } from '../_shared/cors.ts';
-import { COMMUNICATION_SCORING, MDM_SCORING } from '../_shared/evaluation-prompts.ts';
 
 type FeedbackSectionKey =
   | 'informationSharing'
@@ -98,30 +97,12 @@ const roundToAnchor = (value: number, anchors: number[]) => {
   }, anchors[0]);
 };
 
-const getRubricFeedback = (key: FeedbackSectionKey, score: number | null) => {
+// The per-anchor rubric text lived in the retired evaluation-prompts exports
+// (COMMUNICATION_SCORING / MDM_SCORING), which no longer exist. The aggregate
+// reports the rounded average; per-component feedback is in Review Feedback.
+const getRubricFeedback = (_key: FeedbackSectionKey, score: number | null) => {
   if (score == null) return 'No rubric feedback available (insufficient data).';
-
-  if (key === 'informationSharing') {
-    return COMMUNICATION_SCORING.informationSharing.scores[score as 0 | 1 | 2]?.feedback ?? 'No rubric feedback available.';
-  }
-
-  if (key === 'responsiveCommunication') {
-    return COMMUNICATION_SCORING.responsiveCommunication.scores[score as 0 | 1 | 2 | 3]?.feedback ?? 'No rubric feedback available.';
-  }
-
-  if (key === 'efficiencyDeduction') {
-    return COMMUNICATION_SCORING.efficiencyDeduction.scores[String(score) as '-2' | '-1' | '0']?.feedback ?? 'No rubric feedback available.';
-  }
-
-  if (key === 'labsOrdersQuality') {
-    return MDM_SCORING.labsOrdersQuality.scores[score as 0 | 1 | 2 | 3]?.feedback ?? 'No rubric feedback available.';
-  }
-
-  if (key === 'noteThoughtProcess') {
-    return MDM_SCORING.noteThoughtProcess.scores[score as 0 | 1 | 2]?.feedback ?? 'No rubric feedback available.';
-  }
-
-  return MDM_SCORING.safetyDeduction.scores[String(score) as '-2' | '-1' | '0']?.feedback ?? 'No rubric feedback available.';
+  return `Rounded average ${score}. Per-component feedback is in Review Feedback.`;
 };
 
 const metricDefinitions: MetricDefinition[] = [
