@@ -10,6 +10,7 @@ interface RerunRequest {
   room_ids?: string[];       // If provided, only rerun assignments for these rooms
   rerun_all?: boolean;       // If true, rerun all completed assignments
   comments_only?: boolean;   // If true, regenerate only the saved debrief comments
+  full_regrade?: boolean;    // If true, bypass saved-score reuse and create a new scored result
 }
 
 interface RerunResponse {
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { assignment_ids, room_ids, rerun_all, comments_only } = requestBody;
+    const { assignment_ids, room_ids, rerun_all, comments_only, full_regrade } = requestBody;
 
     // Validate input - at least one option must be provided
     if (!assignment_ids && !room_ids && !rerun_all) {
@@ -137,7 +138,7 @@ Deno.serve(async (req) => {
         
         // Call the generate-feedback function for each assignment
         const { data, error: generateError } = await supabaseClient.functions.invoke('generate-feedback', {
-          body: { assignmentId: assignment.id, commentsOnly: comments_only === true }
+          body: { assignmentId: assignment.id, commentsOnly: comments_only === true, forceRegrade: full_regrade === true }
         });
 
         if (generateError) {

@@ -21,8 +21,8 @@ export default defineConfig({
     environment: 'happy-dom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
-    // This suite imports Deno's https: stdlib and must run with Deno.
-    exclude: ['**/node_modules/**', '**/dist/**', 'supabase/functions/consultant-chat/guards.test.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'supabase/functions/consultant-chat/guards.test.ts', 'supabase/functions/_shared/feedback-comments.test.ts'],
+    // feedback-comments.test.ts imports Deno's https: stdlib; run it with test:deno.
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

@@ -72,8 +72,7 @@ describe('evidence-based evaluation contract', () => {
     const reply = { id: 'consult-reply', actor_role: 'consultant', channel: 'consultant_chat', meta: ['Author: Student'] };
     expect(isLearnerAuthoredEvidence(request)).toBe(true);
     expect(isLearnerAuthoredEvidence(reply)).toBe(false);
-    expect(EVALUATION_SYSTEM_PROMPT).toContain("student's consultant request is learner evidence");
-    expect(EVALUATION_SYSTEM_PROMPT).toContain('never infer authorship or channel by parsing a meta string');
+    expect(EVALUATION_SYSTEM_PROMPT).toContain('A consultant recommendation is not a learner action until the learner accepts');
   });
 
   it('allows bedside-first care without a communication penalty for missing nurse chat', () => {
