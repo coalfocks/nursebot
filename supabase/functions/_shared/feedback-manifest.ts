@@ -4,6 +4,8 @@ import type { EvaluationTimelineEntry } from './assignment-timeline.ts';
 // Actor and channel come from structured fields only. Bedside and nurse events
 // keep their own actor, channel, id, and timestamp. Consultant advice stays
 // context and is never converted into a learner action.
+const channelOf = (event: Record<string, unknown>) => typeof event.channel === 'string' ? event.channel : null;
+
 export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): EvaluationTimelineEntry | null => {
   const eventType = String(event.event_type ?? '');
   const kind: EvaluationTimelineEntry['kind'] = eventType === 'order_placed'
@@ -18,12 +20,18 @@ export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): 
             ? 'progress-note'
             : eventType === 'bedside_action'
               ? 'learner-action'
-              : eventType === 'assignment_completed'
+              : eventType === 'hint_shown'
+                ? 'hint'
+                : eventType === 'assignment_completed'
                 ? 'completion'
                 : eventType === 'consultant_request' || eventType === 'consultant_message' || eventType === 'consultant_response'
                   ? 'consultant-message'
                   : 'message';
-  const title = eventType === 'student_message'
+  const title = eventType === 'bedside_action' && channelOf(event) === 'bedside'
+    ? 'Bedside visit'
+    : eventType === 'hint_shown'
+      ? 'Hint opened'
+      : eventType === 'student_message'
     ? 'Student message'
     : eventType === 'nurse_message'
       ? 'Nurse message'
@@ -70,5 +78,6 @@ export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): 
     channel,
     sequence: typeof event.sequence === 'number' ? event.sequence : null,
     ordering_ambiguous: event.ordering_ambiguous === true,
+    assignment_linked: Boolean(event.links && typeof event.links === 'object' && typeof (event.links as Record<string, unknown>).assignment_id === 'string'),
   };
 };
