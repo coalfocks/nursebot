@@ -2,9 +2,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
 import { NURSE_ALTHEA_SIMULATION_PROMPT_ID, NURSE_ALTHEA_SIMULATION_PROMPT_SHA256 } from '../_shared/simulation-prompt.ts';
-import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, buildEvidencePacket, reconcileEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
+import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, buildEvidencePacket, reconcileEvidence, resolveClosedLoopEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
 import { applyLeniencyToEvaluation, readRoomLeniencyMultiplier } from '../_shared/feedback-leniency.ts';
-import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
+import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, safetyConsistencyErrors, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { filterTimelineToScoringWindow, renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
 import { manifestEventToEvaluationEntry } from '../_shared/feedback-manifest.ts';
@@ -266,12 +266,15 @@ Deno.serve(async (req) => {
       const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
       // Commentary is separate from scoring. A commentary failure keeps the valid
       // grades and records a visible commentary error instead of discarding them.
+      // Validation failures collected for this run; any entry keeps the prior saved result.
+      const validationErrors: string[] = [];
       const commentaryGenerated = commentary?.status === 'generated';
       const generatedComments: { strengths: AttemptFeedbackComment[]; improvements: AttemptFeedbackComment[] } = commentary?.status === 'generated'
         ? commentary.comments
         : { strengths: [], improvements: [] };
       const commentStatus = commentary?.status ?? 'failed';
       const commentPromptVersion = FEEDBACK_COMMENT_PROMPT_VERSION;
+      if (!commentaryGenerated) validationErrors.push(`commentary did not produce exactly two strengths and two improvements (${commentary?.status === 'insufficient_evidence' ? commentary.explanation : commentaryDiagnostic})`);
       const commentError = commentaryGenerated
         ? null
         : commentary?.status === 'insufficient_evidence'
@@ -282,7 +285,10 @@ Deno.serve(async (req) => {
         .filter((entry) => !learnerOnly || isLearnerAuthoredEvidence(entry))
         .map((entry) => entry.id);
       const learnerCommunicationIds = idsForKinds(['message', 'consultant-message', 'learner-action'], true);
-      const learnerClosedLoopIds = idsForKinds(['consultant-message', 'learner-action'], true);
+      // Closed-loop candidates come from the same packet the scorer read. Learner nurse-chat
+      // requests are closed-loop evidence; the earlier list omitted them, so every request
+      // was dropped and the score went out with no linked evidence.
+      const learnerClosedLoopIds = packet.closedLoopEventIds.filter((id) => sourceEventIds.includes(id));
       const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'consultant-message', 'order', 'labs', 'vital', 'imaging'], true);
       const evidence = {
         communication: {
@@ -296,6 +302,15 @@ Deno.serve(async (req) => {
       };
       if (!evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids.length && evaluation.communication_breakdown.focused_information_gathering.score != null) evidence.communication.focused = learnerCommunicationIds;
       if (!evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids.length && evaluation.communication_breakdown.closed_loop_team_communication.score != null) evidence.communication.closedLoop = learnerClosedLoopIds;
+      const closedLoopResolution = resolveClosedLoopEvidence({
+        requestedIds: evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids,
+        score: evaluation.communication_breakdown.closed_loop_team_communication.score,
+        candidateIds: learnerClosedLoopIds,
+        pairs: packet.requestAcknowledgmentPairs,
+        sourceEventIds,
+      });
+      if (closedLoopResolution.error) validationErrors.push(closedLoopResolution.error);
+      else evidence.communication.closedLoop = closedLoopResolution.evidenceIds;
       if (!evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids.length && evaluation.mdm_breakdown.orders_monitoring_quality.score != null) evidence.mdm.orders = idsForKinds(['order', 'labs', 'vital', 'imaging']);
       if (!evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids.length && evaluation.mdm_breakdown.clinical_reasoning_documentation.score != null) evidence.mdm.reasoning = learnerReasoningIds;
       evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids = evidence.communication.focused;
@@ -321,7 +336,8 @@ Deno.serve(async (req) => {
         componentEvidenceIds: [...Object.values(evaluation.communication_breakdown), ...Object.values(evaluation.clinical_reasoning_breakdown)].flatMap((component) => component.evidence_event_ids),
         commentEvidenceIds: [...generatedComments.strengths, ...generatedComments.improvements].flatMap((comment) => comment.evidence_event_ids),
       });
-      if (reconciliationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${reconciliationErrors.join('; ')})`);
+      const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
+      if (allValidationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')})`);
       const deterministicEntries = scoredEntries.filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind));
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
@@ -342,7 +358,7 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, learner_communication_event_ids: packet.learnerCommunicationEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);
