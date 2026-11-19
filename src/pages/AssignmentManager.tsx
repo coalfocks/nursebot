@@ -693,8 +693,10 @@ export default function AssignmentManager() {
       if (manifestError) throw manifestError;
       if (!manifest || !Array.isArray(manifest.events)) throw new Error('The assignment history manifest was not returned by the server.');
       // Verified historical baseline only (admin-readable). Absent or unreadable = unavailable, never today's chart.
-      const { data: baselineRow, error: baselineError } = await (supabase as any).from('assignment_baseline_snapshots').select('*').eq('assignment_id', assignment.id).maybeSingle();
-      setEvidenceBaselineLines(baselineReferenceLines(baselineRow ?? null, baselineError ? baselineError.message : null));
+      // The table is not in the generated database types yet, so the query is typed locally.
+      const baselineTable = supabase as unknown as { from: (table: string) => { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> } } } };
+      const { data: baselineRow, error: baselineError } = await baselineTable.from('assignment_baseline_snapshots').select('*').eq('assignment_id', assignment.id).maybeSingle();
+      setEvidenceBaselineLines(baselineReferenceLines(baselineRow, baselineError ? baselineError.message : null));
       setEvidenceAudit(manifest);
     } catch (error) {
       console.error('Error fetching assignment evidence audit:', error);
