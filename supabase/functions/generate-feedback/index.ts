@@ -116,10 +116,12 @@ Deno.serve(async (req) => {
       if (!hasMeaningfulEvidence(sourceEventIds)) throw new Error('Evidence-bearing attempt produced an empty post-page source event manifest');
       // The manifest RPC succeeded, so every source was read. Zero rows here is an
       // available-empty source, which lets a genuine omission be scored.
+      const activationEvent = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
       const packet = buildEvidencePacket(scoredEntries, {
         manifestAvailable: true,
         progressNotePresent: Boolean(assignment.student_progress_note?.trim()),
         caseKeyGoalCount: key.goals.length,
+        activatedAt: typeof activationEvent === 'string' ? activationEvent : null,
       });
       const coverage: SourceCoverage = packet.captureStatus.coverage;
       // Bedside and hint capture covers the whole attempt (activation through completion), so bedside-first
@@ -127,7 +129,7 @@ Deno.serve(async (req) => {
       const activatedAt = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
       const completedAt = events.find((event) => event.event_type === 'assignment_completed')?.occurred_at;
       const attemptEntries = attributeUnrecordedOrderActors(selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null));
-      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length });
+      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length, activatedAt: typeof activationEvent === 'string' ? activationEvent : null });
       const model = getOpenAIModel('generate_feedback');
       const inputFingerprint = await computeFeedbackFingerprint({
         attempt_id: assignment.id,

@@ -11,6 +11,24 @@ export const EVIDENCE_PACKET_VERSION = 'althea-evidence-packet-v2-2026-11-19';
 export const BEDSIDE_RULE_ALCOHOL_WITHDRAWAL = 'acute_alcohol_withdrawal_info_gathering';
 export const BEDSIDE_RULE_VERSION = 'bedside-rule-v1-2026-11-18';
 
+// Bedside visits were recorded only as an assignment status change, which the manifest does
+// not read. A bedside visit is now written as a learner action (channel bedside). Attempts
+// activated before that write existed have no bedside telemetry, so an absent bedside event
+// is "unavailable", not an omission. Set this to the deploy time of the write. While null,
+// every attempt reports bedside capture as unavailable and no bedside deduction is made.
+export const BEDSIDE_TELEMETRY_SINCE: string | null = null;
+
+export const bedsideCaptureStatus = (
+  activatedAt: string | null | undefined,
+  manifestAvailable: boolean,
+  telemetrySince: string | null = BEDSIDE_TELEMETRY_SINCE,
+): 'complete' | 'unavailable' => {
+  if (!manifestAvailable || !telemetrySince || !activatedAt) return 'unavailable';
+  const activated = Date.parse(activatedAt);
+  const since = Date.parse(telemetrySince);
+  return Number.isFinite(activated) && Number.isFinite(since) && activated >= since ? 'complete' : 'unavailable';
+};
+
 export type BedsideExpectation = 'required' | 'optional' | 'not_applicable';
 
 export type BedsideExpectationConfig = {
@@ -144,7 +162,7 @@ export const pairRequestAcknowledgments = (entries: EvaluationTimelineEntry[]): 
 
 export const buildEvidencePacket = (
   entries: EvaluationTimelineEntry[],
-  options: { manifestAvailable: boolean; progressNotePresent: boolean; caseKeyGoalCount: number },
+  options: { manifestAvailable: boolean; progressNotePresent: boolean; caseKeyGoalCount: number; activatedAt?: string | null; telemetrySince?: string | null },
 ): EvidencePacket => {
   const ids = (predicate: (entry: EvaluationTimelineEntry) => boolean) => entries.filter(predicate).map((entry) => entry.id);
   const coverage = buildSourceCoverage(entries, options);
@@ -165,7 +183,7 @@ export const buildEvidencePacket = (
     requestAcknowledgmentPairs: pairRequestAcknowledgments(entries),
     finalNoteEventId: entries.find((entry) => entry.kind === 'progress-note')?.id ?? null,
     baselineMedicationsAndOrders: 'unavailable',
-    captureStatus: { coverage, bedside: options.manifestAvailable ? 'complete' : 'unavailable' },
+    captureStatus: { coverage, bedside: bedsideCaptureStatus(options.activatedAt, options.manifestAvailable, options.telemetrySince) },
   };
 };
 

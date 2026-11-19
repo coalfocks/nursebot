@@ -24,7 +24,8 @@ const bedside: EvaluationTimelineEntry = { id: 'action:abc', kind: 'learner-acti
 const hint: EvaluationTimelineEntry = { id: 'hint:x:oxygen', kind: 'hint', timestamp: '2026-11-18T10:04:00Z', title: 'Hint opened', body: 'Oxygen hint', actor_role: 'student', channel: 'hint', sequence: 13 };
 const order: EvaluationTimelineEntry = { id: 'order:o1', kind: 'order', timestamp: '2026-11-18T10:05:00Z', title: 'Order: Lorazepam', body: '2 mg IV', actor_role: 'student', channel: 'orders', sequence: 14 };
 const alcoholCase: BedsideExpectationConfig = { expectation: 'required', rule: BEDSIDE_RULE_ALCOHOL_WITHDRAWAL, source: 'case_evaluation', rule_version: 'bedside-rule-v1-2026-11-18' };
-const opts = { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 2 };
+// Bedside capture is complete only for attempts activated after bedside telemetry exists.
+const opts = { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 2, activatedAt: '2026-12-01T00:00:00Z', telemetrySince: '2026-11-20T00:00:00Z' };
 
 const fullEvaluation = (focused: number) => canonicalizeEvaluation({
   communication_breakdown: {

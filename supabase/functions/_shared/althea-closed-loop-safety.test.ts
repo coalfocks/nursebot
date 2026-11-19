@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildEvidencePacket,
   attributeUnrecordedOrderActors,
+  applyBedsideInformationRule,
+  bedsideCaptureStatus,
   pairRequestAcknowledgments,
   reconcileEvidence,
   resolveBedsideExpectation,
@@ -42,6 +44,8 @@ const room203Events = [
 const room203Entries = attributeUnrecordedOrderActors(room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry)));
 const room203Packet = buildEvidencePacket(room203Entries, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 });
 const opts = { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 };
+const learnerQuestion: EvaluationTimelineEntry = { id: 'message-10', kind: 'message', timestamp: '2026-11-18T10:01:00Z', title: 'Student message', body: 'What is his oxygen?', actor_role: 'student', channel: 'nurse' };
+const nurseReply: EvaluationTimelineEntry = { id: 'message-11', kind: 'message', timestamp: '2026-11-18T10:02:00Z', title: 'Nurse message', body: 'SpO2 91%.', actor_role: 'assistant', channel: 'nurse' };
 
 describe('Room 203 closed-loop evidence (attempt 2808c092)', () => {
   it('holds the learner nurse-chat requests and orders in the packet the scorer reads', () => {
@@ -220,5 +224,31 @@ describe('learner-placed orders with no recorded actor', () => {
   it('reports a learner order in the Room 203 packet once attribution is applied', () => {
     const packet = buildEvidencePacket(attributeUnrecordedOrderActors(room203Entries), opts);
     expect(packet.learnerOrderEventIds).toEqual(['order:a188ff44', 'order:df5b6a30']);
+  });
+});
+
+describe('bedside telemetry gates the alcohol-withdrawal deduction', () => {
+  const requiredAlcoholCase = { expectation: 'required' as const, rule: BEDSIDE_RULE_ALCOHOL_WITHDRAWAL, source: 'case_evaluation' as const, rule_version: 'bedside-rule-v1-2026-11-18' };
+
+  it('reports bedside capture unavailable until telemetry is switched on, so no omission is inferred', () => {
+    expect(bedsideCaptureStatus('2026-12-01T00:00:00Z', true, null)).toBe('unavailable');
+  });
+
+  it('reports complete only for attempts activated after the telemetry date', () => {
+    expect(bedsideCaptureStatus('2026-12-01T00:00:00Z', true, '2026-11-20T00:00:00Z')).toBe('complete');
+    expect(bedsideCaptureStatus('2026-05-06T16:51:16Z', true, '2026-11-20T00:00:00Z')).toBe('unavailable');
+    expect(bedsideCaptureStatus(null, true, '2026-11-20T00:00:00Z')).toBe('unavailable');
+    expect(bedsideCaptureStatus('2026-12-01T00:00:00Z', false, '2026-11-20T00:00:00Z')).toBe('unavailable');
+  });
+
+  it('makes no deduction for a required case when bedside capture is unavailable', () => {
+    const packet = buildEvidencePacket([learnerQuestion, nurseReply], { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 2, activatedAt: '2026-05-06T16:51:16Z' });
+    expect(packet.captureStatus.bedside).toBe('unavailable');
+    expect(applyBedsideInformationRule(2, packet, requiredAlcoholCase)).toMatchObject({ applied: false, after: 2 });
+  });
+
+  it('applies the one-point rule once telemetry is complete and no visit is recorded', () => {
+    const packet = buildEvidencePacket([learnerQuestion, nurseReply], { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 2, activatedAt: '2026-12-01T00:00:00Z', telemetrySince: '2026-11-20T00:00:00Z' });
+    expect(applyBedsideInformationRule(2, packet, requiredAlcoholCase)).toMatchObject({ applied: true, after: 1 });
   });
 });
