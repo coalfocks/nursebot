@@ -16,7 +16,8 @@ import { getSchoolDisplayName } from '../hooks/useSchools';
 import { classifyFeedbackScore } from '../lib/feedbackScore';
 import { withTimeout } from '../lib/asyncTimeout';
 import { buildAssignmentListQuery } from '../lib/assignmentQueries';
-import { downloadText, eventContent, eventLabel, manifestToCsv, type AssignmentEventManifest } from '../lib/assignmentEventManifest';
+import { downloadText, manifestToCsv, type AssignmentEventManifest } from '../lib/assignmentEventManifest';
+import { baselineReferenceLines, buildReadableTimeline } from '../lib/readableTimeline';
 import { getMissingAssignmentRows, type PendingAssignmentCreate } from '../lib/assignmentCreation';
 import { FeedbackSheet, feedbackSheetStyles, mapFeedbackSheet, renderFeedbackSheetHtml } from '../lib/feedbackSheet';
 import type { FeedbackSheetAssignment } from '../lib/feedbackSheet';
@@ -100,6 +101,7 @@ export default function AssignmentManager() {
   const [reviewAssignment, setReviewAssignment] = useState<Assignment | null>(null);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
   const [evidenceAudit, setEvidenceAudit] = useState<EvidenceAudit | null>(null);
+  const [evidenceBaselineLines, setEvidenceBaselineLines] = useState<string[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const evidenceCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -683,12 +685,18 @@ export default function AssignmentManager() {
     setSelectedAssignment(assignment);
     setShowEvidenceModal(true);
     setEvidenceAudit(null);
+    setEvidenceBaselineLines([]);
     setEvidenceError(null);
     setEvidenceLoading(true);
     try {
       const { data: manifest, error: manifestError } = await (supabase as any).rpc('get_assignment_event_manifest', { p_assignment_id: assignment.id });
       if (manifestError) throw manifestError;
       if (!manifest || !Array.isArray(manifest.events)) throw new Error('The assignment history manifest was not returned by the server.');
+      // Verified historical baseline only (admin-readable). Absent or unreadable = unavailable, never today's chart.
+      // The table is not in the generated database types yet, so the query is typed locally.
+      const baselineTable = supabase as unknown as { from: (table: string) => { select: (columns: string) => { eq: (column: string, value: string) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> } } } };
+      const { data: baselineRow, error: baselineError } = await baselineTable.from('assignment_baseline_snapshots').select('*').eq('assignment_id', assignment.id).maybeSingle();
+      setEvidenceBaselineLines(baselineReferenceLines(baselineRow, baselineError ? baselineError.message : null));
       setEvidenceAudit(manifest);
     } catch (error) {
       console.error('Error fetching assignment evidence audit:', error);
@@ -1807,6 +1815,7 @@ export default function AssignmentManager() {
         <EvidenceAuditModal
           assignment={selectedAssignment}
           audit={evidenceAudit}
+          baselineLines={evidenceBaselineLines}
           loading={evidenceLoading}
           error={evidenceError}
           closeButtonRef={evidenceCloseButtonRef}
@@ -1841,6 +1850,7 @@ export default function AssignmentManager() {
 function EvidenceAuditModal({
   assignment,
   audit,
+  baselineLines,
   loading,
   error,
   closeButtonRef,
@@ -1848,6 +1858,7 @@ function EvidenceAuditModal({
 }: {
   assignment: Assignment;
   audit: EvidenceAudit | null;
+  baselineLines: string[];
   loading: boolean;
   error: string | null;
   closeButtonRef: React.RefObject<HTMLButtonElement>;
@@ -1876,6 +1887,10 @@ function EvidenceAuditModal({
             {!loading && error && <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">Evidence audit could not be read: {error}</p>}
             {!loading && !error && audit && (
               <>
+                <section className="rounded-md border border-emerald-200 bg-emerald-50/40 p-4" aria-label="Patient medications and active orders before case start">
+                  <h3 className="font-medium text-gray-900">Patient medications and active orders before case start</h3>
+                  <ul className="mt-2 space-y-1 text-sm text-gray-700">{baselineLines.map((line) => <li key={line} className="whitespace-pre-wrap">{line}</li>)}</ul>
+                </section>
                 <section className="rounded-md border border-gray-200 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="font-medium text-gray-900">Case activity</h3>
@@ -1884,7 +1899,7 @@ function EvidenceAuditModal({
                     </div>
                   </div>
                   {audit.gaps.length > 0 && <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><p className="font-medium">Capture notes</p><ul className="mt-1 list-disc pl-5">{audit.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
-                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No case activity was captured.</p> : <div className="mt-2 space-y-2">{audit.events.map((event) => <div key={event.event_id} className={`rounded border p-3 text-sm ${event.ordering_ambiguous ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}><div className="font-medium text-gray-900">{eventLabel(event)}</div><div className="text-xs text-gray-500">{event.occurred_at ? new Date(event.occurred_at).toLocaleString() : 'Time not recorded'}{event.timezone ? ` · ${event.timezone}` : ''}{event.ordering_ambiguous ? ' · Events share an uncertain order' : ''}</div><div className="mt-1 text-xs text-gray-500">{[event.actor?.role ? `By ${event.actor.role}` : null, event.channel ? `via ${event.channel}` : null].filter(Boolean).join(' · ')}</div><div className="mt-2 whitespace-pre-wrap text-gray-700">{eventContent(event) || 'No details recorded'}</div></div>)}</div>}
+                  {audit.events.length === 0 ? <p className="mt-2 text-sm text-amber-700">No case activity was captured.</p> : <ol className="mt-2 space-y-2">{buildReadableTimeline(audit.events).map((entry) => <li key={entry.eventId} data-category={entry.category} className={`rounded border p-3 text-sm ${entry.ordering_ambiguous ? 'border-amber-200 bg-amber-50' : entry.category === 'bedside' ? 'border-emerald-200 bg-emerald-50/50' : entry.category === 'hint' ? 'border-violet-200 bg-violet-50/50' : 'border-gray-100 bg-gray-50'}`}><div className="font-medium text-gray-900">{entry.heading}</div><div className="text-xs text-gray-500">{entry.time}{entry.ordering_ambiguous ? ' · Events share an uncertain order' : ''}</div><div className="mt-1 text-xs text-gray-500">{[entry.actor, entry.channel ? `via ${entry.channel}` : null].filter(Boolean).join(' · ')}</div>{entry.details.length > 0 && <div className="mt-2 whitespace-pre-wrap text-gray-700">{entry.details.join('\n')}</div>}<div className="mt-1 font-mono text-[10px] text-gray-400">{entry.eventId}</div></li>)}</ol>}
                 </section>
               </>
             )}

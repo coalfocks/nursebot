@@ -795,6 +795,18 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     if (!assignmentId || isCompleting) return;
     setIsCompleting(true);
     try {
+      // Record the visit as a learner action first. The status change alone is not in the
+      // assignment event manifest, so a bedside visit would be invisible to scoring. If the
+      // event cannot be written, the visit is not recorded and the status is not changed.
+      const { error: eventError } = await supabase
+        .from('learner_action_events')
+        .insert({
+          assignment_id: assignmentId,
+          action_type: 'bedside_finding',
+          channel: 'bedside',
+          content: 'Went to bedside (simulated bedside assessment started).',
+        });
+      if (eventError) throw eventError;
       const { error: updateError } = await supabase
         .from('student_room_assignments')
         .update({
