@@ -39,7 +39,7 @@ const room203Events = [
   manifestEvent('order:a188ff44', 'order_placed', 'unknown', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count with Differential', { channel: 'orders', content: { name: 'Complete Blood Count with Differential', category: 'Lab', status: 'Active' } }),
   manifestEvent('order:df5b6a30', 'order_placed', 'unknown', '2026-05-06T16:57:50.611+00:00', 'ABG with Co-oximetry', { channel: 'orders', content: { name: 'ABG with Co-oximetry', category: 'Lab', status: 'Active' } }),
 ];
-const room203Entries = room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry));
+const room203Entries = attributeUnrecordedOrderActors(room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry)));
 const room203Packet = buildEvidencePacket(room203Entries, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 });
 const opts = { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 };
 
