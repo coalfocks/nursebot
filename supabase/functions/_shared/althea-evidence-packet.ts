@@ -32,10 +32,10 @@ export const bedsideCaptureStatus = (
   manifestAvailable: boolean,
   telemetrySince: string | null = BEDSIDE_TELEMETRY_SINCE,
 ): 'complete' | 'unavailable' => {
-  if (!manifestAvailable || !parseTelemetrySince(telemetrySince) || !activatedAt) return 'unavailable';
+  const since = parseTelemetrySince(telemetrySince);
+  if (!manifestAvailable || !since || !activatedAt) return 'unavailable';
   const activated = Date.parse(activatedAt);
-  const since = Date.parse(telemetrySince);
-  return Number.isFinite(activated) && Number.isFinite(since) && activated >= since ? 'complete' : 'unavailable';
+  return Number.isFinite(activated) && activated >= Date.parse(since) ? 'complete' : 'unavailable';
 };
 
 export type BedsideExpectation = 'required' | 'optional' | 'not_applicable';
