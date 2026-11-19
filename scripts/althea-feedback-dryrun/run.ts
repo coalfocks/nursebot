@@ -27,6 +27,21 @@ const ALLOWED_ENV_KEYS = new Set([
   "ALTHEA_BEDSIDE_TELEMETRY_SINCE",
 ]);
 const REPO = new URL("../../", import.meta.url);
+// Connor's archived Nov 18 download of 2808c092. The file was not located in the workspace or the
+// Telegram media dirs, so these counts come from Connor's description and are labelled that way.
+const ARCHIVED_BASELINE = {
+  source: "per Connor's description, file not located",
+  strengths: 1,
+  improvements: 2,
+  communication: "0/5",
+  clinicalReasoning: "2/5",
+  safety: "none/0",
+  communicationNote: "no linked learner team communication was captured",
+};
+// Evaluator pins. Explicit values, not model or library defaults. See eval-config.json.
+const EVAL_CONFIG = JSON.parse(
+  await Deno.readTextFile(new URL("./eval-config.json", import.meta.url)),
+);
 
 // ---------- args ----------
 const args = parseArgs(Deno.args);
@@ -250,6 +265,17 @@ const modelSource = keyValues.OPENAI_MODEL_GENERATE_FEEDBACK
   ? "OPENAI_MODEL (key file)"
   : "code default (prod env secrets are unreadable here; prod may override)";
 
+const modelPin: string | null = EVAL_CONFIG.release_model ?? null;
+if (!modelPin && !mock) {
+  fail(
+    `PIN: release_model is unpinned in eval-config.json (${EVAL_CONFIG.release_model_status}). Live mode refused.`,
+  );
+}
+if (modelPin && resolvedModel !== modelPin) {
+  fail(
+    `PIN: resolved model ${resolvedModel} differs from pinned ${modelPin}. Refusing to run.`,
+  );
+}
 phase = "pipeline";
 const started = new Date().toISOString();
 const response = await (handler as (req: Request) => Promise<Response>)(
@@ -270,7 +296,7 @@ const rpcCalls: string[] = ctx.supabase.rpcCalls;
 const modelCalls: any[] = ctx.openai.modelCalls;
 
 // ---------- write guard assertions ----------
-const checks: Record<string, boolean | string> = {};
+const checks: Record<string, any> = {};
 const insertRun = intercepted.find((w) =>
   w.op === "insert" && w.table === "feedback_assessment_runs"
 );
@@ -452,6 +478,9 @@ if (
   afterModel.communication.length !== 3 ||
   afterModel.clinicalReasoning.length !== 3
 ) structureErrors.push("component count not 3+3");
+for (const problem of afterModel.commentIntegrity) {
+  structureErrors.push(`comment integrity (after): ${problem}`);
+}
 const bothSheets = [
   artifacts["after-download.html"],
   artifacts["after-preview.html"],
@@ -489,6 +518,40 @@ const gitStatus = await new Deno.Command("git", {
   stdout: "piped",
 }).output().then((o) => new TextDecoder().decode(o.stdout).trim());
 
+const { ALTHEA_SAFETY_EVIDENCE_RULE_VERSION, ALTHEA_SCORING_PROMPT_VERSION } =
+  await import(
+    new URL("../../supabase/functions/_shared/evaluation-prompts.ts", import.meta.url).href
+  );
+const { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION } =
+  await import(
+    new URL("../../supabase/functions/_shared/feedback-contract.ts", import.meta.url).href
+  );
+const { EVIDENCE_PACKET_VERSION } = await import(
+  new URL("../../supabase/functions/_shared/althea-evidence-packet.ts", import.meta.url).href
+);
+const { FEEDBACK_COMMENT_PROMPT_VERSION } = await import(
+  new URL("../../supabase/functions/_shared/feedback-comments.ts", import.meta.url).href
+);
+const emittedVersions: Record<string, string> = {
+  simulation_prompt_id: simPrompt.NURSE_ALTHEA_SIMULATION_PROMPT_ID,
+  simulation_prompt_sha256: simPrompt.NURSE_ALTHEA_SIMULATION_PROMPT_SHA256,
+  scoring: ALTHEA_SCORING_PROMPT_VERSION,
+  rubric: FEEDBACK_RUBRIC_VERSION,
+  assessment: ASSESSMENT_VERSION,
+  case_key: CASE_KEY_VERSION,
+  evidence_packet: EVIDENCE_PACKET_VERSION,
+  safety_evidence_rule: ALTHEA_SAFETY_EVIDENCE_RULE_VERSION,
+  commentary: FEEDBACK_COMMENT_PROMPT_VERSION,
+};
+const pinChecks = Object.fromEntries(
+  Object.entries(EVAL_CONFIG.prompt_versions as Record<string, string>).map((
+    [key, pinned],
+  ) => [key, { pinned, emitted: emittedVersions[key] ?? null, match: emittedVersions[key] === pinned }]),
+);
+for (const [key, check] of Object.entries(pinChecks) as Array<[string, { pinned: string; emitted: string | null; match: boolean }]>) {
+  if (!check.match) structureErrors.push(`pin mismatch (${key}): pinned ${check.pinned}, emitted ${check.emitted}`);
+}
+
 const provenance = {
   run_started_at: started,
   run_finished_at: new Date().toISOString(),
@@ -517,6 +580,13 @@ const provenance = {
   baseline_medications_and_orders: attempt.baseline_medications_and_orders ??
     "unavailable (no baseline snapshot table in prod; PR #46 not applied)",
   checks,
+  eval_config_file: "scripts/althea-feedback-dryrun/eval-config.json",
+  release_model_pin: modelPin ?? "UNPINNED",
+  release_model_status: modelPin ? "pinned" : EVAL_CONFIG.release_model_status,
+  pin_checks: pinChecks,
+  comment_integrity_after: afterModel.commentIntegrity,
+  comment_integrity_before: beforeModel.commentIntegrity,
+  archived_baseline: ARCHIVED_BASELINE,
   write_guard_ok: writeGuardOk,
   response_status: response.status,
   response_error: responseBody?.error ?? null,
@@ -588,7 +658,18 @@ const summary = `# Althea feedback dry run (${
 
 Deidentified. Run ${provenance.run_started_at}. Git ${
   gitHead.slice(0, 12)
-}. Model \`${resolvedModel}\` (${modelSource}). Writes intercepted: ${intercepted.length}, sent: 0.
+}. Model \`${resolvedModel}\` (${modelSource}); release pin: ${
+  modelPin ?? "UNPINNED (see eval-config.json)"
+}. Prompt/config hash of requests sent: ${promptConfigSha}. Writes intercepted: ${intercepted.length}, sent: 0.
+
+## Baseline counts (${ARCHIVED_BASELINE.source})
+- Strengths: ${ARCHIVED_BASELINE.strengths}; improvements: ${ARCHIVED_BASELINE.improvements}
+- Communication ${ARCHIVED_BASELINE.communication}; clinical reasoning ${ARCHIVED_BASELINE.clinicalReasoning}; safety ${ARCHIVED_BASELINE.safety}
+- Note: "${ARCHIVED_BASELINE.communicationNote}"
+
+## Rendered counts from current stored data (before) and dry run (after)
+- Before: strengths ${beforeModel.strengths.length}; improvements ${beforeModel.improvements.length}; comment integrity: ${beforeModel.commentIntegrity.join("; ") || "ok"}
+- After: strengths ${afterModel.strengths.length}; improvements ${afterModel.improvements.length}; comment integrity: ${afterModel.commentIntegrity.join("; ") || "ok"}
 
 ## Before (stored, rubric ${storedRow.rubric_version})
 ${sectionText(beforeModel)}
@@ -609,8 +690,12 @@ ${linkLines}
 - "Observed actions and orders" absent from all sheets: ${obsSectionAbsent}
 - Preview vs download identical (after): ${diffs.after.identical}; (before): ${diffs.before.identical}
 - Prompt constant matches body: ${provenance.prompt_constant_matches_body}
+- Pin checks: ${Object.values(pinChecks).every((c: any) => c.match) ? "all match" : "MISMATCH"}
 `;
 await Deno.writeTextFile(`${outDir}/summary.md`, deid(summary));
+console.log(`commit: ${gitHead}`);
+console.log(`prompt_and_config_sha256_of_requests_sent: ${promptConfigSha}`);
+console.log(`release_model_pin: ${modelPin ?? "UNPINNED"}; resolved model: ${resolvedModel} (${modelSource})`);
 console.log(JSON.stringify(
   {
     outDir,

@@ -24,3 +24,10 @@ Deno.test('rejects a comment that cites an event outside this attempt', () => {
 Deno.test('accepts an explicit insufficient-evidence response', () => {
   assertEquals(validateFeedbackComments({ status: 'insufficient_evidence', explanation: 'The attempt does not contain enough learner-authored evidence.' }, ids), { status: 'insufficient_evidence', explanation: 'The attempt does not contain enough learner-authored evidence.', prompt_version: FEEDBACK_COMMENT_PROMPT_VERSION });
 });
+
+Deno.test('rejects a list whose two comments repeat the same text', () => {
+  const duplicateStrength = { ...valid, strengths: [valid.strengths[0], { ...valid.strengths[0], evidence_event_ids: ['order-1'] }] as typeof valid.strengths };
+  assertEquals(validateFeedbackComments(duplicateStrength, ids), null);
+  const duplicateImprovement = { ...valid, improvements: [valid.improvements[0], { text: `  ${valid.improvements[0].text.toUpperCase()} `, evidence_event_ids: ['note-1'] }] as typeof valid.improvements };
+  assertEquals(validateFeedbackComments(duplicateImprovement, ids), null);
+});

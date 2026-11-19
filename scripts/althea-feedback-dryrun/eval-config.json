@@ -1,0 +1,16 @@
+{
+  "_comment": "Evaluator pins for the dry-run harness. The harness fails if the versions the pipeline actually emits differ from these. release_model is null on purpose: the sources disagree (see release_model_status), so the harness reports UNPINNED and refuses live mode until a model is chosen.",
+  "release_model": null,
+  "release_model_status": "UNPINNED. Ambiguous. Code default is gpt-6-luna (supabase/functions/_shared/openai-model.ts DEFAULT_OPENAI_MODEL). Prod OPENAI_MODEL_GENERATE_FEEDBACK / OPENAI_MODEL secrets are not readable from this harness. PR #45 names no model. Pin an explicit release_model after confirmation.",
+  "prompt_versions": {
+    "simulation_prompt_id": "nurse-althea-simulation-evidence-v1-2026-11-18",
+    "simulation_prompt_sha256": "110b1d349f396a414b8bf9d4d5388323672084ea3295e86be435c218a123fa18",
+    "scoring": "nurse-althea-simulation-evidence-v1-2026-11-18",
+    "rubric": "feedback-v8-althea-2026-11-19",
+    "assessment": "assessment-v6-althea-2026-11-18",
+    "case_key": "case-key-v2",
+    "evidence_packet": "althea-evidence-packet-v3-2026-11-19",
+    "safety_evidence_rule": "safety-evidence-rule-v1-2026-11-19",
+    "commentary": "attempt-specific-comments-v3-2026-11-18"
+  }
+}

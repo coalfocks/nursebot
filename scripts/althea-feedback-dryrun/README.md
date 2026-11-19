@@ -36,6 +36,17 @@ and `internal/` (raw model traffic and the learner/patient text; not deidentifie
 The exit code is 0 only when the write guard passes and the structure checks pass (2 strengths, 2 improvements,
 3+3 components). A structure failure exits 2 and is reported, not hidden.
 
+## Pins and baseline
+
+- `eval-config.json` pins every prompt, rubric, assessment, evidence-packet, safety-rule and commentary version.
+  The run fails if the version the pipeline emits differs from the pin (`pin_checks` in `provenance.json`).
+- `release_model` is `null` (UNPINNED). The code default (`gpt-6-luna`), the prod secrets (not readable here) and
+  PR #45 disagree or are silent, so the harness does not guess. Live mode is refused until a model is pinned.
+  If a model is pinned and the resolved model differs, the run refuses to start.
+- The archived Nov 18 baseline counts are constants in `run.ts`, labelled "per Connor's description, file not located".
+  The summary also shows the counts rendered from the current stored data, so the two are never mixed.
+- The summary and stdout print the commit and the SHA-256 of the exact requests sent (the prompt/config hash).
+
 ## Known limits
 
 - Model: resolved the same way as the function (`OPENAI_MODEL_GENERATE_FEEDBACK`, then `OPENAI_MODEL`, then

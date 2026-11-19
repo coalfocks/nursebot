@@ -40,5 +40,9 @@ export const validateFeedbackComments = (raw: unknown, allowedEventIds: Set<stri
   const strengths = parse(candidate.strengths);
   const improvements = parse(candidate.improvements);
   if (strengths.some((item) => !item) || improvements.some((item) => !item)) return null;
+  // Each list must hold two distinct comments. A repeated comment fails the whole result so the
+  // stored debrief never has a duplicate that the sheet would have to hide.
+  const commentKey = (item: AttemptFeedbackComment | null) => (item?.text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (new Set(strengths.map(commentKey)).size !== 2 || new Set(improvements.map(commentKey)).size !== 2) return null;
   return { status: 'generated', comments: { strengths: strengths as [AttemptFeedbackComment, AttemptFeedbackComment], improvements: improvements as [AttemptFeedbackComment, AttemptFeedbackComment] }, prompt_version };
 };
