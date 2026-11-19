@@ -1,4 +1,14 @@
-export type ScoredComponent = { score: number | null; feedback: string; evidence_event_ids: string[]; not_scored_reason?: string | null };
+export type ScoredComponent = {
+  score: number | null;
+  feedback: string;
+  evidence_event_ids: string[];
+  not_scored_reason?: string | null;
+  // Set by the grader on positive components only: a close call just below the next integer level.
+  // Consumed by the room leniency lift (feedback-leniency.ts); never changes the rubric anchors.
+  borderline_up?: boolean;
+  // Set by the room leniency lift when a borderline flag was converted into +1.
+  leniency_bumped?: boolean;
+};
 
 export interface EvaluationScoringResponse {
   learning_objectives: string;
@@ -53,6 +63,8 @@ const parseComponent = (component: any, min: number, max: number, label: string)
     feedback: sanitizeSimulationText(text(component?.feedback, reason ?? `Observed ${label} evidence supports a score of ${score}.`)),
     evidence_event_ids: ids(component?.evidence_event_ids),
     not_scored_reason: reason,
+    ...(component?.borderline_up === true ? { borderline_up: true } : {}),
+    ...(component?.leniency_bumped === true ? { leniency_bumped: true } : {}),
   };
 };
 
