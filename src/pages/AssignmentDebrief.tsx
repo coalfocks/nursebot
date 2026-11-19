@@ -10,7 +10,10 @@ type GrowthArea = { title?: string; case_goal?: string; practice_example?: strin
 
 const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 const nonEmpty = (value: unknown): string[] => {
-  const raw = asArray<unknown>(value).filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  // Saved comments are {text, evidence_event_ids} objects; read their text so the preview matches the sheet.
+  const raw = asArray<unknown>(value)
+    .map((item) => typeof item === 'string' ? item : item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string' ? (item as { text: string }).text : null)
+    .filter((item): item is string => Boolean(item && item.trim().length > 0));
   const blocked = /reveal this goal only in post-case feedback|do not disclose the target diagnosis|do not reveal .*goal|review the evidence-linked strengths|you are evaluating|after the simulation, you should be able to|goals of (?:this )?case|target diagnosis\s*[—:-]/i;
   const cleaned: string[] = [];
   for (const entry of raw) {

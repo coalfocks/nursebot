@@ -10,6 +10,7 @@ import {
 import { manifestEventToEvaluationEntry } from './feedback-manifest.ts';
 import { safetyConsistencyErrors } from './evaluation-scoring.ts';
 import type { EvaluationTimelineEntry } from './assignment-timeline.ts';
+import { validateFeedbackComments } from './feedback-comments.ts';
 
 // Manifest-shaped events copied from attempt 2808c092 (Room 203, completed 2026-05-06).
 // Text is trimmed to the parts the pipeline reads. Mapping goes through the real manifest mapper.
@@ -169,5 +170,32 @@ describe('Room 506 bedside configuration (case data, applied by the case team)',
 
   it('keeps the current situational record as optional (no automatic penalty) until the case is updated', () => {
     expect(resolveBedsideExpectation({ bedside_requirement: 'situational', emr_context: null })).toMatchObject({ expectation: 'optional', rule: null });
+  });
+});
+
+describe('exactly two strengths and two improvements', () => {
+  const comment = (text: string, id: string) => ({ text, evidence_event_ids: [id] });
+  const allowed = new Set(['chat:a', 'chat:b', 'chat:c', 'chat:d', 'chat:e']);
+
+  it('accepts exactly two strengths and two improvements', () => {
+    const result = validateFeedbackComments({
+      strengths: [comment('You asked for oxygen saturation.', 'chat:a'), comment('You placed the ABG order.', 'chat:b')],
+      improvements: [comment('Go to the bedside sooner.', 'chat:c'), comment('Say when you will reassess.', 'chat:d')],
+    }, allowed);
+    expect(result?.status).toBe('generated');
+  });
+
+  it('rejects the one-strength sheet shape', () => {
+    expect(validateFeedbackComments({
+      strengths: [comment('You asked for oxygen saturation.', 'chat:a')],
+      improvements: [comment('Go to the bedside sooner.', 'chat:c'), comment('Say when you will reassess.', 'chat:d')],
+    }, allowed)).toBeNull();
+  });
+
+  it('rejects comments that cite events outside the packet', () => {
+    expect(validateFeedbackComments({
+      strengths: [comment('You asked for oxygen saturation.', 'chat:zzz'), comment('You placed the ABG order.', 'chat:b')],
+      improvements: [comment('Go to the bedside sooner.', 'chat:c'), comment('Say when you will reassess.', 'chat:d')],
+    }, allowed)).toBeNull();
   });
 });

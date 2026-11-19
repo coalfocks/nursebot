@@ -32,8 +32,14 @@ const text = (...values: unknown[]): string => {
   return typeof value === 'string' ? value.trim() : '';
 };
 
+// Saved strengths and improvements are {text, evidence_event_ids} objects. Accept them as text;
+// dropping objects made the sheet fall back to legacy single-item lists (one strength shown).
+const commentText = (item: unknown): string | null => typeof item === 'string'
+  ? item
+  : item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string' ? (item as { text: string }).text : null;
+
 const list = (value: unknown): string[] => {
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string' && item.trim()).map((item) => item.trim());
+  if (Array.isArray(value)) return value.map(commentText).filter((item): item is string => Boolean(item && item.trim())).map((item) => item.trim());
   const one = text(value);
   return one ? [one] : [];
 };

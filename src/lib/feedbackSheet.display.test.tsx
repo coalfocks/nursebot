@@ -47,3 +47,28 @@ describe('learner-facing feedback sheet', () => {
     expect(model.actions).toEqual([{ label: 'Order: Lorazepam', detail: 'Placed by learner' }]);
   });
 });
+
+describe('saved two-plus-two comments (object shape)', () => {
+  it('shows both saved strengths and both improvements from {text, evidence_event_ids} objects', () => {
+    const model = mapFeedbackSheet({
+      ...assignment,
+      feedback_debrief: {
+        ...assignment.feedback_debrief,
+        strengths: [
+          { text: 'You asked for the NRB settings and oxygen saturation before acting.', evidence_event_ids: ['chat:84b4e108'] },
+          { text: 'You placed the stat ABG order, which tested the hypoxia you had identified.', evidence_event_ids: ['order:df5b6a30'] },
+        ],
+        improvements: [
+          { text: 'Go to the bedside as soon as the nurse reports 83% on the mask.', evidence_event_ids: ['chat:ea246d21'] },
+          { text: 'Confirm critical-care review aloud before you finish the case.', evidence_event_ids: ['chat:5b2d37c0'] },
+        ],
+      },
+    });
+    expect(model.strengths).toHaveLength(2);
+    expect(model.strengths[1]).toContain('stat ABG');
+    expect(model.improvements).toHaveLength(2);
+    const html = renderFeedbackSheetHtml(model);
+    expect(html).toContain('Go to the bedside');
+    expect(html).not.toContain('[object Object]');
+  });
+});
