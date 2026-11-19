@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "https://esm.sh/@supabase/supabase-js@2.38.4": "./stubs/supabase-stub.ts",
+    "https://deno.land/x/openai@v4.68.1/mod.ts": "./stubs/openai-stub.ts",
+    "react": "../../node_modules/react/index.js",
+    "react-dom/server": "../../node_modules/react-dom/server.js"
+  }
+}

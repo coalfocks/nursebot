@@ -6,14 +6,14 @@ export type CommentaryResult =
   | { status: 'generated'; comments: AttemptFeedbackComments; prompt_version: string }
   | { status: 'insufficient_evidence'; explanation: string; prompt_version: string };
 
-export const FEEDBACK_COMMENT_PROMPT_VERSION = 'attempt-specific-comments-v2';
+export const FEEDBACK_COMMENT_PROMPT_VERSION = 'attempt-specific-comments-v3-2026-11-18';
 export const FEEDBACK_COMMENT_PROMPT = `Write a short debrief for the learner about this completed simulation. Speak directly to them in plain language, like a clinical preceptor who watched the case.
 
-Use only this attempt’s verified timeline through completion, the case goals and accepted approaches, and the learner’s recorded note. Choose two distinct strengths and two distinct improvements. Write one sentence per comment, up to 25 words each.
+Use only this attempt’s verified timeline through completion, the case goals and accepted approaches, and the learner’s recorded note. Choose two distinct strengths and two distinct improvements. Write one or two sentences per comment, no more than 25 words each. Stay consistent with the scoring evidence: if the timeline shows learner questions, team requests, or nurse replies, never describe communication as absent.
 
 For each strength, name something the learner actually did and explain why it helped in this case. For each improvement, name the specific moment or decision and give one concrete action they could take next time, including when or what to communicate if relevant. If the learner handled the case well, suggest a refinement tied to a real moment.
 
-Distinguish what the learner considered, requested, ordered, and completed. A hint displayed, a baseline order, or an action by the nurse, patient, or consultant does not count as learner work. Call something missed only when the available record supports that conclusion. Avoid generic praise, copied rubric language, and invented actions or outcomes.
+Distinguish what the learner considered, requested, ordered, and completed. A hint opened, a baseline order, or an action by the nurse, patient, or consultant does not count as learner work. An active baseline PRN that the learner asked the nurse to give, with the nurse's acknowledgment, is appropriate use of an existing order and does not need a duplicate order. Call something missed only when the available record supports that conclusion. Avoid generic praise, copied rubric language, and invented actions or outcomes.
 
 Return JSON with strengths and improvements, each containing exactly two objects with text and evidence_event_ids. Use only IDs from this attempt. If the evidence cannot support four comments, return an insufficient_evidence status and explain the gap.`;
 
@@ -40,5 +40,9 @@ export const validateFeedbackComments = (raw: unknown, allowedEventIds: Set<stri
   const strengths = parse(candidate.strengths);
   const improvements = parse(candidate.improvements);
   if (strengths.some((item) => !item) || improvements.some((item) => !item)) return null;
+  // Each list must hold two distinct comments. A repeated comment fails the whole result so the
+  // stored debrief never has a duplicate that the sheet would have to hide.
+  const commentKey = (item: AttemptFeedbackComment | null) => (item?.text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (new Set(strengths.map(commentKey)).size !== 2 || new Set(improvements.map(commentKey)).size !== 2) return null;
   return { status: 'generated', comments: { strengths: strengths as [AttemptFeedbackComment, AttemptFeedbackComment], improvements: improvements as [AttemptFeedbackComment, AttemptFeedbackComment] }, prompt_version };
 };

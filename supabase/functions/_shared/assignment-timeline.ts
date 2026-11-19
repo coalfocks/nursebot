@@ -103,7 +103,7 @@ export type TimelineAssignmentSummary = {
 
 export type EvaluationTimelineEntry = {
   id: string;
-  kind: 'message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action';
+  kind: 'message' | 'consultant-message' | 'completion' | 'order' | 'labs' | 'vital' | 'imaging' | 'progress-note' | 'learner-action' | 'hint';
   timestamp: string | null;
   title: string;
   body?: string;
@@ -112,6 +112,12 @@ export type EvaluationTimelineEntry = {
   channel?: string | null;
   sequence?: number | null;
   ordering_ambiguous?: boolean;
+  // Order authorship, resolved by resolveOrderAuthorship. observed = the learner is the
+  // recorded actor; inferred = assignment-linked order with no recorded actor that learner
+  // requests or confirmations corroborate; unknown = everything else (never learner credit).
+  authorship?: 'observed' | 'inferred' | 'unknown' | null;
+  // True when the source row is linked to this exact assignment (manifest order events).
+  assignment_linked?: boolean;
 };
 
 const BASELINE_SENTINEL_PREFIX = '2000-01-01';
