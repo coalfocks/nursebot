@@ -288,6 +288,8 @@ export function OrdersManagement({
   // Recover lab orders abandoned mid-generation (closed tab, lost status write). Runs once per
   // order per mount so a persistently failing order cannot loop; failed orders stay manual.
   useEffect(() => {
+    // Wait for room context so a recovered run gets the same prompt inputs as a fresh order.
+    if (patient.roomId && !roomMeta) return;
     const now = Date.now();
     orders
       .filter((order) => isStaleLabGeneration(order, now) && !autoRecoveredLabOrderIds.current.has(order.id))
@@ -296,7 +298,7 @@ export function OrdersManagement({
         retryLabGeneration(order).catch((error) => console.error('Automatic lab recovery failed', error));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders]);
+  }, [orders, roomMeta]);
 
   // Generates, validates, and saves the labs for one saved Lab order, then settles its
   // lab_generation_status. Used both when an order is placed and to recover orders that
