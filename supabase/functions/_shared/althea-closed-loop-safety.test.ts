@@ -16,6 +16,8 @@ import { manifestEventToEvaluationEntry } from './feedback-manifest.ts';
 import { safetyConsistencyErrors } from './evaluation-scoring.ts';
 import type { EvaluationTimelineEntry } from './assignment-timeline.ts';
 import { validateFeedbackComments } from './feedback-comments.ts';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // Manifest-shaped events copied from attempt 2808c092 (Room 203, completed 2026-05-06).
 // Text is trimmed to the parts the pipeline reads. Mapping goes through the real manifest mapper.
@@ -176,6 +178,14 @@ describe('Room 506 bedside configuration (case data, applied by the case team)',
     const config = resolveBedsideExpectation(room506Configured);
     expect(config.expectation).toBe('required');
     expect(config.rule).toBe(BEDSIDE_RULE_ALCOHOL_WITHDRAWAL);
+  });
+
+  it('ships the Room 506 migration that makes bedside required, with the same rule identifier', () => {
+    const sql = readFileSync(resolve(process.cwd(), 'supabase/migrations/20261119150000_room_506_bedside_required.sql'), 'utf8');
+    expect(sql).toContain("where id = 62 and room_number::text = '506'");
+    expect(sql).toContain("'bedsideExpectation', 'required'");
+    expect(sql).toContain(`'bedsideRule', '${BEDSIDE_RULE_ALCOHOL_WITHDRAWAL}'`);
+    expect(sql).toContain("bedside_requirement = 'yes'");
   });
 
   it('keeps the current situational record as optional (no automatic penalty) until the case is updated', () => {
