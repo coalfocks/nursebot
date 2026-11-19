@@ -1347,14 +1347,19 @@ export const emrApi = {
     return data ? mapMedicalOrder(data, order.patientId) : null;
   },
 
-  async updateLabGenerationState(orderId: string, state: Pick<MedicalOrder, 'labGenerationStatus' | 'labGenerationError' | 'labGenerationAttemptedAt'>): Promise<void> {
+  // Returns false when the write fails so callers can tell a stuck order from a saved one.
+  async updateLabGenerationState(orderId: string, state: Pick<MedicalOrder, 'labGenerationStatus' | 'labGenerationError' | 'labGenerationAttemptedAt'>): Promise<boolean> {
     const client = marSupabase;
     const { error } = await client.from('medical_orders').update({
       lab_generation_status: state.labGenerationStatus,
       lab_generation_error: state.labGenerationError ?? null,
       lab_generation_attempted_at: state.labGenerationAttemptedAt ?? new Date().toISOString(),
     }).eq('id', orderId);
-    if (error) console.error('Error updating lab generation state', error);
+    if (error) {
+      console.error('Error updating lab generation state', error);
+      return false;
+    }
+    return true;
   },
 
   async listLabResultsForOrder(orderId: string): Promise<LabResult[]> {
