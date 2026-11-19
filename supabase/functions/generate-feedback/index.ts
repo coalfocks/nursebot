@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
 import { NURSE_ALTHEA_SIMULATION_PROMPT_ID, NURSE_ALTHEA_SIMULATION_PROMPT_SHA256 } from '../_shared/simulation-prompt.ts';
-import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, buildEvidencePacket, reconcileEvidence, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
+import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, buildEvidencePacket, reconcileEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
 import { applyLeniencyToEvaluation, readRoomLeniencyMultiplier } from '../_shared/feedback-leniency.ts';
 import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
@@ -122,6 +122,12 @@ Deno.serve(async (req) => {
         caseKeyGoalCount: key.goals.length,
       });
       const coverage: SourceCoverage = packet.captureStatus.coverage;
+      // Bedside and hint capture covers the whole attempt (activation through completion), so bedside-first
+      // events before the first nurse page still count. Scoring stays on the post-page packet above.
+      const activatedAt = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
+      const completedAt = events.find((event) => event.event_type === 'assignment_completed')?.occurred_at;
+      const attemptEntries = selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null);
+      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length });
       const model = getOpenAIModel('generate_feedback');
       const inputFingerprint = await computeFeedbackFingerprint({
         attempt_id: assignment.id,
@@ -135,7 +141,7 @@ Deno.serve(async (req) => {
         assessment_version: ASSESSMENT_VERSION,
         model,
         prompt_versions: { evaluation: ALTHEA_SCORING_PROMPT_VERSION, rubric: FEEDBACK_RUBRIC_VERSION, commentary: FEEDBACK_COMMENT_PROMPT_VERSION },
-        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, bedside_expectation: bedsideConfig, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
+        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, bedside_expectation: bedsideConfig, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
       });
       if (!request.commentsOnly && !forceRegrade) {
         // Identical frozen inputs reuse the saved score. Commentary is part of the
@@ -168,7 +174,7 @@ Deno.serve(async (req) => {
         try {
           const completion = await openai.chat.completions.create({
             model: getOpenAIModel('generate_feedback'),
-            messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\n${renderPacketSummaryForPrompt(packet)}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
+            messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\n${renderPacketSummaryForPrompt(packet, bedsidePacket)}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
             response_format: { type: 'json_object' },
             max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
           });
@@ -203,7 +209,7 @@ Deno.serve(async (req) => {
         if (!commentary) throw new Error(`Commentary generation failed validation (${commentaryDiagnostic}); prior feedback was preserved`);
         if (commentary.status !== 'generated') throw new Error(`Commentary generation incomplete: ${commentary.explanation}`);
         // Comments-only reruns are checked against the same packet as a full run.
-        const commentErrors = reconcileEvidence({ packet, texts: [...commentary.comments.strengths, ...commentary.comments.improvements].map((comment) => comment.text), componentEvidenceIds: [], commentEvidenceIds: [...commentary.comments.strengths, ...commentary.comments.improvements].flatMap((comment) => comment.evidence_event_ids) });
+        const commentErrors = reconcileEvidence({ packet, bedsideEventIds: bedsidePacket.bedsideEventIds, texts: [...commentary.comments.strengths, ...commentary.comments.improvements].map((comment) => comment.text), componentEvidenceIds: [], commentEvidenceIds: [...commentary.comments.strengths, ...commentary.comments.improvements].flatMap((comment) => comment.evidence_event_ids) });
         if (commentErrors.length) throw new Error(`Evidence reconciliation failed; prior feedback was preserved (${commentErrors.join('; ')})`);
         const priorDebrief = assignment.feedback_debrief && typeof assignment.feedback_debrief === 'object' && !Array.isArray(assignment.feedback_debrief) ? assignment.feedback_debrief as Record<string, unknown> : {};
         const debrief = { ...priorDebrief, strengths: commentary.comments.strengths, improvements: commentary.comments.improvements, comment_generation_status: commentary.status, comment_prompt_version: commentary.prompt_version, comment_evidence_event_ids: [...new Set([...commentary.comments.strengths, ...commentary.comments.improvements].flatMap((comment) => comment.evidence_event_ids))] };
@@ -213,7 +219,7 @@ Deno.serve(async (req) => {
         if (updateError) throw updateError;
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
-      const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\n${renderPacketSummaryForPrompt(packet)}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
+      const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\n${renderPacketSummaryForPrompt(packet, bedsidePacket)}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
       const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
         const completion = await openai.chat.completions.create({
           model: getOpenAIModel('generate_feedback'),
@@ -254,7 +260,7 @@ Deno.serve(async (req) => {
       // Room modifier (RoomEditor leniency multiplier) is applied to component scores
       // before totals are recomputed; safety stays unscaled and is reported separately.
       // Room leniency first, then the bedside rule, so the one-point adjustment is exact and totals are recomputed.
-      const bedsideRuled = applyBedsideRuleToEvaluation(applyLeniencyToEvaluation(canonicalizeEvaluation(mergedEvaluation), leniencyMultiplier), packet, bedsideConfig);
+      const bedsideRuled = applyBedsideRuleToEvaluation(applyLeniencyToEvaluation(canonicalizeEvaluation(mergedEvaluation), leniencyMultiplier), bedsidePacket, bedsideConfig);
       const evaluation = bedsideRuled.evaluation;
       const bedsideRuleResult = bedsideRuled.result;
       const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
@@ -302,6 +308,7 @@ Deno.serve(async (req) => {
       // Reconciliation gate: scores, explanations, and comments must agree with the packet before anything is saved.
       const reconciliationErrors = reconcileEvidence({
         packet,
+        bedsideEventIds: bedsidePacket.bedsideEventIds,
         texts: [
           evaluation.learning_objectives,
           ...Object.values(evaluation.communication_breakdown).map((component) => component.feedback),
@@ -335,7 +342,7 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, learner_communication_event_ids: packet.learnerCommunicationEventIds, bedside_event_ids: packet.bedsideEventIds, hint_event_ids: packet.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: packet.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, learner_communication_event_ids: packet.learnerCommunicationEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);

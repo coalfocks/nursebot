@@ -51,6 +51,21 @@ export const resolveBedsideExpectation = (room: Record<string, unknown>): Bedsid
     : { expectation: null, rule, source: 'unconfigured', rule_version: BEDSIDE_RULE_VERSION };
 };
 
+// Whole-attempt window for bedside and hint capture: from activation through completion.
+// Bedside-first events before the first nurse page are part of the attempt.
+export const selectAttemptEntries = (
+  entries: EvaluationTimelineEntry[],
+  activatedAt: string | null | undefined,
+  completedAt: string | null | undefined,
+): EvaluationTimelineEntry[] => {
+  const startMs = activatedAt ? Date.parse(activatedAt) : Number.NEGATIVE_INFINITY;
+  const endMs = completedAt ? Date.parse(completedAt) : Number.POSITIVE_INFINITY;
+  return entries.filter((entry) => {
+    const ms = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+    return Number.isFinite(ms) && ms >= (Number.isFinite(startMs) ? startMs : Number.NEGATIVE_INFINITY) && ms <= (Number.isFinite(endMs) ? endMs : Number.POSITIVE_INFINITY);
+  });
+};
+
 export type EvidencePacket = {
   version: string;
   sourceEventIds: string[];
@@ -95,13 +110,15 @@ export const buildEvidencePacket = (
 
 // Human-readable header for the scorer and commentary prompts. It states the exact
 // captured counts so the model cannot describe a channel as empty while it holds events.
-export const renderPacketSummaryForPrompt = (packet: EvidencePacket) => [
+// Bedside and hint counts come from the whole-attempt packet, so bedside-first events
+// before the first nurse page are reported.
+export const renderPacketSummaryForPrompt = (packet: EvidencePacket, bedside: EvidencePacket = packet) => [
   `EVIDENCE PACKET ${packet.version}`,
   `Baseline medications and active orders: ${packet.baselineMedicationsAndOrders} (not in this packet; do not infer them).`,
   `Learner communication events captured: ${packet.learnerCommunicationEventIds.length} (${packet.learnerCommunicationEventIds.join(', ') || 'none'}).`,
   `Nurse replies captured: ${packet.nurseReplyEventIds.length}.`,
-  `Bedside visits captured: ${packet.bedsideEventIds.length} (${packet.bedsideEventIds.join(', ') || 'none'}); bedside capture is ${packet.captureStatus.bedside}.`,
-  `Hint openings captured (not learner actions, not bedside visits): ${packet.hintEventIds.length}.`,
+  `Bedside visits captured: ${bedside.bedsideEventIds.length} (${bedside.bedsideEventIds.join(', ') || 'none'}); bedside capture is ${bedside.captureStatus.bedside}.`,
+  `Hint openings captured (not learner actions, not bedside visits): ${bedside.hintEventIds.length}.`,
   `Learner-placed orders captured: ${packet.learnerOrderEventIds.length}.`,
   `Final note event: ${packet.finalNoteEventId ?? 'none'}.`,
 ].join('\n');
@@ -148,10 +165,12 @@ const CONTRADICTORY_BEDSIDE = /\b(?:did not|didn'?t|never|no|not)\b[^.;]{0,30}\b
 // Reconciliation gate. Returns error strings; any entry means the run must not save.
 export const reconcileEvidence = (input: {
   packet: EvidencePacket;
+  bedsideEventIds?: string[];
   texts: string[];
   componentEvidenceIds: string[];
   commentEvidenceIds: string[];
 }): string[] => {
+  const bedsideEventIds = input.bedsideEventIds ?? input.packet.bedsideEventIds;
   const errors: string[] = [];
   const sourceIds = new Set(input.packet.sourceEventIds);
   const badComponent = input.componentEvidenceIds.filter((id) => !sourceIds.has(id));
@@ -161,7 +180,7 @@ export const reconcileEvidence = (input: {
   if (input.packet.learnerCommunicationEventIds.length > 0 && input.texts.some((text) => CONTRADICTORY_COMMUNICATION.test(text))) {
     errors.push(`contradiction: text says no communication was captured, but the packet holds ${input.packet.learnerCommunicationEventIds.length} learner communication event(s)`);
   }
-  if (input.packet.bedsideEventIds.length > 0 && input.texts.some((text) => CONTRADICTORY_BEDSIDE.test(text))) {
+  if (bedsideEventIds.length > 0 && input.texts.some((text) => CONTRADICTORY_BEDSIDE.test(text))) {
     errors.push('contradiction: text says the learner did not visit the bedside, but a bedside visit is recorded');
   }
   return errors;

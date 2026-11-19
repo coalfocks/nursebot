@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   BEDSIDE_RULE_ALCOHOL_WITHDRAWAL,
+  selectAttemptEntries,
   applyBedsideInformationRule,
   applyBedsideRuleToEvaluation,
   buildEvidencePacket,
@@ -87,6 +88,24 @@ describe('bedside credit and the alcohol-withdrawal information rule', () => {
     const incomplete = buildEvidencePacket([learnerQuestion], { ...opts, manifestAvailable: false });
     expect(applyBedsideInformationRule(2, incomplete, alcoholCase)).toMatchObject({ applied: false, after: 2 });
     expect(applyBedsideInformationRule(null, packet, alcoholCase)).toMatchObject({ applied: false, after: null });
+  });
+});
+
+describe('whole-attempt capture for bedside-first events', () => {
+  it('keeps a bedside visit that happened before the first nurse page', () => {
+    const earlyBedside = { ...bedside, id: 'action:early', timestamp: '2026-11-18T09:58:00Z' };
+    const attempt = selectAttemptEntries([earlyBedside, learnerQuestion, nurseReply], '2026-11-18T09:50:00Z', '2026-11-18T11:00:00Z');
+    const packet = buildEvidencePacket(attempt, opts);
+    expect(packet.bedsideEventIds).toEqual(['action:early']);
+    expect(applyBedsideInformationRule(2, packet, alcoholCase)).toMatchObject({ applied: false });
+  });
+
+  it('excludes events outside activation and completion and untimed events', () => {
+    const before = { ...bedside, id: 'action:before', timestamp: '2026-11-18T09:00:00Z' };
+    const after = { ...bedside, id: 'action:after', timestamp: '2026-11-18T12:00:00Z' };
+    const untimed = { ...bedside, id: 'action:untimed', timestamp: null };
+    const attempt = selectAttemptEntries([before, after, untimed, learnerQuestion], '2026-11-18T09:50:00Z', '2026-11-18T11:00:00Z');
+    expect(attempt.map((entry) => entry.id)).toEqual(['message-10']);
   });
 });
 
