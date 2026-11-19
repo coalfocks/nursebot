@@ -19,6 +19,24 @@ export interface FeedbackResponse {
   recommendations: string[];
 }
 
+// supabase-js reports any non-2xx edge response as the generic
+// "Edge Function returned a non-2xx status code", which hides the real server
+// error (the edge function already persists its own message to feedback_error).
+// Read the JSON body the function returned so the learner/admin sees the cause.
+export async function readFunctionErrorMessage(error: unknown): Promise<string> {
+  const fallback = error instanceof Error ? error.message : 'Failed to generate feedback';
+  const context = (error as { context?: unknown } | null)?.context;
+  if (context instanceof Response) {
+    try {
+      const body = (await context.clone().json()) as { error?: unknown } | null;
+      if (typeof body?.error === 'string' && body.error.trim()) return body.error.trim();
+    } catch {
+      // Body was not JSON; fall back to the client-side message.
+    }
+  }
+  return fallback;
+}
+
 export async function generateFeedback(assignmentId: string): Promise<void> {
   try {
     const { data: assignment, error: assignmentError } = await supabase
@@ -50,15 +68,16 @@ export async function generateFeedback(assignmentId: string): Promise<void> {
     });
 
     if (error) {
-      // If there's an error, update the status to failed
+      // If there's an error, update the status to failed with the server's real message
+      const message = await readFunctionErrorMessage(error);
       await supabase
         .from('student_room_assignments')
         .update({ 
           feedback_status: 'failed',
-          feedback_error: error.message
+          feedback_error: message
         })
         .eq('id', assignmentId);
-      throw error;
+      throw new Error(message);
     }
 
     if (!data.success) {
