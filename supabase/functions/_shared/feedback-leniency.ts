@@ -7,8 +7,8 @@
 // Factor F < 1 (strict room) keeps the earlier behavior: positives scaled and rounded,
 // deductions pushed away from zero (floor).
 // F === 1 returns the evaluation unchanged, so default rooms score exactly as before.
-// The safety LEVEL label is never changed by the multiplier; only the numeric safety
-// deduction is scaled.
+// The safety deduction and the safety LEVEL label are never changed by the multiplier,
+// at any factor. Safety stays at full strength in lenient and strict rooms alike.
 import { canonicalizeEvaluation, type EvaluationScoringResponse, type ScoredComponent } from './evaluation-scoring.ts';
 
 export const LENIENCY_MIN = 0.75;
@@ -93,12 +93,12 @@ export const applyLeniencyToEvaluation = (
     mdm_breakdown: {
       orders_monitoring_quality: positiveFor(m.orders_monitoring_quality, 3, multiplier),
       clinical_reasoning_documentation: positiveFor(m.clinical_reasoning_documentation, 2, multiplier),
-      safety_deduction: withScore(m.safety_deduction, scaleDeduction(m.safety_deduction.score, multiplier)),
+      safety_deduction: m.safety_deduction,
     },
     clinical_reasoning_breakdown: {
       orders_monitoring_quality: positiveFor(m.orders_monitoring_quality, 3, multiplier),
       clinical_reasoning_documentation: positiveFor(m.clinical_reasoning_documentation, 2, multiplier),
-      safety_deduction: withScore(m.safety_deduction, scaleDeduction(m.safety_deduction.score, multiplier)),
+      safety_deduction: m.safety_deduction,
     },
   } as Partial<EvaluationScoringResponse>);
 };
