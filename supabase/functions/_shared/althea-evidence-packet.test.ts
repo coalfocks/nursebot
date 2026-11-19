@@ -180,8 +180,8 @@ describe('scoring prompt and version', () => {
     expect(createHash('sha256').update(NURSE_ALTHEA_SIMULATION_PROMPT, 'utf8').digest('hex')).toBe(NURSE_ALTHEA_SIMULATION_PROMPT_SHA256);
   });
 
-  it('bumps the rubric version', () => {
-    expect(FEEDBACK_RUBRIC_VERSION).toBe('feedback-v7-althea-2026-11-18');
+  it('bumps the rubric version for the safety evidence rule', () => {
+    expect(FEEDBACK_RUBRIC_VERSION).toBe('feedback-v8-althea-2026-11-19');
   });
 
   it('removes the legacy rules that demanded administration proof and penalized a missing clinical-exam claim', () => {

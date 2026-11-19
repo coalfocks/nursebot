@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildEvidencePacket,
-  attributeUnrecordedOrderActors,
+  resolveOrderAuthorship,
+  enforceSafetyEvidence,
+  parseTelemetrySince,
   applyBedsideInformationRule,
   bedsideCaptureStatus,
   pairRequestAcknowledgments,
@@ -17,6 +19,8 @@ import { validateFeedbackComments } from './feedback-comments.ts';
 
 // Manifest-shaped events copied from attempt 2808c092 (Room 203, completed 2026-05-06).
 // Text is trimmed to the parts the pipeline reads. Mapping goes through the real manifest mapper.
+const ROOM_203_ASSIGNMENT = '2808c092-d44f-4078-88be-954f11e0ffa3';
+// Order events come from the manifest's assignment-scoped query, so they always link this assignment.
 const manifestEvent = (eventId: string, eventType: string, role: string, occurredAt: string, text: string, extra: Record<string, unknown> = {}) => ({
   event_id: eventId,
   event_type: eventType,
@@ -26,6 +30,7 @@ const manifestEvent = (eventId: string, eventType: string, role: string, occurre
   sequence: null,
   ordering_ambiguous: false,
   content: { text },
+  ...(eventType === 'order_placed' ? { links: { assignment_id: ROOM_203_ASSIGNMENT } } : {}),
   ...extra,
 });
 
@@ -41,7 +46,7 @@ const room203Events = [
   manifestEvent('order:a188ff44', 'order_placed', 'unknown', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count with Differential', { channel: 'orders', content: { name: 'Complete Blood Count with Differential', category: 'Lab', status: 'Active' } }),
   manifestEvent('order:df5b6a30', 'order_placed', 'unknown', '2026-05-06T16:57:50.611+00:00', 'ABG with Co-oximetry', { channel: 'orders', content: { name: 'ABG with Co-oximetry', category: 'Lab', status: 'Active' } }),
 ];
-const room203Entries = attributeUnrecordedOrderActors(room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry)));
+const room203Entries = resolveOrderAuthorship(room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry)));
 const room203Packet = buildEvidencePacket(room203Entries, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 });
 const opts = { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 };
 const learnerQuestion: EvaluationTimelineEntry = { id: 'message-10', kind: 'message', timestamp: '2026-11-18T10:01:00Z', title: 'Student message', body: 'What is his oxygen?', actor_role: 'student', channel: 'nurse' };
@@ -205,25 +210,139 @@ describe('exactly two strengths and two improvements', () => {
   });
 });
 
-describe('learner-placed orders with no recorded actor', () => {
-  it('attributes an unattributed order in the scored window to the learner, labeled as inferred', () => {
-    const order = manifestEventToEvaluationEntry(manifestEvent('order:a188ff44', 'order_placed', 'unknown', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count', { channel: 'orders', content: { name: 'Complete Blood Count' } }));
-    const [attributed] = attributeUnrecordedOrderActors([order!]);
-    expect(attributed.actor_role).toBe('student');
-    expect(attributed.meta?.join(' ')).toContain('inferred');
-    const packet = buildEvidencePacket([attributed], opts);
-    expect(packet.learnerOrderEventIds).toEqual(['order:a188ff44']);
+describe('order authorship: observed, inferred, unknown', () => {
+  const learnerRequest = (id: string, ts: string, body: string): EvaluationTimelineEntry => ({ id, kind: 'message', timestamp: ts, title: 'Student message', body, actor_role: 'student', channel: 'nurse' });
+  const orderAt = (id: string, ts: string, name: string, role = 'unknown', linked = true): EvaluationTimelineEntry => ({
+    ...manifestEventToEvaluationEntry(manifestEvent(id, 'order_placed', role, ts, name, { channel: 'orders', content: { name } }))!,
+    assignment_linked: linked,
   });
 
-  it('leaves an order with a recorded non-learner actor unchanged', () => {
-    const order = manifestEventToEvaluationEntry(manifestEvent('order:att', 'order_placed', 'attending', '2026-05-06T16:57:20.305+00:00', 'Lab', { channel: 'orders' }));
-    const [unchanged] = attributeUnrecordedOrderActors([order!]);
-    expect(unchanged.actor_role).toBe('attending');
+  it('observed: a recorded learner actor is credited as observed, without inference', () => {
+    const [entry] = resolveOrderAuthorship([orderAt('order:o-obs', '2026-05-06T16:57:20Z', 'Lactate', 'student')]);
+    expect(entry.authorship).toBe('observed');
+    expect(buildEvidencePacket([entry], opts).observedOrderEventIds).toEqual(['order:o-obs']);
   });
 
-  it('reports a learner order in the Room 203 packet once attribution is applied', () => {
-    const packet = buildEvidencePacket(attributeUnrecordedOrderActors(room203Entries), opts);
+  it('inferred: assignment-linked, no actor, and a learner request naming the order', () => {
+    const request = learnerRequest('chat:req', '2026-05-06T16:56:28Z', 'Can you also get a stat ABG and CBC?');
+    const resolved = resolveOrderAuthorship([request, orderAt('order:abg', '2026-05-06T16:57:50Z', 'ABG with Co-oximetry')]);
+    const order = resolved.find((entry) => entry.id === 'order:abg')!;
+    expect(order.authorship).toBe('inferred');
+    expect(order.actor_role).toBe('student');
+    expect(order.meta?.join(' ')).toContain('inferred');
+    const packet = buildEvidencePacket(resolved, opts);
+    expect(packet.inferredOrderEventIds).toEqual(['order:abg']);
+    expect(packet.learnerOrderEventIds).toEqual(['order:abg']);
+  });
+
+  it('inferred: a learner placement confirmation shortly after the order corroborates it', () => {
+    const confirm = learnerRequest('chat:confirm', '2026-05-06T16:59:55Z', 'I have just placed those orders.');
+    const [order] = resolveOrderAuthorship([orderAt('order:cbc', '2026-05-06T16:57:20Z', 'Complete Blood Count with Differential'), confirm]).filter((entry) => entry.kind === 'order');
+    expect(order.authorship).toBe('inferred');
+  });
+
+  it('unknown: matching room or timestamp alone is not enough (no assignment link, no learner corroboration)', () => {
+    const unlinked = orderAt('order:x1', '2026-05-06T16:57:20Z', 'Lactate', 'unknown', false);
+    const uncorroborated = orderAt('order:x2', '2026-05-06T16:57:20Z', 'Lactate');
+    const resolved = resolveOrderAuthorship([unlinked, uncorroborated]);
+    expect(resolved.map((entry) => entry.authorship)).toEqual(['unknown', 'unknown']);
+    expect(resolved[0].actor_role).toBe('unknown');
+    const packet = buildEvidencePacket(resolved, opts);
+    expect(packet.learnerOrderEventIds).toEqual([]);
+    expect(packet.unknownOrderEventIds).toEqual(['order:x1', 'order:x2']);
+  });
+
+  it('unknown: an order with another recorded author is never credited to the learner', () => {
+    const [entry] = resolveOrderAuthorship([orderAt('order:att', '2026-05-06T16:57:20Z', 'Lactate', 'attending')]);
+    expect(entry.authorship).toBe('unknown');
+    expect(entry.actor_role).toBe('attending');
+  });
+
+  it('unknown: a learner request for a different test does not corroborate this order', () => {
+    const request = learnerRequest('chat:req2', '2026-05-06T16:56:28Z', 'Please get a stat BNP.');
+    const [order] = resolveOrderAuthorship([request, orderAt('order:ekg', '2026-05-06T16:58:49Z', 'EKG')]).filter((entry) => entry.kind === 'order');
+    expect(order.authorship).toBe('unknown');
+  });
+
+  it('a baseline PRN request and nurse acknowledgment is closed-loop evidence, never a learner-placed order', () => {
+    const entries: EvaluationTimelineEntry[] = [
+      learnerRequest('chat:prn-req', '2026-05-06T16:56:28Z', 'Can you give the PRN morphine for his pain?'),
+      { id: 'chat:prn-ack', kind: 'message', timestamp: '2026-05-06T16:56:40Z', title: 'Nurse message', body: "I'll give it.", actor_role: 'assistant', channel: 'nurse' },
+    ];
+    const packet = buildEvidencePacket(resolveOrderAuthorship(entries), opts);
+    expect(packet.requestAcknowledgmentPairs).toEqual([{ request_id: 'chat:prn-req', acknowledgment_id: 'chat:prn-ack' }]);
+    expect(packet.learnerOrderEventIds).toEqual([]);
+  });
+
+  it('Room 203 attempt: all nine assignment-linked orders are inferred from learner requests and confirmation; none observed or unknown', () => {
+    const resolved = resolveOrderAuthorship(room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry)));
+    const packet = buildEvidencePacket(resolved, opts);
+    expect(packet.observedOrderEventIds).toEqual([]);
+    expect(packet.inferredOrderEventIds).toEqual(['order:a188ff44', 'order:df5b6a30']);
+    expect(packet.unknownOrderEventIds).toEqual([]);
+  });
+
+  it('reports a learner order in the Room 203 packet with its authorship breakdown', () => {
+    const packet = buildEvidencePacket(resolveOrderAuthorship(room203Entries), opts);
     expect(packet.learnerOrderEventIds).toEqual(['order:a188ff44', 'order:df5b6a30']);
+  });
+});
+
+describe('safety deduction requires a linked learner action or order (rubric C)', () => {
+  const packetWithOrder = () => buildEvidencePacket(resolveOrderAuthorship([
+    { id: 'chat:req', kind: 'message', timestamp: '2026-05-06T16:56:28Z', title: 'Student message', body: 'Get a stat ABG.', actor_role: 'student', channel: 'nurse' },
+    { ...manifestEventToEvaluationEntry(manifestEvent('order:abg', 'order_placed', 'unknown', '2026-05-06T16:57:50Z', 'ABG with Co-oximetry', { channel: 'orders' }))!, assignment_linked: true },
+  ]), opts);
+  const evalWith = (level: 'none' | 'concern' | 'critical', evidence: string[], action: string | null = 'Ordered a routine-priority consult.') => ({
+    safety_result: { level, action, rationale: 'Because of the order.', evidence_event_ids: evidence },
+    mdm_breakdown: { safety_deduction: { score: level === 'concern' ? -1 : level === 'critical' ? -2 : 0, feedback: 'Deduction.', evidence_event_ids: evidence } },
+  });
+
+  it('keeps concern when the cited order is a linked, inferred learner order and an action is named', () => {
+    const result = enforceSafetyEvidence(evalWith('concern', ['order:abg']), packetWithOrder());
+    expect(result.downgraded).toBe(false);
+    expect(result.evaluation.safety_result.level).toBe('concern');
+  });
+
+  it('reduces to none when concern cites no linked event (for example severe hypoxia alone)', () => {
+    const result = enforceSafetyEvidence(evalWith('concern', []), packetWithOrder());
+    expect(result.downgraded).toBe(true);
+    expect(result.evaluation.safety_result.level).toBe('none');
+    expect(result.evaluation.mdm_breakdown.safety_deduction.score).toBe(0);
+    expect(result.reason).toContain('no linked learner action or order');
+  });
+
+  it('reduces to none when the cited event is not a learner action or order (a nurse message)', () => {
+    const result = enforceSafetyEvidence(evalWith('critical', ['chat:ack']), packetWithOrder());
+    expect(result.downgraded).toBe(true);
+    expect(result.evaluation.safety_result.level).toBe('none');
+  });
+
+  it('reduces to none when no specific unsafe action is named', () => {
+    const result = enforceSafetyEvidence(evalWith('concern', ['order:abg'], null), packetWithOrder());
+    expect(result.downgraded).toBe(true);
+    expect(result.reason).toContain('no specific unsafe learner action');
+  });
+
+  it('never counts an unknown-author order as a learner action', () => {
+    const unknownOrder = buildEvidencePacket(resolveOrderAuthorship([{ ...manifestEventToEvaluationEntry(manifestEvent('order:unk', 'order_placed', 'unknown', '2026-05-06T16:57:50Z', 'Lactate', { channel: 'orders' }))!, assignment_linked: false }]), opts);
+    expect(enforceSafetyEvidence(evalWith('concern', ['order:unk']), unknownOrder).downgraded).toBe(true);
+  });
+
+  it('leaves level none alone and still fails a none-with-deduction mismatch in the consistency check', () => {
+    expect(enforceSafetyEvidence(evalWith('none', []), packetWithOrder()).downgraded).toBe(false);
+  });
+});
+
+describe('bedside telemetry cutoff is configured, not hardcoded', () => {
+  it('parses a deploy timestamp from the function secret', () => {
+    expect(parseTelemetrySince('2026-11-20T15:00:00Z')).toBe('2026-11-20T15:00:00.000Z');
+  });
+
+  it('treats unset, blank, or invalid values as no telemetry (no bedside penalty for anyone)', () => {
+    expect(parseTelemetrySince(undefined)).toBeNull();
+    expect(parseTelemetrySince('   ')).toBeNull();
+    expect(parseTelemetrySince('not a date')).toBeNull();
   });
 });
 

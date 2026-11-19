@@ -7,23 +7,32 @@ import { canonicalizeEvaluation, type EvaluationScoringResponse } from './evalua
 // they cannot disagree about which learner communication, bedside visit, hint, or
 // order was captured.
 
-export const EVIDENCE_PACKET_VERSION = 'althea-evidence-packet-v2-2026-11-19';
+export const EVIDENCE_PACKET_VERSION = 'althea-evidence-packet-v3-2026-11-19';
 export const BEDSIDE_RULE_ALCOHOL_WITHDRAWAL = 'acute_alcohol_withdrawal_info_gathering';
 export const BEDSIDE_RULE_VERSION = 'bedside-rule-v1-2026-11-18';
 
 // Bedside visits were recorded only as an assignment status change, which the manifest does
 // not read. A bedside visit is now written as a learner action (channel bedside). Attempts
 // activated before that write existed have no bedside telemetry, so an absent bedside event
-// is "unavailable", not an omission. Set this to the deploy time of the write. While null,
-// every attempt reports bedside capture as unavailable and no bedside deduction is made.
+// is "unavailable", not an omission.
+// The live value comes from the ALTHEA_BEDSIDE_TELEMETRY_SINCE function secret, set at deploy
+// to the LATER of (a) the bedside-write deploy and (b) the Room 506 case-config migration. It is
+// read by parseTelemetrySince(). Unset/invalid = null = no bedside penalty for any attempt.
+export const BEDSIDE_TELEMETRY_SINCE_ENV = 'ALTHEA_BEDSIDE_TELEMETRY_SINCE';
 export const BEDSIDE_TELEMETRY_SINCE: string | null = null;
+
+export const parseTelemetrySince = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const ms = Date.parse(value.trim());
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+};
 
 export const bedsideCaptureStatus = (
   activatedAt: string | null | undefined,
   manifestAvailable: boolean,
   telemetrySince: string | null = BEDSIDE_TELEMETRY_SINCE,
 ): 'complete' | 'unavailable' => {
-  if (!manifestAvailable || !telemetrySince || !activatedAt) return 'unavailable';
+  if (!manifestAvailable || !parseTelemetrySince(telemetrySince) || !activatedAt) return 'unavailable';
   const activated = Date.parse(activatedAt);
   const since = Date.parse(telemetrySince);
   return Number.isFinite(activated) && Number.isFinite(since) && activated >= since ? 'complete' : 'unavailable';
@@ -84,20 +93,111 @@ export const selectAttemptEntries = (
   });
 };
 
-// The order manifest records the actor from medical_orders.ordered_by, which is null for
-// most learner-placed orders. Without an actor the packet reports zero learner orders while
-// the chat says the learner placed them. Within the scored window, an order on this
-// assignment with no recorded actor is attributed to the learner and labeled as inferred.
-// Baseline orders are not attached to the attempt and are excluded upstream.
-export const attributeUnrecordedOrderActors = (entries: EvaluationTimelineEntry[]): EvaluationTimelineEntry[] => entries.map((entry) => {
-  const role = (entry.actor_role ?? '').toLowerCase();
-  if (entry.kind !== 'order' || (role !== '' && role !== 'unknown')) return entry;
+// Order authorship. medical_orders.ordered_by is null for most learner-placed orders, so the
+// recorded actor alone cannot establish who placed an order. Three states:
+//   observed - the recorded direct actor is the learner.
+//   inferred - no actor is recorded, the order is linked to THIS assignment (manifest
+//              assignment-linked order event), and learner-origin evidence corroborates it:
+//              a learner message naming the order shortly before it, or a learner
+//              placement confirmation ("I have just placed those orders") shortly after.
+//              Matching the room or the timestamp alone is never enough.
+//   unknown  - everything else, including other authors, baseline orders, and unlinked
+//              orders. Unknown orders earn no learner credit.
+const ORDER_TERM_PATTERNS: Array<[RegExp, RegExp]> = [
+  [/complete blood count|\bcbc\b/i, /\b(cbc|blood count)\b/i],
+  [/comprehensive metabolic|\bcmp\b/i, /\b(cmp|metabolic panel)\b/i],
+  [/\babg\b|blood gas/i, /\b(abg|blood gas)\b/i],
+  [/x-?ray|radiograph/i, /\b(x-?ray|cxr|chest film|radiograph)\b/i],
+  [/lactate/i, /\blactate\b/i],
+  [/\bbnp\b|nt-probnp/i, /\bbnp\b/i],
+  [/\bekg\b|\becg\b|electrocardiogram/i, /\b(ekg|ecg|electrocardiogram)\b/i],
+  [/blood culture/i, /\bblood cultures?\b/i],
+  [/troponin/i, /\btroponin\b/i],
+];
+const LEARNER_PLACEMENT_CONFIRMATION = /\b(?:placed|ordered|entered|put in)\b[^.?!]{0,30}\b(?:orders?|those|these|them|it)\b|\borders?\b[^.?!]{0,20}\b(?:placed|entered|ordered)\b/i;
+const ORDER_CORROBORATION_BEFORE_MS = 60 * 60 * 1000;
+const ORDER_CORROBORATION_AFTER_MS = 10 * 60 * 1000;
+
+export const orderRequestPatterns = (orderName: string): RegExp[] => {
+  const matched = ORDER_TERM_PATTERNS.filter(([name]) => name.test(orderName)).map(([, term]) => term);
+  if (matched.length) return matched;
+  const longest = orderName.split(/[^A-Za-z]+/).filter((word) => word.length >= 4).sort((a, b) => b.length - a.length)[0];
+  return longest ? [new RegExp(`\\b${longest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')] : [];
+};
+
+export const resolveOrderAuthorship = (entries: EvaluationTimelineEntry[]): EvaluationTimelineEntry[] => {
+  const learnerMessages = entries.filter((entry) => (entry.kind === 'message' || entry.kind === 'consultant-message') && isLearnerRole(entry.actor_role) && entry.timestamp);
+  return entries.map((entry) => {
+    if (entry.kind !== 'order') return entry;
+    const role = (entry.actor_role ?? '').toLowerCase();
+    const recordedLearner = isLearnerRole(role);
+    const recordedOther = role !== '' && role !== 'unknown';
+    if (recordedLearner) {
+      return { ...entry, authorship: 'observed' as const, meta: [...(entry.meta ?? []), 'Author: Student (observed: recorded actor is the learner).'] };
+    }
+    if (recordedOther || !entry.assignment_linked || !entry.timestamp) {
+      return { ...entry, authorship: 'unknown' as const, meta: [...(entry.meta ?? []), 'Author: unknown; not credited to the learner.'] };
+    }
+    const orderMs = Date.parse(entry.timestamp);
+    const patterns = orderRequestPatterns(entry.title.replace(/^Order:\s*/i, '') + ' ' + (entry.body ?? ''));
+    const request = learnerMessages.find((message) => {
+      const ms = Date.parse(message.timestamp as string);
+      return ms <= orderMs && orderMs - ms <= ORDER_CORROBORATION_BEFORE_MS && patterns.some((pattern) => pattern.test(message.body ?? ''));
+    });
+    const confirmation = learnerMessages.find((message) => {
+      const ms = Date.parse(message.timestamp as string);
+      return ms >= orderMs && ms - orderMs <= ORDER_CORROBORATION_AFTER_MS && LEARNER_PLACEMENT_CONFIRMATION.test(message.body ?? '');
+    });
+    if (!request && !confirmation) {
+      return { ...entry, authorship: 'unknown' as const, meta: [...(entry.meta ?? []), 'Author: unknown; assignment-linked but no learner request or confirmation corroborates it.'] };
+    }
+    const corroboration = request ? `learner request ${request.id}` : `learner placement confirmation ${confirmation!.id}`;
+    return {
+      ...entry,
+      actor_role: 'student',
+      authorship: 'inferred' as const,
+      meta: [...(entry.meta ?? []), `Author: Student (inferred from assignment-linked order with no recorded actor; corroborated by ${corroboration}).`],
+    };
+  });
+};
+
+// Back-compat name used by earlier callers: the same three-state resolution.
+export const attributeUnrecordedOrderActors = resolveOrderAuthorship;
+
+// Safety deduction support (rubric section C). A level above none needs a specific learner
+// action or order from this attempt, cited by event ID, plus the action and rationale. Missed
+// or late assessment/escalation is not a safety action; it belongs in its own component.
+export const SAFETY_EVIDENCE_RULE = 'rubric C (safety deduction): an observed unsafe learner action or order, cited by linked event ID';
+export const safetyActionEventIds = (packet: EvidencePacket): string[] => [...new Set([...packet.learnerOrderEventIds, ...packet.learnerActionEventIds])];
+
+export const enforceSafetyEvidence = <T extends { safety_result: { level: string; action: string | null; rationale: string | null; evidence_event_ids: string[] }; mdm_breakdown: { safety_deduction: { score: number | null; feedback: string; evidence_event_ids: string[] } } }>(
+  evaluation: T,
+  packet: EvidencePacket,
+): { evaluation: T; downgraded: boolean; reason: string | null } => {
+  const level = evaluation.safety_result.level;
+  if (level !== 'concern' && level !== 'critical') return { evaluation, downgraded: false, reason: null };
+  const allowed = new Set(safetyActionEventIds(packet));
+  const cited = evaluation.safety_result.evidence_event_ids;
+  const outside = cited.filter((id) => !allowed.has(id));
+  const hasAction = typeof evaluation.safety_result.action === 'string' && evaluation.safety_result.action.trim().length > 0;
+  const hasRationale = typeof evaluation.safety_result.rationale === 'string' && evaluation.safety_result.rationale.trim().length > 0;
+  const reason = !cited.length
+    ? 'no linked learner action or order event was cited'
+    : outside.length
+      ? `cited event(s) are not learner actions or orders in this attempt: ${outside.slice(0, 5).join(', ')}`
+      : !hasAction ? 'no specific unsafe learner action was named' : !hasRationale ? 'no rationale was given' : null;
+  if (!reason) return { evaluation, downgraded: false, reason: null };
+  const note = `Safety reduced to none: ${reason}. Severe illness, oxygen support, or a missed assessment or escalation is not by itself a safety concern (${SAFETY_EVIDENCE_RULE}).`;
   return {
-    ...entry,
-    actor_role: 'student',
-    meta: [...(entry.meta ?? []), 'Actor not recorded on the order; attributed to the learner because it was placed on this assignment in the scored window (inferred).'],
+    evaluation: {
+      ...evaluation,
+      safety_result: { ...evaluation.safety_result, level: 'none', action: 'No unsafe learner action or order is supported by linked evidence.', rationale: note, evidence_event_ids: [] },
+      mdm_breakdown: { ...evaluation.mdm_breakdown, safety_deduction: { ...evaluation.mdm_breakdown.safety_deduction, score: 0, feedback: note, evidence_event_ids: [] } },
+    },
+    downgraded: true,
+    reason,
   };
-});
+};
 
 export type EvidencePacket = {
   version: string;
@@ -113,7 +213,13 @@ export type EvidencePacket = {
   consultEventIds: string[];
   bedsideEventIds: string[];
   hintEventIds: string[];
+  // Learner-placed orders = observed + inferred. Unknown-author orders are listed but never credited.
   learnerOrderEventIds: string[];
+  observedOrderEventIds: string[];
+  inferredOrderEventIds: string[];
+  unknownOrderEventIds: string[];
+  // Learner actions that are not bedside visits or hint openings (for safety evidence).
+  learnerActionEventIds: string[];
   resultEventIds: string[];
   requestAcknowledgmentPairs: RequestAcknowledgmentPair[];
   finalNoteEventId: string | null;
@@ -178,7 +284,11 @@ export const buildEvidencePacket = (
     // Opening a hint is visible and time-stamped, but it is not a bedside visit,
     // a learner message, or a learner action.
     hintEventIds: ids((entry) => entry.kind === 'hint'),
-    learnerOrderEventIds: ids((entry) => entry.kind === 'order' && isLearnerRole(entry.actor_role)),
+    learnerOrderEventIds: ids((entry) => entry.kind === 'order' && (entry.authorship === 'observed' || entry.authorship === 'inferred')),
+    observedOrderEventIds: ids((entry) => entry.kind === 'order' && entry.authorship === 'observed'),
+    inferredOrderEventIds: ids((entry) => entry.kind === 'order' && entry.authorship === 'inferred'),
+    unknownOrderEventIds: ids((entry) => entry.kind === 'order' && entry.authorship !== 'observed' && entry.authorship !== 'inferred'),
+    learnerActionEventIds: ids((entry) => entry.kind === 'learner-action' && isLearnerRole(entry.actor_role) && entry.channel !== 'bedside'),
     resultEventIds: ids((entry) => entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging'),
     requestAcknowledgmentPairs: pairRequestAcknowledgments(entries),
     finalNoteEventId: entries.find((entry) => entry.kind === 'progress-note')?.id ?? null,
@@ -198,7 +308,7 @@ export const renderPacketSummaryForPrompt = (packet: EvidencePacket, bedside: Ev
   `Nurse replies captured: ${packet.nurseReplyEventIds.length}.`,
   `Bedside visits captured: ${bedside.bedsideEventIds.length} (${bedside.bedsideEventIds.join(', ') || 'none'}); bedside capture is ${bedside.captureStatus.bedside}.`,
   `Hint openings captured (not learner actions, not bedside visits): ${bedside.hintEventIds.length}.`,
-  `Learner-placed orders captured: ${packet.learnerOrderEventIds.length}.`,
+  `Learner-placed orders credited: ${packet.learnerOrderEventIds.length} (observed ${packet.observedOrderEventIds.length}, inferred ${packet.inferredOrderEventIds.length}); orders with unknown author, not credited: ${packet.unknownOrderEventIds.length}. Inferred orders are assignment-linked and corroborated by learner messages; they are not observed actions.`,
   `Learner consultant requests/messages captured: ${packet.consultEventIds.length}.`,
   `Learner requests acknowledged by the nurse: ${packet.requestAcknowledgmentPairs.length} pair(s) (${packet.requestAcknowledgmentPairs.map((pair) => `${pair.request_id} -> ${pair.acknowledgment_id}`).join('; ') || 'none'}).`,
   `Final note event: ${packet.finalNoteEventId ?? 'none'}.`,

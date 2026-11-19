@@ -78,5 +78,6 @@ export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): 
     channel,
     sequence: typeof event.sequence === 'number' ? event.sequence : null,
     ordering_ambiguous: event.ordering_ambiguous === true,
+    assignment_linked: Boolean(event.links && typeof event.links === 'object' && typeof (event.links as Record<string, unknown>).assignment_id === 'string'),
   };
 };

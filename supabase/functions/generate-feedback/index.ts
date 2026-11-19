@@ -2,7 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
 import { NURSE_ALTHEA_SIMULATION_PROMPT_ID, NURSE_ALTHEA_SIMULATION_PROMPT_SHA256 } from '../_shared/simulation-prompt.ts';
-import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, attributeUnrecordedOrderActors, buildEvidencePacket, reconcileEvidence, resolveClosedLoopEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
+import { ALTHEA_SAFETY_EVIDENCE_RULE_VERSION } from '../_shared/evaluation-prompts.ts';
+import { EVIDENCE_PACKET_VERSION, BEDSIDE_TELEMETRY_SINCE_ENV, SAFETY_EVIDENCE_RULE, applyBedsideRuleToEvaluation, buildEvidencePacket, enforceSafetyEvidence, parseTelemetrySince, reconcileEvidence, resolveClosedLoopEvidence, resolveOrderAuthorship, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
 import { applyLeniencyToEvaluation, readRoomLeniencyMultiplier } from '../_shared/feedback-leniency.ts';
 import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, safetyConsistencyErrors, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
@@ -98,7 +99,9 @@ Deno.serve(async (req) => {
       const boundarySequence = typeof scoringBoundary.sequence === 'number' ? scoringBoundary.sequence : typeof firstPageEvent?.sequence === 'number' ? firstPageEvent.sequence : null;
       const boundaryId = typeof firstPageEvent?.event_id === 'string' ? firstPageEvent.event_id : firstPageEventId;
       const windowEntries = start ? filterTimelineToScoringWindow(entries, start.scoring_start_at, boundaryId, boundarySequence) : { scored: [], uncertain: [] };
-      const scoredEntries = attributeUnrecordedOrderActors(windowEntries.scored);
+      const scoredEntries = resolveOrderAuthorship(windowEntries.scored);
+      // Live bedside telemetry cutoff (function secret). Unset = no bedside penalty for any attempt.
+      const telemetrySince = parseTelemetrySince(Deno.env.get(BEDSIDE_TELEMETRY_SINCE_ENV));
       const missingTimestampEvents = entries.filter((entry) => entry.timestamp == null);
       const uncertainTimestampEvents = [...missingTimestampEvents, ...windowEntries.uncertain];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
@@ -122,14 +125,15 @@ Deno.serve(async (req) => {
         progressNotePresent: Boolean(assignment.student_progress_note?.trim()),
         caseKeyGoalCount: key.goals.length,
         activatedAt: typeof activationEvent === 'string' ? activationEvent : null,
+        telemetrySince,
       });
       const coverage: SourceCoverage = packet.captureStatus.coverage;
       // Bedside and hint capture covers the whole attempt (activation through completion), so bedside-first
       // events before the first nurse page still count. Scoring stays on the post-page packet above.
       const activatedAt = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
       const completedAt = events.find((event) => event.event_type === 'assignment_completed')?.occurred_at;
-      const attemptEntries = attributeUnrecordedOrderActors(selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null));
-      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length, activatedAt: typeof activationEvent === 'string' ? activationEvent : null });
+      const attemptEntries = resolveOrderAuthorship(selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null));
+      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length, activatedAt: typeof activationEvent === 'string' ? activationEvent : null, telemetrySince });
       const model = getOpenAIModel('generate_feedback');
       const inputFingerprint = await computeFeedbackFingerprint({
         attempt_id: assignment.id,
@@ -143,7 +147,7 @@ Deno.serve(async (req) => {
         assessment_version: ASSESSMENT_VERSION,
         model,
         prompt_versions: { evaluation: ALTHEA_SCORING_PROMPT_VERSION, rubric: FEEDBACK_RUBRIC_VERSION, commentary: FEEDBACK_COMMENT_PROMPT_VERSION },
-        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, bedside_expectation: bedsideConfig, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
+        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, safety_evidence_rule_version: ALTHEA_SAFETY_EVIDENCE_RULE_VERSION, bedside_telemetry_since: telemetrySince, bedside_expectation: bedsideConfig, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
       });
       if (!request.commentsOnly && !forceRegrade) {
         // Identical frozen inputs reuse the saved score. Commentary is part of the
@@ -262,7 +266,10 @@ Deno.serve(async (req) => {
       // Room modifier (RoomEditor leniency multiplier) is applied to component scores
       // before totals are recomputed; safety stays unscaled and is reported separately.
       // Room leniency first, then the bedside rule, so the one-point adjustment is exact and totals are recomputed.
-      const bedsideRuled = applyBedsideRuleToEvaluation(applyLeniencyToEvaluation(canonicalizeEvaluation(mergedEvaluation), leniencyMultiplier), bedsidePacket, bedsideConfig);
+      // Safety above none needs a linked learner action or order (rubric C). Unsupported safety is reduced to none before any totals are recomputed.
+      const safetyChecked = enforceSafetyEvidence(canonicalizeEvaluation(mergedEvaluation), packet);
+      const safetyEvidenceCheck = { rule: SAFETY_EVIDENCE_RULE, rule_version: ALTHEA_SAFETY_EVIDENCE_RULE_VERSION, downgraded: safetyChecked.downgraded, reason: safetyChecked.reason };
+      const bedsideRuled = applyBedsideRuleToEvaluation(applyLeniencyToEvaluation(safetyChecked.evaluation, leniencyMultiplier), bedsidePacket, bedsideConfig);
       const evaluation = bedsideRuled.evaluation;
       const bedsideRuleResult = bedsideRuled.result;
       const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
@@ -292,13 +299,15 @@ Deno.serve(async (req) => {
       // was dropped and the score went out with no linked evidence.
       const learnerClosedLoopIds = packet.closedLoopEventIds.filter((id) => sourceEventIds.includes(id));
       const learnerReasoningIds = idsForKinds(['progress-note', 'message', 'consultant-message', 'order', 'labs', 'vital', 'imaging'], true);
+      // Order credit: observed or inferred learner orders only; unknown-author orders are never credited.
+      const orderCreditIds = scoredEntries.filter((entry) => entry.kind === 'order' ? (entry.authorship === 'observed' || entry.authorship === 'inferred') : ['labs', 'vital', 'imaging'].includes(entry.kind)).map((entry) => entry.id);
       const evidence = {
         communication: {
           focused: normalizeEvidenceEventIds(evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids, learnerCommunicationIds),
           closedLoop: normalizeEvidenceEventIds(evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids, learnerClosedLoopIds),
         },
         mdm: {
-          orders: normalizeEvidenceEventIds(evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids, idsForKinds(['order', 'labs', 'vital', 'imaging'])),
+          orders: normalizeEvidenceEventIds(evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids, orderCreditIds),
           reasoning: normalizeEvidenceEventIds(evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids, learnerReasoningIds),
         },
       };
@@ -313,7 +322,7 @@ Deno.serve(async (req) => {
       });
       if (closedLoopResolution.error) validationErrors.push(closedLoopResolution.error);
       else evidence.communication.closedLoop = closedLoopResolution.evidenceIds;
-      if (!evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids.length && evaluation.mdm_breakdown.orders_monitoring_quality.score != null) evidence.mdm.orders = idsForKinds(['order', 'labs', 'vital', 'imaging']);
+      if (!evaluation.mdm_breakdown.orders_monitoring_quality.evidence_event_ids.length && evaluation.mdm_breakdown.orders_monitoring_quality.score != null) evidence.mdm.orders = orderCreditIds;
       if (!evaluation.mdm_breakdown.clinical_reasoning_documentation.evidence_event_ids.length && evaluation.mdm_breakdown.clinical_reasoning_documentation.score != null) evidence.mdm.reasoning = learnerReasoningIds;
       evaluation.communication_breakdown.focused_information_gathering.evidence_event_ids = evidence.communication.focused;
       evaluation.communication_breakdown.closed_loop_team_communication.evidence_event_ids = evidence.communication.closedLoop;
@@ -340,7 +349,7 @@ Deno.serve(async (req) => {
       });
       const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
       if (allValidationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')})`);
-      const deterministicEntries = scoredEntries.filter((entry) => ['order', 'labs', 'imaging'].includes(entry.kind));
+      const deterministicEntries = scoredEntries.filter((entry) => (entry.kind === 'order' ? entry.authorship === 'observed' || entry.authorship === 'inferred' : ['labs', 'imaging'].includes(entry.kind)));
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
         observed_event_ids: sourceEventIds,
@@ -360,7 +369,7 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, safety_evidence_check: safetyEvidenceCheck, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, bedside_telemetry_since: telemetrySince, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);

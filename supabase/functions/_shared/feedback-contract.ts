@@ -1,4 +1,4 @@
-export const FEEDBACK_RUBRIC_VERSION = 'feedback-v7-althea-2026-11-18';
+export const FEEDBACK_RUBRIC_VERSION = 'feedback-v8-althea-2026-11-19';
 export const CASE_KEY_VERSION = 'case-key-v2';
 export const ASSESSMENT_VERSION = 'assessment-v6-althea-2026-11-18';
 
