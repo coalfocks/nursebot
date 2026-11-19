@@ -1,11 +1,11 @@
 // Per-room evaluation leniency multiplier (set in RoomEditor as
-// emr_context.evaluation.leniencyMultiplier). It was applied to scores before the
-// evidence-provenance rewrite (2b2e379) silently dropped it; this restores it on the
-// current scoring path. It scales the positive component scores and the
-// communication efficiency deduction. It deliberately does NOT rescale the safety
-// deduction: safety level is reported separately and must stay consistent with its
-// numeric deduction, so a 1.2 room can never turn a critical safety result into a
-// softened number while the label still says critical.
+// emr_context.evaluation.leniencyMultiplier). It scales the positive component scores,
+// the communication efficiency deduction, and the safety deduction, matching the
+// pre-2b2e379 behavior that the evidence-provenance rewrite dropped.
+// Positive scores use Math.round (round-half-up for non-negative values) capped at the
+// component max. Deductions are pulled toward zero by a lenient room (ceil) and pushed
+// away from zero by a strict room (floor). The safety LEVEL label is never changed by
+// the multiplier; only the numeric safety deduction is scaled.
 import { canonicalizeEvaluation, type EvaluationScoringResponse, type ScoredComponent } from './evaluation-scoring.ts';
 
 export const LENIENCY_MIN = 0.75;
@@ -68,12 +68,12 @@ export const applyLeniencyToEvaluation = (
     mdm_breakdown: {
       orders_monitoring_quality: withScore(m.orders_monitoring_quality, scalePositive(m.orders_monitoring_quality.score, 3, multiplier)),
       clinical_reasoning_documentation: withScore(m.clinical_reasoning_documentation, scalePositive(m.clinical_reasoning_documentation.score, 2, multiplier)),
-      safety_deduction: m.safety_deduction,
+      safety_deduction: withScore(m.safety_deduction, scaleDeduction(m.safety_deduction.score, multiplier)),
     },
     clinical_reasoning_breakdown: {
       orders_monitoring_quality: withScore(m.orders_monitoring_quality, scalePositive(m.orders_monitoring_quality.score, 3, multiplier)),
       clinical_reasoning_documentation: withScore(m.clinical_reasoning_documentation, scalePositive(m.clinical_reasoning_documentation.score, 2, multiplier)),
-      safety_deduction: m.safety_deduction,
+      safety_deduction: withScore(m.safety_deduction, scaleDeduction(m.safety_deduction.score, multiplier)),
     },
   } as Partial<EvaluationScoringResponse>);
 };

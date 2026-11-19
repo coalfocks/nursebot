@@ -24,23 +24,24 @@ describe('room leniency modifier on the scoring path', () => {
     expect(applyLeniencyToEvaluation(evaluation, undefined)).toBe(evaluation);
   });
 
-  it('applies a 1.2 room: softens deductions and rounds positives, then recomputes totals', () => {
+  it('applies a 1.2 room: softens deductions (including safety) and rounds positives, then recomputes totals', () => {
     const result = applyLeniencyToEvaluation(base(), 1.2);
-    // Positive integers round back under 1.2 (1*1.2=1.2, 2*1.2=2.4, 1*1.2=1.2).
+    // Round-half-up at 1.2 leaves these small positives unchanged (1.2->1, 2.4->2).
     expect(result.communication_breakdown.focused_information_gathering.score).toBe(1);
     expect(result.communication_breakdown.closed_loop_team_communication.score).toBe(2);
     expect(result.mdm_breakdown.orders_monitoring_quality.score).toBe(2);
     expect(result.mdm_breakdown.clinical_reasoning_documentation.score).toBe(1);
-    // Deductions are pulled toward zero: ceil(-1/1.2)=0, ceil(-2/1.2)=-1.
+    // Deductions are pulled toward zero: ceil(-1/1.2)=0, ceil(-2/1.2)=-1 (safety included).
     expect(result.communication_breakdown.efficiency_deduction.score).toBe(0);
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(-1);
     expect(result.communication_score).toBe(3);
-    expect(result.mdm_score).toBe(1);
+    expect(result.mdm_score).toBe(2);
   });
 
-  it('does not rescale the safety deduction or safety label, which are reported separately', () => {
+  it('keeps the safety level label while scaling its numeric deduction', () => {
     const result = applyLeniencyToEvaluation(base(), 1.5);
     expect(result.safety_result.level).toBe('critical');
-    expect(result.mdm_breakdown.safety_deduction.score).toBe(-2);
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(-1);
     expect(result.clinical_reasoning_score).toBe(result.mdm_score);
   });
 
@@ -95,3 +96,74 @@ describe('reading the room multiplier', () => {
     expect(readRoomLeniencyMultiplier({})).toBe(1);
   });
 });
+
+describe('1.2 room score mapping across components and safety levels', () => {
+  const component = (score: number | null) => ({ score, feedback: 'x', evidence_event_ids: [] as string[] });
+  const evaluationWith = (positives: { gather: number; loop: number; orders: number; reasoning: number }, efficiency: number, safety: { level: 'none' | 'concern' | 'critical' | 'not_assessed'; score: number | null }) =>
+    canonicalizeEvaluation({
+      communication_breakdown: {
+        focused_information_gathering: component(positives.gather),
+        closed_loop_team_communication: component(positives.loop),
+        efficiency_deduction: component(efficiency),
+      },
+      clinical_reasoning_breakdown: {
+        orders_monitoring_quality: component(positives.orders),
+        clinical_reasoning_documentation: component(positives.reasoning),
+        safety_deduction: component(safety.score),
+      },
+      safety_result: { level: safety.level, action: null, rationale: null, evidence_event_ids: [] },
+    } as any);
+
+  it.each([
+    // [raw positive score, max, expected at 1.2, expected at 1.5]
+    [0, 2, 0, 0],
+    [1, 2, 1, 2],
+    [2, 2, 2, 2],
+    [0, 3, 0, 0],
+    [1, 3, 1, 2],
+    [2, 3, 2, 3],
+    [3, 3, 3, 3],
+  ])('positive score %i (max %i) maps to %i at 1.2 and %i at 1.5', (raw, max, at12, at15) => {
+    const input = evaluationWith(
+      { gather: max === 2 ? raw : 0, loop: max === 3 ? raw : 0, orders: 0, reasoning: 0 },
+      0,
+      { level: 'none', score: 0 },
+    );
+    const at = (multiplier: number) => {
+      const out = applyLeniencyToEvaluation(input, multiplier);
+      return max === 2 ? out.communication_breakdown.focused_information_gathering.score : out.communication_breakdown.closed_loop_team_communication.score;
+    };
+    expect(at(1.2)).toBe(at12);
+    expect(at(1.5)).toBe(at15);
+  });
+
+  it.each([
+    // efficiency deduction raw -> at 1.2 (ceil toward zero)
+    [0, 0],
+    [-1, 0],
+    [-2, -1],
+  ])('efficiency deduction %i maps to %i at 1.2', (raw, expected) => {
+    const out = applyLeniencyToEvaluation(evaluationWith({ gather: 1, loop: 1, orders: 1, reasoning: 1 }, raw, { level: 'none', score: 0 }), 1.2);
+    expect(out.communication_breakdown.efficiency_deduction.score).toBe(expected);
+  });
+
+  it.each([
+    // [safety level, raw safety deduction, expected deduction at 1.2, expected level]
+    ['none', 0, 0, 'none'],
+    ['concern', -1, 0, 'concern'],
+    ['concern', -2, -1, 'concern'],
+    ['critical', -2, -1, 'critical'],
+    ['critical', -1, 0, 'critical'],
+    ['not_assessed', null, null, 'not_assessed'],
+  ] as const)('safety level %s with deduction %s maps to %s at 1.2 (level kept as %s)', (level, raw, expected, expectedLevel) => {
+    const out = applyLeniencyToEvaluation(evaluationWith({ gather: 1, loop: 1, orders: 1, reasoning: 1 }, 0, { level, score: raw }), 1.2);
+    expect(out.mdm_breakdown.safety_deduction.score).toBe(expected);
+    expect(out.safety_result.level).toBe(expectedLevel);
+  });
+
+  it('pushes a -1 safety deduction to -2 in a strict 0.8 room (floor)', () => {
+    const out = applyLeniencyToEvaluation(evaluationWith({ gather: 1, loop: 1, orders: 1, reasoning: 1 }, 0, { level: 'concern', score: -1 }), 0.8);
+    expect(out.mdm_breakdown.safety_deduction.score).toBe(-2);
+  });
+});
+
