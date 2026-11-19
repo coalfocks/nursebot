@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
 import { NURSE_ALTHEA_SIMULATION_PROMPT_ID, NURSE_ALTHEA_SIMULATION_PROMPT_SHA256 } from '../_shared/simulation-prompt.ts';
-import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, buildEvidencePacket, reconcileEvidence, resolveClosedLoopEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
+import { EVIDENCE_PACKET_VERSION, applyBedsideRuleToEvaluation, attributeUnrecordedOrderActors, buildEvidencePacket, reconcileEvidence, resolveClosedLoopEvidence, selectAttemptEntries, renderPacketSummaryForPrompt, resolveBedsideExpectation } from '../_shared/althea-evidence-packet.ts';
 import { applyLeniencyToEvaluation, readRoomLeniencyMultiplier } from '../_shared/feedback-leniency.ts';
 import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidence, safetyConsistencyErrors, sanitizeSimulationText } from '../_shared/evaluation-scoring.ts';
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
       const boundarySequence = typeof scoringBoundary.sequence === 'number' ? scoringBoundary.sequence : typeof firstPageEvent?.sequence === 'number' ? firstPageEvent.sequence : null;
       const boundaryId = typeof firstPageEvent?.event_id === 'string' ? firstPageEvent.event_id : firstPageEventId;
       const windowEntries = start ? filterTimelineToScoringWindow(entries, start.scoring_start_at, boundaryId, boundarySequence) : { scored: [], uncertain: [] };
-      const scoredEntries = windowEntries.scored;
+      const scoredEntries = attributeUnrecordedOrderActors(windowEntries.scored);
       const missingTimestampEvents = entries.filter((entry) => entry.timestamp == null);
       const uncertainTimestampEvents = [...missingTimestampEvents, ...windowEntries.uncertain];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
       // events before the first nurse page still count. Scoring stays on the post-page packet above.
       const activatedAt = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
       const completedAt = events.find((event) => event.event_type === 'assignment_completed')?.occurred_at;
-      const attemptEntries = selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null);
+      const attemptEntries = attributeUnrecordedOrderActors(selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null));
       const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length });
       const model = getOpenAIModel('generate_feedback');
       const inputFingerprint = await computeFeedbackFingerprint({

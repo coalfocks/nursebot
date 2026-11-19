@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildEvidencePacket,
+  attributeUnrecordedOrderActors,
   pairRequestAcknowledgments,
   reconcileEvidence,
   resolveBedsideExpectation,
@@ -35,8 +36,8 @@ const room203Events = [
   manifestEvent('chat:5b2d37c0', 'nurse_message', 'assistant', '2026-05-06T16:56:31.692167+00:00', 'I am not at the computer right now. Have you placed those orders in the EMR yet? I will notify respiratory therapy to prepare for high-flow nasal cannula.'),
   manifestEvent('chat:fcd63d97', 'student_message', 'student', '2026-05-06T16:59:55.181822+00:00', 'I have just placed those orders.'),
   manifestEvent('chat:3d05e2fe', 'nurse_message', 'assistant', '2026-05-06T16:59:57.162217+00:00', 'Thank you. I will proceed with the stat ABG, labs, repeat chest X-ray, EKG, and notify respiratory therapy for high-flow nasal cannula setup.'),
-  manifestEvent('order:a188ff44', 'order_placed', 'student', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count with Differential', { channel: 'orders', content: { name: 'Complete Blood Count with Differential', category: 'Lab', status: 'Active' } }),
-  manifestEvent('order:df5b6a30', 'order_placed', 'student', '2026-05-06T16:57:50.611+00:00', 'ABG with Co-oximetry', { channel: 'orders', content: { name: 'ABG with Co-oximetry', category: 'Lab', status: 'Active' } }),
+  manifestEvent('order:a188ff44', 'order_placed', 'unknown', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count with Differential', { channel: 'orders', content: { name: 'Complete Blood Count with Differential', category: 'Lab', status: 'Active' } }),
+  manifestEvent('order:df5b6a30', 'order_placed', 'unknown', '2026-05-06T16:57:50.611+00:00', 'ABG with Co-oximetry', { channel: 'orders', content: { name: 'ABG with Co-oximetry', category: 'Lab', status: 'Active' } }),
 ];
 const room203Entries = room203Events.map(manifestEventToEvaluationEntry).filter((entry): entry is EvaluationTimelineEntry => Boolean(entry));
 const room203Packet = buildEvidencePacket(room203Entries, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 5 });
@@ -197,5 +198,27 @@ describe('exactly two strengths and two improvements', () => {
       strengths: [comment('You asked for oxygen saturation.', 'chat:zzz'), comment('You placed the ABG order.', 'chat:b')],
       improvements: [comment('Go to the bedside sooner.', 'chat:c'), comment('Say when you will reassess.', 'chat:d')],
     }, allowed)).toBeNull();
+  });
+});
+
+describe('learner-placed orders with no recorded actor', () => {
+  it('attributes an unattributed order in the scored window to the learner, labeled as inferred', () => {
+    const order = manifestEventToEvaluationEntry(manifestEvent('order:a188ff44', 'order_placed', 'unknown', '2026-05-06T16:57:20.305+00:00', 'Complete Blood Count', { channel: 'orders', content: { name: 'Complete Blood Count' } }));
+    const [attributed] = attributeUnrecordedOrderActors([order!]);
+    expect(attributed.actor_role).toBe('student');
+    expect(attributed.meta?.join(' ')).toContain('inferred');
+    const packet = buildEvidencePacket([attributed], opts);
+    expect(packet.learnerOrderEventIds).toEqual(['order:a188ff44']);
+  });
+
+  it('leaves an order with a recorded non-learner actor unchanged', () => {
+    const order = manifestEventToEvaluationEntry(manifestEvent('order:att', 'order_placed', 'attending', '2026-05-06T16:57:20.305+00:00', 'Lab', { channel: 'orders' }));
+    const [unchanged] = attributeUnrecordedOrderActors([order!]);
+    expect(unchanged.actor_role).toBe('attending');
+  });
+
+  it('reports a learner order in the Room 203 packet once attribution is applied', () => {
+    const packet = buildEvidencePacket(attributeUnrecordedOrderActors(room203Entries), opts);
+    expect(packet.learnerOrderEventIds).toEqual(['order:a188ff44', 'order:df5b6a30']);
   });
 });

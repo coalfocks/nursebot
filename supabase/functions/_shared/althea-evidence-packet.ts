@@ -66,6 +66,21 @@ export const selectAttemptEntries = (
   });
 };
 
+// The order manifest records the actor from medical_orders.ordered_by, which is null for
+// most learner-placed orders. Without an actor the packet reports zero learner orders while
+// the chat says the learner placed them. Within the scored window, an order on this
+// assignment with no recorded actor is attributed to the learner and labeled as inferred.
+// Baseline orders are not attached to the attempt and are excluded upstream.
+export const attributeUnrecordedOrderActors = (entries: EvaluationTimelineEntry[]): EvaluationTimelineEntry[] => entries.map((entry) => {
+  const role = (entry.actor_role ?? '').toLowerCase();
+  if (entry.kind !== 'order' || (role !== '' && role !== 'unknown')) return entry;
+  return {
+    ...entry,
+    actor_role: 'student',
+    meta: [...(entry.meta ?? []), 'Actor not recorded on the order; attributed to the learner because it was placed on this assignment in the scored window (inferred).'],
+  };
+});
+
 export type EvidencePacket = {
   version: string;
   sourceEventIds: string[];
