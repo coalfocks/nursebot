@@ -1,6 +1,7 @@
 import type { EvaluationTimelineEntry } from './assignment-timeline.ts';
 import { buildSourceCoverage, type SourceCoverage } from './feedback-coverage.ts';
 import { canonicalizeEvaluation, type EvaluationScoringResponse } from './evaluation-scoring.ts';
+import { readBaselineSnapshot, renderBaselineReference, type BaselineReference } from './baseline-snapshot.ts';
 
 // One normalized evidence packet per attempt. The scorer, the commentary
 // generator, the debrief, and the reconciliation check all read this packet, so
@@ -223,9 +224,10 @@ export type EvidencePacket = {
   resultEventIds: string[];
   requestAcknowledgmentPairs: RequestAcknowledgmentPair[];
   finalNoteEventId: string | null;
-  // The manifest does not carry the historical baseline medication/order list yet.
-  // Reported as unavailable rather than filled from today's chart.
-  baselineMedicationsAndOrders: 'unavailable';
+  // Historical baseline from the verified snapshot row only. Missing or malformed = unavailable;
+  // today's chart is never substituted.
+  baselineMedicationsAndOrders: 'captured' | 'unavailable';
+  baselineReference: BaselineReference;
   captureStatus: { coverage: SourceCoverage; bedside: 'complete' | 'unavailable' };
 };
 
@@ -268,8 +270,9 @@ export const pairRequestAcknowledgments = (entries: EvaluationTimelineEntry[]): 
 
 export const buildEvidencePacket = (
   entries: EvaluationTimelineEntry[],
-  options: { manifestAvailable: boolean; progressNotePresent: boolean; caseKeyGoalCount: number; activatedAt?: string | null; telemetrySince?: string | null },
+  options: { manifestAvailable: boolean; progressNotePresent: boolean; caseKeyGoalCount: number; activatedAt?: string | null; telemetrySince?: string | null; baseline?: BaselineReference },
 ): EvidencePacket => {
+  const baselineReference: BaselineReference = options.baseline ?? readBaselineSnapshot(null);
   const ids = (predicate: (entry: EvaluationTimelineEntry) => boolean) => entries.filter(predicate).map((entry) => entry.id);
   const coverage = buildSourceCoverage(entries, options);
   return {
@@ -292,7 +295,8 @@ export const buildEvidencePacket = (
     resultEventIds: ids((entry) => entry.kind === 'labs' || entry.kind === 'vital' || entry.kind === 'imaging'),
     requestAcknowledgmentPairs: pairRequestAcknowledgments(entries),
     finalNoteEventId: entries.find((entry) => entry.kind === 'progress-note')?.id ?? null,
-    baselineMedicationsAndOrders: 'unavailable',
+    baselineMedicationsAndOrders: baselineReference.status,
+    baselineReference,
     captureStatus: { coverage, bedside: bedsideCaptureStatus(options.activatedAt, options.manifestAvailable, options.telemetrySince) },
   };
 };
@@ -303,7 +307,9 @@ export const buildEvidencePacket = (
 // before the first nurse page are reported.
 export const renderPacketSummaryForPrompt = (packet: EvidencePacket, bedside: EvidencePacket = packet) => [
   `EVIDENCE PACKET ${packet.version}`,
-  `Baseline medications and active orders: ${packet.baselineMedicationsAndOrders} (not in this packet; do not infer them).`,
+  packet.baselineMedicationsAndOrders === 'captured'
+    ? renderBaselineReference(packet.baselineReference).join('\n')
+    : 'Baseline medications and active orders: unavailable (no verified historical snapshot for this attempt); do not infer them from the current chart.',
   `Learner communication events captured: ${packet.learnerCommunicationEventIds.length} (${packet.learnerCommunicationEventIds.join(', ') || 'none'}).`,
   `Nurse replies captured: ${packet.nurseReplyEventIds.length}.`,
   `Bedside visits captured: ${bedside.bedsideEventIds.length} (${bedside.bedsideEventIds.join(', ') || 'none'}); bedside capture is ${bedside.captureStatus.bedside}.`,

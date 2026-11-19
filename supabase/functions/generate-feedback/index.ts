@@ -9,6 +9,7 @@ import { canonicalizeEvaluation, hasMeaningfulEvidence, isLearnerAuthoredEvidenc
 import { FEEDBACK_RUBRIC_VERSION, CASE_KEY_VERSION, ASSESSMENT_VERSION, formativeNotice, normalizeEvidenceEventIds, resolveCaseEvaluationKey } from '../_shared/feedback-contract.ts';
 import { filterTimelineToScoringWindow, renderTimelineEntriesForEvaluation, type EvaluationTimelineEntry } from '../_shared/assignment-timeline.ts';
 import { manifestEventToEvaluationEntry } from '../_shared/feedback-manifest.ts';
+import { BASELINE_SNAPSHOT_VERSION, readBaselineSnapshot, renderBaselineReference } from '../_shared/baseline-snapshot.ts';
 import { type SourceCoverage } from '../_shared/feedback-coverage.ts';
 import { computeFeedbackFingerprint } from '../_shared/feedback-fingerprint.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
@@ -120,7 +121,12 @@ Deno.serve(async (req) => {
       // The manifest RPC succeeded, so every source was read. Zero rows here is an
       // available-empty source, which lets a genuine omission be scored.
       const activationEvent = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
+      // Verified historical baseline only. Missing snapshot = unavailable; the current chart is never used.
+      const { data: baselineRow, error: baselineError } = await client.from('assignment_baseline_snapshots').select('*').eq('assignment_id', assignmentId).maybeSingle();
+      if (baselineError) throw baselineError;
+      const baseline = readBaselineSnapshot(baselineRow as Record<string, unknown> | null);
       const packet = buildEvidencePacket(scoredEntries, {
+        baseline,
         manifestAvailable: true,
         progressNotePresent: Boolean(assignment.student_progress_note?.trim()),
         caseKeyGoalCount: key.goals.length,
@@ -133,7 +139,7 @@ Deno.serve(async (req) => {
       const activatedAt = events.find((event) => event.event_type === 'assignment_activated')?.occurred_at;
       const completedAt = events.find((event) => event.event_type === 'assignment_completed')?.occurred_at;
       const attemptEntries = resolveOrderAuthorship(selectAttemptEntries(entries, typeof activatedAt === 'string' ? activatedAt : null, typeof completedAt === 'string' ? completedAt : null));
-      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length, activatedAt: typeof activationEvent === 'string' ? activationEvent : null, telemetrySince });
+      const bedsidePacket = buildEvidencePacket(attemptEntries, { manifestAvailable: true, progressNotePresent: false, caseKeyGoalCount: key.goals.length, activatedAt: typeof activationEvent === 'string' ? activationEvent : null, telemetrySince, baseline });
       const model = getOpenAIModel('generate_feedback');
       const inputFingerprint = await computeFeedbackFingerprint({
         attempt_id: assignment.id,
@@ -147,7 +153,7 @@ Deno.serve(async (req) => {
         assessment_version: ASSESSMENT_VERSION,
         model,
         prompt_versions: { evaluation: ALTHEA_SCORING_PROMPT_VERSION, rubric: FEEDBACK_RUBRIC_VERSION, commentary: FEEDBACK_COMMENT_PROMPT_VERSION },
-        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, safety_evidence_rule_version: ALTHEA_SAFETY_EVIDENCE_RULE_VERSION, bedside_telemetry_since: telemetrySince, bedside_expectation: bedsideConfig, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
+        config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, baseline_snapshot_version: BASELINE_SNAPSHOT_VERSION, baseline_status: packet.baselineMedicationsAndOrders, safety_evidence_rule_version: ALTHEA_SAFETY_EVIDENCE_RULE_VERSION, bedside_telemetry_since: telemetrySince, bedside_expectation: bedsideConfig, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
       });
       if (!request.commentsOnly && !forceRegrade) {
         // Identical frozen inputs reuse the saved score. Commentary is part of the
@@ -369,7 +375,7 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, safety_evidence_check: safetyEvidenceCheck, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, bedside_telemetry_since: telemetrySince, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, safety_evidence_check: safetyEvidenceCheck, evidence_packet: { version: packet.version, bedside_expectation: bedsideConfig, bedside_rule: bedsideRuleResult, bedside_telemetry_since: telemetrySince, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: bedsidePacket.bedsideEventIds, hint_event_ids: bedsidePacket.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders, baseline_reference: packet.baselineReference.status === 'captured' ? renderBaselineReference(packet.baselineReference) : [packet.baselineReference.reason], capture_status: bedsidePacket.captureStatus.bedside }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readBaselineSnapshot, renderBaselineReference } from './baseline-snapshot.ts';
+import { buildEvidencePacket, renderPacketSummaryForPrompt } from './althea-evidence-packet.ts';
 
 const captured = {
   captured_at: '2026-05-06T16:50:00Z',
@@ -41,5 +42,25 @@ describe('historical baseline snapshot', () => {
   it('renders discontinued and expired statuses so they cannot be mistaken for active authorization', () => {
     const lines = renderBaselineReference(readBaselineSnapshot({ ...captured, active_orders: [{ name: 'Lorazepam', status: 'discontinued', kind: 'prn' }] }));
     expect(lines.join('\n')).toContain('Lorazepam [discontinued, prn]');
+  });
+});
+
+describe('baseline reaches the evidence packet and prompt only from a verified snapshot', () => {
+  const manifestOrder = { id: 'order:o9', kind: 'order' as const, timestamp: '2026-05-06T16:57:20Z', title: 'Order: Lorazepam', body: '1 mg IV', actor_role: 'student', channel: 'orders', authorship: 'observed' as const };
+  const scored = [manifestOrder];
+
+  it('reports an attempt without a snapshot as unavailable and never fills it from the current chart', () => {
+    const packet = buildEvidencePacket(scored, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 1 });
+    expect(packet.baselineMedicationsAndOrders).toBe('unavailable');
+    expect(renderPacketSummaryForPrompt(packet)).toContain('Baseline medications and active orders: unavailable');
+    expect(renderPacketSummaryForPrompt(packet)).not.toContain('Dexamethasone');
+  });
+
+  it('carries a verified snapshot into the packet and the prompt summary with its version', () => {
+    const packet = buildEvidencePacket(scored, { manifestAvailable: true, progressNotePresent: true, caseKeyGoalCount: 1, baseline: readBaselineSnapshot(captured) });
+    expect(packet.baselineMedicationsAndOrders).toBe('captured');
+    const summary = renderPacketSummaryForPrompt(packet);
+    expect(summary).toContain('baseline room-203-baseline-v10');
+    expect(summary).toContain('Dexamethasone');
   });
 });
