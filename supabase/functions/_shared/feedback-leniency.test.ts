@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyLeniencyToEvaluation, normalizeLeniencyMultiplier, readRoomLeniencyMultiplier } from './feedback-leniency';
+import { applyLeniencyToEvaluation, borderlineFlagInstruction, normalizeLeniencyMultiplier, readRoomLeniencyMultiplier } from './feedback-leniency';
 import { canonicalizeEvaluation } from './evaluation-scoring';
 
 const base = (overrides: Record<string, any> = {}) => canonicalizeEvaluation({
@@ -116,14 +116,15 @@ describe('1.2 room score mapping across components and safety levels', () => {
 
   it.each([
     // [raw positive score, max, expected at 1.2, expected at 1.5]
+    // Unflagged positives are never lifted by the room factor; only borderline_up adds +1.
     [0, 2, 0, 0],
-    [1, 2, 1, 2],
+    [1, 2, 1, 1],
     [2, 2, 2, 2],
     [0, 3, 0, 0],
-    [1, 3, 1, 2],
-    [2, 3, 2, 3],
+    [1, 3, 1, 1],
+    [2, 3, 2, 2],
     [3, 3, 3, 3],
-  ])('positive score %i (max %i) maps to %i at 1.2 and %i at 1.5', (raw, max, at12, at15) => {
+  ])('positive score %i (max %i) stays %i at 1.2 and %i at 1.5 without a borderline flag', (raw, max, at12, at15) => {
     const input = evaluationWith(
       { gather: max === 2 ? raw : 0, loop: max === 3 ? raw : 0, orders: 0, reasoning: 0 },
       0,
@@ -167,3 +168,56 @@ describe('1.2 room score mapping across components and safety levels', () => {
   });
 });
 
+
+describe('borderline lift for lenient rooms', () => {
+  const comp = (score: number | null, borderline_up?: boolean) => ({
+    score, feedback: 'x', evidence_event_ids: [] as string[], ...(borderline_up === undefined ? {} : { borderline_up }),
+  });
+  const build = (gather: ReturnType<typeof comp>, orders: ReturnType<typeof comp>, loop = comp(1), reasoning = comp(1)) => canonicalizeEvaluation({
+    communication_breakdown: { focused_information_gathering: gather, closed_loop_team_communication: loop, efficiency_deduction: comp(0) },
+    clinical_reasoning_breakdown: { orders_monitoring_quality: orders, clinical_reasoning_documentation: reasoning, safety_deduction: comp(0) },
+    safety_result: { level: 'none', action: null, rationale: null, evidence_event_ids: [] },
+  } as any);
+
+  it('adds +1 only to flagged positive components below their max in a lenient room', () => {
+    const result = applyLeniencyToEvaluation(build(comp(1, true), comp(2, true)), 1.2);
+    expect(result.communication_breakdown.focused_information_gathering.score).toBe(2);
+    expect(result.communication_breakdown.focused_information_gathering.leniency_bumped).toBe(true);
+    expect(result.mdm_breakdown.orders_monitoring_quality.score).toBe(3);
+    expect(result.communication_breakdown.closed_loop_team_communication.score).toBe(1);
+    expect(result.mdm_breakdown.clinical_reasoning_documentation.score).toBe(1);
+    expect(result.communication_breakdown.closed_loop_team_communication.leniency_bumped).toBeUndefined();
+    expect(result.communication_score).toBe(3);
+    expect(result.mdm_score).toBe(4);
+  });
+
+  it('never raises a component above its max, and ignores flags on null scores', () => {
+    const result = applyLeniencyToEvaluation(build(comp(2, true), comp(null, true)), 1.2);
+    expect(result.communication_breakdown.focused_information_gathering.score).toBe(2);
+    expect(result.communication_breakdown.focused_information_gathering.leniency_bumped).toBeUndefined();
+    expect(result.mdm_breakdown.orders_monitoring_quality.score).toBeNull();
+    expect(result.mdm_score).toBeNull();
+  });
+
+  it('keeps the safety label and the existing deduction softening unchanged', () => {
+    const result = applyLeniencyToEvaluation(build(comp(1, true), comp(2, false)), 1.2);
+    expect(result.safety_result.level).toBe('none');
+    expect(result.mdm_breakdown.safety_deduction.score).toBe(0);
+  });
+
+  it('ignores borderline flags in default rooms and keeps strict-room rounding', () => {
+    const evaluation = build(comp(1, true), comp(2, true));
+    expect(applyLeniencyToEvaluation(evaluation, 1)).toBe(evaluation);
+    const strict = applyLeniencyToEvaluation(evaluation, 0.8);
+    expect(strict.communication_breakdown.focused_information_gathering.score).toBe(1);
+    expect(strict.mdm_breakdown.orders_monitoring_quality.score).toBe(2);
+    expect(strict.communication_breakdown.focused_information_gathering.leniency_bumped).toBeUndefined();
+  });
+
+  it('adds the borderline instruction only for lenient rooms', () => {
+    expect(borderlineFlagInstruction(1)).toBe('');
+    expect(borderlineFlagInstruction(0.8)).toBe('');
+    expect(borderlineFlagInstruction(undefined)).toBe('');
+    expect(borderlineFlagInstruction(1.2)).toContain('"borderline_up": true');
+  });
+});
