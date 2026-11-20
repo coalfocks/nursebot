@@ -4,13 +4,17 @@ export const NURSE_PROMPT_COLUMN = 'nurse_context' as const;
 
 export type NursePromptSaveResult =
   | { ok: true; nurseContext: string; updatedAt: string | null }
-  | { ok: false; reason: 'validation' | 'school_mismatch' | 'conflict' | 'error'; message: string };
+  | { ok: false; reason: 'validation' | 'scope_required' | 'school_mismatch' | 'conflict' | 'error'; message: string };
 
 export interface NursePromptSaveInput {
   roomId: number | string;
   roomSchoolId: string | null | undefined;
-  /** School the acting admin is scoped to (profile school, or active school for super admins). */
+  /**
+   * The school explicitly selected for this write (profile school, or the school a super admin has picked in the scope
+   * selector). "All schools" is discovery-only: it arrives here as null/undefined and can never write.
+   */
   actorSchoolId: string | null | undefined;
+  /** Informational only. Super admins get no exception: every write needs an explicit school equal to the room's school. */
   isSuperAdmin: boolean;
   loadedUpdatedAt: string | null | undefined;
   value: string;
@@ -34,11 +38,13 @@ export async function saveRoomNursePrompt(
   if (!input.roomSchoolId) {
     return { ok: false, reason: 'validation', message: 'This room has no school; cannot scope the nurse prompt save.' };
   }
-  if (!input.isSuperAdmin && input.actorSchoolId !== input.roomSchoolId) {
-    return { ok: false, reason: 'school_mismatch', message: 'This room belongs to a different school than your admin scope. Nothing was saved.' };
+  // Every write, super admins included, needs an explicit selected school that equals the room's school.
+  // A room that is only shared/visible to the selected school (for example the shared Creighton room 202) does not grant write.
+  if (!input.actorSchoolId) {
+    return { ok: false, reason: 'scope_required', message: 'Select the room\u2019s school in the school selector before saving the nurse prompt. "All schools" is read-only. Nothing was saved.' };
   }
-  if (input.isSuperAdmin && input.actorSchoolId && input.actorSchoolId !== input.roomSchoolId) {
-    return { ok: false, reason: 'school_mismatch', message: 'This room is not in the active school. Nothing was saved.' };
+  if (input.actorSchoolId !== input.roomSchoolId) {
+    return { ok: false, reason: 'school_mismatch', message: 'This room belongs to a different school than the school you selected. Nothing was saved.' };
   }
   if (!input.value.trim()) {
     return { ok: false, reason: 'validation', message: 'Nurse prompt cannot be empty.' };

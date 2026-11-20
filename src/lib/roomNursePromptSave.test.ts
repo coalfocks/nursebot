@@ -78,3 +78,38 @@ describe('saveRoomNursePrompt', () => {
     expect(await saveRoomNursePrompt(d.client, base)).toEqual({ ok: false, reason: 'error', message: 'permission denied' });
   });
 });
+
+describe('saveRoomNursePrompt school scope: every write needs an explicit selected school equal to the room school', () => {
+  it('null-scope regression: a super admin with no selected school ("All schools") cannot write', async () => {
+    for (const actorSchoolId of [null, undefined, '']) {
+      const { client, from } = makeClient({ nurse_context: 'x', updated_at: 't' });
+      const result = await saveRoomNursePrompt(client, { ...base, isSuperAdmin: true, actorSchoolId });
+      expect(result).toMatchObject({ ok: false, reason: 'scope_required' });
+      expect((result as { message: string }).message).toMatch(/All schools/);
+      expect(from).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a non-super-admin with no school scope cannot write either', async () => {
+    const { client, from } = makeClient({});
+    expect(await saveRoomNursePrompt(client, { ...base, isSuperAdmin: false, actorSchoolId: null })).toMatchObject({ ok: false, reason: 'scope_required' });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('a super admin writes only when the selected school equals the room school', async () => {
+    const ok = makeClient({ nurse_context: 'edited nurse text', updated_at: 't2' });
+    expect(await saveRoomNursePrompt(ok.client, { ...base, isSuperAdmin: true, actorSchoolId: 'school-1' })).toMatchObject({ ok: true });
+    expect(ok.calls.eq).toContainEqual(['school_id', 'school-1']);
+    const bad = makeClient({});
+    expect(await saveRoomNursePrompt(bad.client, { ...base, isSuperAdmin: true, actorSchoolId: 'school-2' })).toMatchObject({ ok: false, reason: 'school_mismatch' });
+    expect(bad.from).not.toHaveBeenCalled();
+  });
+
+  it('shared visibility grants no write: a room primary to school-1 (e.g. shared room 202) cannot be written while another school is selected', async () => {
+    const { client, from } = makeClient({});
+    // Room 202 is primary to Creighton University SOM and shared with all schools; the writer is scoped to a different school.
+    const result = await saveRoomNursePrompt(client, { ...base, roomId: 202, roomSchoolId: 'creighton-som', actorSchoolId: 'school-2', isSuperAdmin: false });
+    expect(result).toMatchObject({ ok: false, reason: 'school_mismatch' });
+    expect(from).not.toHaveBeenCalled();
+  });
+});
