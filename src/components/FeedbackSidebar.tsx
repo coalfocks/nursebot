@@ -170,16 +170,9 @@ export function FeedbackSidebar({ assignment, onRetryFeedback, retryingFeedback 
         <div className="flex items-center justify-center space-x-2">
           <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
           <p className="text-sm text-gray-600">
-            {assignment.feedback_status === 'pending'
-              ? 'Generating feedback...'
-              : 'Processing feedback...'}
+            Generating your feedback. This can take a minute or two, and you can leave this page.
           </p>
         </div>
-        {onRetryFeedback && (
-          <button type="button" onClick={onRetryFeedback} disabled={retryingFeedback} className="mt-4 w-full rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50">
-            {retryingFeedback ? 'Retrying feedback…' : 'Retry feedback generation'}
-          </button>
-        )}
       </div>
     );
   }
@@ -196,6 +189,11 @@ export function FeedbackSidebar({ assignment, onRetryFeedback, retryingFeedback 
         <div className="bg-white shadow rounded-lg p-6">
           <div className="text-center">
             <p className="text-sm text-red-600">Something went wrong generating feedback</p>
+            {onRetryFeedback && (
+              <button type="button" onClick={onRetryFeedback} disabled={retryingFeedback} className="mt-4 w-full rounded-md border border-blue-300 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+                {retryingFeedback ? 'Retrying feedback…' : 'Retry feedback generation'}
+              </button>
+            )}
           </div>
         </div>
       );

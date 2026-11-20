@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { supabase } from '../lib/supabase';
@@ -10,7 +10,7 @@ import { ConsultantPortal } from '../components/ConsultantPortal';
 import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
-import { generateFeedback } from '../lib/feedbackService';
+import { requestAutoFeedback, retryFailedFeedback, shouldResumeFeedback } from '../lib/feedbackTrigger';
 import { isAssignmentWindowOpen } from '../lib/assignmentWindow';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -28,6 +28,7 @@ export default function AssignmentView() {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [consultantOpen, setConsultantOpen] = useState(false);
   const [retryingFeedback, setRetryingFeedback] = useState(false);
+  const resumedFeedbackFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -39,6 +40,15 @@ export default function AssignmentView() {
       fetchAssignment();
     }
   }, [assignmentId, user]);
+
+  // A completed assignment still waiting on feedback (closed tab, reload, failed first request) asks the server
+  // once per page load. The server claim keeps this idempotent and scoped to this assignment.
+  useEffect(() => {
+    if (!assignmentId || !assignment || resumedFeedbackFor.current === assignmentId) return;
+    if (!shouldResumeFeedback(assignment)) return;
+    resumedFeedbackFor.current = assignmentId;
+    void requestAutoFeedback(assignmentId).catch((error) => console.error('Feedback resume failed', error));
+  }, [assignmentId, assignment]);
 
   // Subscribe to assignment updates (for feedback generation)
   useEffect(() => {
@@ -135,7 +145,7 @@ export default function AssignmentView() {
     if (!assignmentId || retryingFeedback) return;
     setRetryingFeedback(true);
     try {
-      await generateFeedback(assignmentId);
+      await retryFailedFeedback(assignmentId);
       await fetchAssignment();
     } catch (error) {
       console.error('Feedback retry failed', error);

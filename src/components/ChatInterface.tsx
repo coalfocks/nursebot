@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 import { useNavigate } from 'react-router-dom';
 import { savedCompletedAtFrom } from '../lib/completionTimestamp';
+import { requestAutoFeedback } from '../lib/feedbackTrigger';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
 import type { ImagingStudy, LabResult, MedicalOrder, VitalSigns } from '../features/emr/lib/types';
@@ -673,6 +674,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     setIsSavingProgressNote(true);
     try {
       // Persist completion metadata first so we never land in a completed-without-note state.
+      // Guarded on status so a second click/reload cannot re-complete the assignment or reset its feedback.
       const { data: savedRow, error: updateError } = await supabase
         .from('student_room_assignments')
         .update({
@@ -685,10 +687,19 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
           feedback_error: null,
         })
         .eq('id', assignmentId)
+        .neq('status', 'completed')
         .select('completed_at')
-        .single();
+        .maybeSingle();
 
       if (updateError) throw updateError;
+      if (!savedRow) {
+        // Already completed (double click, reload, another tab): do not rewrite it. Make sure feedback is requested
+        // for this assignment only; the server claim makes this a no-op if it is already running or done.
+        setStatus('completed');
+        setShowCompletionConfirm(false);
+        void requestAutoFeedback(assignmentId).catch((feedbackError) => console.error('Error requesting feedback generation:', feedbackError));
+        return;
+      }
       // The database may stamp completed_at itself (server clock) and ignore the browser value, so the local
       // timeline uses the value read back after the save. If the read-back has no timestamp, it stays unknown
       // rather than falling back to the browser clock, so the UI and downloads cannot disagree.
@@ -719,16 +730,10 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
         queueMessageForDisplay(completionResponse.chatMessage, { simulateDelay: false });
       }
 
-      // Do not hold the completion control open while the evaluator calls the
-      // model. The assignment is already durably completed; feedback status is
-      // persisted as pending and the assignment/debrief surfaces can show
-      // progress or retry. Keeping this request fire-and-forget also prevents
-      // a slow evaluator from making a learner believe completion failed.
-      void supabase.functions.invoke('generate-feedback', {
-        body: { assignmentId },
-      }).then(({ error: feedbackError }) => {
-        if (feedbackError) console.error('Error triggering feedback generation:', feedbackError);
-      }).catch((feedbackError) => {
+      // Scoped, idempotent server-side trigger for THIS assignment only. The server claims the assignment and
+      // keeps generating after the response, so the Case Reflection close/reload below cannot abort it. If this
+      // request itself fails, the assignment stays 'pending' and AssignmentView resumes it on load.
+      void requestAutoFeedback(assignmentId).catch((feedbackError) => {
         console.error('Error triggering feedback generation:', feedbackError);
       });
 
