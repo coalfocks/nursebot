@@ -12,15 +12,14 @@ describe('analytics Excel export timing', () => {
   it('uses the same Case Start to Complete calculation as the dashboard and labels exclusions', () => {
     const data = sheet('Learner attempts');
     const headers = data[0].map((cell) => cell.value);
-    const elapsed = headers.indexOf('Elapsed minutes (wall-clock)');
+    const elapsed = headers.indexOf('Elapsed minutes (Complete − Case Start)');
     const status = headers.indexOf('Timing status');
-    const active = headers.indexOf('Active minutes');
+    expect(headers).not.toContain('Active minutes');
     expect(elapsed).toBeGreaterThan(-1);
     expect(data[1][elapsed].value).toBe(20);
     expect(data[1][status].value).toBe('Valid');
     expect(data[2][elapsed].value).toBe('');
     expect(String(data[2][status].value)).toMatch(/Case Start was not recorded/);
-    expect(data[1][active].value).toBe('Unavailable: no pause data');
   });
 
   it('reports timing samples per case with n and median from the same calculation', () => {

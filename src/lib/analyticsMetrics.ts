@@ -33,10 +33,7 @@ export type AnalyticsRow = AnalyticsAssignment & {
 };
 
 export type CaseTimingSummary = {
-  /** Wall-clock minutes from Case Start to Complete. Active (pause-adjusted) time is not computable: no pause events are recorded. */
-  method: 'wall_clock_start_to_complete';
-  activeTimeAvailable: false;
-  activeTimeReason: string;
+  /** Elapsed minutes = Complete − Case Start, including any pauses. */
   validSamples: number;
   completedAttempts: number;
   exclusions: Record<CaseTimingExclusion, number>;
@@ -291,8 +288,6 @@ export const CASE_TIMING_EXCLUSION_LABELS: Record<CaseTimingExclusion, string> =
   reversed_timestamps: 'Complete is earlier than Case Start',
 };
 
-export const ACTIVE_TIME_UNAVAILABLE_REASON = 'Pause events are not recorded, so active time cannot be computed. Durations are wall-clock.';
-
 /**
  * Single timing calculation shared by dashboard, case table, and Excel export.
  * Duration = Complete − Case Start (assignment.case_started_at → assignment.completed_at).
@@ -411,48 +406,100 @@ const caseTimingSummary = (rows: AnalyticsRow[]): CaseTimingSummary => {
     if ('minutes' in timing) validSamples += 1;
     else exclusions[timing.excluded] += 1;
   });
-  return { method: 'wall_clock_start_to_complete', activeTimeAvailable: false, activeTimeReason: ACTIVE_TIME_UNAVAILABLE_REASON, validSamples, completedAttempts, exclusions };
+  return { validSamples, completedAttempts, exclusions };
 };
 
 /**
- * Cohort themes grouped by rubric component (the six structured subscores), not by comment text.
- * Each component counts DISTINCT learners with a valid structured score. A learner is "at max" when any
- * valid attempt scored the component at its maximum, and "below max" when any valid attempt scored under it.
- * Attempt comments are shown as drill-through evidence; they are not tagged to a component upstream.
+ * Cohort themes grouped by rubric component (the six structured subscores).
+ * - Component drill-through shows each attempt's OWN saved explanation and evidence IDs for that component only.
+ * - Comments are never fanned out across components. A recurring theme requires a stable component tag on the
+ *   saved comment (`skill_key`, `component_key`, `skill_tags`, or `rubric_components`) plus a minimum number of
+ *   distinct KNOWN learners. Untagged comments stay attempt-level and are not attached to any skill.
+ * - Rows without a studentId never count toward distinct learners or the minimum threshold.
  */
-export type RubricComponentAttempt = { assignmentId: string; learnerId: string; studentName: string; caseLabel: string; score: number; comments: string[] };
+export type RubricComponentAttempt = {
+  assignmentId: string; learnerId: string | null; studentName: string; caseLabel: string; score: number;
+  /** The saved explanation for this component on this attempt (null when none was saved). */
+  explanation: string | null; evidenceIds: string[];
+};
+export type TaggedComponentComment = { assignmentId: string; learnerId: string; studentName: string; kind: 'strength' | 'improvement'; text: string; evidenceIds: string[] };
 export type RubricComponentTheme = {
   domain: string; key: string; label: string; min: number; max: number;
   validLearners: number; validAttempts: number; atMaxLearners: number; belowMaxLearners: number; unavailableAttempts: number;
+  /** Attempts with a valid score but no known learner; listed but excluded from every learner count. */
+  unknownLearnerAttempts: number;
   suppressed: boolean; minimumLearners: number;
   attempts: RubricComponentAttempt[];
+  /** Comments carrying a stable tag for this component, from known learners only. */
+  taggedComments: TaggedComponentComment[];
+  taggedLearners: number;
+  /** True only when taggedLearners >= minimumLearners. Otherwise the UI must say "not enough tagged evidence". */
+  recurringTheme: boolean;
+};
+
+const COMPONENT_KEYS: ReadonlySet<string> = new Set(SUBSCORE_DEFINITIONS.map((d) => d.key));
+const commentTagsFor = (item: Record<string, unknown>): string[] => {
+  const raw = [item.skill_key, item.component_key, item.skill_tags, item.rubric_components].flat();
+  return [...new Set(raw.filter((tag): tag is string => typeof tag === 'string' && COMPONENT_KEYS.has(tag)))];
+};
+
+const componentDetailFor = (row: AnalyticsRow, definition: (typeof SUBSCORE_DEFINITIONS)[number]): { explanation: string | null; evidenceIds: string[] } => {
+  const breakdown = definition.domain === 'Communication' ? row.communicationBreakdown : row.mdmBreakdown;
+  const component = breakdown?.[definition.key];
+  if (!component || typeof component !== 'object') return { explanation: null, evidenceIds: [] };
+  const record = component as Record<string, unknown>;
+  const feedback = typeof record.feedback === 'string' ? record.feedback.replace(/\s+/g, ' ').trim() : '';
+  return { explanation: feedback || null, evidenceIds: narrativeEvidenceIds(record as Narrative) };
+};
+
+const knownLearnerId = (row: AnalyticsRow): string | null => {
+  const id = typeof row.studentId === 'string' ? row.studentId.trim() : '';
+  return id && id.toLowerCase() !== 'unknown' ? id : null;
 };
 
 export const extractRubricComponentThemes = (rows: AnalyticsRow[], minimumLearners = 3): RubricComponentTheme[] => {
   const assessedRows = uniqueByAssignmentId(rows).filter(isAssessed);
   return SUBSCORE_DEFINITIONS.map((definition) => {
     const attempts: RubricComponentAttempt[] = [];
+    const scoresByLearner = new Map<string, number[]>();
     let unavailableAttempts = 0;
+    let unknownLearnerAttempts = 0;
+    const taggedComments: TaggedComponentComment[] = [];
     assessedRows.forEach((row) => {
+      const learnerId = knownLearnerId(row);
       const score = componentScoreFor(row, definition);
-      if (score == null) { unavailableAttempts += 1; return; }
-      const learnerId = row.studentId ?? `attempt:${row.id}`;
-      const comments = [
-        ...(Array.isArray(row.feedbackDebrief?.strengths) ? row.feedbackDebrief!.strengths as Narrative[] : []).map((item) => narrativeText(item, false)),
-        ...(Array.isArray(row.feedbackDebrief?.improvements) ? row.feedbackDebrief!.improvements as Narrative[] : []).map((item) => narrativeText(item, true)),
-      ].filter((text): text is string => Boolean(text));
-      attempts.push({ assignmentId: row.id, learnerId, studentName: row.studentName, caseLabel: row.roomNumber, score, comments });
+      if (score == null) unavailableAttempts += 1;
+      else {
+        if (learnerId) scoresByLearner.set(learnerId, [...(scoresByLearner.get(learnerId) ?? []), score]);
+        else unknownLearnerAttempts += 1;
+        attempts.push({ assignmentId: row.id, learnerId, studentName: row.studentName, caseLabel: row.roomNumber, score, ...componentDetailFor(row, definition) });
+      }
+      if (!learnerId) return;
+      const collect = (values: unknown, kind: 'strength' | 'improvement') => {
+        if (!Array.isArray(values)) return;
+        values.forEach((raw) => {
+          if (!raw || typeof raw !== 'object') return;
+          const item = raw as Record<string, unknown>;
+          if (!commentTagsFor(item).includes(definition.key)) return;
+          const text = narrativeText(item as Narrative, kind === 'improvement');
+          const evidenceIds = narrativeEvidenceIds(item as Narrative);
+          if (!text || evidenceIds.length === 0) return;
+          taggedComments.push({ assignmentId: row.id, learnerId, studentName: row.studentName, kind, text, evidenceIds });
+        });
+      };
+      collect(row.feedbackDebrief?.strengths, 'strength');
+      collect(row.feedbackDebrief?.improvements, 'improvement');
     });
-    const byLearner = new Map<string, number[]>();
-    attempts.forEach((attempt) => byLearner.set(attempt.learnerId, [...(byLearner.get(attempt.learnerId) ?? []), attempt.score]));
-    const validLearners = byLearner.size;
-    const atMaxLearners = [...byLearner.values()].filter((scores) => scores.some((score) => score === definition.max)).length;
-    const belowMaxLearners = [...byLearner.values()].filter((scores) => scores.some((score) => score < definition.max)).length;
+    const validLearners = scoresByLearner.size;
+    const taggedLearners = new Set(taggedComments.map((comment) => comment.learnerId)).size;
     return {
       domain: definition.domain, key: definition.key, label: definition.label, min: definition.min, max: definition.max,
-      validLearners, validAttempts: attempts.length, atMaxLearners, belowMaxLearners, unavailableAttempts,
+      validLearners, validAttempts: attempts.length, unavailableAttempts, unknownLearnerAttempts,
+      atMaxLearners: [...scoresByLearner.values()].filter((scores) => scores.some((score) => score === definition.max)).length,
+      belowMaxLearners: [...scoresByLearner.values()].filter((scores) => scores.some((score) => score < definition.max)).length,
       suppressed: validLearners < minimumLearners, minimumLearners,
       attempts: attempts.sort((a, b) => a.studentName.localeCompare(b.studentName) || a.assignmentId.localeCompare(b.assignmentId)),
+      taggedComments, taggedLearners, recurringTheme: taggedLearners >= minimumLearners,
     };
   });
 };

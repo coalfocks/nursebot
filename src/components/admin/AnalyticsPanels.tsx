@@ -29,8 +29,7 @@ export function PagedRows<T>({ rows, children, label, pageSize = 10 }: { rows: T
 export function CaseTiming({ metrics }: Props) {
   const { caseTiming } = metrics;
   const excluded = (Object.keys(caseTiming.exclusions) as CaseTimingExclusion[]).filter((key) => caseTiming.exclusions[key] > 0);
-  return <div><p className="mb-1 text-sm text-slate-600">Case Start (first opened) to Complete, wall-clock. Average {formatCompletionDuration(metrics.averageCompletionMinutes)} · median {formatCompletionDuration(metrics.medianCompletionMinutes)} · n = {caseTiming.validSamples} of {caseTiming.completedAttempts} completed attempts.</p>
-    <p className="mb-3 text-xs text-slate-500">{caseTiming.activeTimeReason}</p>
+  return <div><p className="mb-1 text-sm text-slate-600">Elapsed time from Case Start (first opened) to Complete, including pauses. Average {formatCompletionDuration(metrics.averageCompletionMinutes)} · median {formatCompletionDuration(metrics.medianCompletionMinutes)} · n = {caseTiming.validSamples} of {caseTiming.completedAttempts} completed attempts.</p>
     {excluded.length > 0 && <ul className="mb-3 list-disc pl-5 text-xs text-amber-800">{excluded.map((key) => <li key={key}>{caseTiming.exclusions[key]} excluded: {CASE_TIMING_EXCLUSION_LABELS[key]}</li>)}</ul>}
     <PagedRows rows={metrics.caseHeatmap} label="case timings">{(cases) => <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-2">Case</th><th>Median elapsed</th><th>Valid timings / completed</th></tr></thead><tbody>{cases.map((item) => <tr key={item.roomId} className="border-b last:border-0"><td className="py-3">Room {item.caseLabel}<span className="block text-xs text-slate-500">{item.specialty} · {item.schoolName}</span></td><td>{formatCompletionDuration(item.medianCompletionMinutes)}</td><td>{item.completionTimeSampleSize} / {item.completed}</td></tr>)}</tbody></table></div>}</PagedRows>
   </div>;
@@ -48,7 +47,7 @@ export function SafetyReview({ rows, onOpen }: { rows: AnalyticsRow[]; onOpen: (
 export function RubricComponentThemes({ themes, scope, minimumLearners, onOpen }: { themes: RubricComponentTheme[]; scope: 'cohort' | 'learner'; minimumLearners: number; onOpen: (assignmentId: string) => void }) {
   const hasValid = themes.some((theme) => theme.validLearners > 0);
   return <div>
-    <p className="mt-3 text-xs text-slate-600">Grouped by rubric component. Counts are distinct learners with a valid structured score. Individual comments are shown in the drill-through, untouched.</p>
+    <p className="mt-3 text-xs text-slate-600">Grouped by rubric component. Counts are distinct learners with a valid structured score. Drill-through shows each attempt's own saved explanation and evidence for that component.</p>
     {!hasValid && <p className="mt-3 text-sm text-slate-600">{scope === 'cohort' ? 'No rubric component has structured scores in this scope.' : 'No structured component scores are available for this learner.'}</p>}
     {hasValid && <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-2">Component</th><th>Valid n (learners)</th><th>At max</th><th>Below max</th><th>Unavailable attempts</th></tr></thead><tbody>
       {themes.map((theme) => <tr key={theme.key} className="border-b last:border-0"><td className="py-2 pr-2">{theme.label}<span className="block text-xs text-slate-500">{theme.domain} · {theme.min} to {theme.max}</span></td>
@@ -61,9 +60,12 @@ export function RubricComponentThemes({ themes, scope, minimumLearners, onOpen }
       <summary className="cursor-pointer text-sm font-medium text-slate-800">{theme.label}: {theme.attempts.length} attempt{theme.attempts.length === 1 ? '' : 's'} (n = {theme.validLearners} learners)</summary>
       <ul className="mt-3 space-y-3">{theme.attempts.map((attempt) => <li key={attempt.assignmentId} className="text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2"><span>{attempt.studentName} · Room {attempt.caseLabel} · score {attempt.score} ({theme.min} to {theme.max})</span><button type="button" onClick={() => onOpen(attempt.assignmentId)} className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline">Review attempt <ExternalLink className="h-3 w-3" /></button></div>
-        {attempt.comments.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs text-slate-600">{attempt.comments.map((text) => <li key={text}>{text}</li>)}</ul>}
+        {attempt.explanation ? <p className="mt-1 text-xs text-slate-700">{attempt.explanation}</p> : <p className="mt-1 text-xs text-slate-500">No saved explanation for this component.</p>}
+        <p className="mt-1 text-xs text-slate-500">Evidence: {attempt.evidenceIds.length ? attempt.evidenceIds.join(', ') : 'none recorded'}</p>
       </li>)}</ul>
-      <p className="mt-2 text-xs text-slate-500">Comments are attempt-level and are not tagged to this component.</p>
+      {theme.recurringTheme
+        ? <div className="mt-3 border-t pt-2"><p className="text-xs font-medium text-slate-700">Recurring theme: tagged comments from {theme.taggedLearners} learners</p><ul className="mt-1 list-disc pl-5 text-xs text-slate-600">{theme.taggedComments.map((comment) => <li key={`${comment.assignmentId}-${comment.kind}-${comment.text}`}>{comment.text} <span className="text-slate-500">(evidence: {comment.evidenceIds.join(', ')})</span></li>)}</ul></div>
+        : <p className="mt-3 border-t pt-2 text-xs text-slate-500">Not enough tagged evidence for a recurring theme (n = {theme.taggedLearners} learner{theme.taggedLearners === 1 ? '' : 's'} with tagged comments; minimum {minimumLearners}).</p>}
     </details>)}
   </div>;
 }

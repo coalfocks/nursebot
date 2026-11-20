@@ -12,7 +12,7 @@ it('shows all six component ranges, includes zero deductions, and labels case el
  expect(screen.getByText('Safety deduction')).toBeInTheDocument();
  expect(screen.getByText('Efficiency deduction')).toBeInTheDocument();
  expect(screen.getByText('20 min')).toBeInTheDocument();
- expect(screen.getByText(/Pause events are not recorded/)).toBeInTheDocument();
+ expect(screen.getByText(/including pauses/)).toBeInTheDocument();
  expect(screen.getByText(/n = 1 of 1 completed attempts/)).toBeInTheDocument();
 });
 it('names the learner/case for critical safety review and opens the right assignment', () => {
