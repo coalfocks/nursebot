@@ -81,7 +81,7 @@ function CommentList({ comments, onOpen, empty }: { comments: SavedComment[]; on
   if (!comments.length) return <p className="mt-1 text-xs text-slate-500">{empty}</p>;
   return <ul className="mt-1 space-y-2">{comments.map((comment, index) => <li key={`${comment.assignmentId}-${comment.kind}-${index}`} className="text-sm text-slate-800">
     <span>{comment.text}</span>
-    <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{comment.componentKeys.length ? comment.componentKeys.join(', ') : 'Evaluation feedback'}</span>
+    <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{comment.componentKeys.length ? comment.componentKeys.join(', ') : comment.source === 'legacy_evaluation_feedback' ? 'Saved evaluation feedback (legacy)' : 'Evaluation feedback'}</span>
     <span className="block text-xs text-slate-500">Room {comment.caseLabel} · {dateLabel(comment.at)} · {comment.evidenceIds.length ? `evidence: ${comment.evidenceIds.join(', ')}` : 'no linked evidence'} · <button type="button" onClick={() => onOpen(comment.assignmentId)} className="text-blue-700 hover:underline">Open case</button> · <button type="button" onClick={() => onOpen(`${comment.assignmentId}/feedback`)} className="text-blue-700 hover:underline">Open evaluation</button></span>
   </li>)}</ul>;
 }
@@ -93,7 +93,7 @@ export function LearnerSummary({ overview, learnerName, onOpen }: { overview: Le
     <p className="text-xs text-slate-500">Built from saved evaluation strengths, improvements, and component explanations; no new model calls. No cohort minimum applies to a single learner.</p>
     <div><h3 className="text-sm font-semibold text-slate-900">Supported strengths</h3><CommentList comments={overview.strengths} onOpen={onOpen} empty="No evidence-linked strengths were saved." /></div>
     <div><h3 className="text-sm font-semibold text-slate-900">Next practice goals</h3><CommentList comments={overview.nextPractice} onOpen={onOpen} empty="No specific next practice goals were saved." /></div>
-    {overview.unsupported.length > 0 && <div><h3 className="text-sm font-semibold text-slate-900">Other evaluation feedback (no linked evidence)</h3><CommentList comments={overview.unsupported} onOpen={onOpen} empty="" /></div>}
+    {overview.unsupported.length > 0 && <div><h3 className="text-sm font-semibold text-slate-900">Saved evaluation feedback (no linked event IDs)</h3><CommentList comments={overview.unsupported} onOpen={onOpen} empty="" /></div>}
     <details className="rounded-lg border border-slate-200 p-3"><summary className="cursor-pointer text-sm font-medium text-slate-800">Component explanations by case</summary>
       <div className="mt-3 space-y-3">{overview.components.map((component) => <div key={component.key}><h4 className="text-sm font-medium">{component.label} <span className="text-xs text-slate-500">{component.domain} · {component.min} to {component.max}</span></h4>
         {component.entries.length ? <ul className="mt-1 space-y-1">{component.entries.map((entry) => <li key={entry.assignmentId} className="text-xs text-slate-700">Room {entry.caseLabel} · score {entry.score}: {entry.explanation ?? 'No saved explanation for this component.'} <button type="button" onClick={() => onOpen(entry.assignmentId)} className="text-blue-700 hover:underline">Open case</button> · <button type="button" onClick={() => onOpen(`${entry.assignmentId}/feedback`)} className="text-blue-700 hover:underline">Open evaluation</button></li>)}</ul> : <p className="text-xs text-slate-500">No structured score for this component.</p>}
@@ -109,7 +109,7 @@ export function RecurringBehaviorThemesPanel({ themes }: { themes: RecurringBeha
     ? <ul className="mt-1 space-y-2">{items.map((theme) => <li key={`${theme.direction}-${theme.behaviorKey}`} className="text-sm"><span className="font-medium">{theme.behaviorKey}</span> · {theme.learners} learners<ul className="mt-1 list-disc pl-5 text-xs text-slate-600">{theme.comments.map((comment, i) => <li key={`${comment.assignmentId}-${i}`}>{comment.studentName}: {comment.text} <span className="text-slate-500">(evidence: {comment.evidenceIds.join(', ')})</span></li>)}</ul></li>)}</ul>
     : <p className="mt-1 text-xs text-slate-500">{empty}</p>}</div>;
   return <div className="mt-3 space-y-3">
-    <p className="text-xs text-slate-600">A recurring strength or need is the same behavior in the same direction for at least {themes.minimumLearners} distinct known learners. Component tags alone never qualify.</p>
+    <p className="text-xs text-slate-600">A recurring strength or need is the same behavior in the same direction for at least {themes.minimumLearners} distinct known learners (selectable: 3 or 5). Component tags alone never qualify.</p>
     {themes.keyedComments === 0 && <p className="rounded bg-slate-50 p-2 text-xs text-slate-700">No stable behavior keys have been saved on any comment in this scope (the feedback generator does not emit them yet), so no recurring strength or need can be claimed. Component evidence is shown below.</p>}
     {list(themes.recurringStrengths, 'Recurring strengths', `No behavior meets the ${themes.minimumLearners}-learner minimum as a strength.`)}
     {list(themes.recurringNeeds, 'Recurring needs', `No behavior meets the ${themes.minimumLearners}-learner minimum as an improvement need.`)}

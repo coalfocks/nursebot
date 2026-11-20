@@ -6,7 +6,8 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { supabase } from '../lib/supabase';
-import { buildLearnerOverview, computeDashboardMetrics, computeGroupedAnalytics, extractRecurringBehaviorThemes, extractRubricComponentThemes, isAssessed, type AnalyticsRow } from '../lib/analyticsMetrics';
+import { buildAnalyticsSelect, CASE_START_UNAVAILABLE_NOTICE, describeAnalyticsLoadError, isMissingCaseStartColumn } from '../lib/analyticsQuery';
+import { DEFAULT_THEME_MINIMUM, normalizeThemeMinimum, THEME_MINIMUM_OPTIONS, type ThemeMinimum, buildLearnerOverview, computeDashboardMetrics, computeGroupedAnalytics, extractRecurringBehaviorThemes, extractRubricComponentThemes, isAssessed, type AnalyticsRow } from '../lib/analyticsMetrics';
 
 import { downloadAnalyticsWorkbook } from '../lib/analyticsExport';
 import { CaseTiming, DomainPerformance, LearnerSummary, PagedRows, RecurringBehaviorThemesPanel, RubricComponentThemes, SafetyReview } from '../components/admin/AnalyticsPanels';
@@ -25,7 +26,7 @@ type RawAnalyticsRecord = {
   grade: number | null;
   created_at: string | null;
   scoring_start_at: string | null;
-  case_started_at: string | null;
+  case_started_at?: string | null;
   safety_result: Record<string, unknown> | null;
   completed_at: string | null;
   feedback_generated_at: string | null;
@@ -46,6 +47,7 @@ export default function AdminAnalytics() {
   const [rows, setRows] = useState<AnalyticsRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [caseStartUnavailable, setCaseStartUnavailable] = useState(false);
   const [specialty, setSpecialty] = useState('all');
   const [caseId, setCaseId] = useState('all');
   const [status, setStatus] = useState('all');
@@ -54,7 +56,7 @@ export default function AdminAnalytics() {
   const [toDate, setToDate] = useState('');
   const [includeTest, setIncludeTest] = useState(false);
   const [timeScope, setTimeScope] = useState<'all' | '3m' | '6m' | '1y' | 'custom'>('all');
-  const [minimumThemeLearners, setMinimumThemeLearners] = useState(3);
+  const [minimumThemeLearners, setMinimumThemeLearners] = useState<ThemeMinimum>(DEFAULT_THEME_MINIMUM);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [feedbackScope, setFeedbackScope] = useState<'cohort' | 'learner'>('cohort');
@@ -74,18 +76,24 @@ export default function AdminAnalytics() {
         const pageSize = 1000;
         let from = 0;
         const raw: RawAnalyticsRecord[] = [];
+        let caseStartAvailable = true;
         while (true) {
-        let query = supabase.from('student_room_assignments').select(`
-          id, school_id, is_sandbox, student_id, room_id, status, feedback_status, communication_score, mdm_score,
-          grade, created_at, scoring_start_at, case_started_at, safety_result, completed_at, feedback_generated_at, case_difficulty,
-          communication_breakdown, mdm_breakdown, nurse_feedback, feedback_debrief,
-          student:student_id (id, full_name, role),
-          room:room_id (id, room_number, specialty_id, specialty_ids),
-          school:school_id (id, name)
-        `).order('created_at', { ascending: false }).range(from, from + pageSize - 1);
-        if (!includeTest) query = query.eq('is_sandbox', false);
-        if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
-        const { data, error: queryError } = await query;
+        const buildQuery = (withCaseStart: boolean) => {
+          let query = supabase.from('student_room_assignments').select(buildAnalyticsSelect(withCaseStart)).order('created_at', { ascending: false }).range(from, from + pageSize - 1);
+          if (!includeTest) query = query.eq('is_sandbox', false);
+          if (scopedSchoolId) query = query.eq('school_id', scopedSchoolId);
+          return query;
+        };
+        let result = await buildQuery(caseStartAvailable);
+        // Pre-migration database: case_started_at does not exist yet. Drop only that column, keep every other analytic,
+        // and mark timing unavailable with a reason. Any other error still fails the load with its real message.
+        if (result.error && caseStartAvailable && isMissingCaseStartColumn(result.error)) {
+          caseStartAvailable = false;
+          from = 0;
+          raw.length = 0;
+          result = await buildQuery(false);
+        }
+        const { data, error: queryError } = result;
         if (queryError) throw queryError;
         const page = (data ?? []) as unknown as RawAnalyticsRecord[];
         raw.push(...page);
@@ -111,15 +119,15 @@ export default function AdminAnalytics() {
             overallScore: item.communication_score != null && item.mdm_score != null
               ? Number(((item.communication_score + item.mdm_score) / 2).toFixed(2))
               : null,
-            scoringStartAt: item.scoring_start_at, caseStartedAt: item.case_started_at, safetyResult: item.safety_result, createdAt: item.created_at, completedAt: item.completed_at, feedbackGeneratedAt: item.feedback_generated_at,
+            scoringStartAt: item.scoring_start_at, caseStartedAt: item.case_started_at ?? null, caseStartUnavailable: !caseStartAvailable, safetyResult: item.safety_result, createdAt: item.created_at, completedAt: item.completed_at, feedbackGeneratedAt: item.feedback_generated_at,
             caseDifficulty: item.case_difficulty, communicationBreakdown: item.communication_breakdown, mdmBreakdown: item.mdm_breakdown,
             nurseFeedback: item.nurse_feedback,
             feedbackDebrief: item.feedback_debrief,
           };
         });
-        if (!cancelled) setRows(mapped);
+        if (!cancelled) { setRows(mapped); setCaseStartUnavailable(!caseStartAvailable); }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Analytics could not be loaded.');
+        if (!cancelled) setError(describeAnalyticsLoadError(err));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -187,6 +195,7 @@ export default function AdminAnalytics() {
       {exportError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
       <div className="flex justify-end print:hidden"><button type="button" onClick={() => window.print()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">Print current view</button></div>
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-600"><Loader2 className="mx-auto h-6 w-6 animate-spin" /><p className="mt-2">Loading authorized analytics…</p></div> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">{error}</div> : !filteredRows.length ? <EmptyState /> : <>
+        {caseStartUnavailable && <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{CASE_START_UNAVAILABLE_NOTICE}</div>}
         <section className="grid gap-4 md:grid-cols-2">{[
           ['Completed / assigned', `${metrics.completedAssignments} / ${metrics.eligibleAssignments}`, `${pct(metrics.completionRate)} completed · ${metrics.participatingLearners} of ${metrics.eligibleLearners} learners participating`],
           ['Completed with feedback', `${metrics.assessedAssignments} / ${metrics.completedAssignments}`, `${pct(metrics.assessmentCoverageRate)} of completed attempts have saved feedback`],
@@ -197,7 +206,8 @@ export default function AdminAnalytics() {
         <Panel title="Completion time by case" subtitle="Complete − Start, pauses included. Valid n counts attempts with both timestamps; completed n counts all completed attempts."><CaseTiming metrics={metrics} /></Panel>
         <details className="rounded-2xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-semibold text-slate-900">Recurring themes and component evidence</summary>
           <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" onClick={() => setFeedbackScope('cohort')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${feedbackScope === 'cohort' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Cohort themes</button><button type="button" disabled={learnerId === 'all'} onClick={() => setFeedbackScope('learner')} className={`rounded-md px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${feedbackScope === 'learner' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Selected learner</button><span className="text-xs text-slate-500">{feedbackScope === 'learner' ? learnerId === 'all' ? 'Choose a learner first.' : `${assessedFeedbackRows.length} selected-learner assessed attempt${assessedFeedbackRows.length === 1 ? '' : 's'}` : `${assessedFeedbackRows.length} assessed/cohort-filtered attempt${assessedFeedbackRows.length === 1 ? '' : 's'}`}</span></div>
-          {feedbackScope === 'cohort' && <label className="mt-3 flex items-center gap-2 text-xs text-slate-600">Minimum learners per theme<select aria-label="Minimum learners per theme" value={minimumThemeLearners} onChange={(event) => setMinimumThemeLearners(Number(event.target.value))} className="rounded border px-2 py-1"><option value={3}>3 learners</option><option value={5}>5 learners</option></select></label>}
+          {feedbackScope === 'cohort' && <label className="mt-3 flex items-center gap-2 text-xs text-slate-600">Recurring-theme threshold (distinct known learners)<select aria-label="Minimum learners per theme" value={minimumThemeLearners} onChange={(event) => setMinimumThemeLearners(normalizeThemeMinimum(event.target.value))} className="rounded border px-2 py-1">{THEME_MINIMUM_OPTIONS.map((option) => <option key={option} value={option}>{option} distinct learners</option>)}</select></label>}
+          {feedbackScope === 'learner' && <p className="mt-3 text-xs text-slate-600">Individual learner summaries have no threshold.</p>}
           <RecurringBehaviorThemesPanel themes={behaviorThemes} />
           <h3 className="mt-4 text-sm font-semibold text-slate-900">Component evidence</h3>
           <RubricComponentThemes themes={rubricThemes} scope={feedbackScope} minimumLearners={feedbackScope === 'cohort' ? minimumThemeLearners : 1} onOpen={(id) => navigate(`/assignment/${id}`)} />

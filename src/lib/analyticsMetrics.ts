@@ -22,6 +22,8 @@ export type AnalyticsRow = AnalyticsAssignment & {
   scoringStartAt?: string | null;
   /** Case Start: when the learner first opened the case (assignment moved to in_progress). Null for attempts that pre-date start tracking. */
   caseStartedAt?: string | null;
+  /** True when the database predates case_started_at: timing is unavailable for the row, never estimated. */
+  caseStartUnavailable?: boolean;
   safetyResult?: Record<string, unknown> | null;
   completedAt: string | null;
   feedbackGeneratedAt: string | null;
@@ -290,9 +292,10 @@ export type CasePerformance = {
 
 export const isAssessed = (row: AnalyticsAssignment) => row.status === 'completed' && row.feedbackStatus === 'completed';
 
-export type CaseTimingExclusion = 'start_not_recorded' | 'completion_not_recorded' | 'invalid_timestamp' | 'reversed_timestamps';
+export type CaseTimingExclusion = 'schema_not_migrated' | 'start_not_recorded' | 'completion_not_recorded' | 'invalid_timestamp' | 'reversed_timestamps';
 
 export const CASE_TIMING_EXCLUSION_LABELS: Record<CaseTimingExclusion, string> = {
+  schema_not_migrated: 'Case Start timing is unavailable (database not yet migrated to record Case Start)',
   start_not_recorded: 'Case Start was not recorded (attempt began before start tracking)',
   completion_not_recorded: 'Completion timestamp is missing',
   invalid_timestamp: 'Case Start or Complete is not a valid timestamp',
@@ -306,6 +309,7 @@ export const CASE_TIMING_EXCLUSION_LABELS: Record<CaseTimingExclusion, string> =
  */
 export const caseTimingFor = (row: AnalyticsRow): { minutes: number } | { excluded: CaseTimingExclusion } | null => {
   if (row.status !== 'completed') return null;
+  if (row.caseStartUnavailable) return { excluded: 'schema_not_migrated' };
   if (!row.caseStartedAt) return { excluded: 'start_not_recorded' };
   if (!row.completedAt) return { excluded: 'completion_not_recorded' };
   const start = Date.parse(row.caseStartedAt);
@@ -407,7 +411,7 @@ export const computeDashboardMetrics = (inputRows: AnalyticsRow[], eligibleLearn
 };
 
 const caseTimingSummary = (rows: AnalyticsRow[]): CaseTimingSummary => {
-  const exclusions: Record<CaseTimingExclusion, number> = { start_not_recorded: 0, completion_not_recorded: 0, invalid_timestamp: 0, reversed_timestamps: 0 };
+  const exclusions: Record<CaseTimingExclusion, number> = { schema_not_migrated: 0, start_not_recorded: 0, completion_not_recorded: 0, invalid_timestamp: 0, reversed_timestamps: 0 };
   const attempts: CaseTimingAttempt[] = [];
   const minutes: number[] = [];
   rows.forEach((row) => {
@@ -533,31 +537,71 @@ export const behaviorKeyFor = (item: Record<string, unknown>): string | null => 
   return key.length >= 3 && key.length <= 80 && BEHAVIOR_KEY_PATTERN.test(key) ? key : null;
 };
 
+/** Recurring-theme threshold: a selectable 3 OR 5 distinct known learners (not "3 of 5"). Individual learner summaries use no threshold. */
+export const THEME_MINIMUM_OPTIONS = [3, 5] as const;
+export type ThemeMinimum = (typeof THEME_MINIMUM_OPTIONS)[number];
+export const DEFAULT_THEME_MINIMUM: ThemeMinimum = 3;
+export const normalizeThemeMinimum = (value: unknown): ThemeMinimum => (Number(value) === 5 ? 5 : DEFAULT_THEME_MINIMUM);
+
 export type CommentDirection = 'strength' | 'improvement';
 export type SavedComment = {
   assignmentId: string; learnerId: string | null; studentName: string; caseLabel: string; at: string | null;
   kind: CommentDirection; text: string; evidenceIds: string[];
   /** Rubric component keys carried by the saved comment's tags; empty = untagged (older) comment. */
   componentKeys: string[]; behaviorKey: string | null;
+  /** 'debrief' = canonical saved debrief; 'legacy_evaluation_feedback' = older nurse_feedback copy, used only when the canonical field is absent. */
+  source: 'debrief' | 'legacy_evaluation_feedback';
 };
 
-/** Reads every saved strength/improvement on an attempt once; used by the learner overview and recurring themes. */
+const isAbsentField = (value: unknown) => value === undefined || value === null;
+const textKey = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+/** Legacy evaluation-feedback groups as stored on prod (`clinical_reasoning`, `communication_skills`); `communication` accepted for older writers. */
+const LEGACY_FEEDBACK_GROUPS = ['clinical_reasoning', 'communication_skills', 'communication'] as const;
+
+/**
+ * Reads every saved strength/improvement on an attempt once; used by the learner overview and recurring themes.
+ * - Canonical `feedback_debrief.strengths` / `.improvements` entries may be {text, evidence_event_ids} objects or plain strings.
+ *   String comments carry no event IDs and are listed as saved evaluation feedback without linked evidence.
+ * - Legacy `nurse_feedback.<group>.strengths|areas_for_improvement` is used ONLY when the canonical field is absent.
+ *   A present-but-empty canonical list is a real answer and does not fall back. Canonical and legacy are never merged.
+ * - Legacy comments never get invented evidence IDs, and identical text across legacy groups is listed once.
+ */
 export const savedCommentsFor = (row: AnalyticsRow): SavedComment[] => {
   const debrief = row.feedbackDebrief ?? {};
   const out: SavedComment[] = [];
-  const read = (values: unknown, kind: CommentDirection) => {
+  const base = { assignmentId: row.id, learnerId: knownLearnerId(row), studentName: row.studentName, caseLabel: row.roomNumber, at: row.completedAt ?? row.createdAt };
+  const read = (values: unknown, kind: CommentDirection, source: SavedComment['source'] = 'debrief') => {
     if (!Array.isArray(values)) return;
     values.forEach((raw) => {
+      if (typeof raw === 'string') {
+        const text = narrativeText({ text: raw } as Narrative, false);
+        if (text) out.push({ ...base, kind, text, evidenceIds: [], componentKeys: [], behaviorKey: null, source });
+        return;
+      }
       if (!raw || typeof raw !== 'object') return;
       const item = raw as Record<string, unknown>;
       const text = narrativeText(item as Narrative, kind === 'improvement');
       if (!text) return;
-      out.push({ assignmentId: row.id, learnerId: knownLearnerId(row), studentName: row.studentName, caseLabel: row.roomNumber, at: row.completedAt ?? row.createdAt,
-        kind, text, evidenceIds: narrativeEvidenceIds(item as Narrative), componentKeys: commentTagsFor(item), behaviorKey: behaviorKeyFor(item) });
+      out.push({ ...base, kind, text, evidenceIds: narrativeEvidenceIds(item as Narrative), componentKeys: commentTagsFor(item), behaviorKey: behaviorKeyFor(item), source });
     });
   };
-  read(debrief.strengths, 'strength');
-  read(debrief.improvements, 'improvement');
+  const legacy = (field: 'strengths' | 'areas_for_improvement') => {
+    const feedback = row.nurseFeedback && typeof row.nurseFeedback === 'object' ? row.nurseFeedback as Record<string, unknown> : {};
+    const seen = new Set<string>();
+    return LEGACY_FEEDBACK_GROUPS.flatMap((group) => {
+      const section = feedback[group];
+      const list = section && typeof section === 'object' ? (section as Record<string, unknown>)[field] : undefined;
+      return Array.isArray(list) ? list : [];
+    }).filter((item): item is string => {
+      if (typeof item !== 'string') return false;
+      const key = textKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  if (isAbsentField(debrief.strengths)) read(legacy('strengths'), 'strength', 'legacy_evaluation_feedback'); else read(debrief.strengths, 'strength');
+  if (isAbsentField(debrief.improvements)) read(legacy('areas_for_improvement'), 'improvement', 'legacy_evaluation_feedback'); else read(debrief.improvements, 'improvement');
   read(debrief.growth_areas, 'improvement');
   return out;
 };
