@@ -17,7 +17,9 @@ Deno.serve(async (req) => {
     const caller = await resolveFeedbackCaller(client as never, req.headers.get('Authorization'), serviceKey);
     if (!caller || caller.isService) return json({ error: 'Not authenticated as an admin user' }, 401);
 
-    const { data: assignment, error: assignmentError } = await client.from('student_room_assignments').select(`id, student_id, school_id, status, ${PROMOTION_FIELDS.join(', ')}`).eq('id', assignmentId).maybeSingle();
+    const assignmentQuery = await client.from('student_room_assignments').select(`id, student_id, school_id, status, ${PROMOTION_FIELDS.join(', ')}`).eq('id', assignmentId).maybeSingle();
+    const assignmentError = assignmentQuery.error;
+    const assignment = assignmentQuery.data as unknown as (Record<string, any> & { student_id: string | null; school_id: string | null }) | null;
     if (assignmentError) throw assignmentError;
     if (!assignment || !canAdministerFeedback(caller, assignment)) return json({ error: 'Not allowed for this assignment' }, 403);
     if (assignment.status !== 'completed') return json({ error: 'Assignment is not completed', code: 'NOT_COMPLETED' }, 409);
