@@ -3,6 +3,7 @@ import { Send, Loader2, User2, Wand2, ExternalLink, Stethoscope, ChevronDown, Ch
 import { supabase } from '../lib/supabase';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 import { useNavigate } from 'react-router-dom';
+import { savedCompletedAtFrom } from '../lib/completionTimestamp';
 import { generateInitialPrompt } from '../lib/openai';
 import { emrApi } from '../features/emr/lib/api';
 import type { ImagingStudy, LabResult, MedicalOrder, VitalSigns } from '../features/emr/lib/types';
@@ -672,7 +673,7 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
     setIsSavingProgressNote(true);
     try {
       // Persist completion metadata first so we never land in a completed-without-note state.
-      const { error: updateError } = await supabase
+      const { data: savedRow, error: updateError } = await supabase
         .from('student_room_assignments')
         .update({
           status: 'completed',
@@ -683,15 +684,21 @@ export function ChatInterface({ assignmentId, roomNumber, roomId, scenarioBaseli
           treatment_plan: null,
           feedback_error: null,
         })
-        .eq('id', assignmentId);
+        .eq('id', assignmentId)
+        .select('completed_at')
+        .single();
 
       if (updateError) throw updateError;
+      // The database may stamp completed_at itself (server clock) and ignore the browser value, so the local
+      // timeline uses the value read back after the save. If the read-back has no timestamp, it stays unknown
+      // rather than falling back to the browser clock, so the UI and downloads cannot disagree.
+      const savedCompletedAt = savedCompletedAtFrom(savedRow);
 
       setStatus('completed');
       setAssignmentTimeline({
         status: 'completed',
         student_progress_note: progressNote,
-        completed_at: completedAt,
+        completed_at: savedCompletedAt,
         completion_hint_views: completionHintViews,
       });
 

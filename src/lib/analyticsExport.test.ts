@@ -44,7 +44,7 @@ describe('analytics Excel export timing', () => {
     expect(summary).toContainEqual(['Valid n', 1]);
     expect(summary).toContainEqual(['Completed n', 2]);
     const attempts = sheet('Timing by attempt');
-    expect(attempts[0].map((cell) => cell.value)).toEqual(['Assignment ID', 'Learner', 'Case', 'Start', 'Complete', 'Duration (minutes)', 'Exclusion reason']);
+    expect(attempts[0].map((cell) => cell.value)).toEqual(['Assignment ID', 'Learner', 'Case', 'Start (first case open)', 'Complete', 'Duration (minutes)', 'Exclusion reason']);
     const excluded = attempts.find((r) => r[0].value === 'synthetic-attempt-1')!;
     expect(excluded[3].value).toBe('');
     expect(String(excluded[6].value)).toMatch(/Case Start was not recorded/);
@@ -57,5 +57,19 @@ describe('analytics Excel export timing', () => {
     expect(text).toContain('based on one evaluation');
     expect(text).toContain('https://example.test/assignment/synthetic-attempt-0/feedback');
     expect(buildAnalyticsWorkbook([analyticsFixture(0), analyticsFixture(1)], 'https://example.test', 's').some((x) => x.sheet === 'Learner overview')).toBe(false);
+  });
+});
+
+describe('analytics Excel export start fields', () => {
+  it('keeps "Start (first case open)" and "First nurse page (scoring boundary)" as separate labeled columns with their own values', () => {
+    const data = sheet('Learner attempts');
+    const headers = data[0].map((cell) => cell.value);
+    const start = headers.indexOf('Start (first case open)');
+    const page = headers.indexOf('First nurse page (scoring boundary)');
+    expect(start).toBeGreaterThan(-1);
+    expect(page).toBeGreaterThan(-1);
+    expect(start).not.toBe(page);
+    expect(data[1][start].value).toBe(analyticsFixture(0).caseStartedAt);
+    expect(data[1][page].value).toBe(analyticsFixture(0).scoringStartAt);
   });
 });

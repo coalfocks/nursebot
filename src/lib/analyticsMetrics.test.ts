@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYTICS_QUERY_CONTRACT, completionMinutesFor, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, buildLearnerOverview, extractEvidenceBackedThemes, extractRecurringBehaviorThemes, extractRubricComponentThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, completionMinutesFor, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, buildLearnerOverview, extractEvidenceBackedThemes, extractRecurringBehaviorThemes, extractRubricComponentThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow, normalizeThemeMinimum, savedCommentsFor, DEFAULT_THEME_MINIMUM, THEME_MINIMUM_OPTIONS, CASE_TIMING_EXCLUSION_LABELS } from './analyticsMetrics';
 
 describe('formatCompletionDuration', () => {
   it('formats minutes and larger durations responsively', () => {
@@ -406,5 +406,89 @@ describe('per-case timing average, median, n and drill-through', () => {
   it('never substitutes created_at, first nurse message or feedback time for Start or Complete', () => {
     const row = analyticsRow({ id: 'x', caseStartedAt: null, createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T09:00:00Z', feedbackGeneratedAt: '2026-10-03T11:00:00Z', completedAt: '2026-10-03T10:00:00Z' });
     expect(completionMinutesFor(row)).toBeNull();
+  });
+});
+
+describe('recurring-theme threshold is a selectable 3 or 5 distinct known learners', () => {
+  it('offers exactly 3 or 5, defaults to 3, and normalizes anything else to 3', () => {
+    expect([...THEME_MINIMUM_OPTIONS]).toEqual([3, 5]);
+    expect(DEFAULT_THEME_MINIMUM).toBe(3);
+    expect(normalizeThemeMinimum('5')).toBe(5);
+    expect(normalizeThemeMinimum(5)).toBe(5);
+    expect(normalizeThemeMinimum('3')).toBe(3);
+    expect(normalizeThemeMinimum('4')).toBe(3);
+    expect(normalizeThemeMinimum(undefined)).toBe(3);
+  });
+
+  it('a behavior shared by 3 distinct learners recurs at threshold 3 but not 5; 5 learners recur at both; repeat attempts count once; unknown learners never count', () => {
+    const keyed = (id: string, learner: string | null) => learnerRow(id, learner, { strengths: [c('Asked about allergies', { behavior_key: 'asks_about_allergies' })] });
+    const three = [keyed('a', 'l1'), keyed('b', 'l2'), keyed('c', 'l3'), keyed('d', 'l3'), keyed('u', null)];
+    expect(extractRecurringBehaviorThemes(three, 3).recurringStrengths).toMatchObject([{ behaviorKey: 'asks_about_allergies', learners: 3 }]);
+    expect(extractRecurringBehaviorThemes(three, 5).recurringStrengths).toEqual([]);
+    const five = [...three, keyed('e', 'l4'), keyed('f', 'l5')];
+    expect(extractRecurringBehaviorThemes(five, 3).recurringStrengths).toMatchObject([{ learners: 5 }]);
+    expect(extractRecurringBehaviorThemes(five, 5).recurringStrengths).toMatchObject([{ learners: 5 }]);
+  });
+
+  it('individual learner summaries have no threshold: a single learner keeps all saved comments', () => {
+    const overview = buildLearnerOverview([learnerRow('a', 'one', { strengths: [c('Only one')], improvements: [c('Only one improvement')] })]);
+    expect(overview.strengths).toHaveLength(1);
+    expect(overview.nextPractice).toHaveLength(1);
+  });
+});
+
+describe('saved comment shapes: string arrays and legacy nurse_feedback', () => {
+  const legacy = {
+    clinical_reasoning: { strengths: ['Legacy clinical strength.', 'Shared legacy strength.'], areas_for_improvement: ['Legacy clinical improvement.'] },
+    communication_skills: { strengths: ['Legacy communication strength.', 'shared  LEGACY strength.'], areas_for_improvement: ['Legacy communication improvement.'] },
+  };
+
+  it('accepts debrief strengths/improvements given as string arrays, labeled without linked event IDs', () => {
+    const row = learnerRow('a', 'one', { strengths: ['You asked about oxygen.', 'You ordered an ABG.'], improvements: ['Reassess sooner.', 'Name the plan aloud.'] });
+    const comments = savedCommentsFor(row);
+    expect(comments.map((x) => [x.kind, x.text, x.evidenceIds, x.source])).toEqual([
+      ['strength', 'You asked about oxygen.', [], 'debrief'], ['strength', 'You ordered an ABG.', [], 'debrief'],
+      ['improvement', 'Reassess sooner.', [], 'debrief'], ['improvement', 'Name the plan aloud.', [], 'debrief'],
+    ]);
+    const overview = buildLearnerOverview([row]);
+    expect(overview.strengths).toEqual([]);
+    expect(overview.unsupported.map((x) => x.text)).toEqual(['You asked about oxygen.', 'You ordered an ABG.', 'Reassess sooner.', 'Name the plan aloud.']);
+  });
+
+  it('falls back to legacy nurse_feedback only when the canonical field is absent, without invented evidence or duplicate aliases', () => {
+    const row = learnerRow('a', 'one', {}, { nurseFeedback: legacy });
+    const comments = savedCommentsFor(row);
+    expect(comments.every((x) => x.source === 'legacy_evaluation_feedback' && x.evidenceIds.length === 0 && x.behaviorKey === null && x.componentKeys.length === 0)).toBe(true);
+    expect(comments.filter((x) => x.kind === 'strength').map((x) => x.text)).toEqual(['Legacy clinical strength.', 'Shared legacy strength.', 'Legacy communication strength.']);
+    expect(comments.filter((x) => x.kind === 'improvement').map((x) => x.text)).toEqual(['Legacy clinical improvement.', 'Legacy communication improvement.']);
+    const overview = buildLearnerOverview([row]);
+    expect(overview.strengths).toEqual([]);
+    expect(overview.unsupported).toHaveLength(5);
+  });
+
+  it('also reads the `communication` group name used by older writers', () => {
+    const row = learnerRow('a', 'one', null as never, { feedbackDebrief: null, nurseFeedback: { communication: { strengths: ['Old comm strength.'], areas_for_improvement: ['Old comm improvement.'] } } });
+    expect(savedCommentsFor(row).map((x) => x.text)).toEqual(['Old comm strength.', 'Old comm improvement.']);
+  });
+
+  it('does not use legacy when the canonical field is present, including a present-but-empty list, and never merges the two', () => {
+    const canonical = savedCommentsFor(learnerRow('a', 'one', { strengths: [c('Canonical strength')], improvements: [c('Canonical improvement')] }, { nurseFeedback: legacy }));
+    expect(canonical.map((x) => x.text)).toEqual(['Canonical strength', 'Canonical improvement']);
+    const empty = savedCommentsFor(learnerRow('b', 'one', { strengths: [], improvements: [] }, { nurseFeedback: legacy }));
+    expect(empty).toEqual([]);
+    const mixed = savedCommentsFor(learnerRow('c', 'one', { strengths: [c('Canonical strength')] }, { nurseFeedback: legacy }));
+    expect(mixed.filter((x) => x.kind === 'strength').map((x) => x.text)).toEqual(['Canonical strength']);
+    expect(mixed.filter((x) => x.kind === 'improvement').every((x) => x.source === 'legacy_evaluation_feedback')).toBe(true);
+  });
+});
+
+describe('timing is unavailable, never estimated, on a pre-migration database', () => {
+  it('excludes every completed attempt with an explicit reason and reports no average', () => {
+    const rows = [0, 1].map((i) => analyticsRow({ id: `p${i}`, caseStartedAt: null, caseStartUnavailable: true, completedAt: '2026-10-03T10:20:00Z', createdAt: '2026-10-03T10:00:00Z', scoringStartAt: '2026-10-03T10:05:00Z' }));
+    const timing = computeDashboardMetrics(rows, 1).caseTiming;
+    expect(timing).toMatchObject({ validSamples: 0, completedAttempts: 2, averageMinutes: null, medianMinutes: null });
+    expect(timing.exclusions.schema_not_migrated).toBe(2);
+    expect(timing.attempts.every((a) => a.minutes === null && a.exclusionReason === CASE_TIMING_EXCLUSION_LABELS.schema_not_migrated)).toBe(true);
+    expect(completionMinutesFor(rows[0])).toBeNull();
   });
 });
