@@ -116,4 +116,16 @@ describe('RoomEditor EMR context control', () => {
     expect(updateRoom.mock.calls[0][0]).not.toHaveProperty('hospital_timeline');
     expect(rpc).not.toHaveBeenCalled();
   });
+
+  it('saves only the nurse prompt, scoped by id/school/updated_at, and shows the timestamp', async () => {
+    const stamped = { ...(room as object), updated_at: '2026-11-01T00:00:00.000Z' } as never;
+    render(<RoomEditor room={stamped} onSave={vi.fn()} onCancel={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Nurse Context'), { target: { value: 'edited nurse text' } });
+    fireEvent.click(screen.getByTestId('save-nurse-prompt'));
+
+    await waitFor(() => expect(updateRoom).toHaveBeenCalledTimes(1));
+    expect(updateRoom).toHaveBeenCalledWith({ nurse_context: 'edited nurse text' });
+    expect(rpc).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId('nurse-prompt-status').textContent).toMatch(/Nurse prompt saved/));
+  });
 });
