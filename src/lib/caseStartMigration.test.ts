@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const sql = readFileSync(new URL('../../supabase/migrations/20261120090000_case_started_at.sql', import.meta.url), 'utf8');
+const sql = readFileSync(resolve(process.cwd(), 'supabase/migrations/20261120090000_case_started_at.sql'), 'utf8');
 
 // Static guard for the trigger contract. Behaviour is exercised by supabase/tests/case-started-at.integration.sql.
 describe('case_started_at / completed_at trigger migration', () => {

@@ -43,6 +43,7 @@ it('applies school/learner scope to named safety review and Excel, with prominen
  expect(mocks.download.mock.calls[0][0]).toHaveLength(1);
  expect(mocks.download.mock.calls[0][0][0].id).toBe('synthetic-attempt-1');
  fireEvent.click(screen.getByRole('button', { name: 'Selected learner' }));
- expect(screen.getAllByText('Focused escalation to the senior clinician').length).toBeGreaterThan(0);
+ expect(screen.queryByText('Focused escalation to the senior clinician')).not.toBeInTheDocument();
+ expect(screen.getAllByText(/Not enough tagged evidence/).length).toBeGreaterThan(0);
  expect(screen.getByText('Cohort themes by rubric component')).toBeInTheDocument();
 });
