@@ -12,6 +12,10 @@ import { type SourceCoverage } from '../_shared/feedback-coverage.ts';
 import { computeFeedbackFingerprint } from '../_shared/feedback-fingerprint.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { PINNED_FEEDBACK_MODEL } from '../_shared/feedback-model.ts';
+import { scoredAssignmentUpdate } from '../_shared/feedback-assignment-update.ts';
+import { buildFeedbackContext, type ContextNote } from '../_shared/feedback-context.ts';
+import { claimAssignmentFeedback } from '../_shared/feedback-trigger.ts';
+import { canAdministerFeedback, canTriggerFeedback, resolveFeedbackCaller } from '../_shared/feedback-auth.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
 import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type AttemptFeedbackComment, type CommentaryResult } from '../_shared/feedback-comments.ts';
 import {
@@ -32,49 +36,44 @@ const sanitizeFeedbackTree = (value: unknown): unknown => {
   return value;
 };
 
-// Single writer for a scored result, shared by fresh grading and saved-score reuse.
-// Comments-only reruns never call this, so their scores and safety are untouched.
-const scoredAssignmentUpdate = (
-  evaluation: ReturnType<typeof canonicalizeEvaluation>,
-  debrief: Record<string, unknown>,
-  key: { version: string },
-  scoringStartAt: string,
-  sourceEventIds: string[],
-) => {
-  const legacy = { summary: evaluation.learning_objectives, clinical_reasoning: { score: evaluation.mdm_score, comments: evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback, strengths: [evaluation.mdm_breakdown.clinical_reasoning_documentation.feedback], areas_for_improvement: evaluation.improvements }, communication_skills: { score: evaluation.communication_score, comments: evaluation.communication_breakdown.closed_loop_team_communication.feedback, strengths: [evaluation.communication_breakdown.focused_information_gathering.feedback], areas_for_improvement: evaluation.improvements }, recommendations: evaluation.recommendations };
-  return {
-    feedback_status: 'completed',
-    feedback_error: null,
-    communication_score: evaluation.communication_score,
-    mdm_score: evaluation.clinical_reasoning_score,
-    communication_breakdown: evaluation.communication_breakdown,
-    mdm_breakdown: evaluation.clinical_reasoning_breakdown,
-    learning_objectives: evaluation.learning_objectives,
-    grade: null,
-    nurse_feedback: legacy,
-    feedback_generated_at: new Date().toISOString(),
-    scoring_start_at: scoringStartAt,
-    rubric_version: FEEDBACK_RUBRIC_VERSION,
-    case_key_version: key.version || CASE_KEY_VERSION,
-    assessment_version: ASSESSMENT_VERSION,
-    source_event_ids: sourceEventIds,
-    technical_incomplete: false,
-    safety_result: evaluation.safety_result,
-    feedback_debrief: debrief,
-  };
-};
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let assignmentId: string | undefined;
   let commentsOnly = false;
+  let requestMode: string | undefined;
   try {
-    const request = await req.json() as { assignmentId?: string; commentsOnly?: boolean; forceRegrade?: boolean };
+    const request = await req.json() as { assignmentId?: string; commentsOnly?: boolean; forceRegrade?: boolean; mode?: 'auto' | 'compare' };
     assignmentId = request.assignmentId;
+    requestMode = request.mode;
     commentsOnly = request.commentsOnly === true;
     const forceRegrade = request.forceRegrade === true;
     if (!assignmentId) throw new Error('Assignment ID is required');
     const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+    const mode = request.mode === 'auto' || request.mode === 'compare' ? request.mode : null;
+    if (request.mode && !mode) throw new Error('Unsupported feedback mode');
+    if (mode && commentsOnly) throw new Error('commentsOnly cannot be combined with a scoped mode');
+    // Scoped modes act on exactly one assignment on behalf of a signed-in user, so scope is checked here
+    // (this function runs with the service role). Legacy mode-less calls keep their existing behavior.
+    let compareVersionId: string | null = null;
+    let detached = false;
+    if (mode) {
+      const caller = await resolveFeedbackCaller(client as never, req.headers.get('Authorization'), Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+      if (!caller) return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const { data: scope, error: scopeError } = await client.from('student_room_assignments').select('student_id, school_id, status').eq('id', assignmentId).maybeSingle();
+      if (scopeError) throw scopeError;
+      const allowed = scope && (mode === 'auto' ? canTriggerFeedback(caller, scope) : canAdministerFeedback(caller, scope));
+      if (!allowed) return new Response(JSON.stringify({ error: 'Not allowed for this assignment' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      if (mode === 'auto') {
+        const outcome = await claimAssignmentFeedback(client as never, assignmentId);
+        if (outcome !== 'claimed') return new Response(JSON.stringify({ success: true, assignmentId, skipped: outcome }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } else {
+        if (!isFeedbackEligibleStatus(scope.status)) throw new Error('Cannot rerun feedback for an incomplete assignment');
+        const inserted = await client.from('feedback_rerun_versions').insert({ assignment_id: assignmentId, school_id: scope.school_id, requested_by: caller.userId, status: 'running' }).select('id').single();
+        if (inserted.error) throw inserted.error;
+        compareVersionId = inserted.data.id as string;
+      }
+      detached = true;
+    }
     const work = (async () => {
       const { data: assignment, error: assignmentError } = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', assignmentId).single();
       if (assignmentError) throw assignmentError;
@@ -103,10 +102,42 @@ Deno.serve(async (req) => {
       const uncertainTimestampEvents = [...missingTimestampEvents, ...windowEntries.uncertain];
       const sourceEventIds = scoredEntries.map((entry) => entry.id);
       const key = resolveCaseEvaluationKey(room);
+      // FEEDBACK CONTEXT: assembled outside the evaluator prompt body. Pinned snapshot text wins over live room text.
+      const baseline = assignment.scenario_baseline && typeof assignment.scenario_baseline === 'object' && !Array.isArray(assignment.scenario_baseline) ? assignment.scenario_baseline as Record<string, unknown> : null;
+      const contextRoom = baseline ? { ...room, ...baseline } : room;
+      const roomLineage: number[] = [];
+      for (let current = typeof contextRoom.id === 'number' ? contextRoom.id : null, hops = 0; current && !roomLineage.includes(current) && hops < 10; hops += 1) {
+        roomLineage.push(current);
+        const { data: parent } = await client.from('rooms').select('continues_from').eq('id', current).maybeSingle();
+        current = typeof parent?.continues_from === 'number' ? parent.continues_from : null;
+      }
+      const patientId = typeof contextRoom.patient_id === 'string' ? contextRoom.patient_id : null;
+      const [patientResult, notesResult] = patientId ? await Promise.all([
+        client.from('patients').select('gender, date_of_birth, service, admission_date, allergies, code_status').eq('id', patientId).maybeSingle(),
+        client.from('clinical_notes').select('id, note_type, title, author, timestamp, content, override_scope, room_id, assignment_id, deleted_at').eq('patient_id', patientId).is('deleted_at', null),
+      ]) : [{ data: null, error: null }, { data: [], error: null }];
+      if (patientResult.error) throw patientResult.error;
+      if (notesResult.error) throw notesResult.error;
+      const feedbackContext = await buildFeedbackContext({
+        assignmentId: assignment.id,
+        room: contextRoom,
+        pinned: Boolean(baseline),
+        roomLineage,
+        patient: patientResult.data,
+        notes: (notesResult.data ?? []) as ContextNote[],
+        caseGoals: resolveCaseEvaluationKey(contextRoom).goals,
+        asOf: assignment.completed_at ?? null,
+      });
+      const contextProvenance = { context_block_id: feedbackContext.framing_id, context_block_sha256: feedbackContext.framing_sha256, context_rendered_sha256: feedbackContext.sha256, context_builder_version: feedbackContext.builder_version, context_source: feedbackContext.source, context_fields: feedbackContext.fields, context_missing: feedbackContext.missing, patient_summary: feedbackContext.patient_summary };
       const leniencyMultiplier = readRoomLeniencyMultiplier(room);
       const provenance = { assignment_id: assignment.id, attempt_id: assignment.id, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, scoring_start_at: start?.scoring_start_at ?? null, source_event_ids: sourceEventIds };
       if (!start) {
         const result = { technical_incomplete: true, summary: 'This attempt is technically incomplete because no first nurse page was recorded. No learner score was assigned.', formative_notice: formativeNotice };
+        if (compareVersionId) {
+          const { error: versionError } = await client.from('feedback_rerun_versions').update({ status: 'completed', technical_incomplete: true, result: { ...result, debrief: result }, provenance: { model: PINNED_FEEDBACK_MODEL, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, ...contextProvenance, generated_at: new Date().toISOString() } }).eq('id', compareVersionId);
+          if (versionError) throw versionError;
+          return { versionId: compareVersionId, promptVersion: null };
+        }
         const incompleteRun = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, result }).select('id').single();
         if (incompleteRun.error) throw new Error(incompleteRun.error.message);
         await client.from('student_room_assignments').update({ feedback_status: 'completed', feedback_error: null, scoring_start_at: null, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, source_event_ids: [], technical_incomplete: true, safety_result: null, feedback_debrief: result, nurse_feedback: result, communication_score: null, mdm_score: null, grade: null, feedback_generated_at: new Date().toISOString() }).eq('id', assignmentId);
@@ -142,7 +173,7 @@ Deno.serve(async (req) => {
         prompt_versions: { evaluation: ALTHEA_SCORING_PROMPT_VERSION, rubric: FEEDBACK_RUBRIC_VERSION, commentary: FEEDBACK_COMMENT_PROMPT_VERSION },
         config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, simulation_prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
       });
-      if (!request.commentsOnly && !forceRegrade) {
+      if (!request.commentsOnly && !forceRegrade && !compareVersionId) {
         // Identical frozen inputs reuse the saved score. Commentary is part of the
         // saved result, so a comments-only rerun can still refresh it later.
         const { data: priorRuns, error: priorError } = await client.from('feedback_assessment_runs')
@@ -218,7 +249,7 @@ Deno.serve(async (req) => {
         if (updateError) throw updateError;
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
-      const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
+      const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\n${feedbackContext.text}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
       const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
         const completion = await openai.chat.completions.create({
           model: PINNED_FEEDBACK_MODEL,
@@ -355,18 +386,35 @@ Deno.serve(async (req) => {
         evidence: growthEvidence,
         scoring_start_at: start.scoring_start_at,
       }];
-      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: attemptBedsideEventIds, hint_event_ids: packet.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, model: PINNED_FEEDBACK_MODEL, ...contextProvenance, evidence_packet: { version: packet.version, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: attemptBedsideEventIds, hint_event_ids: packet.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      if (compareVersionId) {
+        // Compare-only rerun: the saved grade, feedback and feedback_assessment_runs are never touched.
+        const { error: versionError } = await client.from('feedback_rerun_versions').update({ status: 'completed', technical_incomplete: false, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError, scoring_start_at: start.scoring_start_at, source_event_ids: sourceEventIds, case_key_version: key.version || CASE_KEY_VERSION }, provenance: { model: PINNED_FEEDBACK_MODEL, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, rubric_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, comment_prompt_version: commentPromptVersion, input_fingerprint: inputFingerprint, ...contextProvenance, generated_at: new Date().toISOString() } }).eq('id', compareVersionId);
+        if (versionError) throw versionError;
+        return { versionId: compareVersionId, promptVersion: commentPromptVersion, commentError };
+      }
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);
       if (updateError) throw updateError;
       return { runId: run.data.id, promptVersion: commentPromptVersion, commentError };
     })();
+    if (detached) {
+      // Learner/admin requests return immediately; the evaluation outlives the HTTP request, so a page reload
+      // or closed tab cannot abort it. Failures are written to the row that owns this run.
+      const settle = Promise.race([work, timeout(90000)]).catch(async (error) => {
+        const failure = error instanceof Error ? error.message : (error && typeof error === 'object' && 'message' in error ? String(error.message) : JSON.stringify(error));
+        if (compareVersionId) await client.from('feedback_rerun_versions').update({ status: 'failed', error: failure }).eq('id', compareVersionId);
+        else await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: failure }).eq('id', assignmentId!);
+      });
+      (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime?.waitUntil(settle);
+      return new Response(JSON.stringify({ success: true, assignmentId, accepted: true, versionId: compareVersionId }), { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     const result = await Promise.race([work, timeout(90000)]) as { runId?: string | null; promptVersion?: string | null };
     return new Response(JSON.stringify({ success: true, assignmentId, ...result }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error && typeof error === 'object' && 'message' in error ? String(error.message) : JSON.stringify(error));
-    if (assignmentId && !commentsOnly) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
+    if (assignmentId && !commentsOnly && !requestMode) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
     return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
