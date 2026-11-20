@@ -18,6 +18,8 @@ vi.mock('../lib/supabase', () => ({
         chain.eq = vi.fn(() => chain);
         chain.select = vi.fn(() => chain);
         chain.single = vi.fn(async () => result);
+        chain.is = vi.fn(() => chain);
+        chain.maybeSingle = vi.fn(async () => ({ error: null, data: { ...(payload as object), updated_at: '2026-11-20T00:00:00.000Z' } }));
         chain.then = (resolve: (value: typeof result) => unknown) => Promise.resolve(resolve(result));
         return chain;
       });
