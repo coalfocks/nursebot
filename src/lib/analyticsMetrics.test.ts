@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYTICS_QUERY_CONTRACT, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, completionMinutesFor, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, extractRubricComponentThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
 
 describe('formatCompletionDuration', () => {
   it('formats minutes and larger durations responsively', () => {
@@ -129,7 +129,7 @@ describe('grouped analytics and evidence-backed themes', () => {
 describe('computeDashboardMetrics', () => {
   it('keeps missing scores out of denominators and creates observable trend/case rows', () => {
     const rows = [
-      { ...assignment(), id: '1', schoolId: 's', studentName: 'A', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: '2026-10-01T10:00:00Z', scoringStartAt: '2026-10-01T10:10:00Z', completedAt: '2026-10-01T11:00:00Z', feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
+      { ...assignment(), id: '1', schoolId: 's', studentName: 'A', studentRole: 'student', roomId: 1, roomNumber: '101', specialty: 'Medicine', createdAt: '2026-10-01T10:00:00Z', scoringStartAt: '2026-10-01T10:10:00Z', caseStartedAt: '2026-10-01T10:10:00Z', completedAt: '2026-10-01T11:00:00Z', feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
       { ...assignment({ status: 'in_progress', communicationScore: null, mdmScore: null }), id: '2', schoolId: 's', studentName: 'B', studentRole: 'student', roomId: 2, roomNumber: '102', specialty: 'Surgery', createdAt: '2026-10-02T10:00:00Z', completedAt: null, feedbackGeneratedAt: null, caseDifficulty: null, communicationBreakdown: null, mdmBreakdown: null, nurseFeedback: null },
     ] as AnalyticsRow[];
     const metrics = computeDashboardMetrics(rows, 2);
@@ -143,14 +143,41 @@ describe('computeDashboardMetrics', () => {
 
 
 describe('educator analytics regression coverage', () => {
-  it('measures per-case first-page elapsed time, not assignment wait, and excludes missing or invalid pairs', () => {
+  it('measures Case Start to Complete (not first nurse page or assignment wait) and excludes missing or invalid pairs with a reason', () => {
     const metrics = computeDashboardMetrics([
-      analyticsRow({ id: 'valid', createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
-      analyticsRow({ id: 'missing', createdAt: '2026-10-01T00:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
-      analyticsRow({ id: 'reversed', scoringStartAt: '2026-10-03T11:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
-      analyticsRow({ id: 'invalid', scoringStartAt: 'not-a-date', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'valid', createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T09:00:00Z', caseStartedAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'missing-start', createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T09:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'reversed', caseStartedAt: '2026-10-03T11:00:00Z', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'invalid', caseStartedAt: 'not-a-date', completedAt: '2026-10-03T10:20:00Z' }),
+      analyticsRow({ id: 'no-complete', caseStartedAt: '2026-10-03T10:00:00Z', completedAt: null }),
     ], 1);
-    expect(metrics.caseHeatmap[0]).toMatchObject({ medianCompletionMinutes: 20, completionTimeSampleSize: 1, completed: 4 });
+    expect(metrics.caseHeatmap[0]).toMatchObject({ medianCompletionMinutes: 20, completionTimeSampleSize: 1, completed: 5 });
+    expect(metrics.caseTiming).toMatchObject({ validSamples: 1, completedAttempts: 5, exclusions: { start_not_recorded: 1, reversed_timestamps: 1, invalid_timestamp: 1, completion_not_recorded: 1 } });
+  });
+
+  it('reports wall-clock only: active time is explicitly unavailable because pauses are not recorded', () => {
+    const metrics = computeDashboardMetrics([analyticsRow({ caseStartedAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:30:00Z' })], 1);
+    expect(metrics.caseTiming.activeTimeAvailable).toBe(false);
+    expect(metrics.caseTiming.activeTimeReason).toMatch(/Pause events are not recorded/);
+    expect(metrics.averageCompletionMinutes).toBe(30);
+    expect(metrics.medianCompletionMinutes).toBe(30);
+  });
+
+  it('keeps timing averages to valid samples only, never counting missing starts as zero', () => {
+    const metrics = computeDashboardMetrics([
+      analyticsRow({ id: 'a', caseStartedAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:10:00Z' }),
+      analyticsRow({ id: 'b', caseStartedAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:30:00Z' }),
+      analyticsRow({ id: 'c', caseStartedAt: null, completedAt: '2026-10-03T10:30:00Z' }),
+    ], 1);
+    expect(metrics.averageCompletionMinutes).toBe(20);
+    expect(metrics.completionTimeSampleSize).toBe(2);
+  });
+
+  it('does not let a feedback rerun change the Case Start-based duration', () => {
+    const base = analyticsRow({ caseStartedAt: '2026-10-03T10:00:00Z', completedAt: '2026-10-03T10:20:00Z', scoringStartAt: '2026-10-03T09:00:00Z' });
+    const rerun = { ...base, feedbackStatus: 'pending', feedbackGeneratedAt: '2026-10-04T08:00:00Z', scoringStartAt: '2026-10-04T08:00:00Z' };
+    expect(completionMinutesFor(base)).toBe(20);
+    expect(completionMinutesFor(rerun)).toBe(20);
   });
 
   it('keeps identical room numbers from different cases separate and deduplicates all samples', () => {
@@ -177,5 +204,57 @@ describe('educator analytics regression coverage', () => {
     expect(safetyFlagFor(analyticsRow({ safetyResult: { level: 'critical', rationale: 'Contraindicated order', action: 'Unsafe order' } }))).toMatchObject({ level: 'critical', rationale: 'Contraindicated order' });
     expect(safetyFlagFor(analyticsRow({ feedbackDebrief: { safety_result: { level: 'concern' } } }))).toMatchObject({ level: 'concern' });
     expect(safetyFlagFor(analyticsRow({ safetyResult: { level: 'none', rationale: 'No harmful action' } }))).toBeNull();
+  });
+});
+
+describe('unavailable structured subscores (domain totals only)', () => {
+  it('reports components as unavailable with a reason, excludes them from component stats, and keeps domain totals', () => {
+    const metrics = computeDashboardMetrics([
+      analyticsRow({ id: 'structured', communicationScore: 4, communicationBreakdown: { focused_information_gathering: { score: 2 } } }),
+      analyticsRow({ id: 'totals-only', studentId: 'learner-2', communicationScore: 5, communicationBreakdown: null, mdmBreakdown: null }),
+    ], 2);
+    const focused = metrics.subscorePerformance.find((item) => item.key === 'focused_information_gathering');
+    expect(focused).toMatchObject({ average: 2, scored: 1, assessed: 2, unavailable: 1 });
+    expect(focused?.unavailableReason).toMatch(/^Not estimated|Components unavailable|attempts have no valid structured score/);
+    expect(metrics.domainPerformance[0]).toMatchObject({ domain: 'Communication', average: 4.5, scored: 2 });
+  });
+
+  it('marks every component unavailable with a whole-cohort reason when no structured subscores exist', () => {
+    const metrics = computeDashboardMetrics([analyticsRow({ id: 'legacy', communicationBreakdown: null, mdmBreakdown: null })], 1);
+    expect(metrics.subscorePerformance.every((item) => item.average === null && item.scored === 0 && item.unavailable === 1)).toBe(true);
+    expect(metrics.subscorePerformance[0].unavailableReason).toMatch(/Components unavailable: no structured subscores/);
+  });
+
+  it('does not treat an out-of-range component score as a valid subscore', () => {
+    const metrics = computeDashboardMetrics([analyticsRow({ communicationBreakdown: { focused_information_gathering: { score: 9 } } })], 1);
+    expect(metrics.subscorePerformance[0]).toMatchObject({ scored: 0, unavailable: 1 });
+  });
+});
+
+describe('cohort themes by rubric component', () => {
+  const scored = (id: string, studentId: string, focused: number, extra: Partial<AnalyticsRow> = {}) => analyticsRow({
+    id, studentId, studentName: studentId, communicationBreakdown: { focused_information_gathering: { score: focused } },
+    feedbackDebrief: { strengths: [{ text: `Personal praise ${id}`, evidence_event_ids: [`e-${id}`] }], improvements: [{ text: `Personal tip ${id}`, evidence_event_ids: [`e-${id}`] }] },
+    ...extra,
+  });
+
+  it('groups personalized comments under the same rubric component, counting distinct learners', () => {
+    const themes = extractRubricComponentThemes([scored('a', 'one', 2), scored('b', 'two', 2), scored('c', 'three', 1)], 3);
+    const focused = themes.find((theme) => theme.key === 'focused_information_gathering');
+    expect(focused).toMatchObject({ validLearners: 3, atMaxLearners: 2, belowMaxLearners: 1, suppressed: false, validAttempts: 3 });
+    expect(focused?.attempts.map((attempt) => attempt.assignmentId).sort()).toEqual(['a', 'b', 'c']);
+    expect(focused?.attempts.find((attempt) => attempt.assignmentId === 'a')?.comments).toEqual(['Personal praise a', 'Personal tip a']);
+  });
+
+  it('suppresses components below the learner minimum and counts repeated attempts once per learner', () => {
+    const themes = extractRubricComponentThemes([scored('a', 'one', 2), scored('b', 'one', 2), scored('c', 'two', 2)], 3);
+    const focused = themes.find((theme) => theme.key === 'focused_information_gathering');
+    expect(focused).toMatchObject({ validLearners: 2, validAttempts: 3, suppressed: true });
+  });
+
+  it('excludes unassessed attempts and reports attempts lacking a component as unavailable', () => {
+    const themes = extractRubricComponentThemes([scored('a', 'one', 2), scored('pending', 'two', 2, { feedbackStatus: 'pending' }), analyticsRow({ id: 'no-breakdown', studentId: 'three' })], 1);
+    const focused = themes.find((theme) => theme.key === 'focused_information_gathering');
+    expect(focused).toMatchObject({ validLearners: 1, validAttempts: 1, unavailableAttempts: 1, suppressed: false });
   });
 });

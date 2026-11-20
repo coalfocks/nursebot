@@ -19,7 +19,7 @@ import AdminAnalytics from './AdminAnalytics';
 it('applies school/learner scope to named safety review and Excel, with prominent domains and minimum cohort themes', async () => {
  mocks.rows = Array.from({ length: 3 }, (_, i) => {
   const row = analyticsFixture(i, { safetyResult: i === 0 ? { level: 'critical', rationale: 'Synthetic contraindicated order', action: 'Synthetic action' } : null });
-  return { id: row.id, school_id: row.schoolId, school: { id: row.schoolId, name: row.schoolName }, is_sandbox: false, student_id: row.studentId, room_id: row.roomId, status: row.status, feedback_status: row.feedbackStatus, communication_score: row.communicationScore, mdm_score: row.mdmScore, created_at: row.createdAt, scoring_start_at: row.scoringStartAt, safety_result: row.safetyResult, completed_at: row.completedAt, communication_breakdown: row.communicationBreakdown, mdm_breakdown: row.mdmBreakdown, feedback_debrief: row.feedbackDebrief, student: { id: row.studentId, full_name: row.studentName, role: row.studentRole }, room: { id: row.roomId, room_number: row.roomNumber, specialty_id: null, specialty_ids: [] } };
+  return { id: row.id, school_id: row.schoolId, school: { id: row.schoolId, name: row.schoolName }, is_sandbox: false, student_id: row.studentId, room_id: row.roomId, status: row.status, feedback_status: row.feedbackStatus, communication_score: row.communicationScore, mdm_score: row.mdmScore, created_at: row.createdAt, scoring_start_at: row.scoringStartAt, case_started_at: row.caseStartedAt, safety_result: row.safetyResult, completed_at: row.completedAt, communication_breakdown: row.communicationBreakdown, mdm_breakdown: row.mdmBreakdown, feedback_debrief: row.feedbackDebrief, student: { id: row.studentId, full_name: row.studentName, role: row.studentRole }, room: { id: row.roomId, room_number: row.roomNumber, specialty_id: null, specialty_ids: [] } };
  });
  render(<AdminAnalytics />);
  await screen.findByRole('heading', { name: 'Domain performance and subscores' });
@@ -31,11 +31,11 @@ it('applies school/learner scope to named safety review and Excel, with prominen
  const details = screen.getByText('Learner attempts and evidence links (3)').closest('details');
  expect(details).not.toHaveAttribute('open');
  expect(screen.getByRole('heading', { name: 'Domain performance and subscores' }).compareDocumentPosition(details!) & 4).toBe(4);
- fireEvent.click(screen.getByRole('button', { name: 'Review attempt' }));
+ fireEvent.click(screen.getAllByRole('button', { name: 'Review attempt' })[0]);
  expect(mocks.navigate).toHaveBeenCalledWith('/assignment/synthetic-attempt-0');
  if (process.env.ANALYTICS_QA_HTML) writeFileSync(process.env.ANALYTICS_QA_HTML, document.documentElement.outerHTML);
  fireEvent.change(screen.getByLabelText('Minimum learners per theme'), { target: { value: '5' } });
- expect(screen.getAllByText(/No evidence-backed theme meets the 5-learner minimum/)).toHaveLength(2);
+ expect(screen.getAllByText(/below the 5-learner minimum, counts hidden/)).toHaveLength(6);
  fireEvent.change(screen.getByLabelText('Learner'), { target: { value: 'synthetic-learner-1' } });
  expect(screen.queryByText('Synthetic contraindicated order')).not.toBeInTheDocument();
  fireEvent.click(screen.getByRole('button', { name: 'Download Excel' }));
@@ -43,5 +43,6 @@ it('applies school/learner scope to named safety review and Excel, with prominen
  expect(mocks.download.mock.calls[0][0]).toHaveLength(1);
  expect(mocks.download.mock.calls[0][0][0].id).toBe('synthetic-attempt-1');
  fireEvent.click(screen.getByRole('button', { name: 'Selected learner' }));
- expect(screen.getByText('Focused escalation to the senior clinician')).toBeInTheDocument();
+ expect(screen.getAllByText('Focused escalation to the senior clinician').length).toBeGreaterThan(0);
+ expect(screen.getByText('Cohort themes by rubric component')).toBeInTheDocument();
 });

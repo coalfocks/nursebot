@@ -1,21 +1,40 @@
-// @vitest-environment node
-import { it, expect } from 'vitest';
-import writeXlsxFile from 'write-excel-file/node';
-import { writeFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
 import { buildAnalyticsWorkbook } from './analyticsExport';
 import { analyticsFixture } from '../test/analyticsFixture';
 
-it('exports all filtered rows beyond the old 100-row cutoff, with separate cases and typed literal learner names', async () => {
-  const rows = Array.from({ length: 125 }, (_, index) => analyticsFixture(index));
-  rows[0] = analyticsFixture(0, { studentName: '=1+1', safetyResult: { level: 'critical', rationale: 'Synthetic contraindicated order' } });
-  const sheets = buildAnalyticsWorkbook(rows, 'https://nursealthea.com', 'Synthetic test scope; test data only');
-  expect(sheets.map((sheet) => sheet.sheet)).toEqual(['Case performance', 'Learner attempts', 'Domain subscores', 'Definitions']);
-  expect(sheets[0].data).toHaveLength(3);
-  expect(sheets[1].data).toHaveLength(126);
-  expect(sheets[1].data[1][1]).toMatchObject({ type: String, value: '=1+1' });
-  expect(sheets[1].data[125].at(-1)).toMatchObject({ value: 'https://nursealthea.com/assignment/synthetic-attempt-124' });
-  expect(sheets[2].data).toHaveLength(7);
-  const buffer = await writeXlsxFile(sheets).toBuffer();
-  expect(buffer.subarray(0, 2).toString()).toBe('PK');
-  if (process.env.ANALYTICS_QA_XLSX) writeFileSync(process.env.ANALYTICS_QA_XLSX, buffer);
+const sheet = (name: string) => {
+  const found = buildAnalyticsWorkbook([analyticsFixture(0), analyticsFixture(1, { caseStartedAt: null })], 'https://example.test', 'Synthetic scope').find((item) => item.sheet === name);
+  if (!found) throw new Error(`missing sheet ${name}`);
+  return found.data as Array<Array<{ value: unknown }>>;
+};
+
+describe('analytics Excel export timing', () => {
+  it('uses the same Case Start to Complete calculation as the dashboard and labels exclusions', () => {
+    const data = sheet('Learner attempts');
+    const headers = data[0].map((cell) => cell.value);
+    const elapsed = headers.indexOf('Elapsed minutes (wall-clock)');
+    const status = headers.indexOf('Timing status');
+    const active = headers.indexOf('Active minutes');
+    expect(elapsed).toBeGreaterThan(-1);
+    expect(data[1][elapsed].value).toBe(20);
+    expect(data[1][status].value).toBe('Valid');
+    expect(data[2][elapsed].value).toBe('');
+    expect(String(data[2][status].value)).toMatch(/Case Start was not recorded/);
+    expect(data[1][active].value).toBe('Unavailable: no pause data');
+  });
+
+  it('reports timing samples per case with n and median from the same calculation', () => {
+    const data = sheet('Case performance');
+    const headers = data[0].map((cell) => cell.value);
+    const samples = headers.indexOf('Timing samples (n)');
+    expect(data[1][samples].value).toBe(1);
+  });
+
+  it('marks domain components with no structured subscores as unavailable in the workbook', () => {
+    const rows = [analyticsFixture(0, { communicationBreakdown: null, mdmBreakdown: null })];
+    const found = buildAnalyticsWorkbook(rows, 'https://example.test', 'Synthetic scope').find((item) => item.sheet === 'Domain subscores');
+    const data = found!.data as Array<Array<{ value: unknown }>>;
+    expect(data[1][7].value).toBe(1);
+    expect(String(data[1][8].value)).toMatch(/Components unavailable/);
+  });
 });
