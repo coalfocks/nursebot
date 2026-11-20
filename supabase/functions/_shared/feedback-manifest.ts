@@ -18,12 +18,16 @@ export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): 
             ? 'progress-note'
             : eventType === 'bedside_action'
               ? 'learner-action'
-              : eventType === 'assignment_completed'
+              : eventType === 'hint_shown'
+                ? 'hint'
+                : eventType === 'assignment_completed'
                 ? 'completion'
                 : eventType === 'consultant_request' || eventType === 'consultant_message' || eventType === 'consultant_response'
                   ? 'consultant-message'
                   : 'message';
-  const title = eventType === 'student_message'
+  const title = eventType === 'hint_shown'
+    ? 'Hint opened'
+    : eventType === 'student_message'
     ? 'Student message'
     : eventType === 'nurse_message'
       ? 'Nurse message'
@@ -70,5 +74,6 @@ export const manifestEventToEvaluationEntry = (event: Record<string, unknown>): 
     channel,
     sequence: typeof event.sequence === 'number' ? event.sequence : null,
     ordering_ambiguous: event.ordering_ambiguous === true,
+    assignment_linked: Boolean(event.links && typeof event.links === 'object' && typeof (event.links as Record<string, unknown>).assignment_id === 'string'),
   };
 };
