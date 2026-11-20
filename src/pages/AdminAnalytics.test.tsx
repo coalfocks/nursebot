@@ -19,29 +19,41 @@ import AdminAnalytics from './AdminAnalytics';
 it('applies school/learner scope to named safety review and Excel, with prominent domains and minimum cohort themes', async () => {
  mocks.rows = Array.from({ length: 3 }, (_, i) => {
   const row = analyticsFixture(i, { safetyResult: i === 0 ? { level: 'critical', rationale: 'Synthetic contraindicated order', action: 'Synthetic action' } : null });
-  return { id: row.id, school_id: row.schoolId, school: { id: row.schoolId, name: row.schoolName }, is_sandbox: false, student_id: row.studentId, room_id: row.roomId, status: row.status, feedback_status: row.feedbackStatus, communication_score: row.communicationScore, mdm_score: row.mdmScore, created_at: row.createdAt, scoring_start_at: row.scoringStartAt, safety_result: row.safetyResult, completed_at: row.completedAt, communication_breakdown: row.communicationBreakdown, mdm_breakdown: row.mdmBreakdown, feedback_debrief: row.feedbackDebrief, student: { id: row.studentId, full_name: row.studentName, role: row.studentRole }, room: { id: row.roomId, room_number: row.roomNumber, specialty_id: null, specialty_ids: [] } };
+  return { id: row.id, school_id: row.schoolId, school: { id: row.schoolId, name: row.schoolName }, is_sandbox: false, student_id: row.studentId, room_id: row.roomId, status: row.status, feedback_status: row.feedbackStatus, communication_score: row.communicationScore, mdm_score: row.mdmScore, created_at: row.createdAt, scoring_start_at: row.scoringStartAt, case_started_at: row.caseStartedAt, safety_result: row.safetyResult, completed_at: row.completedAt, communication_breakdown: row.communicationBreakdown, mdm_breakdown: row.mdmBreakdown, feedback_debrief: row.feedbackDebrief, student: { id: row.studentId, full_name: row.studentName, role: row.studentRole }, room: { id: row.roomId, room_number: row.roomNumber, specialty_id: null, specialty_ids: [] } };
  });
  render(<AdminAnalytics />);
  await screen.findByRole('heading', { name: 'Domain performance and subscores' });
  expect(mocks.eq).toHaveBeenCalledWith('school_id', 'synthetic-school');
  expect(mocks.eq).toHaveBeenCalledWith('is_sandbox', false);
  expect(screen.queryByText('Eligible attempts')).not.toBeInTheDocument();
- expect(screen.getByText('Completed cases with feedback')).toBeInTheDocument();
+ expect(screen.getByText('Completed with feedback')).toBeInTheDocument();
  expect(screen.getAllByText(/3 learners/).length).toBeGreaterThan(0);
  const details = screen.getByText('Learner attempts and evidence links (3)').closest('details');
  expect(details).not.toHaveAttribute('open');
  expect(screen.getByRole('heading', { name: 'Domain performance and subscores' }).compareDocumentPosition(details!) & 4).toBe(4);
- fireEvent.click(screen.getByRole('button', { name: 'Review attempt' }));
+ // Dashboard order: cards, safety queue, domain/component, learner summary, timing, then disclosures.
+ const order = ['Completed / assigned', 'Completed with feedback', 'Safety flags for faculty review', 'Domain performance and subscores', 'Selected learner summary', 'Completion time by case']
+  .map((text) => screen.getByText(text));
+ order.slice(1).forEach((node, i) => expect(order[i].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy());
+ expect(screen.getByText('Choose a learner in the filters to see their summary.')).toBeInTheDocument();
+ expect(screen.getByText(/Average 20 min · median 20 min · valid n = 3 · completed n = 3/)).toBeInTheDocument();
+ fireEvent.click(screen.getAllByRole('button', { name: 'Review attempt' })[0]);
  expect(mocks.navigate).toHaveBeenCalledWith('/assignment/synthetic-attempt-0');
  if (process.env.ANALYTICS_QA_HTML) writeFileSync(process.env.ANALYTICS_QA_HTML, document.documentElement.outerHTML);
  fireEvent.change(screen.getByLabelText('Minimum learners per theme'), { target: { value: '5' } });
- expect(screen.getAllByText(/No evidence-backed theme meets the 5-learner minimum/)).toHaveLength(2);
+ expect(screen.getAllByText(/below the 5-learner minimum, counts hidden/)).toHaveLength(6);
  fireEvent.change(screen.getByLabelText('Learner'), { target: { value: 'synthetic-learner-1' } });
  expect(screen.queryByText('Synthetic contraindicated order')).not.toBeInTheDocument();
+ expect(screen.getByText('Based on one evaluation')).toBeInTheDocument();
+ expect(screen.getByText(/No stable behavior keys have been saved/)).toBeInTheDocument();
  fireEvent.click(screen.getByRole('button', { name: 'Download Excel' }));
  await waitFor(() => expect(mocks.download).toHaveBeenCalled());
  expect(mocks.download.mock.calls[0][0]).toHaveLength(1);
  expect(mocks.download.mock.calls[0][0][0].id).toBe('synthetic-attempt-1');
  fireEvent.click(screen.getByRole('button', { name: 'Selected learner' }));
- expect(screen.getByText('Focused escalation to the senior clinician')).toBeInTheDocument();
+ // The untagged comment appears once, in the learner summary, labeled as evaluation feedback; it is not copied under any component.
+ expect(screen.getAllByText('Focused escalation to the senior clinician')).toHaveLength(1);
+ expect(screen.getByText('Recurring themes and component evidence').closest('details')).not.toHaveTextContent('Focused escalation to the senior clinician');
+ expect(screen.getAllByText(/No saved comments are tagged to this component/).length).toBeGreaterThan(0);
+ expect(screen.getByText('Recurring themes and component evidence')).toBeInTheDocument();
 });

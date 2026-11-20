@@ -2065,6 +2065,7 @@ export type Database = {
           communication_breakdown: Json | null
           communication_score: number | null
           completed_at: string | null
+          case_started_at: string | null
           completion_hint_views: Json
           completion_token_matched: boolean | null
           created_at: string | null
@@ -2103,6 +2104,7 @@ export type Database = {
           communication_breakdown?: Json | null
           communication_score?: number | null
           completed_at?: string | null
+          case_started_at?: string | null
           completion_hint_views?: Json
           completion_token_matched?: boolean | null
           created_at?: string | null
@@ -2143,6 +2145,7 @@ export type Database = {
           communication_breakdown?: Json | null
           communication_score?: number | null
           completed_at?: string | null
+          case_started_at?: string | null
           completion_hint_views?: Json
           completion_token_matched?: boolean | null
           created_at?: string | null
