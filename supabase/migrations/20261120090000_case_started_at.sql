@@ -27,9 +27,16 @@ begin
     new.case_started_at := null;
   end if;
 
+  -- Complete is stamped by the server clock on the first transition into completed. Until now the browser
+  -- wrote completed_at from its own clock (ChatInterface.completeAssignment), so Start (server) and Complete
+  -- (client) could disagree by clock skew; a client-supplied value is ignored on that transition. This also covers
+  -- paths that complete an assignment without sending completed_at at all.
+  if new.status = 'completed' and old.status is distinct from 'completed' then
+    new.completed_at := now();
   -- Original completion time is preserved: reruns, feedback regeneration, or a repeated completion write
-  -- on an already-completed assignment cannot move or clear it.
-  if old.status = 'completed' and old.completed_at is not null and new.status = 'completed' then
+  -- on an already-completed assignment cannot move or clear it. (On prod, 15 completed rows had their
+  -- completed_at moved by a second completion on the same row; this stops that.)
+  elsif old.status = 'completed' and old.completed_at is not null and new.status = 'completed' then
     new.completed_at := old.completed_at;
   end if;
 

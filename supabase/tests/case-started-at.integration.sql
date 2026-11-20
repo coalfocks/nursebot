@@ -7,10 +7,12 @@ do $$
 declare
   a uuid := gen_random_uuid();
   b uuid := gen_random_uuid();
+  c uuid := gen_random_uuid();
   started timestamptz;
   completed timestamptz;
 begin
   insert into public.student_room_assignments (id, status) values (a, 'assigned');
+  insert into public.student_room_assignments (id, status) values (c, 'assigned');
   if (select case_started_at from public.student_room_assignments where id = a) is not null then
     raise exception 'assigned insert must not have a start';
   end if;
@@ -35,13 +37,25 @@ begin
     raise exception 'case_started_at must be immutable once set';
   end if;
 
-  -- Completion timestamp preserved across reruns.
-  update public.student_room_assignments set status = 'completed', completed_at = '2026-11-20T10:00:00Z' where id = a;
-  completed := '2026-11-20T10:00:00Z';
+  -- Complete is server time on the first transition; a client-supplied value is ignored.
+  update public.student_room_assignments set status = 'completed', completed_at = '2000-01-01T00:00:00Z' where id = a;
+  select completed_at into completed from public.student_room_assignments where id = a;
+  if completed is null or completed < now() - interval '1 minute' then
+    raise exception 'first completion must use server time, got %', completed;
+  end if;
+
+  -- Completion timestamp preserved across reruns / second completion on the same row.
   update public.student_room_assignments set status = 'completed', completed_at = '2026-11-21T10:00:00Z' where id = a;
   update public.student_room_assignments set completed_at = null where id = a;
   if (select completed_at from public.student_room_assignments where id = a) is distinct from completed then
     raise exception 'completed_at must be preserved once completed';
+  end if;
+
+  -- A completion that never went through in_progress (e.g. CaseManager) still gets a server Complete and no start.
+  update public.student_room_assignments set status = 'completed' where id = c;
+  if (select completed_at from public.student_room_assignments where id = c) is null
+     or (select case_started_at from public.student_room_assignments where id = c) is not null then
+    raise exception 'direct completion must set Complete and leave Start null';
   end if;
 
   -- Insert directly as in_progress also gets a server start.

@@ -32,11 +32,22 @@ export type AnalyticsRow = AnalyticsAssignment & {
   feedbackDebrief: Record<string, unknown> | null;
 };
 
+export type CaseTimingAttempt = {
+  assignmentId: string; studentName: string; caseLabel: string;
+  start: string | null; complete: string | null;
+  /** Complete − Start in minutes (pauses included); null when excluded. */
+  minutes: number | null; exclusion: CaseTimingExclusion | null; exclusionReason: string | null;
+};
+
 export type CaseTimingSummary = {
   /** Elapsed minutes = Complete − Case Start, including any pauses. */
   validSamples: number;
   completedAttempts: number;
+  averageMinutes: number | null;
+  medianMinutes: number | null;
   exclusions: Record<CaseTimingExclusion, number>;
+  /** Drill-through: every completed attempt in scope with Start, Complete, duration and exclusion reason. */
+  attempts: CaseTimingAttempt[];
 };
 
 export type DashboardMetrics = CohortMetrics & {
@@ -274,7 +285,7 @@ export type CasePerformance = {
   attempts: number; completed: number; assessed: number;
   communicationAverage: number | null; reasoningAverage: number | null;
   communicationSamples: number; reasoningSamples: number;
-  medianCompletionMinutes: number | null; completionTimeSampleSize: number;
+  medianCompletionMinutes: number | null; averageCompletionMinutes: number | null; completionTimeSampleSize: number;
 };
 
 export const isAssessed = (row: AnalyticsAssignment) => row.status === 'completed' && row.feedbackStatus === 'completed';
@@ -390,31 +401,36 @@ export const computeDashboardMetrics = (inputRows: AnalyticsRow[], eligibleLearn
       return { roomId, caseLabel: attempts[0].roomNumber, schoolName: attempts[0].schoolName ?? 'Unknown school', specialty: attempts[0].specialty,
         attempts: attempts.length, completed: attempts.filter((row) => row.status === 'completed').length, assessed: scored.length,
         communicationAverage: average(communication), reasoningAverage: average(reasoning), communicationSamples: communication.length, reasoningSamples: reasoning.length,
-        medianCompletionMinutes: median(times), completionTimeSampleSize: times.length };
+        medianCompletionMinutes: median(times), averageCompletionMinutes: average(times), completionTimeSampleSize: times.length };
     }).sort((a, b) => a.caseLabel.localeCompare(b.caseLabel) || a.roomId - b.roomId),
   };
 };
 
 const caseTimingSummary = (rows: AnalyticsRow[]): CaseTimingSummary => {
   const exclusions: Record<CaseTimingExclusion, number> = { start_not_recorded: 0, completion_not_recorded: 0, invalid_timestamp: 0, reversed_timestamps: 0 };
-  let validSamples = 0;
-  let completedAttempts = 0;
+  const attempts: CaseTimingAttempt[] = [];
+  const minutes: number[] = [];
   rows.forEach((row) => {
     const timing = caseTimingFor(row);
     if (!timing) return;
-    completedAttempts += 1;
-    if ('minutes' in timing) validSamples += 1;
-    else exclusions[timing.excluded] += 1;
+    const base = { assignmentId: row.id, studentName: row.studentName, caseLabel: row.roomNumber, start: row.caseStartedAt ?? null, complete: row.completedAt };
+    if ('minutes' in timing) {
+      minutes.push(timing.minutes);
+      attempts.push({ ...base, minutes: timing.minutes, exclusion: null, exclusionReason: null });
+    } else {
+      exclusions[timing.excluded] += 1;
+      attempts.push({ ...base, minutes: null, exclusion: timing.excluded, exclusionReason: CASE_TIMING_EXCLUSION_LABELS[timing.excluded] });
+    }
   });
-  return { validSamples, completedAttempts, exclusions };
+  attempts.sort((a, b) => a.caseLabel.localeCompare(b.caseLabel) || a.studentName.localeCompare(b.studentName) || a.assignmentId.localeCompare(b.assignmentId));
+  return { validSamples: minutes.length, completedAttempts: attempts.length, averageMinutes: average(minutes), medianMinutes: median(minutes), exclusions, attempts };
 };
 
 /**
- * Cohort themes grouped by rubric component (the six structured subscores).
+ * Rubric-component evidence (the six structured subscores).
  * - Component drill-through shows each attempt's OWN saved explanation and evidence IDs for that component only.
- * - Comments are never fanned out across components. A recurring theme requires a stable component tag on the
- *   saved comment (`skill_key`, `component_key`, `skill_tags`, or `rubric_components`) plus a minimum number of
- *   distinct KNOWN learners. Untagged comments stay attempt-level and are not attached to any skill.
+ * - Comments are never fanned out across components. A component tag (`skill_key`, `component_key`,
+ *   `skill_tags`, `rubric_components`) only files a comment under that component as EVIDENCE; it never makes a theme.
  * - Rows without a studentId never count toward distinct learners or the minimum threshold.
  */
 export type RubricComponentAttempt = {
@@ -422,7 +438,7 @@ export type RubricComponentAttempt = {
   /** The saved explanation for this component on this attempt (null when none was saved). */
   explanation: string | null; evidenceIds: string[];
 };
-export type TaggedComponentComment = { assignmentId: string; learnerId: string; studentName: string; kind: 'strength' | 'improvement'; text: string; evidenceIds: string[] };
+export type TaggedComponentComment = { assignmentId: string; learnerId: string; studentName: string; kind: 'strength' | 'improvement'; text: string; evidenceIds: string[]; behaviorKey: string | null };
 export type RubricComponentTheme = {
   domain: string; key: string; label: string; min: number; max: number;
   validLearners: number; validAttempts: number; atMaxLearners: number; belowMaxLearners: number; unavailableAttempts: number;
@@ -433,8 +449,8 @@ export type RubricComponentTheme = {
   /** Comments carrying a stable tag for this component, from known learners only. */
   taggedComments: TaggedComponentComment[];
   taggedLearners: number;
-  /** True only when taggedLearners >= minimumLearners. Otherwise the UI must say "not enough tagged evidence". */
-  recurringTheme: boolean;
+  // Deliberately no `recurringTheme` flag: a broad component tag shared by unrelated comments is component
+  // evidence only. Recurrence is decided by extractRecurringBehaviorThemes (same behavior key + same direction).
 };
 
 const COMPONENT_KEYS: ReadonlySet<string> = new Set(SUBSCORE_DEFINITIONS.map((d) => d.key));
@@ -484,7 +500,7 @@ export const extractRubricComponentThemes = (rows: AnalyticsRow[], minimumLearne
           const text = narrativeText(item as Narrative, kind === 'improvement');
           const evidenceIds = narrativeEvidenceIds(item as Narrative);
           if (!text || evidenceIds.length === 0) return;
-          taggedComments.push({ assignmentId: row.id, learnerId, studentName: row.studentName, kind, text, evidenceIds });
+          taggedComments.push({ assignmentId: row.id, learnerId, studentName: row.studentName, kind, text, evidenceIds, behaviorKey: behaviorKeyFor(item) });
         });
       };
       collect(row.feedbackDebrief?.strengths, 'strength');
@@ -499,7 +515,134 @@ export const extractRubricComponentThemes = (rows: AnalyticsRow[], minimumLearne
       belowMaxLearners: [...scoresByLearner.values()].filter((scores) => scores.some((score) => score < definition.max)).length,
       suppressed: validLearners < minimumLearners, minimumLearners,
       attempts: attempts.sort((a, b) => a.studentName.localeCompare(b.studentName) || a.assignmentId.localeCompare(b.assignmentId)),
-      taggedComments, taggedLearners, recurringTheme: taggedLearners >= minimumLearners,
+      taggedComments, taggedLearners,
     };
   });
+};
+
+/**
+ * Stable behavior key slot. A future feedback generator may emit `behavior_key` (alias `behaviorKey`) on each saved
+ * strength/improvement, e.g. "asks_about_allergies". The generator emits none today, so recurring themes are empty
+ * until it does. Keys are matched EXACTLY after trimming; nothing is derived from free text.
+ */
+export const BEHAVIOR_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+export const behaviorKeyFor = (item: Record<string, unknown>): string | null => {
+  const raw = item.behavior_key ?? item.behaviorKey;
+  if (typeof raw !== 'string') return null;
+  const key = raw.trim();
+  return key.length >= 3 && key.length <= 80 && BEHAVIOR_KEY_PATTERN.test(key) ? key : null;
+};
+
+export type CommentDirection = 'strength' | 'improvement';
+export type SavedComment = {
+  assignmentId: string; learnerId: string | null; studentName: string; caseLabel: string; at: string | null;
+  kind: CommentDirection; text: string; evidenceIds: string[];
+  /** Rubric component keys carried by the saved comment's tags; empty = untagged (older) comment. */
+  componentKeys: string[]; behaviorKey: string | null;
+};
+
+/** Reads every saved strength/improvement on an attempt once; used by the learner overview and recurring themes. */
+export const savedCommentsFor = (row: AnalyticsRow): SavedComment[] => {
+  const debrief = row.feedbackDebrief ?? {};
+  const out: SavedComment[] = [];
+  const read = (values: unknown, kind: CommentDirection) => {
+    if (!Array.isArray(values)) return;
+    values.forEach((raw) => {
+      if (!raw || typeof raw !== 'object') return;
+      const item = raw as Record<string, unknown>;
+      const text = narrativeText(item as Narrative, kind === 'improvement');
+      if (!text) return;
+      out.push({ assignmentId: row.id, learnerId: knownLearnerId(row), studentName: row.studentName, caseLabel: row.roomNumber, at: row.completedAt ?? row.createdAt,
+        kind, text, evidenceIds: narrativeEvidenceIds(item as Narrative), componentKeys: commentTagsFor(item), behaviorKey: behaviorKeyFor(item) });
+    });
+  };
+  read(debrief.strengths, 'strength');
+  read(debrief.improvements, 'improvement');
+  read(debrief.growth_areas, 'improvement');
+  return out;
+};
+
+export type BehaviorTheme = { behaviorKey: string; direction: CommentDirection; learners: number; comments: SavedComment[] };
+export type RecurringBehaviorThemes = {
+  minimumLearners: number;
+  recurringStrengths: BehaviorTheme[];
+  recurringNeeds: BehaviorTheme[];
+  /** Keyed behaviors below the threshold: shown as counts only, never claimed as recurring. */
+  belowThreshold: BehaviorTheme[];
+  keyedComments: number;
+};
+
+/**
+ * A recurring strength/need is the SAME behavior key in the SAME direction across at least `minimumLearners`
+ * distinct known learners (repeat attempts by one learner count once). Positive and improvement stay separate.
+ * Evidence ids are required so a claim always links back to something the learner did.
+ */
+export const extractRecurringBehaviorThemes = (rows: AnalyticsRow[], minimumLearners = 3): RecurringBehaviorThemes => {
+  const groups = new Map<string, BehaviorTheme>();
+  let keyedComments = 0;
+  uniqueByAssignmentId(rows).filter(isAssessed).forEach((row) => {
+    savedCommentsFor(row).forEach((comment) => {
+      if (!comment.behaviorKey || comment.evidenceIds.length === 0) return;
+      keyedComments += 1;
+      if (!comment.learnerId) return;
+      const id = `${comment.kind}\u0000${comment.behaviorKey}`;
+      const group = groups.get(id) ?? { behaviorKey: comment.behaviorKey, direction: comment.kind, learners: 0, comments: [] };
+      group.comments.push(comment);
+      group.learners = new Set(group.comments.map((item) => item.learnerId)).size;
+      groups.set(id, group);
+    });
+  });
+  const all = [...groups.values()].sort((a, b) => b.learners - a.learners || a.behaviorKey.localeCompare(b.behaviorKey));
+  const meets = (theme: BehaviorTheme) => theme.learners >= minimumLearners;
+  return {
+    minimumLearners, keyedComments,
+    recurringStrengths: all.filter((theme) => theme.direction === 'strength' && meets(theme)),
+    recurringNeeds: all.filter((theme) => theme.direction === 'improvement' && meets(theme)),
+    belowThreshold: all.filter((theme) => !meets(theme)),
+  };
+};
+
+export type LearnerOverview = {
+  evaluatedCases: number;
+  basedOnOneEvaluation: boolean;
+  firstDate: string | null; lastDate: string | null;
+  strengths: SavedComment[];
+  nextPractice: SavedComment[];
+  /** Saved comments with no linked evidence. Kept visible, never promoted to "supported", never dropped. */
+  unsupported: SavedComment[];
+  components: Array<{ key: string; label: string; domain: string; min: number; max: number; entries: RubricComponentAttempt[]; taggedComments: SavedComment[] }>;
+  /** Older comments without a component tag: shown once, labeled evaluation feedback, never copied under the six skills. */
+  evaluationFeedback: SavedComment[];
+  sources: Array<{ assignmentId: string; caseLabel: string; at: string | null }>;
+};
+
+/**
+ * Deterministic per-learner overview from SAVED debrief strengths/improvements and component explanations.
+ * No model calls. `rows` must already be scoped to one learner; assessed attempts only.
+ */
+export const buildLearnerOverview = (rows: AnalyticsRow[]): LearnerOverview => {
+  const assessedRows = uniqueByAssignmentId(rows).filter(isAssessed)
+    .sort((a, b) => (a.completedAt ?? a.createdAt ?? '').localeCompare(b.completedAt ?? b.createdAt ?? '') || a.id.localeCompare(b.id));
+  const comments = assessedRows.flatMap(savedCommentsFor);
+  const dates = assessedRows.map((row) => (row.completedAt ?? row.createdAt)?.slice(0, 10)).filter((d): d is string => Boolean(d));
+  const supported = (c: SavedComment) => c.evidenceIds.length > 0;
+  const components = SUBSCORE_DEFINITIONS.map((definition) => ({
+    key: definition.key, label: definition.label, domain: definition.domain, min: definition.min, max: definition.max,
+    entries: assessedRows.flatMap((row): RubricComponentAttempt[] => {
+      const score = componentScoreFor(row, definition);
+      return score == null ? [] : [{ assignmentId: row.id, learnerId: knownLearnerId(row), studentName: row.studentName, caseLabel: row.roomNumber, score, ...componentDetailFor(row, definition) }];
+    }),
+    taggedComments: comments.filter((c) => c.componentKeys.includes(definition.key)),
+  }));
+  return {
+    evaluatedCases: assessedRows.length,
+    basedOnOneEvaluation: assessedRows.length === 1,
+    firstDate: dates[0] ?? null, lastDate: dates[dates.length - 1] ?? null,
+    strengths: comments.filter((c) => c.kind === 'strength' && supported(c)),
+    nextPractice: comments.filter((c) => c.kind === 'improvement' && supported(c)),
+    unsupported: comments.filter((c) => !supported(c)),
+    components,
+    evaluationFeedback: comments.filter((c) => c.componentKeys.length === 0),
+    sources: assessedRows.map((row) => ({ assignmentId: row.id, caseLabel: row.roomNumber, at: row.completedAt ?? row.createdAt })),
+  };
 };
