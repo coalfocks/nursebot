@@ -115,3 +115,20 @@ export const hasMeaningfulEvidence = (sourceEventIds: string[]) => sourceEventId
 
 export const isLearnerAuthoredEvidence = (entry: { actor_role?: string | null }) =>
   ['student', 'user', 'learner'].includes((entry.actor_role ?? '').toLowerCase());
+
+// Approved safety mapping (rubric section C): none = 0, concern = -1, critical = -2.
+// not_assessed means the safety review is unavailable, so the deduction must be unscored.
+export const SAFETY_DEDUCTION_BY_LEVEL: Record<'none' | 'concern' | 'critical', number> = { none: 0, concern: -1, critical: -2 };
+
+// Safety level and safety deduction must agree. Returns error strings; any entry
+// means the run must not save. The validator never picks which field is right.
+export const safetyConsistencyErrors = (evaluation: Pick<EvaluationScoringResponse, 'safety_result' | 'mdm_breakdown'>): string[] => {
+  const level = evaluation.safety_result.level;
+  const deduction = evaluation.mdm_breakdown.safety_deduction.score;
+  if (level === 'not_assessed') {
+    return deduction == null ? [] : [`safety mismatch: level is not_assessed but the safety deduction is ${deduction}`];
+  }
+  if (deduction == null) return [`safety mismatch: level is ${level} but the safety deduction is unscored`];
+  const expected = SAFETY_DEDUCTION_BY_LEVEL[level];
+  return deduction === expected ? [] : [`safety mismatch: level ${level} requires a deduction of ${expected} but the saved deduction is ${deduction}`];
+};
