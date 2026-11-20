@@ -1,34 +1,31 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { checkPendingFeedback } from '../lib/feedbackService';
+import { feedbackProcessorConfig, type FeedbackProcessorConfig } from '../lib/feedbackProcessorConfig';
 import { hasAdminAccess } from '../lib/roles';
 
 const POLLING_INTERVAL = 30000; // Check every 30 seconds
 
-export default function FeedbackProcessor() {
+type Props = { config?: FeedbackProcessorConfig };
+
+// Background auto-runner. Opt-in only: does nothing unless VITE_FEEDBACK_PROCESSOR_ENABLED === 'true'.
+export default function FeedbackProcessor({ config = feedbackProcessorConfig }: Props) {
   const { profile } = useAuthStore();
-  const timerRef = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
+    if (!config.enabled) return;
     // Only run for admin users
     if (!hasAdminAccess(profile)) return;
 
-    // Initial check
-    checkPendingFeedback();
+    const run = () => { void checkPendingFeedback({ assignmentIds: config.assignmentIds }); };
 
-    // Set up periodic checking
-    timerRef.current = setInterval(() => {
-      checkPendingFeedback();
-    }, POLLING_INTERVAL);
+    // Initial check, then periodic checks
+    run();
+    const timer = setInterval(run, POLLING_INTERVAL);
 
-    // Cleanup
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [profile]);
+    return () => clearInterval(timer);
+  }, [profile, config]);
 
   // This is a background component, it doesn't render anything
   return null;
-} 
+}

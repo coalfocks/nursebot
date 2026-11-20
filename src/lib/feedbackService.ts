@@ -98,19 +98,29 @@ export async function generateFeedback(assignmentId: string): Promise<void> {
   }
 }
 
-export async function checkPendingFeedback(): Promise<void> {
-  const { data: pendingAssignments, error } = await supabase
+export interface CheckPendingFeedbackOptions {
+  /** null/undefined = all pending completed assignments; [] = nothing; otherwise only these assignment IDs. */
+  assignmentIds?: string[] | null;
+}
+
+export async function checkPendingFeedback(options: CheckPendingFeedbackOptions = {}): Promise<void> {
+  const scope = options.assignmentIds ?? null;
+  if (scope && scope.length === 0) return;
+
+  let query = supabase
     .from('student_room_assignments')
     .select('id')
     .eq('feedback_status', 'pending')
     .eq('status', 'completed');
+  if (scope) query = query.in('id', scope);
+  const { data: pendingAssignments, error } = await query;
 
   if (error) {
     console.error('Error checking pending feedback:', error);
     return;
   }
 
-  for (const assignment of pendingAssignments) {
+  for (const assignment of pendingAssignments ?? []) {
     try {
       await generateFeedback(assignment.id);
       // Add a small delay between processing assignments to avoid overwhelming the system
@@ -119,4 +129,4 @@ export async function checkPendingFeedback(): Promise<void> {
       console.error(`Error generating feedback for assignment ${assignment.id}:`, error);
     }
   }
-} 
+}
