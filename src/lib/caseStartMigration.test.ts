@@ -17,4 +17,9 @@ describe('case_started_at / completed_at trigger migration', () => {
   it('preserves the original completed_at on completed assignments', () => {
     expect(sql).toMatch(/old\.status = 'completed' and old\.completed_at is not null and new\.status = 'completed'[\s\S]*new\.completed_at := old\.completed_at/i);
   });
+  it('stamps Complete from the server clock on the first transition to completed and ignores client values', () => {
+    expect(sql).toMatch(/new\.status = 'completed' and old\.status is distinct from 'completed' then\s+new\.completed_at := now\(\)/i);
+    // the server stamp must come before the preserve branch so a client value cannot win on the first transition
+    expect(sql.search(/new\.completed_at := now\(\)/i)).toBeLessThan(sql.search(/new\.completed_at := old\.completed_at/i));
+  });
 });

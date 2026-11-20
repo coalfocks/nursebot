@@ -6,10 +6,10 @@ import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
 import { useAuthStore } from '../stores/authStore';
 import { hasAdminAccess, isSuperAdmin } from '../lib/roles';
 import { supabase } from '../lib/supabase';
-import { computeDashboardMetrics, computeGroupedAnalytics, extractRubricComponentThemes, isAssessed, safetyFlagFor, type AnalyticsRow } from '../lib/analyticsMetrics';
+import { buildLearnerOverview, computeDashboardMetrics, computeGroupedAnalytics, extractRecurringBehaviorThemes, extractRubricComponentThemes, isAssessed, type AnalyticsRow } from '../lib/analyticsMetrics';
 
 import { downloadAnalyticsWorkbook } from '../lib/analyticsExport';
-import { CaseTiming, DomainPerformance, PagedRows, RubricComponentThemes, SafetyReview } from '../components/admin/AnalyticsPanels';
+import { CaseTiming, DomainPerformance, LearnerSummary, PagedRows, RecurringBehaviorThemesPanel, RubricComponentThemes, SafetyReview } from '../components/admin/AnalyticsPanels';
 
 type RawAnalyticsRecord = {
   id: string;
@@ -157,6 +157,10 @@ export default function AdminAnalytics() {
   const assessedFeedbackRows = feedbackRows.filter(isAssessed);
   const rubricThemes = useMemo(() => extractRubricComponentThemes(assessedFeedbackRows, feedbackScope === 'cohort' ? minimumThemeLearners : 1), [assessedFeedbackRows, feedbackScope, minimumThemeLearners]);
 
+  const learnerOverview = useMemo(() => learnerId === 'all' ? null : buildLearnerOverview(filteredRows.filter((row) => row.studentId === learnerId)), [filteredRows, learnerId]);
+  const learnerName = learnerId === 'all' ? '' : rows.find((row) => row.studentId === learnerId)?.studentName ?? 'Selected learner';
+  const behaviorThemes = useMemo(() => extractRecurringBehaviorThemes(assessedFeedbackRows, feedbackScope === 'cohort' ? minimumThemeLearners : 1), [assessedFeedbackRows, feedbackScope, minimumThemeLearners]);
+
   const exportExcel = async () => {
     setExporting(true); setExportError(null);
     try {
@@ -183,23 +187,22 @@ export default function AdminAnalytics() {
       {exportError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{exportError}</p>}
       <div className="flex justify-end print:hidden"><button type="button" onClick={() => window.print()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">Print current view</button></div>
       {loading ? <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-600"><Loader2 className="mx-auto h-6 w-6 animate-spin" /><p className="mt-2">Loading authorized analytics…</p></div> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">{error}</div> : !filteredRows.length ? <EmptyState /> : <>
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[
-          ['Completed / assigned', `${metrics.completedAssignments} / ${metrics.eligibleAssignments}`, `${pct(metrics.completionRate)} completed`],
-          ['Completed cases with feedback', `${metrics.assessedAssignments} / ${metrics.completedAssignments}`, `${pct(metrics.assessmentCoverageRate)} of completed attempts have saved feedback`],
-          ['Learners participating', `${metrics.participatingLearners} / ${metrics.eligibleLearners}`, pct(metrics.participationRate)],
-          ['Safety flags to review', filteredRows.filter((row) => row.status === 'completed' && safetyFlagFor(row)).length, 'Named learners and cases below'],
+        <section className="grid gap-4 md:grid-cols-2">{[
+          ['Completed / assigned', `${metrics.completedAssignments} / ${metrics.eligibleAssignments}`, `${pct(metrics.completionRate)} completed · ${metrics.participatingLearners} of ${metrics.eligibleLearners} learners participating`],
+          ['Completed with feedback', `${metrics.assessedAssignments} / ${metrics.completedAssignments}`, `${pct(metrics.assessmentCoverageRate)} of completed attempts have saved feedback`],
         ].map(([label, value, detail]) => <div key={String(label)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>)}</section>
-        <DomainPerformance metrics={metrics} />
         <SafetyReview rows={filteredRows} onOpen={(id) => navigate(`/assignment/${id}`)} />
-        <Panel title="Completion time by case" subtitle="Case Start (first opened) to Complete. Wall-clock only; pauses are not recorded."><CaseTiming metrics={metrics} /></Panel>
-        <Panel title="Case performance — Excel download" subtitle="Keep the page focused on teaching priorities. The workbook includes every filtered case and learner attempt, domain scores, all six subscores, safety flags, timing samples, and evidence links."><button onClick={exportExcel} disabled={exporting} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-3 py-2 text-sm text-blue-700 disabled:opacity-50"><Download className="h-4 w-4" />{exporting ? 'Preparing Excel…' : 'Download case and learner Excel'}</button></Panel>
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="font-semibold text-slate-900">Cohort themes by rubric component</h2>
-          <p className="mt-1 text-xs text-slate-600">Grouped by the six rubric components, not by comment text, so personalized feedback still counts. Each count is distinct learners with a valid structured score; repeated attempts by one learner count once.</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2"><button type="button" onClick={() => setFeedbackScope('cohort')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${feedbackScope === 'cohort' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Cohort themes</button><button type="button" disabled={learnerId === 'all'} onClick={() => setFeedbackScope('learner')} className={`rounded-md px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${feedbackScope === 'learner' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Selected learner</button><span className="text-xs text-slate-500">{feedbackScope === 'learner' ? learnerId === 'all' ? 'Choose a learner first.' : `${assessedFeedbackRows.length} selected-learner assessed attempt${assessedFeedbackRows.length === 1 ? '' : 's'}` : `${assessedFeedbackRows.length} assessed/cohort-filtered attempt${assessedFeedbackRows.length === 1 ? '' : 's'}`}</span></div>
+        <DomainPerformance metrics={metrics} />
+        <Panel title="Selected learner summary" subtitle="Strengths and next practice goals taken from this learner's saved evaluations, with links to the source case and evaluation.">{learnerOverview ? <LearnerSummary overview={learnerOverview} learnerName={learnerName} onOpen={(path) => navigate(`/assignment/${path}`)} /> : <p className="text-sm text-slate-600">Choose a learner in the filters to see their summary.</p>}</Panel>
+        <Panel title="Completion time by case" subtitle="Complete − Start, pauses included. Valid n counts attempts with both timestamps; completed n counts all completed attempts."><CaseTiming metrics={metrics} /></Panel>
+        <details className="rounded-2xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-semibold text-slate-900">Recurring themes and component evidence</summary>
+          <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" onClick={() => setFeedbackScope('cohort')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${feedbackScope === 'cohort' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Cohort themes</button><button type="button" disabled={learnerId === 'all'} onClick={() => setFeedbackScope('learner')} className={`rounded-md px-3 py-1.5 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40 ${feedbackScope === 'learner' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700'}`}>Selected learner</button><span className="text-xs text-slate-500">{feedbackScope === 'learner' ? learnerId === 'all' ? 'Choose a learner first.' : `${assessedFeedbackRows.length} selected-learner assessed attempt${assessedFeedbackRows.length === 1 ? '' : 's'}` : `${assessedFeedbackRows.length} assessed/cohort-filtered attempt${assessedFeedbackRows.length === 1 ? '' : 's'}`}</span></div>
           {feedbackScope === 'cohort' && <label className="mt-3 flex items-center gap-2 text-xs text-slate-600">Minimum learners per theme<select aria-label="Minimum learners per theme" value={minimumThemeLearners} onChange={(event) => setMinimumThemeLearners(Number(event.target.value))} className="rounded border px-2 py-1"><option value={3}>3 learners</option><option value={5}>5 learners</option></select></label>}
+          <RecurringBehaviorThemesPanel themes={behaviorThemes} />
+          <h3 className="mt-4 text-sm font-semibold text-slate-900">Component evidence</h3>
           <RubricComponentThemes themes={rubricThemes} scope={feedbackScope} minimumLearners={feedbackScope === 'cohort' ? minimumThemeLearners : 1} onOpen={(id) => navigate(`/assignment/${id}`)} />
-        </section>
+        </details>
+        <Panel title="Excel download" subtitle="The workbook uses exactly the filters above and the same timing, summary, and score calculations as this page, including every case and learner attempt."><button onClick={exportExcel} disabled={exporting} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-3 py-2 text-sm text-blue-700 disabled:opacity-50"><Download className="h-4 w-4" />{exporting ? 'Preparing Excel…' : 'Download case and learner Excel'}</button></Panel>
         <details className="rounded-2xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-semibold text-slate-900">Activity trends and cohort comparison</summary><div className="mt-4 space-y-5"><Panel title="Attempts over time" subtitle="Assignment activity, not time-on-task."><PagedRows rows={metrics.trend} label="activity dates">{(dates) => <div className="space-y-3">{dates.map((point) => <div key={point.label} className="grid grid-cols-[7rem_1fr_8rem] items-center gap-3 text-sm"><span>{point.label}</span><div className="h-5 rounded bg-slate-100"><div className="h-5 rounded bg-blue-500" style={{ width: `${(point.attempts / maxTrend) * 100}%` }} /></div><span className="text-right text-xs text-slate-600">{point.completed}/{point.attempts} complete</span></div>)}</div>}</PagedRows></Panel>
         <GroupedTable rows={filteredRows} groupBy="specialty" />
         {isSuperAdmin(profile) && <GroupedTable rows={filteredRows} groupBy="school" />}</div></details>

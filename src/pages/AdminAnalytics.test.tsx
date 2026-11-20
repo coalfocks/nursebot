@@ -26,11 +26,17 @@ it('applies school/learner scope to named safety review and Excel, with prominen
  expect(mocks.eq).toHaveBeenCalledWith('school_id', 'synthetic-school');
  expect(mocks.eq).toHaveBeenCalledWith('is_sandbox', false);
  expect(screen.queryByText('Eligible attempts')).not.toBeInTheDocument();
- expect(screen.getByText('Completed cases with feedback')).toBeInTheDocument();
+ expect(screen.getByText('Completed with feedback')).toBeInTheDocument();
  expect(screen.getAllByText(/3 learners/).length).toBeGreaterThan(0);
  const details = screen.getByText('Learner attempts and evidence links (3)').closest('details');
  expect(details).not.toHaveAttribute('open');
  expect(screen.getByRole('heading', { name: 'Domain performance and subscores' }).compareDocumentPosition(details!) & 4).toBe(4);
+ // Dashboard order: cards, safety queue, domain/component, learner summary, timing, then disclosures.
+ const order = ['Completed / assigned', 'Completed with feedback', 'Safety flags for faculty review', 'Domain performance and subscores', 'Selected learner summary', 'Completion time by case']
+  .map((text) => screen.getByText(text));
+ order.slice(1).forEach((node, i) => expect(order[i].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy());
+ expect(screen.getByText('Choose a learner in the filters to see their summary.')).toBeInTheDocument();
+ expect(screen.getByText(/Average 20 min · median 20 min · valid n = 3 · completed n = 3/)).toBeInTheDocument();
  fireEvent.click(screen.getAllByRole('button', { name: 'Review attempt' })[0]);
  expect(mocks.navigate).toHaveBeenCalledWith('/assignment/synthetic-attempt-0');
  if (process.env.ANALYTICS_QA_HTML) writeFileSync(process.env.ANALYTICS_QA_HTML, document.documentElement.outerHTML);
@@ -38,12 +44,16 @@ it('applies school/learner scope to named safety review and Excel, with prominen
  expect(screen.getAllByText(/below the 5-learner minimum, counts hidden/)).toHaveLength(6);
  fireEvent.change(screen.getByLabelText('Learner'), { target: { value: 'synthetic-learner-1' } });
  expect(screen.queryByText('Synthetic contraindicated order')).not.toBeInTheDocument();
+ expect(screen.getByText('Based on one evaluation')).toBeInTheDocument();
+ expect(screen.getByText(/No stable behavior keys have been saved/)).toBeInTheDocument();
  fireEvent.click(screen.getByRole('button', { name: 'Download Excel' }));
  await waitFor(() => expect(mocks.download).toHaveBeenCalled());
  expect(mocks.download.mock.calls[0][0]).toHaveLength(1);
  expect(mocks.download.mock.calls[0][0][0].id).toBe('synthetic-attempt-1');
  fireEvent.click(screen.getByRole('button', { name: 'Selected learner' }));
- expect(screen.queryByText('Focused escalation to the senior clinician')).not.toBeInTheDocument();
- expect(screen.getAllByText(/Not enough tagged evidence/).length).toBeGreaterThan(0);
- expect(screen.getByText('Cohort themes by rubric component')).toBeInTheDocument();
+ // The untagged comment appears once, in the learner summary, labeled as evaluation feedback; it is not copied under any component.
+ expect(screen.getAllByText('Focused escalation to the senior clinician')).toHaveLength(1);
+ expect(screen.getByText('Recurring themes and component evidence').closest('details')).not.toHaveTextContent('Focused escalation to the senior clinician');
+ expect(screen.getAllByText(/No saved comments are tagged to this component/).length).toBeGreaterThan(0);
+ expect(screen.getByText('Recurring themes and component evidence')).toBeInTheDocument();
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ANALYTICS_QUERY_CONTRACT, completionMinutesFor, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, extractEvidenceBackedThemes, extractRubricComponentThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
+import { ANALYTICS_QUERY_CONTRACT, completionMinutesFor, computeCohortMetrics, computeDashboardMetrics, computeGroupedAnalytics, buildLearnerOverview, extractEvidenceBackedThemes, extractRecurringBehaviorThemes, extractRubricComponentThemes, formatCompletionDuration, safetyFlagFor, type AnalyticsRow } from './analyticsMetrics';
 
 describe('formatCompletionDuration', () => {
   it('formats minutes and larger durations responsively', () => {
@@ -251,26 +251,26 @@ describe('cohort themes by rubric component', () => {
     expect(JSON.stringify(themes)).not.toContain('Personal tip');
   });
 
-  it('does not fan a whole-attempt documentation comment out under every skill; untagged comments yield no recurring theme', () => {
+  it('does not fan a whole-attempt documentation comment out under every skill; untagged comments are not attached to any component', () => {
     const themes = extractRubricComponentThemes([scored('a', 'one', 2), scored('b', 'two', 2), scored('c', 'three', 2)], 3);
     themes.forEach((theme) => {
       expect(JSON.stringify(theme)).not.toContain(DOC_COMMENT);
       expect(theme.taggedComments).toEqual([]);
-      expect(theme.recurringTheme).toBe(false);
       expect(theme.taggedLearners).toBe(0);
     });
   });
 
-  it('builds a recurring theme only from tagged comments with enough distinct known learners', () => {
+  it('files tagged comments under their own component as evidence only (known learners)', () => {
     const tagged = (id: string, studentId: string | null) => scored(id, studentId, 2, { feedbackDebrief: { strengths: [
       { text: DOC_COMMENT, skill_key: 'clinical_reasoning_documentation', evidence_event_ids: [`doc-${id}`] },
       { text: 'Untagged general praise', evidence_event_ids: [`g-${id}`] },
     ], improvements: [] } });
     const two = extractRubricComponentThemes([tagged('a', 'one'), tagged('b', 'two')], 3);
-    expect(find(two, 'clinical_reasoning_documentation')).toMatchObject({ taggedLearners: 2, recurringTheme: false });
+    expect(find(two, 'clinical_reasoning_documentation')).toMatchObject({ taggedLearners: 2 });
     const three = extractRubricComponentThemes([tagged('a', 'one'), tagged('b', 'two'), tagged('c', 'three')], 3);
     const doc = find(three, 'clinical_reasoning_documentation');
-    expect(doc).toMatchObject({ taggedLearners: 3, recurringTheme: true });
+    expect(doc).toMatchObject({ taggedLearners: 3 });
+    expect(doc).not.toHaveProperty('recurringTheme');
     expect(doc.taggedComments.every((comment) => comment.text === DOC_COMMENT && comment.evidenceIds.length > 0)).toBe(true);
     expect(find(three, 'focused_information_gathering').taggedComments).toEqual([]);
     expect(JSON.stringify(three)).not.toContain('Untagged general praise');
@@ -282,7 +282,7 @@ describe('cohort themes by rubric component', () => {
     expect(focused).toMatchObject({ validLearners: 0, atMaxLearners: 0, unknownLearnerAttempts: 3, suppressed: true });
     const tagged = (id: string) => scored(id, null, 2, { feedbackDebrief: { strengths: [{ text: DOC_COMMENT, skill_key: 'clinical_reasoning_documentation', evidence_event_ids: ['e'] }], improvements: [] } });
     const doc = find(extractRubricComponentThemes([tagged('a'), tagged('b'), tagged('c')], 3), 'clinical_reasoning_documentation');
-    expect(doc).toMatchObject({ taggedLearners: 0, recurringTheme: false, suppressed: true });
+    expect(doc).toMatchObject({ taggedLearners: 0, suppressed: true });
   });
 
   it('suppresses components below the learner minimum and counts repeated attempts once per learner', () => {
@@ -293,5 +293,118 @@ describe('cohort themes by rubric component', () => {
   it('excludes unassessed attempts and reports attempts lacking a component as unavailable', () => {
     const themes = extractRubricComponentThemes([scored('a', 'one', 2), scored('pending', 'two', 2, { feedbackStatus: 'pending' }), analyticsRow({ id: 'no-breakdown', studentId: 'three' })], 1);
     expect(find(themes, 'focused_information_gathering')).toMatchObject({ validLearners: 1, validAttempts: 1, unavailableAttempts: 1, suppressed: false });
+  });
+});
+
+const learnerRow = (id: string, studentId: string | null, debrief: Record<string, unknown>, extra: Partial<AnalyticsRow> = {}) => analyticsRow({ id, studentId, studentName: studentId ?? 'Unknown learner', feedbackDebrief: debrief, ...extra });
+const c = (text: string, extra: Record<string, unknown> = {}) => ({ text, evidence_event_ids: ['ev'], ...extra });
+
+describe('recurring themes need the same behavior and direction', () => {
+  it('does not treat a broad component tag shared by unrelated comments as a recurring theme', () => {
+    const tag = { skill_key: 'focused_information_gathering' };
+    const rows = [
+      learnerRow('a', 'one', { strengths: [c('Asked about allergies', tag)] }),
+      learnerRow('b', 'two', { strengths: [c('Checked oxygen flow rate', tag)] }),
+      learnerRow('c', 'three', { strengths: [c('Monitored urine output', tag)] }),
+    ];
+    const themes = extractRecurringBehaviorThemes(rows, 3);
+    expect(themes.recurringStrengths).toEqual([]);
+    expect(themes.recurringNeeds).toEqual([]);
+    expect(themes.keyedComments).toBe(0);
+    // They remain component evidence only.
+    const focused = extractRubricComponentThemes(rows, 3).find((t) => t.key === 'focused_information_gathering')!;
+    expect(focused.taggedComments.map((x) => x.text)).toEqual(['Asked about allergies', 'Checked oxygen flow rate', 'Monitored urine output']);
+  });
+
+  it('claims a recurring strength only when the same behavior key and direction reach the distinct known-learner threshold', () => {
+    const key = (k: string) => ({ behavior_key: k });
+    const rows = [
+      learnerRow('a', 'one', { strengths: [c('x', key('asks_allergies'))] }),
+      learnerRow('a2', 'one', { strengths: [c('x again', key('asks_allergies'))] }), // repeat attempt: counts once
+      learnerRow('b', 'two', { strengths: [c('y', key('asks_allergies'))] }),
+      learnerRow('n', null, { strengths: [c('z', key('asks_allergies'))] }), // unknown learner never counts
+    ];
+    expect(extractRecurringBehaviorThemes(rows, 3).recurringStrengths).toEqual([]);
+    expect(extractRecurringBehaviorThemes(rows, 3).belowThreshold).toMatchObject([{ behaviorKey: 'asks_allergies', direction: 'strength', learners: 2 }]);
+    const three = [...rows, learnerRow('c', 'three', { strengths: [c('w', key('asks_allergies'))] })];
+    expect(extractRecurringBehaviorThemes(three, 3).recurringStrengths).toMatchObject([{ behaviorKey: 'asks_allergies', learners: 3 }]);
+    expect(extractRecurringBehaviorThemes(three, 5).recurringStrengths).toEqual([]);
+  });
+
+  it('keeps positives and improvements separate and never merges unlike behavior keys', () => {
+    const rows = [
+      learnerRow('a', 'one', { strengths: [c('s', { behavior_key: 'closes_loop' })] }),
+      learnerRow('b', 'two', { strengths: [c('s', { behavior_key: 'closes_loop' })] }),
+      learnerRow('c', 'three', { improvements: [c('i', { behavior_key: 'closes_loop' })] }),
+      learnerRow('d', 'four', { improvements: [c('i', { behavior_key: 'orders_labs' })] }),
+    ];
+    const themes = extractRecurringBehaviorThemes(rows, 3);
+    expect(themes.recurringStrengths).toEqual([]);
+    expect(themes.recurringNeeds).toEqual([]);
+    const needs = extractRecurringBehaviorThemes([...rows, learnerRow('e', 'five', { improvements: [c('i', { behavior_key: 'closes_loop' })] }), learnerRow('f', 'six', { improvements: [c('i', { behavior_key: 'closes_loop' })] })], 3);
+    expect(needs.recurringNeeds).toMatchObject([{ behaviorKey: 'closes_loop', direction: 'improvement', learners: 3 }]);
+    expect(needs.recurringStrengths).toEqual([]);
+  });
+
+  it('reports no keyed comments when the generator emits none and ignores malformed keys', () => {
+    const rows = ['a', 'b', 'c'].map((id) => learnerRow(id, id, { strengths: [c('Same sentence', { behavior_key: 'Not A Key!' })] }));
+    expect(extractRecurringBehaviorThemes(rows, 3)).toMatchObject({ recurringStrengths: [], recurringNeeds: [], keyedComments: 0 });
+  });
+});
+
+describe('selected learner overview', () => {
+  it('builds strengths, next practice goals, date range and links from saved feedback only, labeled for one evaluation', () => {
+    const row = learnerRow('a', 'one', { strengths: [c('Escalated promptly')], improvements: [{ title: 'Document reassessment', evidence_event_ids: ['e2'] }] }, { completedAt: '2026-10-03T10:20:00Z' });
+    const overview = buildLearnerOverview([row]);
+    expect(overview).toMatchObject({ evaluatedCases: 1, basedOnOneEvaluation: true, firstDate: '2026-10-03', lastDate: '2026-10-03' });
+    expect(overview.strengths.map((x) => x.text)).toEqual(['Escalated promptly']);
+    expect(overview.nextPractice.map((x) => x.text)).toEqual(['Document reassessment']);
+    expect(overview.sources).toEqual([{ assignmentId: 'a', caseLabel: '101', at: '2026-10-03T10:20:00Z' }]);
+  });
+
+  it('keeps older untagged comments visible once as evaluation feedback, never under all six skills', () => {
+    const rows = [
+      learnerRow('a', 'one', { strengths: [c('Old untagged strength')], improvements: [{ text: 'No evidence tip' }] }, { completedAt: '2026-10-01T10:00:00Z' }),
+      learnerRow('b', 'one', { strengths: [c('Tagged', { skill_key: 'closed_loop_team_communication' })] }, { completedAt: '2026-10-05T10:00:00Z' }),
+    ];
+    const overview = buildLearnerOverview(rows);
+    expect(overview).toMatchObject({ evaluatedCases: 2, basedOnOneEvaluation: false, firstDate: '2026-10-01', lastDate: '2026-10-05' });
+    expect(overview.evaluationFeedback.map((x) => x.text)).toEqual(['Old untagged strength', 'No evidence tip']);
+    expect(overview.unsupported.map((x) => x.text)).toEqual(['No evidence tip']);
+    overview.components.forEach((component) => {
+      const texts = component.taggedComments.map((x) => x.text);
+      expect(texts).toEqual(component.key === 'closed_loop_team_communication' ? ['Tagged'] : []);
+    });
+  });
+
+  it('applies no cohort minimum to a single learner and ignores unassessed attempts', () => {
+    const overview = buildLearnerOverview([learnerRow('a', 'one', { strengths: [c('Only one')] }), learnerRow('p', 'one', { strengths: [c('Pending')] }, { feedbackStatus: 'pending' })]);
+    expect(overview.evaluatedCases).toBe(1);
+    expect(overview.strengths.map((x) => x.text)).toEqual(['Only one']);
+  });
+});
+
+describe('per-case timing average, median, n and drill-through', () => {
+  it('reports average and median with valid n and completed n, and keeps valid long durations', () => {
+    const at = (id: string, start: string, end: string | null) => analyticsRow({ id, caseStartedAt: start, completedAt: end });
+    const m = computeDashboardMetrics([
+      at('a', '2026-10-03T10:00:00Z', '2026-10-03T10:10:00Z'),
+      at('b', '2026-10-03T10:00:00Z', '2026-10-03T10:20:00Z'),
+      at('c', '2026-10-03T10:00:00Z', '2026-10-04T10:00:00Z'), // 24h incl. pauses; valid and kept
+      analyticsRow({ id: 'd', caseStartedAt: null, completedAt: '2026-10-03T10:20:00Z' }),
+    ], 1);
+    expect(m.caseTiming).toMatchObject({ validSamples: 3, completedAttempts: 4, medianMinutes: 20 });
+    expect(m.caseTiming.averageMinutes).toBeCloseTo((10 + 20 + 1440) / 3, 1);
+    expect(m.caseHeatmap[0]).toMatchObject({ completionTimeSampleSize: 3, completed: 4, medianCompletionMinutes: 20 });
+    expect(m.caseHeatmap[0].averageCompletionMinutes).toBeCloseTo(490, 0);
+    const d = m.caseTiming.attempts.find((x) => x.assignmentId === 'd')!;
+    expect(d).toMatchObject({ start: null, complete: '2026-10-03T10:20:00Z', minutes: null, exclusion: 'start_not_recorded' });
+    expect(d.exclusionReason).toMatch(/Case Start was not recorded/);
+    expect(m.caseTiming.attempts.find((x) => x.assignmentId === 'c')).toMatchObject({ minutes: 1440, exclusionReason: null });
+  });
+
+  it('never substitutes created_at, first nurse message or feedback time for Start or Complete', () => {
+    const row = analyticsRow({ id: 'x', caseStartedAt: null, createdAt: '2026-10-01T00:00:00Z', scoringStartAt: '2026-10-03T09:00:00Z', feedbackGeneratedAt: '2026-10-03T11:00:00Z', completedAt: '2026-10-03T10:00:00Z' });
+    expect(completionMinutesFor(row)).toBeNull();
   });
 });

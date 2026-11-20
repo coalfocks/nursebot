@@ -25,8 +25,10 @@ describe('analytics Excel export timing', () => {
   it('reports timing samples per case with n and median from the same calculation', () => {
     const data = sheet('Case performance');
     const headers = data[0].map((cell) => cell.value);
-    const samples = headers.indexOf('Timing samples (n)');
-    expect(data[1][samples].value).toBe(1);
+    expect(data[1][headers.indexOf('Valid timing n')].value).toBe(1);
+    expect(data[1][headers.indexOf('Completed n')].value).toBe(1);
+    expect(data[1][headers.indexOf('Average minutes (Start to Complete)')].value).toBe(20);
+    expect(data[1][headers.indexOf('Median minutes (Start to Complete)')].value).toBe(20);
   });
 
   it('marks domain components with no structured subscores as unavailable in the workbook', () => {
@@ -35,5 +37,25 @@ describe('analytics Excel export timing', () => {
     const data = found!.data as Array<Array<{ value: unknown }>>;
     expect(data[1][7].value).toBe(1);
     expect(String(data[1][8].value)).toMatch(/Components unavailable/);
+  });
+
+  it('exports the same timing summary and per-attempt Start, Complete, duration and exclusion as the dashboard', () => {
+    const summary = sheet('Timing summary').map((r) => [r[0].value, r[1].value]);
+    expect(summary).toContainEqual(['Valid n', 1]);
+    expect(summary).toContainEqual(['Completed n', 2]);
+    const attempts = sheet('Timing by attempt');
+    expect(attempts[0].map((cell) => cell.value)).toEqual(['Assignment ID', 'Learner', 'Case', 'Start', 'Complete', 'Duration (minutes)', 'Exclusion reason']);
+    const excluded = attempts.find((r) => r[0].value === 'synthetic-attempt-1')!;
+    expect(excluded[3].value).toBe('');
+    expect(String(excluded[6].value)).toMatch(/Case Start was not recorded/);
+  });
+
+  it('adds a Learner overview sheet only when the scope is one learner', () => {
+    const one = buildAnalyticsWorkbook([analyticsFixture(0)], 'https://example.test', 's').find((x) => x.sheet === 'Learner overview');
+    expect(one).toBeTruthy();
+    const text = JSON.stringify(one!.data);
+    expect(text).toContain('based on one evaluation');
+    expect(text).toContain('https://example.test/assignment/synthetic-attempt-0/feedback');
+    expect(buildAnalyticsWorkbook([analyticsFixture(0), analyticsFixture(1)], 'https://example.test', 's').some((x) => x.sheet === 'Learner overview')).toBe(false);
   });
 });
