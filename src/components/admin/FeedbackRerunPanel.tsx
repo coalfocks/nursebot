@@ -8,10 +8,11 @@ import {
   sideFromAssignment,
   sideFromVersion,
   startFeedbackRerun,
+  type FeedbackJson,
   type FeedbackRerunVersion,
 } from '../../lib/feedbackRerun';
 
-type Props = { assignment: Record<string, any>; onPromoted?: () => void };
+type Props = { assignment: FeedbackJson; onPromoted?: () => void };
 
 /** Compare-only by default: rerunning never changes the saved result. Promote is separate and confirmed. */
 export function FeedbackRerunPanel({ assignment, onPromoted }: Props) {

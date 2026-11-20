@@ -7,7 +7,10 @@ import { readFunctionErrorMessage } from './feedbackService';
  */
 export const PROMOTE_CONFIRMATION = 'PROMOTE';
 
-type Json = Record<string, any>;
+// Saved feedback is untyped JSON from the database.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type FeedbackJson = Record<string, any>;
+type Json = FeedbackJson;
 
 export type FeedbackRerunVersion = {
   id: string;
@@ -127,7 +130,8 @@ export async function startFeedbackRerun(assignmentId: string): Promise<string> 
 }
 
 export async function listFeedbackRerunVersions(assignmentId: string): Promise<FeedbackRerunVersion[]> {
-  const { data, error } = await supabase
+  // Table is added by the (unapplied) migration, so it is not in the generated database types yet.
+  const { data, error } = await (supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> })
     .from('feedback_rerun_versions')
     .select('id, assignment_id, status, technical_incomplete, result, provenance, error, created_at, promoted_at')
     .eq('assignment_id', assignmentId)

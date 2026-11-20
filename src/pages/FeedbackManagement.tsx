@@ -6,6 +6,7 @@ import { Loader2, RefreshCw, AlertCircle, CheckCircle, Clock, Activity, Download
 import AdminLayout from '../components/admin/AdminLayout';
 import AssignmentFeedback from '../components/AssignmentFeedback';
 import { generateFeedback } from '../lib/feedbackService';
+import type { FeedbackJson } from '../lib/feedbackRerun';
 import { FeedbackRerunPanel } from '../components/admin/FeedbackRerunPanel';
 import type { Database } from '../lib/database.types';
 import SchoolScopeSelector from '../components/admin/SchoolScopeSelector';
@@ -442,7 +443,7 @@ export default function FeedbackManagement() {
                         assignment={assignment}
                         onRetryFeedback={() => handleRetryFeedback(assignment.id)}
                       />
-                      <FeedbackRerunPanel assignment={assignment as Record<string, any>} onPromoted={() => { void fetchAssignments(); }} />
+                      <FeedbackRerunPanel assignment={assignment as unknown as FeedbackJson} onPromoted={() => { void fetchAssignments(); }} />
                     </div>
                   )}
                 </li>
