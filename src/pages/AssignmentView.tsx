@@ -11,6 +11,7 @@ import type { Database } from '../lib/database.types';
 import { fetchSpecialtiesForRoom } from '../lib/roomHelpers';
 import { resolveAssignmentRoom } from '../lib/assignmentBaseline';
 import { generateFeedback } from '../lib/feedbackService';
+import { recordCaseStartOnce } from '../lib/caseStart';
 import { isAssignmentWindowOpen } from '../lib/assignmentWindow';
 
 type Assignment = Database['public']['Tables']['student_room_assignments']['Row'] & {
@@ -120,6 +121,8 @@ export default function AssignmentView() {
           .eq('id', assignmentId);
 
         if (updateError) throw updateError;
+        // Case Start for analytics. Non-fatal so the case still opens if the column is not yet deployed.
+        if (assignmentId) recordCaseStartOnce(assignmentId).catch((startError) => console.warn('Case Start was not recorded', startError));
         setAssignment({ ...assignmentWithSpecialties, status: 'in_progress' });
       }
 

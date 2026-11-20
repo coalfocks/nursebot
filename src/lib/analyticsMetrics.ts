@@ -20,6 +20,8 @@ export type AnalyticsRow = AnalyticsAssignment & {
   specialty: string;
   createdAt: string | null;
   scoringStartAt?: string | null;
+  /** Case Start: when the learner first opened the case (assignment moved to in_progress). Null for attempts that pre-date start tracking. */
+  caseStartedAt?: string | null;
   safetyResult?: Record<string, unknown> | null;
   completedAt: string | null;
   feedbackGeneratedAt: string | null;
@@ -30,9 +32,21 @@ export type AnalyticsRow = AnalyticsAssignment & {
   feedbackDebrief: Record<string, unknown> | null;
 };
 
+export type CaseTimingSummary = {
+  /** Wall-clock minutes from Case Start to Complete. Active (pause-adjusted) time is not computable: no pause events are recorded. */
+  method: 'wall_clock_start_to_complete';
+  activeTimeAvailable: false;
+  activeTimeReason: string;
+  validSamples: number;
+  completedAttempts: number;
+  exclusions: Record<CaseTimingExclusion, number>;
+};
+
 export type DashboardMetrics = CohortMetrics & {
   medianCompletionMinutes: number | null;
+  averageCompletionMinutes: number | null;
   completionTimeSampleSize: number;
+  caseTiming: CaseTimingSummary;
   trend: Array<{ label: string; attempts: number; completed: number; assessed: number }>;
   domainPerformance: Array<{ domain: string; average: number | null; scored: number; eligible: number }>;
   caseHeatmap: CasePerformance[];
@@ -268,10 +282,36 @@ export type CasePerformance = {
 
 export const isAssessed = (row: AnalyticsAssignment) => row.status === 'completed' && row.feedbackStatus === 'completed';
 
+export type CaseTimingExclusion = 'start_not_recorded' | 'completion_not_recorded' | 'invalid_timestamp' | 'reversed_timestamps';
+
+export const CASE_TIMING_EXCLUSION_LABELS: Record<CaseTimingExclusion, string> = {
+  start_not_recorded: 'Case Start was not recorded (attempt began before start tracking)',
+  completion_not_recorded: 'Completion timestamp is missing',
+  invalid_timestamp: 'Case Start or Complete is not a valid timestamp',
+  reversed_timestamps: 'Complete is earlier than Case Start',
+};
+
+export const ACTIVE_TIME_UNAVAILABLE_REASON = 'Pause events are not recorded, so active time cannot be computed. Durations are wall-clock.';
+
+/**
+ * Single timing calculation shared by dashboard, case table, and Excel export.
+ * Duration = Complete − Case Start (assignment.case_started_at → assignment.completed_at).
+ * Returns null for attempts that are not completed (not a timing sample at all).
+ */
+export const caseTimingFor = (row: AnalyticsRow): { minutes: number } | { excluded: CaseTimingExclusion } | null => {
+  if (row.status !== 'completed') return null;
+  if (!row.caseStartedAt) return { excluded: 'start_not_recorded' };
+  if (!row.completedAt) return { excluded: 'completion_not_recorded' };
+  const start = Date.parse(row.caseStartedAt);
+  const end = Date.parse(row.completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return { excluded: 'invalid_timestamp' };
+  if (end < start) return { excluded: 'reversed_timestamps' };
+  return { minutes: (end - start) / 60000 };
+};
+
 export const completionMinutesFor = (row: AnalyticsRow): number | null => {
-  if (row.status !== 'completed' || !row.scoringStartAt || !row.completedAt) return null;
-  const minutes = (Date.parse(row.completedAt) - Date.parse(row.scoringStartAt)) / 60000;
-  return Number.isFinite(minutes) && minutes >= 0 ? minutes : null;
+  const timing = caseTimingFor(row);
+  return timing && 'minutes' in timing ? timing.minutes : null;
 };
 
 export const SUBSCORE_DEFINITIONS = [
@@ -282,8 +322,26 @@ export const SUBSCORE_DEFINITIONS = [
   { domain: 'Clinical Reasoning', key: 'clinical_reasoning_documentation', label: 'Reasoning / documentation', min: 0, max: 2 },
   { domain: 'Clinical Reasoning', key: 'safety_deduction', label: 'Safety deduction', min: -2, max: 0 },
 ] as const;
-export type SubscorePerformance = { domain: string; label: string; min: number; max: number; average: number | null; scored: number };
+export type SubscorePerformance = {
+  domain: string; key: string; label: string; min: number; max: number; average: number | null; scored: number;
+  /** Assessed attempts in scope. Components are unavailable (not zero) where no valid structured subscore exists. */
+  assessed: number; unavailable: number; unavailableReason: string | null;
+};
 const finiteScore = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const componentScoreFor = (row: AnalyticsRow, definition: (typeof SUBSCORE_DEFINITIONS)[number]): number | null => {
+  const breakdown = definition.domain === 'Communication' ? row.communicationBreakdown : row.mdmBreakdown;
+  const component = breakdown?.[definition.key];
+  const value = component && typeof component === 'object' ? (component as Record<string, unknown>).score : component;
+  return finiteScore(value) && value >= definition.min && value <= definition.max ? value : null;
+};
+
+const unavailableReasonFor = (rows: AnalyticsRow[], unavailable: number): string | null => {
+  if (unavailable === 0) return null;
+  const withoutBreakdown = rows.filter((row) => !row.communicationBreakdown && !row.mdmBreakdown).length;
+  if (withoutBreakdown === rows.length) return 'Components unavailable: no structured subscores were recorded for these attempts (domain totals only). Not estimated.';
+  return `${unavailable} of ${rows.length} attempts have no valid structured score for this component. Not estimated.`;
+};
 
 export const safetyFlagFor = (row: AnalyticsRow): { level: 'critical' | 'concern'; rationale: string; action: string } | null => {
   const safety = row.safetyResult ?? row.feedbackDebrief?.safety_result;
@@ -316,19 +374,18 @@ export const computeDashboardMetrics = (inputRows: AnalyticsRow[], eligibleLearn
   return {
     ...base,
     medianCompletionMinutes: median(completionMinutes),
+    averageCompletionMinutes: average(completionMinutes),
     completionTimeSampleSize: completionMinutes.length,
+    caseTiming: caseTimingSummary(rows),
     trend: [...trendMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([label, value]) => ({ label, ...value })),
     domainPerformance: domainDefinitions.map(({ domain, values }) => {
       const scored = values.filter(finiteScore);
       return { domain, average: average(scored), scored: scored.length, eligible: base.completedAssignments };
     }),
     subscorePerformance: SUBSCORE_DEFINITIONS.map((definition) => {
-      const values = assessed.map((row) => {
-        const breakdown = definition.domain === 'Communication' ? row.communicationBreakdown : row.mdmBreakdown;
-        const component = breakdown?.[definition.key];
-        return component && typeof component === 'object' ? (component as Record<string, unknown>).score : component;
-      }).filter(finiteScore).filter((value) => value >= definition.min && value <= definition.max);
-      return { ...definition, average: average(values), scored: values.length };
+      const values = assessed.map((row) => componentScoreFor(row, definition)).filter(finiteScore);
+      const unavailable = assessed.length - values.length;
+      return { ...definition, average: average(values), scored: values.length, assessed: assessed.length, unavailable, unavailableReason: unavailableReasonFor(assessed, unavailable) };
     }),
     caseHeatmap: [...caseMap.entries()].map(([roomId, attempts]) => {
       const scored = attempts.filter(isAssessed);
@@ -341,4 +398,61 @@ export const computeDashboardMetrics = (inputRows: AnalyticsRow[], eligibleLearn
         medianCompletionMinutes: median(times), completionTimeSampleSize: times.length };
     }).sort((a, b) => a.caseLabel.localeCompare(b.caseLabel) || a.roomId - b.roomId),
   };
+};
+
+const caseTimingSummary = (rows: AnalyticsRow[]): CaseTimingSummary => {
+  const exclusions: Record<CaseTimingExclusion, number> = { start_not_recorded: 0, completion_not_recorded: 0, invalid_timestamp: 0, reversed_timestamps: 0 };
+  let validSamples = 0;
+  let completedAttempts = 0;
+  rows.forEach((row) => {
+    const timing = caseTimingFor(row);
+    if (!timing) return;
+    completedAttempts += 1;
+    if ('minutes' in timing) validSamples += 1;
+    else exclusions[timing.excluded] += 1;
+  });
+  return { method: 'wall_clock_start_to_complete', activeTimeAvailable: false, activeTimeReason: ACTIVE_TIME_UNAVAILABLE_REASON, validSamples, completedAttempts, exclusions };
+};
+
+/**
+ * Cohort themes grouped by rubric component (the six structured subscores), not by comment text.
+ * Each component counts DISTINCT learners with a valid structured score. A learner is "at max" when any
+ * valid attempt scored the component at its maximum, and "below max" when any valid attempt scored under it.
+ * Attempt comments are shown as drill-through evidence; they are not tagged to a component upstream.
+ */
+export type RubricComponentAttempt = { assignmentId: string; learnerId: string; studentName: string; caseLabel: string; score: number; comments: string[] };
+export type RubricComponentTheme = {
+  domain: string; key: string; label: string; min: number; max: number;
+  validLearners: number; validAttempts: number; atMaxLearners: number; belowMaxLearners: number; unavailableAttempts: number;
+  suppressed: boolean; minimumLearners: number;
+  attempts: RubricComponentAttempt[];
+};
+
+export const extractRubricComponentThemes = (rows: AnalyticsRow[], minimumLearners = 3): RubricComponentTheme[] => {
+  const assessedRows = uniqueByAssignmentId(rows).filter(isAssessed);
+  return SUBSCORE_DEFINITIONS.map((definition) => {
+    const attempts: RubricComponentAttempt[] = [];
+    let unavailableAttempts = 0;
+    assessedRows.forEach((row) => {
+      const score = componentScoreFor(row, definition);
+      if (score == null) { unavailableAttempts += 1; return; }
+      const learnerId = row.studentId ?? `attempt:${row.id}`;
+      const comments = [
+        ...(Array.isArray(row.feedbackDebrief?.strengths) ? row.feedbackDebrief!.strengths as Narrative[] : []).map((item) => narrativeText(item, false)),
+        ...(Array.isArray(row.feedbackDebrief?.improvements) ? row.feedbackDebrief!.improvements as Narrative[] : []).map((item) => narrativeText(item, true)),
+      ].filter((text): text is string => Boolean(text));
+      attempts.push({ assignmentId: row.id, learnerId, studentName: row.studentName, caseLabel: row.roomNumber, score, comments });
+    });
+    const byLearner = new Map<string, number[]>();
+    attempts.forEach((attempt) => byLearner.set(attempt.learnerId, [...(byLearner.get(attempt.learnerId) ?? []), attempt.score]));
+    const validLearners = byLearner.size;
+    const atMaxLearners = [...byLearner.values()].filter((scores) => scores.some((score) => score === definition.max)).length;
+    const belowMaxLearners = [...byLearner.values()].filter((scores) => scores.some((score) => score < definition.max)).length;
+    return {
+      domain: definition.domain, key: definition.key, label: definition.label, min: definition.min, max: definition.max,
+      validLearners, validAttempts: attempts.length, atMaxLearners, belowMaxLearners, unavailableAttempts,
+      suppressed: validLearners < minimumLearners, minimumLearners,
+      attempts: attempts.sort((a, b) => a.studentName.localeCompare(b.studentName) || a.assignmentId.localeCompare(b.assignmentId)),
+    };
+  });
 };
