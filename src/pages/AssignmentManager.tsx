@@ -1,3 +1,5 @@
+import { readFunctionErrorMessage } from '../lib/feedbackService';
+import { useAssignmentSelection } from '../hooks/useAssignmentSelection';
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -96,8 +98,8 @@ export default function AssignmentManager() {
   const [selectedChatMessages, setSelectedChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
-  const [reviewAssignment, setReviewAssignment] = useState<Assignment | null>(null);
+  const [selectedAssignment, setSelectedAssignment] = useAssignmentSelection(assignments);
+  const [reviewAssignment, setReviewAssignment] = useAssignmentSelection(assignments);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
   const [evidenceAudit, setEvidenceAudit] = useState<EvidenceAudit | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
@@ -716,22 +718,24 @@ export default function AssignmentManager() {
 
       if (error) {
         console.error('Error rerunning assessment:', error);
-        throw error;
+        throw new Error(await readFunctionErrorMessage(error));
       }
 
       console.log('Assessment rerun response:', data);
 
       if (data?.success) {
-        // Show success message
+        // Read back persisted rows before reporting success.
+        await fetchAssignments();
         alert(`Assessment rerun completed successfully. ${data.message}`);
         
-        // Refresh assignments to show updated status
-        await fetchAssignments();
+        // List and open detail state now both contain the persisted readback.
       } else {
-        throw new Error(data?.error || 'Failed to rerun assessment');
+        throw new Error(data?.error || data?.errors?.join('; ') || 'Failed to rerun assessment');
       }
     } catch (error) {
       console.error('Error rerunning assessment:', error);
+      try { await fetchAssignments(); }
+      catch (refreshError) { console.error('Could not refresh assessment status:', refreshError); }
       alert(`Error rerunning assessment: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setRerunningAssessments(prev => {
