@@ -16,7 +16,7 @@ import { computeFeedbackFingerprint } from '../_shared/feedback-fingerprint.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { PINNED_FEEDBACK_MODEL } from '../_shared/feedback-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
-import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type AttemptFeedbackComment, type CommentaryResult } from '../_shared/feedback-comments.ts';
+import { FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type AttemptFeedbackComment, type CommentaryResult } from '../_shared/feedback-comments.ts';
 import {
   COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
