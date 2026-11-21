@@ -74,10 +74,14 @@ export const canonicalizeEvaluation = (raw: Partial<EvaluationScoringResponse>):
   const safetyRawResult = source.safety_result;
   const safetyLevelIsKnown = ['none', 'concern', 'critical'].includes(safetyRawResult?.level)
     && validScore(typeof safetyDeductionRaw === 'object' ? safetyDeductionRaw?.score : safetyDeductionRaw, -2, 0) != null;
+  const safetyIsExplicitlyUnassessed = safetyRawResult?.level === 'not_assessed'
+    && safetyDeductionRaw?.score === null
+    && typeof safetyDeductionRaw?.not_scored_reason === 'string'
+    && Boolean(safetyDeductionRaw.not_scored_reason.trim());
   const clinicalReasoningBreakdown = {
     orders_monitoring_quality: parseComponent(ordersRaw, 0, 3, 'orders and monitoring quality'),
     clinical_reasoning_documentation: parseComponent(reasoningRaw, 0, 2, 'clinical reasoning and documentation'),
-    safety_deduction: safetyLevelIsKnown
+    safety_deduction: (safetyLevelIsKnown || safetyIsExplicitlyUnassessed)
       ? parseComponent(safetyDeductionRaw, -2, 0, 'safety deduction')
       : parseComponent(undefined, -2, 0, 'safety deduction; safety review result is missing'),
   };
