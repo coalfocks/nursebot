@@ -1,3 +1,4 @@
+import { rejectedFeedbackDiagnostic } from '../_shared/rejected-feedback.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
@@ -340,7 +341,13 @@ Deno.serve(async (req) => {
         commentEvidenceIds: [...generatedComments.strengths, ...generatedComments.improvements].flatMap((comment) => comment.evidence_event_ids),
       });
       const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
-      if (allValidationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')})`);
+      if (allValidationErrors.length) {
+        // Requires rejected_feedback_diagnostics RLS migration before deployment.
+        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors }, allValidationErrors);
+        const retained = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, input_fingerprint: inputFingerprint, result: diagnostic });
+        const retentionError = retained.error ? '; diagnostic retention failed' : '';
+        throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')}${retentionError})`);
+      }
       const deterministicEntries = scoredEntries.filter((entry) => (entry.kind === 'order' ? entry.authorship === 'observed' || entry.authorship === 'inferred' : ['labs', 'imaging'].includes(entry.kind)));
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
