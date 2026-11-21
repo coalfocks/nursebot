@@ -69,11 +69,11 @@ export const assertCompleteEvaluation = (evaluation: {
 };
 
 /** Retry only a truncated/empty length-limited response, once, with identical messages. */
-export const requestSectionWithLengthRetry = async <T>(request: (budget: number) => Promise<T>, budget: number): Promise<T> => {
+export const requestSectionWithLengthRetry = async <T>(request: (budget: number) => Promise<T>, budget: number, ceiling = budget * 2): Promise<T> => {
   try { return await request(budget); }
   catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('finish_reason=length')) throw error;
-    return await request(budget * 2);
+    if (!(error instanceof Error) || !error.message.includes('finish_reason=length') || budget >= ceiling) throw error;
+    return await request(Math.min(budget * 2, ceiling));
   }
 };
 

@@ -1,3 +1,4 @@
+import { eligibleMdmRecovery } from '../_shared/mdm-recovery.ts';
 import { diagnosticFetch, type ModelTransportAttempt } from '../_shared/model-transport-diagnostics.ts';
 import { buildCommentaryContext, buildCommentaryRepairContent } from '../_shared/commentary-context.ts';
 import { FeedbackDeadline } from '../_shared/feedback-deadline.ts';
@@ -183,6 +184,13 @@ Deno.serve(async (req) => {
           return { runId: reusable.id, promptVersion: saved.comment_prompt_version ?? null, reused: true };
         }
       }
+      let mdmRecovery = false;
+      if (!commentsOnly) {
+        const latest = await client.from('feedback_assessment_runs').select('result')
+          .eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1);
+        // Missing history or read errors never enable the higher initial budget.
+        mdmRecovery = !latest.error && eligibleMdmRecovery(latest.data?.[0]?.result);
+      }
       deadline.setPhase('model_evaluation');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
       const allowedEventIds = new Set(sourceEventIds);
@@ -255,7 +263,7 @@ Deno.serve(async (req) => {
         return { runId: run.data.id, promptVersion: commentary.prompt_version };
       }
       const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
-      const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
+      const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number, ceiling = maxCompletionTokens * 2) => {
         return requestSectionWithLengthRetry(async (budget) => {
           const completion = await openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
@@ -267,7 +275,7 @@ Deno.serve(async (req) => {
             max_completion_tokens: budget,
           }, { signal: deadline.signal });
           return parseSectionCompletion(completion);
-        }, maxCompletionTokens);
+        }, maxCompletionTokens, ceiling);
       };
       const requestCommunicationEvaluation = () => requestEvaluationSection(
         'COMMUNICATION SECTION: Return communication_breakdown containing focused_information_gathering (0-2), closed_loop_team_communication (0-3), and efficiency_deduction (-2..0). Apply the Communication anchors from the rubric. Return no scores or fields for Medical Decision-Making.',
@@ -275,7 +283,8 @@ Deno.serve(async (req) => {
       );
       const requestMdmEvaluation = () => requestEvaluationSection(
         'MEDICAL DECISION-MAKING SECTION: Return clinical_reasoning_breakdown containing orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), and safety_deduction (0/-1/-2), plus safety_result {level: none|concern|critical|not_assessed, action: string|null, rationale: string|null, evidence_event_ids: string[]}. Also return learning_objectives, strengths, improvements, recommendations, and action_review. Apply the Medical Decision-Making anchors from the rubric. Do not return communication scores or components.',
-        MDM_EVALUATION_MAX_COMPLETION_TOKENS,
+        mdmRecovery ? MDM_EVALUATION_MAX_COMPLETION_TOKENS * 2 : MDM_EVALUATION_MAX_COMPLETION_TOKENS,
+        MDM_EVALUATION_MAX_COMPLETION_TOKENS * 2,
       );
       // Collect section diagnostics, then reject any technical incompleteness
       // before persistence; a partial model response is not a successful assessment.
