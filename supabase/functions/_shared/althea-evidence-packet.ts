@@ -195,7 +195,8 @@ export const buildEvidencePacket = (
   };
 };
 
-const CONTRADICTORY_COMMUNICATION = /\b(?:no|zero|not any|none)\b[^.;]{0,60}\b(?:communication|messages?|questions?|team (?:instructions?|requests?|updates?)|learner (?:questions?|messages?|communication))\b[^.;]{0,40}\b(?:captured|recorded|observed|documented|present|available)\b|\b(?:communication|messages?|questions?|team (?:instructions?|requests?))\b[^.;]{0,40}\b(?:was|were|is|are) not (?:captured|recorded|observed|documented)\b/i;
+// Match an unqualified absence of learner communication, not a scoped negative finding.
+const CONTRADICTORY_COMMUNICATION = /\b(?:no|zero|not any|none)\s+(?:(?:learner|student)\s+)?(?:communication|messages?|questions?|team (?:instructions?|requests?|updates?))\s+(?:(?:was|were|is|are|has been|have been)\s+)?(?:captured|recorded|observed|documented|present|available)\b|(?:^|[.;!?\n])\s*(?:(?:learner|student)\s+)?(?:communication|messages?|questions?|team (?:instructions?|requests?))\s+(?:was|were|is|are) not (?:captured|recorded|observed|documented)\b/i;
 // "No orders were captured" / "no consult placed" while the packet holds learner orders or consults.
 const CONTRADICTORY_ORDERS = /\b(?:no|zero|none|not any)\s+(?:learner[- ](?:placed|authored)\s+|learner\s+)?(?:orders?|consults?|consultations?|consult requests?|consultant (?:requests?|messages?))\b[^.;]{0,30}\b(?:captured|recorded|observed|documented|placed|present|available)\b/i;
 const CONTRADICTORY_BEDSIDE = /\b(?:did not|didn'?t|never|no|not)\b[^.;]{0,30}\b(?:go|went|visit|visited|attend|attended|reach|reached)\b[^.;]{0,25}\bbedside\b/i;

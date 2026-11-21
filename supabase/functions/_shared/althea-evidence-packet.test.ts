@@ -130,7 +130,7 @@ describe('invalid comment counts and duplicates are rejected, never padded, trun
 describe('a failed validation preserves the prior saved result', () => {
   const source = readFileSync(resolve(__dirname, '../generate-feedback/index.ts'), 'utf8');
   it('throws on any validation error before the scored run is inserted or the assignment is updated', () => {
-    const gate = source.indexOf("if (allValidationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept");
+    const gate = source.indexOf("throw new Error(`Evidence reconciliation failed; the prior saved result was kept");
     const insert = source.indexOf("insert({ ...provenance, technical_incomplete: false", gate);
     const update = source.indexOf('scoredAssignmentUpdate(evaluation', gate);
     expect(gate).toBeGreaterThan(-1);
@@ -145,5 +145,17 @@ describe('a failed validation preserves the prior saved result', () => {
   });
   it('a commentary that fails count validation is an error, not a saved empty list', () => {
     expect(source).toContain('commentary did not produce exactly two strengths and two improvements');
+  });
+});
+
+
+describe('scoped-negative communication findings', () => {
+  const packet = buildEvidencePacket([learnerQuestion, nurseReply], opts);
+  const check = (text: string) => reconcileEvidence({ packet, texts: [text], componentEvidenceIds: [], commentEvidenceIds: [] });
+  it.each(['No consultant communication was recorded.', 'No unsafe communication pattern was observed.', 'No closed-loop communication was recorded.', 'No communication errors were observed.', 'Consultant communication was not recorded.', 'Unsafe communication was not observed.'])('allows scoped negative: %s', (text) => {
+    expect(check(text)).toEqual([]);
+  });
+  it.each(['No communication was recorded.', 'Zero learner messages were captured.', 'Communication was not documented.', 'No communication was recorded. No unsafe communication pattern was observed.'])('rejects genuine absence: %s', (text) => {
+    expect(check(text).some((error) => error.includes('no communication'))).toBe(true);
   });
 });

@@ -50,3 +50,29 @@ export const parseSectionCompletion = (completion: CompletionLike): Record<strin
   }
   return JSON.parse(content) as Record<string, unknown>;
 };
+
+/** A missing/invalid response is a technical failure, not evidence-based abstention. */
+export const assertCompleteEvaluation = (evaluation: {
+  communication_breakdown: Record<string, { score: number | null; not_scored_reason?: string | null }>;
+  clinical_reasoning_breakdown: Record<string, { score: number | null; not_scored_reason?: string | null }>;
+}, sectionErrors: Record<string, string> = {}): void => {
+  const errors = Object.entries(sectionErrors).map(([section, error]) => `${section}: ${error}`);
+  for (const [section, components] of Object.entries({ communication: evaluation.communication_breakdown, medical_decision_making: evaluation.clinical_reasoning_breakdown })) {
+    if (Object.keys(components).length !== 3) errors.push(`${section}: incomplete component response`);
+    for (const [name, component] of Object.entries(components)) {
+      if (component.score == null && (!component.not_scored_reason || /^Not scored: (required |component value )/.test(component.not_scored_reason))) {
+        errors.push(`${section}.${name}: missing or invalid component response`);
+      }
+    }
+  }
+  if (errors.length) throw new Error(`Evaluation response incomplete; prior saved result was kept (${errors.join('; ')})`);
+};
+
+/** Retry only a truncated/empty length-limited response, once, with identical messages. */
+export const requestSectionWithLengthRetry = async <T>(request: (budget: number) => Promise<T>, budget: number): Promise<T> => {
+  try { return await request(budget); }
+  catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('finish_reason=length')) throw error;
+    return await request(budget * 2);
+  }
+};

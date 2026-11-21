@@ -1,3 +1,4 @@
+import { rejectedFeedbackDiagnostic } from '../_shared/rejected-feedback.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
 import { ALTHEA_SCORING_PROMPT_VERSION, EVALUATION_SYSTEM_PROMPT } from '../_shared/evaluation-prompts.ts';
@@ -18,6 +19,8 @@ import {
   COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
   COMMENTARY_MAX_COMPLETION_TOKENS,
+  assertCompleteEvaluation,
+  requestSectionWithLengthRetry,
   mergeEvaluationSections,
   parseSectionCompletion,
   runIndependentFeedbackOperations,
@@ -154,7 +157,9 @@ Deno.serve(async (req) => {
         if (priorError) throw priorError;
         const reusable = (priorRuns ?? []).find((run) => {
           const saved = run.result as Record<string, any> | null;
-          return Boolean(saved?.evaluation && saved?.debrief && saved?.mode !== 'comments_only');
+          if (!saved?.evaluation || !saved?.debrief || saved?.mode === 'comments_only') return false;
+          try { assertCompleteEvaluation(saved.evaluation, saved.debrief.section_errors ?? {}); return true; }
+          catch { return false; }
         });
         if (reusable) {
           const saved = reusable.result as { evaluation: ReturnType<typeof canonicalizeEvaluation>; debrief: Record<string, unknown>; comment_prompt_version?: string | null };
@@ -220,16 +225,18 @@ Deno.serve(async (req) => {
       }
       const prompt = `SCORING VERSION: ${FEEDBACK_RUBRIC_VERSION} (${ALTHEA_SCORING_PROMPT_VERSION})\n\nFORMATIVE NOTICE: ${formativeNotice}\n\nCASE-SPECIFIC EVALUATION KEY (${key.version}; guide only, not evidence):\n${JSON.stringify(key, null, 2)}\n\nSCORING BOUNDARY: score only learner actions at or after ${start.scoring_start_at}. Baseline chart context and prior/setup events are excluded.\n\nSCORABLE POST-PAGE EVIDENCE IDS:\n${evidenceManifest}\n\nCURRENT ATTEMPT EVIDENCE (${sourceEventIds.length} timestamped events; actor_role/channel are structured fields):\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nEVENTS WITH MISSING OR AMBIGUOUS ORDERING (preserve as uncertainty; do not use to infer in-window action, delay, or omission):\n${uncertainTimestampEvents.map((entry) => JSON.stringify({ id: entry.id, occurred_at: entry.timestamp, sequence: entry.sequence ?? null, ordering_ambiguous: true, kind: entry.kind, title: entry.title, actor_role: entry.actor_role, channel: entry.channel, excerpt: entry.body ?? null })).join('\\n') || 'None.'}\n\nSOURCE COVERAGE (explicit; available_empty = the source was read successfully and returned zero rows, which is a complete empty source; unavailable = could not be read, so dependent components must be not scored):\n${JSON.stringify(coverage, null, 2)}\n\nProgress note: ${assignment.student_progress_note || 'Not observed'}`;
       const requestEvaluationSection = async (sectionInstructions: string, maxCompletionTokens: number) => {
-        const completion = await openai.chat.completions.create({
-          model: PINNED_FEEDBACK_MODEL,
-          messages: [
-            { role: 'system', content: EVALUATION_SYSTEM_PROMPT },
-            { role: 'user', content: `${prompt}\n\nOUTPUT FORMAT ONLY: Return one JSON object. Every requested rubric component must be {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable. Do not include rubric components assigned to the other section.\n\n${sectionInstructions}` },
-          ],
-          response_format: { type: 'json_object' },
-          max_completion_tokens: maxCompletionTokens,
-        });
-        return parseSectionCompletion(completion);
+        return requestSectionWithLengthRetry(async (budget) => {
+          const completion = await openai.chat.completions.create({
+            model: PINNED_FEEDBACK_MODEL,
+            messages: [
+              { role: 'system', content: EVALUATION_SYSTEM_PROMPT },
+              { role: 'user', content: `${prompt}\n\nOUTPUT FORMAT ONLY: Return one JSON object. Every requested rubric component must be {score: integer|null, feedback: string, evidence_event_ids: string[], not_scored_reason: string|null}. Null requires a concrete reason. Include an explanation and evidence for an actual efficiency/safety deduction; use score 0 only when the respective absence/interference finding is assessable. Do not include rubric components assigned to the other section.\n\n${sectionInstructions}` },
+            ],
+            response_format: { type: 'json_object' },
+            max_completion_tokens: budget,
+          });
+          return parseSectionCompletion(completion);
+        }, maxCompletionTokens);
       };
       const requestCommunicationEvaluation = () => requestEvaluationSection(
         'COMMUNICATION SECTION: Return communication_breakdown containing focused_information_gathering (0-2), closed_loop_team_communication (0-3), and efficiency_deduction (-2..0). Apply the Communication anchors from the rubric. Return no scores or fields for Medical Decision-Making.',
@@ -239,9 +246,8 @@ Deno.serve(async (req) => {
         'MEDICAL DECISION-MAKING SECTION: Return clinical_reasoning_breakdown containing orders_monitoring_quality (0-3), clinical_reasoning_documentation (0-2), and safety_deduction (0/-1/-2), plus safety_result {level: none|concern|critical|not_assessed, action: string|null, rationale: string|null, evidence_event_ids: string[]}. Also return learning_objectives, strengths, improvements, recommendations, and action_review. Apply the Medical Decision-Making anchors from the rubric. Do not return communication scores or components.',
         MDM_EVALUATION_MAX_COMPLETION_TOKENS,
       );
-      // A failed section becomes missing evidence for its own components only; the
-      // other section's valid scores are kept. If both sections fail, nothing valid
-      // exists and the attempt keeps its prior saved result.
+      // Collect section diagnostics, then reject any technical incompleteness
+      // before persistence; a partial model response is not a successful assessment.
       const sectionErrors: Record<string, string> = {};
       const guardSection = (label: string, request: () => Promise<Record<string, unknown>>) => request().catch((error) => {
         sectionErrors[label] = error instanceof Error ? error.message : String(error);
@@ -259,6 +265,7 @@ Deno.serve(async (req) => {
       // Room modifier (RoomEditor leniency multiplier) is applied to component scores
       // before totals are recomputed; safety stays unscaled and is reported separately.
       const evaluation = applyLeniencyToEvaluation(canonicalizeEvaluation(mergedEvaluation), leniencyMultiplier);
+      assertCompleteEvaluation(evaluation, sectionErrors);
       const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
       // Commentary is separate from scoring. A commentary failure keeps the valid
       // grades and records a visible commentary error instead of discarding them.
@@ -334,7 +341,13 @@ Deno.serve(async (req) => {
         commentEvidenceIds: [...generatedComments.strengths, ...generatedComments.improvements].flatMap((comment) => comment.evidence_event_ids),
       });
       const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
-      if (allValidationErrors.length) throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')})`);
+      if (allValidationErrors.length) {
+        // Requires rejected_feedback_diagnostics RLS migration before deployment.
+        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors }, allValidationErrors);
+        const retained = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, input_fingerprint: inputFingerprint, result: diagnostic });
+        const retentionError = retained.error ? '; diagnostic retention failed' : '';
+        throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')}${retentionError})`);
+      }
       const deterministicEntries = scoredEntries.filter((entry) => (entry.kind === 'order' ? entry.authorship === 'observed' || entry.authorship === 'inferred' : ['labs', 'imaging'].includes(entry.kind)));
       const actionReviewWithKey = {
         expected_pathway: { goals: key.goals, expected_endpoint: key.expected_endpoint, time_sensitive_actions: key.time_sensitive_actions, must: key.must, should: key.should, could: key.could, should_not: key.should_not, must_not: key.must_not, acceptable_alternative_paths: key.acceptable_alternative_paths },
@@ -366,6 +379,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, assignmentId, ...result }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error && typeof error === 'object' && 'message' in error ? String(error.message) : JSON.stringify(error));
+    console.error('Feedback generation failed', { assignmentId, error: message });
     if (assignmentId && !commentsOnly) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
     return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
