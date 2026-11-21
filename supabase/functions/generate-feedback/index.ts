@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
         }
       }
       let mdmRecovery = false;
-      if (forceRegrade && !commentsOnly) {
+      if (!commentsOnly) {
         const latest = await client.from('feedback_assessment_runs').select('result')
           .eq('assignment_id', assignment.id).order('created_at', { ascending: false }).limit(1);
         // Missing history or read errors never enable the higher initial budget.
