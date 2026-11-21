@@ -24,6 +24,7 @@ import {
   COMMENTARY_MAX_COMPLETION_TOKENS,
   assertCompleteEvaluation,
   requestSectionWithLengthRetry,
+  requestCompletionWithLengthRetry,
   mergeEvaluationSections,
   parseSectionCompletion,
   runIndependentFeedbackOperations,
@@ -200,12 +201,12 @@ Deno.serve(async (req) => {
           const sourceContext = buildCommentaryContext({ goals: key.goals, timeline: commentaryTimeline, note: assignment.student_progress_note, evidenceManifest, validationNote });
           attempt = { stage: 'initial', user_content: sourceContext };
           commentaryAttempts.push(attempt);
-          const completion = await deadline.track('commentary_initial', () => openai.chat.completions.create({
+          const completion = await deadline.track('commentary_initial', () => requestCompletionWithLengthRetry((budget) => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
             messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: sourceContext }],
             response_format: { type: 'json_object' },
-            max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
-          }, { signal: deadline.signal }));
+            max_completion_tokens: budget,
+          }, { signal: deadline.signal }), COMMENTARY_MAX_COMPLETION_TOKENS));
           const rawContent = completion.choices[0].message.content ?? '{}';
           attempt.raw_response = rawContent;
           const parsed = JSON.parse(rawContent);
@@ -216,15 +217,15 @@ Deno.serve(async (req) => {
           const repairContent = buildCommentaryRepairContent(sourceContext, rawContent);
           attempt = { stage: 'repair', user_content: repairContent };
           commentaryAttempts.push(attempt);
-          const repair = await deadline.track('commentary_repair', () => openai.chat.completions.create({
+          const repair = await deadline.track('commentary_repair', () => requestCompletionWithLengthRetry((budget) => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
             messages: [
               { role: 'system', content: 'Repair the candidate into the exact requested JSON contract. Return JSON only. Do not invent evidence IDs or actions.' },
               { role: 'user', content: repairContent },
             ],
             response_format: { type: 'json_object' },
-            max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
-          }, { signal: deadline.signal }));
+            max_completion_tokens: budget,
+          }, { signal: deadline.signal }), COMMENTARY_MAX_COMPLETION_TOKENS));
           const repairedContent = repair.choices[0].message.content ?? '{}';
           attempt.raw_response = repairedContent;
           return validateFeedbackComments(JSON.parse(repairedContent), allowedEventIds);

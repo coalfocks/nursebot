@@ -76,3 +76,13 @@ export const requestSectionWithLengthRetry = async <T>(request: (budget: number)
     return await request(budget * 2);
   }
 };
+
+/** Commentary uses the same single doubled-budget recovery, only on an explicit length finish. */
+export const requestCompletionWithLengthRetry = <T extends CompletionLike>(request: (budget: number) => Promise<T>, budget: number): Promise<T> =>
+  requestSectionWithLengthRetry(async (currentBudget) => {
+    const completion = await request(currentBudget);
+    if (completion.choices[0]?.finish_reason === 'length') {
+      throw new Error('Model response was truncated (finish_reason=length)');
+    }
+    return completion;
+  }, budget);
