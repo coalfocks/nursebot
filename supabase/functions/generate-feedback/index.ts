@@ -1,3 +1,4 @@
+import { FeedbackDeadline } from '../_shared/feedback-deadline.ts';
 import { rejectedFeedbackDiagnostic } from '../_shared/rejected-feedback.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
 import { OpenAI } from 'https://deno.land/x/openai@v4.68.1/mod.ts';
@@ -27,7 +28,6 @@ import {
 } from '../_shared/feedback-operations.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
-const timeout = (ms: number) => new Promise((_, reject) => setTimeout(() => reject(new Error('Evaluation scoring timed out')), ms));
 const sanitizeFeedbackTree = (value: unknown): unknown => {
   if (typeof value === 'string') return sanitizeSimulationText(value);
   if (Array.isArray(value)) return value.map(sanitizeFeedbackTree);
@@ -71,18 +71,23 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let assignmentId: string | undefined;
   let commentsOnly = false;
+  let lifecycle: FeedbackDeadline | undefined;
+  let failureProvenance: Record<string, unknown> | undefined;
   try {
     const request = await req.json() as { assignmentId?: string; commentsOnly?: boolean; forceRegrade?: boolean };
     assignmentId = request.assignmentId;
     commentsOnly = request.commentsOnly === true;
     const forceRegrade = request.forceRegrade === true;
     if (!assignmentId) throw new Error('Assignment ID is required');
-    const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
-    const work = (async () => {
+    const deadline = new FeedbackDeadline(90000);
+    lifecycle = deadline;
+    const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { global: { fetch: deadline.fetch } });
+    const work = async () => {
       const { data: assignment, error: assignmentError } = await client.from('student_room_assignments').select('*, room:room_id (*)').eq('id', assignmentId).single();
       if (assignmentError) throw assignmentError;
       if (!isFeedbackEligibleStatus(assignment.status)) throw new Error('Cannot generate feedback for incomplete assignment');
       const room = (assignment.room ?? {}) as Record<string, unknown>;
+      deadline.setPhase('load_manifest');
       const { data: canonicalManifest, error: manifestError } = await client.rpc('get_assignment_event_manifest', { p_assignment_id: assignmentId });
       if (manifestError) throw manifestError;
       const manifest = canonicalManifest && typeof canonicalManifest === 'object' ? canonicalManifest as Record<string, unknown> : {};
@@ -108,7 +113,9 @@ Deno.serve(async (req) => {
       const key = resolveCaseEvaluationKey(room);
       const leniencyMultiplier = readRoomLeniencyMultiplier(room);
       const provenance = { assignment_id: assignment.id, attempt_id: assignment.id, rubric_version: FEEDBACK_RUBRIC_VERSION, case_key_version: key.version || CASE_KEY_VERSION, assessment_version: ASSESSMENT_VERSION, scoring_start_at: start?.scoring_start_at ?? null, source_event_ids: sourceEventIds };
+      failureProvenance = provenance;
       if (!start) {
+        deadline.setPhase('persist_technical_incomplete');
         const result = { technical_incomplete: true, summary: 'This attempt is technically incomplete because no first nurse page was recorded. No learner score was assigned.', formative_notice: formativeNotice };
         const incompleteRun = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, result }).select('id').single();
         if (incompleteRun.error) throw new Error(incompleteRun.error.message);
@@ -145,6 +152,7 @@ Deno.serve(async (req) => {
         prompt_versions: { evaluation: ALTHEA_SCORING_PROMPT_VERSION, rubric: FEEDBACK_RUBRIC_VERSION, commentary: FEEDBACK_COMMENT_PROMPT_VERSION },
         config: { evidence_packet_version: EVIDENCE_PACKET_VERSION, simulation_prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, leniency_multiplier: leniencyMultiplier, communication_max_tokens: COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS, mdm_max_tokens: MDM_EVALUATION_MAX_COMPLETION_TOKENS, commentary_max_tokens: COMMENTARY_MAX_COMPLETION_TOKENS },
       });
+      deadline.setPhase('fingerprint_and_reuse');
       if (!request.commentsOnly && !forceRegrade) {
         // Identical frozen inputs reuse the saved score. Commentary is part of the
         // saved result, so a comments-only rerun can still refresh it later.
@@ -170,25 +178,26 @@ Deno.serve(async (req) => {
           return { runId: reusable.id, promptVersion: saved.comment_prompt_version ?? null, reused: true };
         }
       }
+      deadline.setPhase('model_evaluation');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
       const allowedEventIds = new Set(sourceEventIds);
       const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
       let commentaryDiagnostic = 'unknown';
       const requestCommentary = async (validationNote = ''): Promise<CommentaryResult | null> => {
         try {
-          const completion = await openai.chat.completions.create({
+          const completion = await deadline.track('commentary_initial', () => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
             messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
             response_format: { type: 'json_object' },
             max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
-          });
+          }, { signal: deadline.signal }));
           const rawContent = completion.choices[0].message.content ?? '{}';
           const parsed = JSON.parse(rawContent);
           const validated = validateFeedbackComments(parsed, allowedEventIds);
           if (validated) return validated;
           commentaryDiagnostic = 'model response failed contract validation';
           console.error('Commentary response failed validation', { response_preview: rawContent.slice(0, 1200), valid_event_count: allowedEventIds.size });
-          const repair = await openai.chat.completions.create({
+          const repair = await deadline.track('commentary_repair', () => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
             messages: [
               { role: 'system', content: 'Repair the candidate into the exact requested JSON contract. Return JSON only. Do not invent evidence IDs or actions.' },
@@ -196,7 +205,7 @@ Deno.serve(async (req) => {
             ],
             response_format: { type: 'json_object' },
             max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
-          });
+          }, { signal: deadline.signal }));
           const repairedContent = repair.choices[0].message.content ?? '{}';
           return validateFeedbackComments(JSON.parse(repairedContent), allowedEventIds);
         } catch (error) {
@@ -234,7 +243,7 @@ Deno.serve(async (req) => {
             ],
             response_format: { type: 'json_object' },
             max_completion_tokens: budget,
-          });
+          }, { signal: deadline.signal });
           return parseSectionCompletion(completion);
         }, maxCompletionTokens);
       };
@@ -254,10 +263,11 @@ Deno.serve(async (req) => {
         return {} as Record<string, unknown>;
       });
       const [communicationRaw, mdmRaw, commentary] = await runIndependentFeedbackOperations(
-        () => guardSection('communication', requestCommunicationEvaluation),
-        () => guardSection('medical_decision_making', requestMdmEvaluation),
+        () => guardSection('communication', () => deadline.track('communication', requestCommunicationEvaluation)),
+        () => guardSection('medical_decision_making', () => deadline.track('medical_decision_making', requestMdmEvaluation)),
         requestCommentary,
       );
+      deadline.setPhase('validation');
       if (sectionErrors.communication && sectionErrors.medical_decision_making) {
         throw new Error(`Evaluation failed for both sections: ${JSON.stringify(sectionErrors)}`);
       }
@@ -369,18 +379,32 @@ Deno.serve(async (req) => {
         scoring_start_at: start.scoring_start_at,
       }];
       const debrief = { leniency_multiplier: leniencyMultiplier, prompt_id: NURSE_ALTHEA_SIMULATION_PROMPT_ID, prompt_sha256: NURSE_ALTHEA_SIMULATION_PROMPT_SHA256, evidence_packet: { version: packet.version, learner_communication_event_ids: packet.learnerCommunicationEventIds, closed_loop_event_ids: packet.closedLoopEventIds, request_acknowledgment_pairs: packet.requestAcknowledgmentPairs, learner_order_event_ids: packet.learnerOrderEventIds, observed_order_event_ids: packet.observedOrderEventIds, inferred_order_event_ids: packet.inferredOrderEventIds, unknown_order_event_ids: packet.unknownOrderEventIds, learner_action_event_ids: packet.learnerActionEventIds, consult_event_ids: packet.consultEventIds, bedside_event_ids: attemptBedsideEventIds, hint_event_ids: packet.hintEventIds, baseline_medications_and_orders: packet.baselineMedicationsAndOrders }, case_goals: key.goals, approach_summary: evaluation.learning_objectives, strengths: generatedComments.strengths, improvements: generatedComments.improvements, recommendations: evaluation.recommendations, growth_areas: growthAreas, action_review: actionReviewWithKey, safety_result: evaluation.safety_result, scoring_start_at: start.scoring_start_at, comment_generation_status: commentStatus, comment_prompt_version: commentPromptVersion, comment_error: commentError, section_errors: sectionErrors, source_coverage: coverage, input_fingerprint: inputFingerprint, evaluation_version: FEEDBACK_RUBRIC_VERSION, assessment_version: ASSESSMENT_VERSION, case_key_version: key.version || CASE_KEY_VERSION };
+      deadline.setPhase('persist_scored_result');
       const run = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: false, input_fingerprint: inputFingerprint, result: { evaluation, debrief, comment_prompt_version: commentPromptVersion, comment_generation_status: commentStatus, comment_error: commentError } }).select('id').single();
       if (run.error) throw run.error;
       const { error: updateError } = await client.from('student_room_assignments').update(scoredAssignmentUpdate(evaluation, debrief, key, start.scoring_start_at, sourceEventIds)).eq('id', assignmentId);
       if (updateError) throw updateError;
       return { runId: run.data.id, promptVersion: commentPromptVersion, commentError };
-    })();
-    const result = await Promise.race([work, timeout(90000)]) as { runId?: string | null; promptVersion?: string | null };
+    };
+    const result = await deadline.run(work) as { runId?: string | null; promptVersion?: string | null };
     return new Response(JSON.stringify({ success: true, assignmentId, ...result }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error && typeof error === 'object' && 'message' in error ? String(error.message) : JSON.stringify(error));
     console.error('Feedback generation failed', { assignmentId, error: message });
-    if (assignmentId && !commentsOnly) { const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''); await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId); }
+    if (assignmentId && !commentsOnly) {
+      // Diagnostic/status reporting has its own bounded transport after scoring is cancelled.
+      const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
+        global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5000) }) },
+      });
+      if (lifecycle?.timedOut && failureProvenance) {
+        const retained = await client.from('feedback_assessment_runs').insert({
+          ...failureProvenance, technical_incomplete: true,
+          result: { status: 'rejected', failure_type: 'timeout', errors: [message], timing: lifecycle.snapshot() },
+        });
+        if (retained.error) console.error('Timeout diagnostic retention failed', { assignmentId, code: retained.error.code });
+      }
+      await client.from('student_room_assignments').update({ feedback_status: 'failed', feedback_error: message }).eq('id', assignmentId);
+    }
     return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
