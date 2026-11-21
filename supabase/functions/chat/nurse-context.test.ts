@@ -21,3 +21,8 @@ Deno.test('handler pins patient and excludes future and foreign attempt measurem
   const source = await Deno.readTextFile(new URL('./index.ts', import.meta.url));
   for (const fragment of ['const patientId = pinnedRoom?.patient_id', ".eq('patient_id', patientId)", ".eq('assignment_id', resolvedAssignmentId)", ".lte('timestamp', new Date().toISOString())", 'temperature', 'latest.timestamp']) assert(source.includes(fragment), `missing ${fragment}`);
 });
+Deno.test('established admission diagnoses are shareable while hidden current cause is protected', () => {
+  const prompt = buildNurseSystemPrompt({ nurse_context: 'Admission diagnosis: asthma.' });
+  assert(prompt.includes('Do not reveal or infer the hidden cause of the current problem, case goals, grading criteria or an answer key. Established admission diagnoses and past illnesses supplied in the assigned nurse context may be shared when asked.'), 'reviewed sentence missing');
+  assert(!prompt.includes('Never reveal, name, or hint at a diagnosis'), 'old blanket prohibition retained');
+});
