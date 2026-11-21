@@ -1,3 +1,4 @@
+import { buildCommentaryContext, buildCommentaryRepairContent } from '../_shared/commentary-context.ts';
 import { FeedbackDeadline } from '../_shared/feedback-deadline.ts';
 import { rejectedFeedbackDiagnostic } from '../_shared/rejected-feedback.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.4';
@@ -15,7 +16,7 @@ import { computeFeedbackFingerprint } from '../_shared/feedback-fingerprint.ts';
 import { isFeedbackEligibleStatus } from '../_shared/feedback-eligibility.ts';
 import { PINNED_FEEDBACK_MODEL } from '../_shared/feedback-model.ts';
 import { appendUncitedDeterministicActions } from '../_shared/action-review.ts';
-import { FEEDBACK_COMMENT_PROMPT, FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type AttemptFeedbackComment, type CommentaryResult } from '../_shared/feedback-comments.ts';
+import { FEEDBACK_COMMENT_PROMPT_VERSION, validateFeedbackComments, type AttemptFeedbackComment, type CommentaryResult } from '../_shared/feedback-comments.ts';
 import {
   COMMUNICATION_EVALUATION_MAX_COMPLETION_TOKENS,
   MDM_EVALUATION_MAX_COMPLETION_TOKENS,
@@ -183,33 +184,50 @@ Deno.serve(async (req) => {
       const allowedEventIds = new Set(sourceEventIds);
       const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
       let commentaryDiagnostic = 'unknown';
+      const commentaryAttempts: Array<{ stage: 'initial' | 'repair'; user_content: string; raw_response?: string; error?: string }> = [];
+      const commentaryTimeline = renderTimelineEntriesForEvaluation(scoredEntries);
+      const commentarySourceCounts = {
+        goals: key.goals.length, authored_accepted_approaches: key.acceptable_alternative_paths.length,
+        timeline_events: scoredEntries.length, timeline_characters: commentaryTimeline.length,
+        note_characters: assignment.student_progress_note?.length ?? 0, evidence_ids: sourceEventIds.length,
+      };
       const requestCommentary = async (validationNote = ''): Promise<CommentaryResult | null> => {
+        let attempt: (typeof commentaryAttempts)[number] | undefined;
         try {
+          const sourceContext = buildCommentaryContext({ goals: key.goals, timeline: commentaryTimeline, note: assignment.student_progress_note, evidenceManifest, validationNote });
+          attempt = { stage: 'initial', user_content: sourceContext };
+          commentaryAttempts.push(attempt);
           const completion = await deadline.track('commentary_initial', () => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
-            messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nCASE GOALS:\n${key.goals.join('\n') || 'Not recorded.'}\n\nVERIFIED ATTEMPT TIMELINE:\n${renderTimelineEntriesForEvaluation(scoredEntries)}\n\nLEARNER NOTE:\n${assignment.student_progress_note || 'Not observed.'}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}${validationNote}` }],
+            messages: [{ role: 'system', content: 'Return only the requested JSON object. Do not score or revise the evaluation.' }, { role: 'user', content: sourceContext }],
             response_format: { type: 'json_object' },
             max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
           }, { signal: deadline.signal }));
           const rawContent = completion.choices[0].message.content ?? '{}';
+          attempt.raw_response = rawContent;
           const parsed = JSON.parse(rawContent);
           const validated = validateFeedbackComments(parsed, allowedEventIds);
           if (validated) return validated;
           commentaryDiagnostic = 'model response failed contract validation';
           console.error('Commentary response failed validation', { response_preview: rawContent.slice(0, 1200), valid_event_count: allowedEventIds.size });
+          const repairContent = buildCommentaryRepairContent(sourceContext, rawContent);
+          attempt = { stage: 'repair', user_content: repairContent };
+          commentaryAttempts.push(attempt);
           const repair = await deadline.track('commentary_repair', () => openai.chat.completions.create({
             model: PINNED_FEEDBACK_MODEL,
             messages: [
               { role: 'system', content: 'Repair the candidate into the exact requested JSON contract. Return JSON only. Do not invent evidence IDs or actions.' },
-              { role: 'user', content: `${FEEDBACK_COMMENT_PROMPT}\n\nVALID EVIDENCE IDS:\n${evidenceManifest}\n\nCANDIDATE JSON TO REPAIR:\n${rawContent}\n\nREPAIR REQUIREMENTS: strengths and improvements must each contain exactly two objects; every object must contain text and evidence_event_ids; use only the valid IDs above; each text must be one sentence of no more than 25 words.` },
+              { role: 'user', content: repairContent },
             ],
             response_format: { type: 'json_object' },
             max_completion_tokens: COMMENTARY_MAX_COMPLETION_TOKENS,
           }, { signal: deadline.signal }));
           const repairedContent = repair.choices[0].message.content ?? '{}';
+          attempt.raw_response = repairedContent;
           return validateFeedbackComments(JSON.parse(repairedContent), allowedEventIds);
         } catch (error) {
           commentaryDiagnostic = error instanceof Error ? error.message : String(error);
+          if (attempt) attempt.error = commentaryDiagnostic;
           console.error('Commentary request failed', error instanceof Error ? error.message : String(error));
           return null;
         }
@@ -353,7 +371,7 @@ Deno.serve(async (req) => {
       const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
       if (allValidationErrors.length) {
         // Requires rejected_feedback_diagnostics RLS migration before deployment.
-        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors }, allValidationErrors);
+        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors, commentaryResult: commentary, commentaryAttempts, commentarySourceCounts }, allValidationErrors);
         const retained = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, input_fingerprint: inputFingerprint, result: diagnostic });
         const retentionError = retained.error ? '; diagnostic retention failed' : '';
         throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')}${retentionError})`);
