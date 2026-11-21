@@ -1,3 +1,4 @@
+import { diagnosticFetch, type ModelTransportAttempt } from '../_shared/model-transport-diagnostics.ts';
 import { buildCommentaryContext, buildCommentaryRepairContent } from '../_shared/commentary-context.ts';
 import { FeedbackDeadline } from '../_shared/feedback-deadline.ts';
 import { rejectedFeedbackDiagnostic } from '../_shared/rejected-feedback.ts';
@@ -72,6 +73,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   let assignmentId: string | undefined;
   let commentsOnly = false;
+  const modelAttempts: ModelTransportAttempt[] = [];
+  let incompleteCandidate: unknown;
   let lifecycle: FeedbackDeadline | undefined;
   let failureProvenance: Record<string, unknown> | undefined;
   try {
@@ -182,7 +185,7 @@ Deno.serve(async (req) => {
       deadline.setPhase('model_evaluation');
       const evidenceManifest = scoredEntries.map((entry) => `${entry.id} | ${entry.kind} | ${entry.title}`).join('\n');
       const allowedEventIds = new Set(sourceEventIds);
-      const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY') });
+      const openai = new OpenAI({ apiKey: Deno.env.get('OPENAI_API_KEY'), fetch: diagnosticFetch(modelAttempts) });
       let commentaryDiagnostic = 'unknown';
       const commentaryAttempts: Array<{ stage: 'initial' | 'repair'; user_content: string; raw_response?: string; error?: string }> = [];
       const commentaryTimeline = renderTimelineEntriesForEvaluation(scoredEntries);
@@ -287,13 +290,18 @@ Deno.serve(async (req) => {
       );
       deadline.setPhase('validation');
       if (sectionErrors.communication && sectionErrors.medical_decision_making) {
+        incompleteCandidate = { communicationRaw, mdmRaw, sectionErrors };
         throw new Error(`Evaluation failed for both sections: ${JSON.stringify(sectionErrors)}`);
       }
       const mergedEvaluation = mergeEvaluationSections(communicationRaw, mdmRaw);
       // Room modifier (RoomEditor leniency multiplier) is applied to component scores
       // before totals are recomputed; safety stays unscaled and is reported separately.
       const evaluation = applyLeniencyToEvaluation(canonicalizeEvaluation(mergedEvaluation), leniencyMultiplier);
-      assertCompleteEvaluation(evaluation, sectionErrors);
+      try { assertCompleteEvaluation(evaluation, sectionErrors); }
+      catch (error) {
+        incompleteCandidate = { evaluation, mergedEvaluation, communicationRaw, mdmRaw, sectionErrors };
+        throw error;
+      }
       const actionReview = sanitizeFeedbackTree(mergedEvaluation.action_review ?? []);
       // Commentary is separate from scoring. A commentary failure keeps the valid
       // grades and records a visible commentary error instead of discarding them.
@@ -371,7 +379,7 @@ Deno.serve(async (req) => {
       const allValidationErrors = [...validationErrors, ...safetyConsistencyErrors(evaluation), ...reconciliationErrors];
       if (allValidationErrors.length) {
         // Requires rejected_feedback_diagnostics RLS migration before deployment.
-        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors, commentaryResult: commentary, commentaryAttempts, commentarySourceCounts }, allValidationErrors);
+        const diagnostic = rejectedFeedbackDiagnostic({ evaluation, generatedComments, mergedEvaluation, sectionErrors, commentaryResult: commentary, commentaryAttempts, commentarySourceCounts, model_transport: modelAttempts }, allValidationErrors);
         const retained = await client.from('feedback_assessment_runs').insert({ ...provenance, technical_incomplete: true, input_fingerprint: inputFingerprint, result: diagnostic });
         const retentionError = retained.error ? '; diagnostic retention failed' : '';
         throw new Error(`Evidence reconciliation failed; the prior saved result was kept (${allValidationErrors.join('; ')}${retentionError})`);
@@ -414,10 +422,10 @@ Deno.serve(async (req) => {
       const client = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
         global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5000) }) },
       });
-      if (lifecycle?.timedOut && failureProvenance) {
+      if ((lifecycle?.timedOut || incompleteCandidate) && failureProvenance) {
         const retained = await client.from('feedback_assessment_runs').insert({
           ...failureProvenance, technical_incomplete: true,
-          result: { status: 'rejected', failure_type: 'timeout', errors: [message], timing: lifecycle.snapshot() },
+          result: { status: 'rejected', failure_type: lifecycle?.timedOut ? 'timeout' : 'completeness', errors: [message], timing: lifecycle?.snapshot(), candidate: incompleteCandidate, model_transport: JSON.parse(JSON.stringify(modelAttempts)) },
         });
         if (retained.error) console.error('Timeout diagnostic retention failed', { assignmentId, code: retained.error.code });
       }
